@@ -992,11 +992,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -1032,11 +1043,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -2826,11 +2847,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -2866,11 +2898,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -5560,11 +5602,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -5753,11 +5806,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -7632,11 +7695,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -7672,11 +7746,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -8902,11 +8986,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -8942,11 +9037,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -11798,11 +11903,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -12143,11 +12259,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -17967,11 +18093,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -20638,11 +20774,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -20678,11 +20825,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -21833,11 +21990,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -22431,11 +22598,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -29079,7 +29256,8 @@
             "input": [
               "text",
               "image",
-              "video"
+              "video",
+              "pdf"
             ],
             "output": [
               "text"
@@ -33230,16 +33408,28 @@
           "temperature": true,
           "tool_call": false,
           "reasoning": {
-            "supported": true
+            "supported": true,
+            "default": true
           },
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -38424,8 +38614,8 @@
               "text",
               "image",
               "video",
-              "audio",
-              "pdf"
+              "pdf",
+              "audio"
             ],
             "output": [
               "text"
@@ -38435,6 +38625,7 @@
             "context": 1000000,
             "output": 65536
           },
+          "temperature": true,
           "tool_call": true,
           "reasoning": {
             "supported": true,
@@ -39691,11 +39882,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -39760,11 +39962,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -46471,11 +46683,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -49787,11 +50009,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -50095,11 +50328,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -53123,11 +53366,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -54633,11 +54887,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -58682,11 +58946,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -59112,11 +59387,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -59933,35 +60218,6 @@
           "open_weights": true,
           "release_date": "2026-04-07",
           "last_updated": "2026-04-07",
-          "type": "chat"
-        },
-        {
-          "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
-          "name": "Qwen3 235B A22B Instruct 2507",
-          "display_name": "Qwen3 235B A22B Instruct 2507",
-          "modalities": {
-            "input": [
-              "text"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 262144,
-            "output": 262144
-          },
-          "temperature": true,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "attachment": false,
-          "open_weights": true,
-          "knowledge": "2025-04",
-          "release_date": "2025-07-29",
-          "last_updated": "2026-01-29",
           "type": "chat"
         },
         {
@@ -60945,11 +61201,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -61934,11 +62201,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -76177,11 +76454,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -76967,11 +77255,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -77266,11 +77565,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -78363,16 +78672,27 @@
           "temperature": true,
           "tool_call": true,
           "reasoning": {
-            "supported": true
+            "supported": true,
+            "default": true
           },
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -80739,6 +81059,35 @@
           "release_date": "2025-05-20",
           "last_updated": "2025-05-20",
           "type": "chat"
+        },
+        {
+          "id": "solar-pro4",
+          "name": "Solar Pro 4",
+          "display_name": "Solar Pro 4",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 524288,
+            "output": 131072
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": false,
+          "open_weights": false,
+          "knowledge": "2026-02",
+          "release_date": "2026-08-06",
+          "last_updated": "2026-08-06",
+          "type": "chat"
         }
       ]
     },
@@ -80810,11 +81159,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -80987,11 +81347,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -81684,11 +82054,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -81724,11 +82105,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -85522,11 +85913,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -85562,11 +85964,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -87445,11 +87857,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -87485,11 +87908,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -92342,11 +92775,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -92382,11 +92826,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -93123,11 +93577,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -93444,11 +93909,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -94285,11 +94760,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -94541,11 +95027,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -94592,7 +95088,8 @@
             "input": [
               "text",
               "image",
-              "video"
+              "video",
+              "pdf"
             ],
             "output": [
               "text"
@@ -100195,11 +100692,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -100895,11 +101403,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -103986,11 +104504,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -105479,11 +106007,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -107854,11 +108392,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -109265,11 +109813,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -109452,11 +110011,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -110279,11 +110848,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -111067,11 +111647,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -111868,6 +112458,47 @@
           "knowledge": "2024-05-30",
           "release_date": "2025-08-07",
           "last_updated": "2025-08-07",
+          "type": "chat"
+        },
+        {
+          "id": "kimi-k2.7-code",
+          "name": "Kimi K2.7 Code",
+          "display_name": "Kimi K2.7 Code",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144
+          },
+          "temperature": false,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ]
+            }
+          },
+          "attachment": true,
+          "open_weights": true,
+          "knowledge": "2025-01",
+          "release_date": "2026-06-12",
+          "last_updated": "2026-06-12",
           "type": "chat"
         },
         {
@@ -114185,11 +114816,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -114870,11 +115512,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -118088,11 +118741,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -119714,11 +120377,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -119754,11 +120428,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -122627,11 +123311,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -122885,11 +123580,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -125036,11 +125741,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -125076,11 +125792,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -131561,11 +132287,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -131601,11 +132338,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -133028,11 +133775,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -133068,11 +133826,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -136436,7 +137204,8 @@
             "input": [
               "text",
               "image",
-              "video"
+              "video",
+              "pdf"
             ],
             "output": [
               "text"
@@ -138630,8 +139399,8 @@
         },
         {
           "id": "meta/muse-spark-1.2",
-          "name": "Meta: Muse Spark 1.2",
-          "display_name": "Meta: Muse Spark 1.2",
+          "name": "Muse Spark 1.2",
+          "display_name": "Muse Spark 1.2",
           "modalities": {
             "input": [
               "text",
@@ -138706,7 +139475,7 @@
           },
           "limit": {
             "context": 131072,
-            "output": 16384
+            "output": 32768
           },
           "temperature": true,
           "tool_call": true,
@@ -139600,11 +140369,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -139700,11 +140480,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -141867,8 +142657,8 @@
             ]
           },
           "limit": {
-            "context": 262144,
-            "output": 262144
+            "context": 1024000,
+            "output": 128000
           },
           "temperature": true,
           "tool_call": true,
@@ -148715,11 +149505,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -148755,11 +149556,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -151810,11 +152621,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -151907,11 +152729,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -152576,11 +153408,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -152959,11 +153802,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -152980,7 +153833,8 @@
           "display_name": "Qwen3.8 Max Preview",
           "modalities": {
             "input": [
-              "text"
+              "text",
+              "image"
             ],
             "output": [
               "text"
@@ -153001,7 +153855,7 @@
               "supported": true
             }
           },
-          "attachment": false,
+          "attachment": true,
           "open_weights": false,
           "release_date": "2026-07-19",
           "last_updated": "2026-07-19",
@@ -154435,7 +155289,8 @@
             "input": [
               "text",
               "image",
-              "video"
+              "video",
+              "pdf"
             ],
             "output": [
               "text"
@@ -159209,6 +160064,7 @@
             "context": 1048576,
             "output": 1048576
           },
+          "temperature": true,
           "tool_call": true,
           "reasoning": {
             "supported": true,
@@ -160898,11 +161754,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -160973,11 +161840,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -162974,37 +163851,6 @@
           "knowledge": "2023-08-31",
           "release_date": "2024-03-13",
           "last_updated": "2024-03-13",
-          "type": "chat"
-        },
-        {
-          "id": "anthropic/claude-opus-5-fast",
-          "name": "Claude Opus 5 (Fast)",
-          "display_name": "Claude Opus 5 (Fast)",
-          "modalities": {
-            "input": [
-              "text",
-              "image",
-              "pdf"
-            ],
-            "output": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 1000000,
-            "output": 128000
-          },
-          "temperature": false,
-          "tool_call": true,
-          "reasoning": {
-            "supported": true,
-            "default": true
-          },
-          "attachment": true,
-          "open_weights": false,
-          "knowledge": "2026-05",
-          "release_date": "2026-07-24",
-          "last_updated": "2026-07-24",
           "type": "chat"
         },
         {
@@ -167290,11 +168136,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -168232,11 +169089,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -168405,7 +169272,8 @@
             "input": [
               "text",
               "image",
-              "video"
+              "video",
+              "pdf"
             ],
             "output": [
               "text"
@@ -172915,11 +173783,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -173071,11 +173950,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -175656,11 +176545,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -175696,11 +176596,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -177897,11 +178807,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -177937,11 +178858,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -181824,7 +182755,8 @@
             "input": [
               "text",
               "image",
-              "video"
+              "video",
+              "pdf"
             ],
             "output": [
               "text"
@@ -182293,11 +183225,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -182333,11 +183276,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -185488,11 +186441,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -185744,11 +186708,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -185795,7 +186769,8 @@
             "input": [
               "text",
               "image",
-              "video"
+              "video",
+              "pdf"
             ],
             "output": [
               "text"
@@ -196508,11 +197483,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -197483,11 +198469,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -199869,11 +200865,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -199909,11 +200916,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -200435,11 +201452,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -200514,11 +201542,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -214790,11 +215828,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -215107,11 +216156,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -220089,11 +221148,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -220115,11 +221185,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -222636,16 +223716,28 @@
           },
           "tool_call": false,
           "reasoning": {
-            "supported": true
+            "supported": true,
+            "default": true
           },
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -222680,16 +223772,27 @@
           },
           "tool_call": false,
           "reasoning": {
-            "supported": true
+            "supported": true,
+            "default": true
           },
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -226625,7 +227728,7 @@
                 "thinking_blocks"
               ],
               "notes": [
-                "Thinking mode is enabled by default and supports low, high, and max effort."
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -226665,9 +227768,7 @@
               "mode": "effort",
               "effort": "high",
               "effort_options": [
-                "low",
                 "high",
-                "xhigh",
                 "max"
               ],
               "interleaved": true,
@@ -226677,7 +227778,7 @@
                 "thinking_blocks"
               ],
               "notes": [
-                "Thinking mode is enabled by default; low maps to high and xhigh maps to max."
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -228173,6 +229274,28 @@
           "type": "chat"
         },
         {
+          "id": "wan3.0-video",
+          "name": "wan3.0-video",
+          "display_name": "wan3.0-video",
+          "modalities": {
+            "input": [
+              "image",
+              "text",
+              "audio",
+              "video"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "chat"
+        },
+        {
           "id": "gpt-5.6-luna",
           "name": "gpt-5.6-luna",
           "display_name": "gpt-5.6-luna",
@@ -228393,18 +229516,17 @@
           "type": "imageGeneration"
         },
         {
-          "id": "claude-opus-5",
-          "name": "claude-opus-5",
-          "display_name": "claude-opus-5",
+          "id": "qwen3.8-max",
+          "name": "qwen3.8-max",
+          "display_name": "qwen3.8-max",
           "modalities": {
             "input": [
-              "text",
-              "image"
+              "text"
             ]
           },
           "limit": {
-            "context": 1000000,
-            "output": 1000000
+            "context": 991000,
+            "output": 991000
           },
           "tool_call": true,
           "reasoning": {
@@ -228419,17 +229541,18 @@
           "type": "chat"
         },
         {
-          "id": "qwen3.8-max",
-          "name": "qwen3.8-max",
-          "display_name": "qwen3.8-max",
+          "id": "claude-opus-5",
+          "name": "claude-opus-5",
+          "display_name": "claude-opus-5",
           "modalities": {
             "input": [
-              "text"
+              "text",
+              "image"
             ]
           },
           "limit": {
-            "context": 991000,
-            "output": 991000
+            "context": 1000000,
+            "output": 1000000
           },
           "tool_call": true,
           "reasoning": {
@@ -228486,9 +229609,9 @@
           "type": "chat"
         },
         {
-          "id": "claude-sonnet-5",
-          "name": "claude-sonnet-5",
-          "display_name": "claude-sonnet-5",
+          "id": "qwen3.8-max-preview",
+          "name": "qwen3.8-max-preview",
+          "display_name": "qwen3.8-max-preview",
           "modalities": {
             "input": [
               "text",
@@ -228496,8 +229619,8 @@
             ]
           },
           "limit": {
-            "context": 1000000,
-            "output": 1000000
+            "context": 983616,
+            "output": 983616
           },
           "tool_call": true,
           "reasoning": {
@@ -228591,9 +229714,9 @@
           "type": "chat"
         },
         {
-          "id": "qwen3.8-max-preview",
-          "name": "qwen3.8-max-preview",
-          "display_name": "qwen3.8-max-preview",
+          "id": "claude-sonnet-5",
+          "name": "claude-sonnet-5",
+          "display_name": "claude-sonnet-5",
           "modalities": {
             "input": [
               "text",
@@ -228601,8 +229724,8 @@
             ]
           },
           "limit": {
-            "context": 983616,
-            "output": 983616
+            "context": 1000000,
+            "output": 1000000
           },
           "tool_call": true,
           "reasoning": {
@@ -230269,11 +231392,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -230300,11 +231434,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -235738,13 +236882,12 @@
           "type": "chat"
         },
         {
-          "id": "wan2.5-i2v-preview",
-          "name": "wan2.5-i2v-preview",
-          "display_name": "wan2.5-i2v-preview",
+          "id": "wan2.5-t2v-preview",
+          "name": "wan2.5-t2v-preview",
+          "display_name": "wan2.5-t2v-preview",
           "modalities": {
             "input": [
-              "text",
-              "image"
+              "text"
             ]
           },
           "limit": {
@@ -235778,12 +236921,13 @@
           "type": "chat"
         },
         {
-          "id": "wan2.5-t2v-preview",
-          "name": "wan2.5-t2v-preview",
-          "display_name": "wan2.5-t2v-preview",
+          "id": "wan2.5-i2v-preview",
+          "name": "wan2.5-i2v-preview",
+          "display_name": "wan2.5-i2v-preview",
           "modalities": {
             "input": [
-              "text"
+              "text",
+              "image"
             ]
           },
           "limit": {
@@ -243827,9 +244971,9 @@
           "type": "chat"
         },
         {
-          "id": "text-ada-001",
-          "name": "text-ada-001",
-          "display_name": "text-ada-001",
+          "id": "text-babbage-001",
+          "name": "text-babbage-001",
+          "display_name": "text-babbage-001",
           "limit": {
             "context": 8192,
             "output": 8192
@@ -243841,9 +244985,9 @@
           "type": "chat"
         },
         {
-          "id": "text-curie-001",
-          "name": "text-curie-001",
-          "display_name": "text-curie-001",
+          "id": "text-davinci-002",
+          "name": "text-davinci-002",
+          "display_name": "text-davinci-002",
           "limit": {
             "context": 8192,
             "output": 8192
@@ -243912,6 +245056,20 @@
           "type": "tts"
         },
         {
+          "id": "text-ada-001",
+          "name": "text-ada-001",
+          "display_name": "text-ada-001",
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "chat"
+        },
+        {
           "id": "tts-1",
           "name": "tts-1",
           "display_name": "tts-1",
@@ -243959,9 +245117,9 @@
           "type": "chat"
         },
         {
-          "id": "text-moderation-latest",
-          "name": "text-moderation-latest",
-          "display_name": "text-moderation-latest",
+          "id": "text-curie-001",
+          "name": "text-curie-001",
+          "display_name": "text-curie-001",
           "limit": {
             "context": 8192,
             "output": 8192
@@ -243973,9 +245131,9 @@
           "type": "chat"
         },
         {
-          "id": "text-babbage-001",
-          "name": "text-babbage-001",
-          "display_name": "text-babbage-001",
+          "id": "text-moderation-007",
+          "name": "text-moderation-007",
+          "display_name": "text-moderation-007",
           "limit": {
             "context": 8192,
             "output": 8192
@@ -243985,25 +245143,6 @@
             "supported": false
           },
           "type": "chat"
-        },
-        {
-          "id": "text-embedding-v1",
-          "name": "text-embedding-v1",
-          "display_name": "text-embedding-v1",
-          "modalities": {
-            "input": [
-              "text"
-            ]
-          },
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "type": "embedding"
         },
         {
           "id": "step-2-16k",
@@ -244075,6 +245214,25 @@
             "supported": false
           },
           "type": "chat"
+        },
+        {
+          "id": "text-embedding-v1",
+          "name": "text-embedding-v1",
+          "display_name": "text-embedding-v1",
+          "modalities": {
+            "input": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 8192,
+            "output": 8192
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "embedding"
         },
         {
           "id": "text-embedding-ada-002",
@@ -244151,20 +245309,6 @@
           "id": "text-davinci-003",
           "name": "text-davinci-003",
           "display_name": "text-davinci-003",
-          "limit": {
-            "context": 8192,
-            "output": 8192
-          },
-          "tool_call": false,
-          "reasoning": {
-            "supported": false
-          },
-          "type": "chat"
-        },
-        {
-          "id": "text-davinci-002",
-          "name": "text-davinci-002",
-          "display_name": "text-davinci-002",
           "limit": {
             "context": 8192,
             "output": 8192
@@ -244260,9 +245404,9 @@
           "type": "chat"
         },
         {
-          "id": "text-moderation-007",
-          "name": "text-moderation-007",
-          "display_name": "text-moderation-007",
+          "id": "text-moderation-latest",
+          "name": "text-moderation-latest",
+          "display_name": "text-moderation-latest",
           "limit": {
             "context": 8192,
             "output": 8192
@@ -246391,9 +247535,106 @@
           "type": "imageGeneration"
         },
         {
+          "id": "anthropic/claude-fable-5:batch",
+          "name": "Anthropic: Claude Fable 5 (batch)",
+          "display_name": "Anthropic: Claude Fable 5 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "omitted",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Adaptive thinking is always on for Claude Fable 5 and Claude Mythos 5; thinking.type = \"disabled\" is rejected.",
+                "Manual budget_tokens requests return 400 on Claude Fable 5 and Claude Mythos 5.",
+                "thinking.display defaults to omitted; set display to summarized to receive readable thinking summaries."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "anthropic/claude-haiku-4.5",
           "name": "Anthropic: Claude Haiku 4.5",
           "display_name": "Anthropic: Claude Haiku 4.5",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 64000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "budget",
+              "budget": {
+                "min": 1024,
+                "unit": "tokens"
+              },
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Claude 4 manual thinking uses thinking.type = \"enabled\" with budget_tokens.",
+                "Interleaved thinking requires the interleaved-thinking-2025-05-14 beta header for this model family."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "anthropic/claude-haiku-4.5:batch",
+          "name": "Anthropic: Claude Haiku 4.5 (batch)",
+          "display_name": "Anthropic: Claude Haiku 4.5 (batch)",
           "modalities": {
             "input": [
               "text",
@@ -246529,6 +247770,52 @@
           "type": "imageGeneration"
         },
         {
+          "id": "anthropic/claude-opus-4.1:batch",
+          "name": "Anthropic: Claude Opus 4.1 (batch)",
+          "display_name": "Anthropic: Claude Opus 4.1 (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "budget",
+              "budget": {
+                "min": 1024,
+                "unit": "tokens"
+              },
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Claude 4 manual thinking uses thinking.type = \"enabled\" with budget_tokens.",
+                "Interleaved thinking requires the interleaved-thinking-2025-05-14 beta header for this model family."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "anthropic/claude-opus-4.5",
           "name": "Anthropic: Claude Opus 4.5",
           "display_name": "Anthropic: Claude Opus 4.5",
@@ -246581,9 +247868,114 @@
           "type": "imageGeneration"
         },
         {
+          "id": "anthropic/claude-opus-4.5:batch",
+          "name": "Anthropic: Claude Opus 4.5 (batch)",
+          "display_name": "Anthropic: Claude Opus 4.5 (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 64000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "mixed",
+              "budget": {
+                "min": 1024,
+                "unit": "tokens"
+              },
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Claude Opus 4.5 uses manual thinking.type = \"enabled\" with budget_tokens; effort can be used alongside the thinking budget.",
+                "Interleaved thinking requires the interleaved-thinking-2025-05-14 beta header."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "anthropic/claude-opus-4.6",
           "name": "Anthropic: Claude Opus 4.6",
           "display_name": "Anthropic: Claude Opus 4.6",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "mixed",
+              "budget": {
+                "min": 1024,
+                "unit": "tokens"
+              },
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "medium",
+                "high",
+                "max"
+              ],
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Anthropic recommends adaptive thinking with effort for Claude 4.6; budget_tokens remains a deprecated compatibility path.",
+                "Anthropic API defaults effort to high; lower effort levels should be chosen per workload."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "anthropic/claude-opus-4.6:batch",
+          "name": "Anthropic: Claude Opus 4.6 (batch)",
+          "display_name": "Anthropic: Claude Opus 4.6 (batch)",
           "modalities": {
             "input": [
               "text",
@@ -246736,6 +248128,57 @@
           "type": "imageGeneration"
         },
         {
+          "id": "anthropic/claude-opus-4.7:batch",
+          "name": "Anthropic: Claude Opus 4.7 (batch)",
+          "display_name": "Anthropic: Claude Opus 4.7 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "omitted",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Claude Opus 4.7 and newer Opus models require thinking.type = \"adaptive\" to enable thinking explicitly.",
+                "Manual budget_tokens requests return 400 on Claude Opus 4.7 and newer adaptive-only Opus models.",
+                "task_budget is separate from thinking control and should not be treated as a thinking budget."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "anthropic/claude-opus-4.8",
           "name": "Anthropic: Claude Opus 4.8",
           "display_name": "Anthropic: Claude Opus 4.8",
@@ -246838,6 +248281,57 @@
           "type": "imageGeneration"
         },
         {
+          "id": "anthropic/claude-opus-4.8:batch",
+          "name": "Anthropic: Claude Opus 4.8 (batch)",
+          "display_name": "Anthropic: Claude Opus 4.8 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "omitted",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Claude Opus 4.7 and newer Opus models require thinking.type = \"adaptive\" to enable thinking explicitly.",
+                "Manual budget_tokens requests return 400 on Claude Opus 4.7 and newer adaptive-only Opus models.",
+                "task_budget is separate from thinking control and should not be treated as a thinking budget."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "anthropic/claude-opus-5",
           "name": "Claude Opus 5",
           "display_name": "Claude Opus 5",
@@ -246871,6 +248365,31 @@
           "id": "anthropic/claude-opus-5-fast",
           "name": "Claude Opus 5 (Fast)",
           "display_name": "Claude Opus 5 (Fast)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "anthropic/claude-opus-5:batch",
+          "name": "Claude Opus 5 (batch)",
+          "display_name": "Claude Opus 5 (batch)",
           "modalities": {
             "input": [
               "text",
@@ -246986,9 +248505,109 @@
           "type": "imageGeneration"
         },
         {
+          "id": "anthropic/claude-sonnet-4.5:batch",
+          "name": "Anthropic: Claude Sonnet 4.5 (batch)",
+          "display_name": "Anthropic: Claude Sonnet 4.5 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 64000
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "budget",
+              "budget": {
+                "min": 1024,
+                "unit": "tokens"
+              },
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Claude 4 manual thinking uses thinking.type = \"enabled\" with budget_tokens.",
+                "Interleaved thinking requires the interleaved-thinking-2025-05-14 beta header for this model family."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "anthropic/claude-sonnet-4.6",
           "name": "Anthropic: Claude Sonnet 4.6",
           "display_name": "Anthropic: Claude Sonnet 4.6",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "mixed",
+              "budget": {
+                "min": 1024,
+                "unit": "tokens"
+              },
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "medium",
+                "high",
+                "max"
+              ],
+              "interleaved": true,
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thinking_blocks"
+              ],
+              "notes": [
+                "Anthropic recommends adaptive thinking with effort for Claude 4.6; budget_tokens remains a deprecated compatibility path.",
+                "Anthropic API defaults effort to high; lower effort levels should be chosen per workload."
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "anthropic/claude-sonnet-4.6:batch",
+          "name": "Anthropic: Claude Sonnet 4.6 (batch)",
+          "display_name": "Anthropic: Claude Sonnet 4.6 (batch)",
           "modalities": {
             "input": [
               "text",
@@ -247064,6 +248683,31 @@
             "reasoning": {
               "supported": true
             }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "anthropic/claude-sonnet-5:batch",
+          "name": "Anthropic: Claude Sonnet 5 (batch)",
+          "display_name": "Anthropic: Claude Sonnet 5 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
           },
           "attachment": true,
           "type": "imageGeneration"
@@ -247680,11 +249324,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -247743,11 +249398,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -247858,6 +249523,99 @@
                 "min": 512,
                 "max": 24576,
                 "auto": -1,
+                "unit": "tokens"
+              },
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thought_signatures"
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "google/gemini-2.5-flash-lite:batch",
+          "name": "Google: Gemini 2.5 Flash Lite (batch)",
+          "display_name": "Google: Gemini 2.5 Flash Lite (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "audio",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65535
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "budget",
+              "budget": {
+                "default": -1,
+                "min": 512,
+                "max": 24576,
+                "auto": -1,
+                "unit": "tokens"
+              },
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thought_signatures"
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "google/gemini-2.5-flash:batch",
+          "name": "Google: Gemini 2.5 Flash (batch)",
+          "display_name": "Google: Gemini 2.5 Flash (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text",
+              "audio",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65535
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "budget",
+              "budget": {
+                "default": -1,
+                "min": 0,
+                "max": 24576,
+                "auto": -1,
+                "off": 0,
                 "unit": "tokens"
               },
               "summaries": true,
@@ -248008,6 +249766,52 @@
           "type": "imageGeneration"
         },
         {
+          "id": "google/gemini-2.5-pro:batch",
+          "name": "Google: Gemini 2.5 Pro (batch)",
+          "display_name": "Google: Gemini 2.5 Pro (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "audio",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "budget",
+              "budget": {
+                "default": -1,
+                "min": 128,
+                "max": 32768,
+                "auto": -1,
+                "unit": "tokens"
+              },
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thought_signatures"
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "google/gemini-3-flash-preview",
           "name": "Google: Gemini 3 Flash Preview",
           "display_name": "Google: Gemini 3 Flash Preview",
@@ -248024,7 +249828,53 @@
           },
           "limit": {
             "context": 1048576,
-            "output": 65535
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "level",
+              "level": "high",
+              "level_options": [
+                "minimal",
+                "low",
+                "medium",
+                "high"
+              ],
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thought_signatures"
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "google/gemini-3-flash-preview:batch",
+          "name": "Google: Gemini 3 Flash Preview (batch)",
+          "display_name": "Google: Gemini 3 Flash Preview (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "audio",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65536
           },
           "tool_call": true,
           "reasoning": {
@@ -248292,6 +250142,33 @@
           "type": "imageGeneration"
         },
         {
+          "id": "google/gemini-3.1-flash-lite:batch",
+          "name": "Google: Gemini 3.1 Flash Lite (batch)",
+          "display_name": "Google: Gemini 3.1 Flash Lite (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "google/gemini-3.1-pro-preview",
           "name": "Google: Gemini 3.1 Pro Preview",
           "display_name": "Google: Gemini 3.1 Pro Preview",
@@ -248344,6 +250221,50 @@
               "text",
               "audio",
               "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "level",
+              "level": "high",
+              "level_options": [
+                "low",
+                "high"
+              ],
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thought_signatures"
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "google/gemini-3.1-pro-preview:batch",
+          "name": "Google: Gemini 3.1 Pro Preview (batch)",
+          "display_name": "Google: Gemini 3.1 Pro Preview (batch)",
+          "modalities": {
+            "input": [
+              "audio",
+              "image",
+              "text",
               "video"
             ],
             "output": [
@@ -248458,9 +250379,128 @@
           "type": "imageGeneration"
         },
         {
+          "id": "google/gemini-3.5-flash-lite:batch",
+          "name": "Google: Gemini 3.5 Flash Lite (batch)",
+          "display_name": "Google: Gemini 3.5 Flash Lite (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "google/gemini-3.5-flash:batch",
+          "name": "Google: Gemini 3.5 Flash (batch)",
+          "display_name": "Google: Gemini 3.5 Flash (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "level",
+              "level": "high",
+              "level_options": [
+                "minimal",
+                "low",
+                "medium",
+                "high"
+              ],
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thought_signatures"
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "google/gemini-3.6-flash",
           "name": "Google: Gemini 3.6 Flash",
           "display_name": "Google: Gemini 3.6 Flash",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 65536
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "level",
+              "level": "high",
+              "level_options": [
+                "minimal",
+                "low",
+                "medium",
+                "high"
+              ],
+              "summaries": true,
+              "visibility": "summary",
+              "continuation": [
+                "thought_signatures"
+              ]
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "google/gemini-3.6-flash:batch",
+          "name": "Google: Gemini 3.6 Flash (batch)",
+          "display_name": "Google: Gemini 3.6 Flash (batch)",
           "modalities": {
             "input": [
               "text",
@@ -248925,8 +250965,8 @@
             ]
           },
           "limit": {
-            "context": 131072,
-            "output": 16384
+            "context": 262144,
+            "output": 32768
           },
           "tool_call": true,
           "reasoning": {
@@ -248941,9 +250981,9 @@
           "type": "chat"
         },
         {
-          "id": "inclusionai/ling-3.0-flash:free",
-          "name": "Ling-3.0-flash (free)",
-          "display_name": "Ling-3.0-flash (free)",
+          "id": "inclusionai/ling-3.0-tiny:free",
+          "name": "inclusionAI: Ling 3.0 Tiny (free)",
+          "display_name": "inclusionAI: Ling 3.0 Tiny (free)",
           "modalities": {
             "input": [
               "text"
@@ -249612,6 +251652,32 @@
           "type": "imageGeneration"
         },
         {
+          "id": "minimax/minimax-m3:batch",
+          "name": "MiniMax: MiniMax M3 (batch)",
+          "display_name": "MiniMax: MiniMax M3 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 524288,
+            "output": 524288
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "type": "imageGeneration"
+        },
+        {
           "id": "mistralai/codestral-2508",
           "name": "Mistral: Codestral 2508",
           "display_name": "Mistral: Codestral 2508",
@@ -250217,6 +252283,30 @@
           "type": "imageGeneration"
         },
         {
+          "id": "moonshotai/kimi-k2.7-code:batch",
+          "name": "MoonshotAI: Kimi K2.7 Code (batch)",
+          "display_name": "MoonshotAI: Kimi K2.7 Code (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 262144
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "type": "imageGeneration"
+        },
+        {
           "id": "moonshotai/kimi-k3",
           "name": "MoonshotAI: Kimi K3",
           "display_name": "MoonshotAI: Kimi K3",
@@ -250521,7 +252611,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 16384
+            "output": 262144
           },
           "temperature": true,
           "tool_call": true,
@@ -250586,6 +252676,30 @@
             "reasoning": {
               "supported": true
             }
+          },
+          "type": "chat"
+        },
+        {
+          "id": "nvidia/nemotron-3-ultra-550b-a55b:batch",
+          "name": "NVIDIA: Nemotron 3 Ultra (batch)",
+          "display_name": "NVIDIA: Nemotron 3 Ultra (batch)",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 512288,
+            "output": 512288
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
           },
           "type": "chat"
         },
@@ -250774,6 +252888,28 @@
           "type": "chat"
         },
         {
+          "id": "openai/gpt-3.5-turbo:batch",
+          "name": "OpenAI: GPT-3.5 Turbo (batch)",
+          "display_name": "OpenAI: GPT-3.5 Turbo (batch)",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 16385,
+            "output": 4096
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "chat"
+        },
+        {
           "id": "openai/gpt-4",
           "name": "OpenAI: GPT-4",
           "display_name": "OpenAI: GPT-4",
@@ -250841,6 +252977,29 @@
           "type": "chat"
         },
         {
+          "id": "openai/gpt-4-turbo:batch",
+          "name": "OpenAI: GPT-4 Turbo (batch)",
+          "display_name": "OpenAI: GPT-4 Turbo (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 128000,
+            "output": 4096
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-4.1",
           "name": "OpenAI: GPT-4.1",
           "display_name": "OpenAI: GPT-4.1",
@@ -250889,9 +253048,81 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-4.1-mini:batch",
+          "name": "OpenAI: GPT-4.1 Mini (batch)",
+          "display_name": "OpenAI: GPT-4.1 Mini (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1047576,
+            "output": 32768
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-4.1-nano",
           "name": "OpenAI: GPT-4.1 Nano",
           "display_name": "OpenAI: GPT-4.1 Nano",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1047576,
+            "output": 32768
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-4.1-nano:batch",
+          "name": "OpenAI: GPT-4.1 Nano (batch)",
+          "display_name": "OpenAI: GPT-4.1 Nano (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1047576,
+            "output": 32768
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-4.1:batch",
+          "name": "OpenAI: GPT-4.1 (batch)",
+          "display_name": "OpenAI: GPT-4.1 (batch)",
           "modalities": {
             "input": [
               "image",
@@ -251057,6 +253288,54 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-4o-mini:batch",
+          "name": "OpenAI: GPT-4o-mini (batch)",
+          "display_name": "OpenAI: GPT-4o-mini (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-4o:batch",
+          "name": "OpenAI: GPT-4o (batch)",
+          "display_name": "OpenAI: GPT-4o (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 128000,
+            "output": 16384
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": false
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-5",
           "name": "OpenAI: GPT-5",
           "display_name": "OpenAI: GPT-5",
@@ -251102,6 +253381,30 @@
             }
           },
           "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5-codex:batch",
+          "name": "OpenAI: GPT-5 Codex (batch)",
+          "display_name": "OpenAI: GPT-5 Codex (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
           "type": "imageGeneration"
         },
         {
@@ -251205,6 +253508,31 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-5-mini:batch",
+          "name": "OpenAI: GPT-5 Mini (batch)",
+          "display_name": "OpenAI: GPT-5 Mini (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-5-nano",
           "name": "OpenAI: GPT-5 Nano",
           "display_name": "OpenAI: GPT-5 Nano",
@@ -251253,6 +253581,31 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-5-nano:batch",
+          "name": "OpenAI: GPT-5 Nano (batch)",
+          "display_name": "OpenAI: GPT-5 Nano (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-5-pro",
           "name": "OpenAI: GPT-5 Pro",
           "display_name": "OpenAI: GPT-5 Pro",
@@ -251290,6 +253643,56 @@
               ],
               "visibility": "hidden"
             }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5-pro:batch",
+          "name": "OpenAI: GPT-5 Pro (batch)",
+          "display_name": "OpenAI: GPT-5 Pro (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5:batch",
+          "name": "OpenAI: GPT-5 (batch)",
+          "display_name": "OpenAI: GPT-5 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
           },
           "attachment": true,
           "type": "imageGeneration"
@@ -251484,6 +253887,31 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-5.1:batch",
+          "name": "OpenAI: GPT-5.1 (batch)",
+          "display_name": "OpenAI: GPT-5.1 (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-5.2",
           "name": "OpenAI: GPT-5.2",
           "display_name": "OpenAI: GPT-5.2",
@@ -251646,6 +254074,80 @@
               ],
               "visibility": "hidden"
             }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.2-pro:batch",
+          "name": "OpenAI: GPT-5.2 Pro (batch)",
+          "display_name": "OpenAI: GPT-5.2 Pro (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false,
+            "effort": "none",
+            "verbosity": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "effort",
+              "effort": "none",
+              "effort_options": [
+                "none",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "verbosity": "medium",
+              "verbosity_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.2:batch",
+          "name": "OpenAI: GPT-5.2 (batch)",
+          "display_name": "OpenAI: GPT-5.2 (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
           },
           "attachment": true,
           "type": "imageGeneration"
@@ -251871,9 +254373,107 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-5.4-mini:batch",
+          "name": "OpenAI: GPT-5.4 Mini (batch)",
+          "display_name": "OpenAI: GPT-5.4 Mini (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false,
+            "effort": "none",
+            "verbosity": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "effort",
+              "effort": "none",
+              "effort_options": [
+                "none",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "verbosity": "medium",
+              "verbosity_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-5.4-nano",
           "name": "OpenAI: GPT-5.4 Nano",
           "display_name": "OpenAI: GPT-5.4 Nano",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 400000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false,
+            "effort": "none",
+            "verbosity": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "effort",
+              "effort": "none",
+              "effort_options": [
+                "none",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "verbosity": "medium",
+              "verbosity_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.4-nano:batch",
+          "name": "OpenAI: GPT-5.4 Nano (batch)",
+          "display_name": "OpenAI: GPT-5.4 Nano (batch)",
           "modalities": {
             "input": [
               "image",
@@ -251967,6 +254567,80 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-5.4-pro:batch",
+          "name": "OpenAI: GPT-5.4 Pro (batch)",
+          "display_name": "OpenAI: GPT-5.4 Pro (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": false,
+            "effort": "none",
+            "verbosity": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": false,
+              "mode": "effort",
+              "effort": "none",
+              "effort_options": [
+                "none",
+                "low",
+                "medium",
+                "high",
+                "xhigh"
+              ],
+              "verbosity": "medium",
+              "verbosity_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.4:batch",
+          "name": "OpenAI: GPT-5.4 (batch)",
+          "display_name": "OpenAI: GPT-5.4 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-5.5",
           "name": "OpenAI: GPT-5.5",
           "display_name": "OpenAI: GPT-5.5",
@@ -252045,6 +254719,56 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-5.5-pro:batch",
+          "name": "OpenAI: GPT-5.5 Pro (batch)",
+          "display_name": "OpenAI: GPT-5.5 Pro (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.5:batch",
+          "name": "OpenAI: GPT-5.5 (batch)",
+          "display_name": "OpenAI: GPT-5.5 (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-5.6-luna",
           "name": "OpenAI: GPT-5.6 Luna",
           "display_name": "OpenAI: GPT-5.6 Luna",
@@ -252098,6 +254822,56 @@
           "id": "openai/gpt-5.6-luna-pro",
           "name": "OpenAI: GPT-5.6 Luna Pro",
           "display_name": "OpenAI: GPT-5.6 Luna Pro",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.6-luna-pro:batch",
+          "name": "OpenAI: GPT-5.6 Luna Pro (batch)",
+          "display_name": "OpenAI: GPT-5.6 Luna Pro (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.6-luna:batch",
+          "name": "OpenAI: GPT-5.6 Luna (batch)",
+          "display_name": "OpenAI: GPT-5.6 Luna (batch)",
           "modalities": {
             "input": [
               "image",
@@ -252195,6 +254969,56 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/gpt-5.6-sol-pro:batch",
+          "name": "OpenAI: GPT-5.6 Sol Pro (batch)",
+          "display_name": "OpenAI: GPT-5.6 Sol Pro (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.6-sol:batch",
+          "name": "OpenAI: GPT-5.6 Sol (batch)",
+          "display_name": "OpenAI: GPT-5.6 Sol (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/gpt-5.6-terra",
           "name": "OpenAI: GPT-5.6 Terra",
           "display_name": "OpenAI: GPT-5.6 Terra",
@@ -252248,6 +255072,56 @@
           "id": "openai/gpt-5.6-terra-pro",
           "name": "OpenAI: GPT-5.6 Terra Pro",
           "display_name": "OpenAI: GPT-5.6 Terra Pro",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.6-terra-pro:batch",
+          "name": "OpenAI: GPT-5.6 Terra Pro (batch)",
+          "display_name": "OpenAI: GPT-5.6 Terra Pro (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1050000,
+            "output": 128000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/gpt-5.6-terra:batch",
+          "name": "OpenAI: GPT-5.6 Terra (batch)",
+          "display_name": "OpenAI: GPT-5.6 Terra (batch)",
           "modalities": {
             "input": [
               "image",
@@ -252527,6 +255401,71 @@
           "type": "imageGeneration"
         },
         {
+          "id": "openai/o1-pro:batch",
+          "name": "OpenAI: o1-pro (batch)",
+          "display_name": "OpenAI: o1-pro (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "tool_call": false,
+          "reasoning": {
+            "supported": true,
+            "default": true,
+            "effort": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "medium",
+              "effort_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/o1:batch",
+          "name": "OpenAI: o1 (batch)",
+          "display_name": "OpenAI: o1 (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
           "id": "openai/o3",
           "name": "OpenAI: o3",
           "display_name": "OpenAI: o3",
@@ -252645,6 +255584,84 @@
           "type": "chat"
         },
         {
+          "id": "openai/o3-mini-high:batch",
+          "name": "OpenAI: o3 Mini High (batch)",
+          "display_name": "OpenAI: o3 Mini High (batch)",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true,
+            "effort": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "medium",
+              "effort_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "chat"
+        },
+        {
+          "id": "openai/o3-mini:batch",
+          "name": "OpenAI: o3 Mini (batch)",
+          "display_name": "OpenAI: o3 Mini (batch)",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true,
+            "effort": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "medium",
+              "effort_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "chat"
+        },
+        {
           "id": "openai/o3-pro",
           "name": "OpenAI: o3 Pro",
           "display_name": "OpenAI: o3 Pro",
@@ -252680,6 +255697,71 @@
               ],
               "visibility": "hidden"
             }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/o3-pro:batch",
+          "name": "OpenAI: o3 Pro (batch)",
+          "display_name": "OpenAI: o3 Pro (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true,
+            "effort": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "medium",
+              "effort_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/o3:batch",
+          "name": "OpenAI: o3 (batch)",
+          "display_name": "OpenAI: o3 (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
           },
           "attachment": true,
           "type": "imageGeneration"
@@ -252760,6 +255842,71 @@
               ],
               "visibility": "hidden"
             }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/o4-mini-high:batch",
+          "name": "OpenAI: o4 Mini High (batch)",
+          "display_name": "OpenAI: o4 Mini High (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true,
+            "effort": "medium"
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "medium",
+              "effort_options": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "visibility": "hidden"
+            }
+          },
+          "attachment": true,
+          "type": "imageGeneration"
+        },
+        {
+          "id": "openai/o4-mini:batch",
+          "name": "OpenAI: o4 Mini (batch)",
+          "display_name": "OpenAI: o4 Mini (batch)",
+          "modalities": {
+            "input": [
+              "image",
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 200000,
+            "output": 100000
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
           },
           "attachment": true,
           "type": "imageGeneration"
@@ -254075,7 +257222,7 @@
           },
           "limit": {
             "context": 262144,
-            "output": 65536
+            "output": 81920
           },
           "temperature": true,
           "tool_call": true,
@@ -255096,6 +258243,31 @@
           "type": "imageGeneration"
         },
         {
+          "id": "thinkingmachines/inkling:batch",
+          "name": "Thinking Machines: Inkling (batch)",
+          "display_name": "Thinking Machines: Inkling (batch)",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "audio"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 524288,
+            "output": 524288
+          },
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "type": "imageGeneration"
+        },
+        {
           "id": "undi95/remm-slerp-l2-13b",
           "name": "ReMM SLERP 13B",
           "display_name": "ReMM SLERP 13B",
@@ -255651,8 +258823,8 @@
             ]
           },
           "limit": {
-            "context": 262144,
-            "output": 262144
+            "context": 1048576,
+            "output": 131072
           },
           "temperature": true,
           "tool_call": true,
@@ -255664,6 +258836,30 @@
             "reasoning": {
               "supported": true
             }
+          },
+          "type": "chat"
+        },
+        {
+          "id": "z-ai/glm-5.2:batch",
+          "name": "Z.ai: GLM 5.2 (batch)",
+          "display_name": "Z.ai: GLM 5.2 (batch)",
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 512000,
+            "output": 512000
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
           },
           "type": "chat"
         },
@@ -256502,11 +259698,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -256536,11 +259743,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -262432,11 +265649,22 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "low",
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps xhigh to high for V4 Flash; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -262512,11 +265740,21 @@
           "extra_capabilities": {
             "reasoning": {
               "supported": true,
+              "default_enabled": true,
+              "mode": "effort",
+              "effort": "high",
+              "effort_options": [
+                "high",
+                "max"
+              ],
               "interleaved": true,
               "summaries": true,
               "visibility": "summary",
               "continuation": [
                 "thinking_blocks"
+              ],
+              "notes": [
+                "The DeepSeek API maps low to high and xhigh to max for V4 Pro; effort_options lists distinct model-effective levels."
               ]
             }
           },
@@ -263389,6 +266627,43 @@
           "open_weights": false,
           "release_date": "2026-04-08",
           "last_updated": "2026-07-09",
+          "type": "chat"
+        },
+        {
+          "id": "meta/muse-spark-1.2",
+          "name": "Meta: Muse Spark 1.2",
+          "display_name": "Meta: Muse Spark 1.2",
+          "modalities": {
+            "input": [
+              "text",
+              "image",
+              "video",
+              "pdf",
+              "audio"
+            ],
+            "output": [
+              "text"
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 65536
+          },
+          "temperature": true,
+          "tool_call": true,
+          "reasoning": {
+            "supported": true,
+            "default": true
+          },
+          "extra_capabilities": {
+            "reasoning": {
+              "supported": true
+            }
+          },
+          "attachment": true,
+          "open_weights": false,
+          "release_date": "2026-08-05",
+          "last_updated": "2026-08-05",
           "type": "chat"
         },
         {
