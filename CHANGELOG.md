@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.1.0-beta.12 (2026-08-07)
+- Added proactive multi-Agent collaboration with live child Sessions, progress tracking, controls, and result handoff
+- Added a bundled local `deepchat` CLI for inference, media, OCR, artifacts, Agent runs, provider and model administration, Settings, Skills, and MCP operations
+- Added native web search for supported DeepSeek V4 Flash models, with a per-turn toggle, visible search activity, and source links
+- Added OrcaRouter as a built-in provider with live model discovery
+- Upgraded the bundled Computer Use driver to 0.17.0 with snapshot-bound targeting, post-action verification, and new window, menu, and clipboard tools
+- Persisted images generated through MCP tools so they remain available after restart and in follow-up actions
+- Improved compatibility with large MCP tool catalogs and equivalent JSON schemas
+- Standardized UI controls and refined interface motion, hover behavior, and reduced-motion feedback
+- Upgraded Light OCR to 0.5.7, Electron to 41.10.4, and the bundled Node.js runtime to 24.18.0
+- Restored provider database refreshes for larger catalogs and refreshed model and Agent registries
+- Fixed long unbroken text expanding the chat composer, untranslated confirmation labels, and scheduler restart and manual-run feedback
+- 新增主动式多 Agent 协作，支持实时子会话、进度跟踪、控制与结果回传
+- 新增内置本地 `deepchat` CLI，覆盖推理、媒体生成、OCR、产物管理、Agent 运行、Provider 与模型管理、设置、Skills 和 MCP 操作
+- 为支持的 DeepSeek V4 Flash 模型新增原生联网搜索，提供逐轮开关、可见搜索过程与来源链接
+- 新增 OrcaRouter 内置 Provider，并支持动态获取模型列表
+- 将内置 Computer Use 驱动升级至 0.17.0，新增基于快照的目标定位、操作后验证，以及窗口、菜单和剪贴板工具
+- 持久化 MCP 工具生成的图片，确保重启后及后续操作中仍可使用
+- 改进大型 MCP 工具目录及等价 JSON Schema 的兼容性
+- 统一界面控件，并优化动效、悬停行为与减少动态效果反馈
+- 将 Light OCR 升级至 0.5.7、Electron 升级至 41.10.4，并将内置 Node.js 运行时升级至 24.18.0
+- 恢复大型 Provider 数据库的刷新能力，并更新模型与 Agent 注册表
+- 修复无空格长文本撑宽聊天输入框、确认按钮未翻译，以及调度器重启与手动运行反馈异常
+
 ## v1.1.0-beta.11 (2026-07-31)
 - Tolerated invalid MCP tool output schemas without rejecting otherwise usable tools
 - 容忍无效的 MCP 工具输出 Schema，避免拒绝其他可用工具
