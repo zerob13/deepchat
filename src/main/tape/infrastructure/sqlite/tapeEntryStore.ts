@@ -15,6 +15,7 @@ import {
   type TapeAnchorAppendInput,
   type TapeEventAppendInput
 } from '@/tape/domain/entry'
+import { DEFAULT_EXCLUDED_TAPE_EVENT_NAMES } from '@/tape/domain/effectiveView'
 import type {
   TapeBootstrapStore,
   TapeEntryStore,
@@ -135,6 +136,10 @@ const AUTHORIZED_TAPE_SOURCES_CTE_SQL = `
     FROM json_each(?)
   )
 `
+
+const DEFAULT_EXCLUDED_TAPE_EVENT_NAMES_SQL = DEFAULT_EXCLUDED_TAPE_EVENT_NAMES.map(
+  (name) => `'${name.replaceAll("'", "''")}'`
+).join(', ')
 
 function effectiveTapeMessagePredicateSql(alias: string): string {
   return `
@@ -265,11 +270,7 @@ const EFFECTIVE_TAPE_ROWS_CTE_SQL = `
       provenance_key, payload_json, meta_json, created_at
     FROM bounded_rows
     WHERE kind = 'event'
-      AND (name IS NULL OR name NOT IN (
-        'message/retracted',
-        'message/compaction_indicator',
-        'migration/backfill'
-      ))
+      AND (name IS NULL OR name NOT IN (${DEFAULT_EXCLUDED_TAPE_EVENT_NAMES_SQL}))
     UNION ALL
     SELECT
       session_id, entry_id, kind, name, source_type, source_id, source_seq,
@@ -300,11 +301,10 @@ const EFFECTIVE_TAPE_SEARCH_ROW_PREDICATE_SQL = `
   candidate.kind = 'anchor'
   OR (
     candidate.kind = 'event'
-    AND (candidate.name IS NULL OR candidate.name NOT IN (
-      'message/retracted',
-      'message/compaction_indicator',
-      'migration/backfill'
-    ))
+    AND (
+      candidate.name IS NULL
+      OR candidate.name NOT IN (${DEFAULT_EXCLUDED_TAPE_EVENT_NAMES_SQL})
+    )
   )
   OR (
     candidate.kind = 'message'

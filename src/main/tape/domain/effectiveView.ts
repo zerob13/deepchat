@@ -37,6 +37,15 @@ interface EffectiveTapeViewOptions {
   includeAuditEvents?: boolean
 }
 
+export const DEFAULT_EXCLUDED_TAPE_EVENT_NAMES = [
+  'message/retracted',
+  'message/compaction_indicator',
+  'migration/backfill',
+  ...EXECUTION_JOURNAL_EVENT_NAMES
+] as const
+
+const DEFAULT_EXCLUDED_TAPE_EVENT_NAME_SET = new Set<string>(DEFAULT_EXCLUDED_TAPE_EVENT_NAMES)
+
 type EffectiveMessageCandidate = {
   row: DeepChatTapeEntryRow
   record: ChatMessageRecord
@@ -89,12 +98,7 @@ function shouldReplaceMessage(
 }
 
 function isAuditEvent(row: DeepChatTapeEntryRow): boolean {
-  return (
-    row.name === 'message/retracted' ||
-    row.name === 'message/compaction_indicator' ||
-    row.name === 'migration/backfill' ||
-    EXECUTION_JOURNAL_EVENT_NAMES.some((name) => name === row.name)
-  )
+  return row.name !== null && DEFAULT_EXCLUDED_TAPE_EVENT_NAME_SET.has(row.name)
 }
 
 function shouldReplaceToolRow(

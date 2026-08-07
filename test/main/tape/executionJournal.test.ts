@@ -275,6 +275,54 @@ describe('Execution Journal domain and strict persistence', () => {
     ).toHaveLength(3)
   })
 
+  itIfSqlite('keeps journal facts out of linked SQL search and context', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new DeepChatTapeEntriesTable(db)
+      table.createTable()
+      table.ensureBootstrapAnchor('linked-session')
+      const contextEntry = table.appendEvent({
+        sessionId: 'linked-session',
+        name: 'context/before',
+        data: { marker: 'linked-context-marker' }
+      })
+      for (const name of EXECUTION_JOURNAL_EVENT_NAMES) {
+        table.appendEvent({
+          sessionId: 'linked-session',
+          name,
+          data: { marker: 'linked-journal-marker' }
+        })
+      }
+      table.appendEvent({
+        sessionId: 'linked-session',
+        name: 'context/after',
+        data: { marker: 'linked-context-marker' }
+      })
+      const source = {
+        sessionId: 'linked-session',
+        maxEntryId: table.getMaxEntryId('linked-session')
+      }
+
+      expect(table.searchEffectiveSourcesAtHeads([source], 'linked-journal-marker')).toEqual([])
+      expect(table.searchEffectiveSourcesAtHeads([source], 'linked-context-marker')).toHaveLength(2)
+
+      const contextNames = table
+        .getEffectiveContextRowsAtHead(source, [contextEntry.entry_id], {
+          before: 0,
+          after: 10,
+          limit: 20
+        })
+        .map((row) => row.name)
+      expect(contextNames).toContain('context/before')
+      expect(contextNames).toContain('context/after')
+      expect(
+        contextNames.some((name) => EXECUTION_JOURNAL_EVENT_NAMES.some((event) => event === name))
+      ).toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
   it('rejects new operation facts after a Run terminal while preserving idempotent retries', () => {
     const { table } = createTapeTableMock()
     const service = createTapeService(table)
