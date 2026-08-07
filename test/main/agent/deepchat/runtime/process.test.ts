@@ -168,6 +168,7 @@ function makeStreamEvents(...events: LLMCoreStreamEvent[]): LLMCoreStreamEvent[]
 describe('processStream', () => {
   let messageStore: ReturnType<typeof createMockMessageStore>
   let tapeToolFactWriter: { appendToolFact: ReturnType<typeof vi.fn> }
+  let commitRunTerminal: ReturnType<typeof vi.fn>
   let tempHome: string | null = null
   let homedirSpy: ReturnType<typeof vi.spyOn> | null = null
 
@@ -175,6 +176,7 @@ describe('processStream', () => {
     vi.useFakeTimers()
     vi.clearAllMocks()
     messageStore = createMockMessageStore()
+    commitRunTerminal = vi.fn()
     tapeToolFactWriter = {
       appendToolFact: vi.fn(async (input) => ({
         sessionId: input.sessionId,
@@ -246,6 +248,7 @@ describe('processStream', () => {
       maxTokens: 4096,
       interleavedReasoning: DEFAULT_INTERLEAVED_REASONING,
       permissionMode: 'full_access',
+      commitRunTerminal,
       io: {
         messageStore,
         tapeToolFactWriter,
@@ -271,6 +274,9 @@ describe('processStream', () => {
   }
 
   function observeCommitOrder(order: string[]): void {
+    commitRunTerminal.mockImplementation(() => {
+      order.push('journal:terminal')
+    })
     messageStore.updateAssistantContent.mockImplementation(() => {
       order.push('message:update')
     })
@@ -516,8 +522,14 @@ describe('processStream', () => {
       'tape:tool_call',
       'tape:tool_result'
     ]
-    const ERROR_TERMINAL_COMMIT_ORDER = ['message:error', 'renderer:update', 'renderer:error']
+    const ERROR_TERMINAL_COMMIT_ORDER = [
+      'journal:terminal',
+      'message:error',
+      'renderer:update',
+      'renderer:error'
+    ]
     const COMPLETED_TERMINAL_COMMIT_ORDER = [
+      'journal:terminal',
       'message:complete',
       'renderer:update',
       'renderer:complete'
@@ -561,10 +573,15 @@ describe('processStream', () => {
         'message:update',
         'renderer:update',
         'message:update',
+        'journal:terminal',
         'message:complete',
         'renderer:update',
         'renderer:complete'
       ])
+      expect(commitRunTerminal).toHaveBeenCalledWith({
+        outcome: 'completed',
+        stopReason: 'complete'
+      })
       expect(tapeToolFactWriter.appendToolFact).not.toHaveBeenCalled()
       expect(JSON.parse(messageStore.finalizeAssistantMessage.mock.calls[0][2])).toMatchObject({
         provider: 'openai',
@@ -577,7 +594,7 @@ describe('processStream', () => {
       })
     })
 
-    it('keeps the legacy error fallback inside one settlement stage invocation', async () => {
+    it('does not select a conflicting terminal when projection fails after commit', async () => {
       const order: string[] = []
       observeCommitOrder(order)
       messageStore.finalizeAssistantMessage.mockImplementation(() => {
@@ -585,23 +602,48 @@ describe('processStream', () => {
         throw new Error('final write failed')
       })
 
-      const result = await processStream(createParams())
-
-      expect(result).toMatchObject({
-        status: 'error',
-        errorMessage: 'final write failed'
-      })
+      await expect(processStream(createParams())).rejects.toThrow('final write failed')
       expect(order).toEqual([
         'renderer:update',
         'message:update',
         'renderer:update',
         'message:update',
+        'journal:terminal',
         'message:complete',
-        ...ERROR_TERMINAL_COMMIT_ORDER
       ])
       expect(messageStore.finalizeAssistantMessage).toHaveBeenCalledTimes(1)
-      expect(messageStore.setMessageError).toHaveBeenCalledTimes(1)
+      expect(messageStore.setMessageError).not.toHaveBeenCalled()
+      expect(commitRunTerminal).toHaveBeenCalledOnce()
       expect(tapeToolFactWriter.appendToolFact).not.toHaveBeenCalled()
+    })
+
+    it('prevents terminal transcript and renderer projection when the journal commit fails', async () => {
+      const order: string[] = []
+      observeCommitOrder(order)
+      commitRunTerminal.mockImplementation(() => {
+        order.push('journal:terminal')
+        throw new Error('journal unavailable')
+      })
+
+      await expect(processStream(createParams())).rejects.toThrow('journal unavailable')
+
+      expect(order).toEqual([
+        'renderer:update',
+        'message:update',
+        'renderer:update',
+        'message:update',
+        'journal:terminal'
+      ])
+      expect(messageStore.finalizeAssistantMessage).not.toHaveBeenCalled()
+      expect(messageStore.setMessageError).not.toHaveBeenCalled()
+      expect(publishDeepchatEventMock).not.toHaveBeenCalledWith(
+        'chat.stream.completed',
+        expect.anything()
+      )
+      expect(publishDeepchatEventMock).not.toHaveBeenCalledWith(
+        'chat.stream.failed',
+        expect.anything()
+      )
     })
 
     it('persists each tool round before entering the next provider round', async () => {
@@ -657,6 +699,7 @@ describe('processStream', () => {
         'tape:tool_result',
         'tape:tool_call',
         'tape:tool_result',
+        'journal:terminal',
         'message:complete',
         'renderer:update',
         'renderer:complete'
@@ -740,10 +783,15 @@ describe('processStream', () => {
         'message:update',
         'renderer:update',
         'message:update',
+        'journal:terminal',
         'message:update',
         'renderer:update',
         'renderer:complete'
       ])
+      expect(commitRunTerminal).toHaveBeenCalledWith({
+        outcome: 'paused',
+        stopReason: 'interaction'
+      })
       expect(tapeToolFactWriter.appendToolFact).not.toHaveBeenCalled()
     })
 
@@ -890,10 +938,16 @@ describe('processStream', () => {
       expect(order).toEqual([
         'renderer:update',
         'message:update',
+        'journal:terminal',
         'message:error',
         'renderer:update',
         'renderer:error'
       ])
+      expect(commitRunTerminal).toHaveBeenCalledWith({
+        outcome: 'error',
+        stopReason: 'provider_error',
+        errorMessage: 'Connection lost'
+      })
       expect(messageStore.setMessageError).toHaveBeenCalled()
       expect(messageStore.finalizeAssistantMessage).not.toHaveBeenCalled()
       expect(tapeToolFactWriter.appendToolFact).not.toHaveBeenCalled()
@@ -921,10 +975,16 @@ describe('processStream', () => {
       expect(order).toEqual([
         'renderer:update',
         'message:update',
+        'journal:terminal',
         'message:error',
         'renderer:update',
         'renderer:error'
       ])
+      expect(commitRunTerminal).toHaveBeenCalledWith({
+        outcome: 'aborted',
+        stopReason: 'user_stop',
+        errorMessage: 'common.error.userCanceledGeneration'
+      })
       expect(abortController.signal.aborted).toBe(true)
       const abortMetadata = JSON.parse(messageStore.setMessageError.mock.calls[0][2])
       expect(abortMetadata).toMatchObject({ provider: 'openai', model: 'gpt-4' })

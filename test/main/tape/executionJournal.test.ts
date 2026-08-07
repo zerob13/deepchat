@@ -186,6 +186,7 @@ describe('Execution Journal domain and strict persistence', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
     commitStarted(service, RUN_IDS.completed)
+    const errorMessage = `authorization secret-value ${'x'.repeat(8_192)}`
 
     service.commitRunTerminal({
       sessionId: 'session-1',
@@ -193,11 +194,12 @@ describe('Execution Journal domain and strict persistence', () => {
       messageId: 'assistant-1',
       outcome: 'error',
       stopReason: 'provider_error',
-      errorMessage: 'authorization secret-value'
+      errorMessage
     })
 
     const terminal = entries.find((entry) => entry.name === 'execution/run_terminal')!
     expect(terminal.payload_json).not.toContain('secret-value')
+    expect(terminal.payload_json).not.toContain(errorMessage)
     expect(terminal.payload_json).toContain('errorHash')
     expect(service.classifyRecoveryCandidates()).toContainEqual(
       expect.objectContaining({

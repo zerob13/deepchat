@@ -98,7 +98,8 @@ local Run construction and preflight
 `processStream` receives the narrow writer through its I/O collaborators. Terminal settlement
 commits exactly one of `completed`, `paused`, `aborted`, or `error` before calling the current
 finalizers. If a post-terminal projection throws, the committed terminal fact is retained and no
-conflicting terminal fact is attempted.
+conflicting terminal fact or ordinary error projection is attempted; the Run remains parked for
+reconciliation.
 
 ## Tool Dispatch And Outcome Flow
 

@@ -26,7 +26,6 @@ const MAX_TOOL_NAME_CHARS = 512
 const MAX_TARGET_FIELD_CHARS = 1_024
 const MAX_OFFLOAD_PATH_CHARS = 4_096
 const MAX_STOP_REASON_CHARS = 1_024
-const MAX_ERROR_MESSAGE_CHARS = 4_096
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -199,15 +198,6 @@ function requireString(
     throw new ExecutionJournalError(`${label} must not contain outer whitespace.`, 'invalid_fact')
   }
   return value
-}
-
-function requireOptionalString(
-  value: unknown,
-  label: string,
-  maxLength: number,
-  options: { preserveWhitespace?: boolean } = {}
-): string | undefined {
-  return value === undefined ? undefined : requireString(value, label, maxLength, options)
 }
 
 function requireSessionId(value: unknown): string {
@@ -434,19 +424,16 @@ export function buildToolOutcomeData(input: CommitExecutionToolOutcomeInput) {
 export function buildRunTerminalData(input: CommitExecutionRunTerminalInput) {
   requireSessionId(input.sessionId)
   requireOptionalCreatedAt(input.createdAt)
-  const errorMessage = requireOptionalString(
-    input.errorMessage,
-    'errorMessage',
-    MAX_ERROR_MESSAGE_CHARS,
-    { preserveWhitespace: true }
-  )
+  if (input.errorMessage !== undefined && typeof input.errorMessage !== 'string') {
+    throw new ExecutionJournalError('errorMessage must be a string.', 'invalid_fact')
+  }
   return {
     protocolVersion: EXECUTION_JOURNAL_PROTOCOL_VERSION,
     runId: requireExecutionRunId(input.runId),
     messageId: requireMessageId(input.messageId),
     outcome: normalizeRunOutcome(input.outcome),
     stopReason: requireString(input.stopReason, 'stopReason', MAX_STOP_REASON_CHARS),
-    ...(errorMessage === undefined ? {} : { errorHash: hashJson(errorMessage) })
+    ...(input.errorMessage === undefined ? {} : { errorHash: hashJson(input.errorMessage) })
   }
 }
 

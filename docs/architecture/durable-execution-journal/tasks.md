@@ -20,14 +20,15 @@
 
 ## 3. Normal Run Lifecycle
 
-- [ ] Replace process-local loop Run IDs with UUIDs.
-- [ ] Commit `run_started` before Run registration.
+- [x] Replace process-local loop Run IDs with UUIDs.
+- [x] Commit `run_started` before Run registration.
 - [ ] Pass structured operation identity into each tool execution.
 - [ ] Commit T2 before staged result projection for known success and failure outcomes.
-- [ ] Commit all terminal outcomes before transcript, status, hooks, and UI projection.
-- [ ] Prevent a post-terminal projection failure from attempting a conflicting terminal fact.
-- [ ] Add loop ordering and failure tests.
-- [ ] Review and commit the lifecycle slice.
+- [x] Commit all terminal outcomes before transcript, status, hooks, and UI projection.
+- [x] Prevent a post-terminal projection failure from attempting a conflicting terminal fact or
+  error projection.
+- [x] Add loop ordering and failure tests for Run start and terminal boundaries.
+- [x] Review and commit the lifecycle slice.
 
 ## 4. Resolved Tool Boundaries
 

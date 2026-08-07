@@ -49,6 +49,8 @@ import type { DeepChatEventPublisher, ProcessResult } from './types'
 import { buildUsageFromMetadata, stampTerminalMetadata } from './runtimeMetadata'
 import type { SessionSettingsStore } from '@/session/data/settings'
 import type { TapeReconciliationPort } from '@/tape/ports/capabilities'
+import { isExecutionJournalError } from '@/tape/domain/executionJournal'
+import { isCommittedRunProjectionError } from './runTerminalProjectionError'
 import {
   getTapeContextHistoryRecords,
   buildTapeChatView,
@@ -902,6 +904,7 @@ export class TurnCoordinator {
         ...(attachmentPreparation ? { attachmentPreparation } : {})
       })
     } catch (err) {
+      if (isExecutionJournalError(err) || isCommittedRunProjectionError(err)) throw err
       const aborted = isAbortError(err) || preStreamAbortSignal.aborted
       const pendingInputHandoff =
         preStreamAbortSignal.reason === PENDING_INPUT_ABORT_REASON
@@ -1456,6 +1459,7 @@ export class TurnCoordinator {
       }
       return true
     } catch (error) {
+      if (isExecutionJournalError(error) || isCommittedRunProjectionError(error)) throw error
       this.ports.memoryIngestionObserver.afterTurnSettled({
         session: instance.getMemorySessionHandle(),
         origin: 'resume',

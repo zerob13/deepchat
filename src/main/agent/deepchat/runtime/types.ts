@@ -216,6 +216,12 @@ export interface ProcessResult {
   errorMessage?: string
 }
 
+export interface ProcessTerminalSelection {
+  outcome: ProcessResult['status']
+  stopReason: string
+  errorMessage?: string
+}
+
 export interface ProcessParams {
   run: LoopRun<StreamState>
   toolCatalog: ToolCatalogPort
@@ -250,6 +256,7 @@ export interface ProcessParams {
   notificationObserver?: DeepChatLoopNotificationObserver
   controls?: ProcessControlCollaborators
   diagnostics?: ProcessInternalDiagnostics
+  commitRunTerminal(selection: ProcessTerminalSelection): void
   io: ProcessIoParams
 }
 

@@ -54,10 +54,12 @@ import { nanoid } from 'nanoid'
 import { createSessionData, createSessionDataFromDatabase } from '@/session/data'
 import { SessionTranscriptMutations } from '@/session/transcriptMutations'
 import { LiveDelegationAgentTool } from '@/tool/agentTools/liveDelegationTool'
+import { ExecutionJournalError } from '@/tape/domain/executionJournal'
 
 vi.mock('nanoid', () => ({ nanoid: vi.fn(() => 'mock-msg-id') }))
 
 const publishDeepchatEvent = vi.fn()
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 vi.mock('@/events', () => ({
   SESSION_EVENTS: {
@@ -2500,11 +2502,130 @@ describe('DeepChatAgentHarness', () => {
         requestSeq: 0,
         physicalAttempt: 0
       })
+      expect(callArgs.run.runId).toMatch(UUID_PATTERN)
       expect(
         sqlitePresenter.deepchatMessagesTable.insert.mock.calls.some(
           ([row]) => row.id === 'mock-msg-id' && row.role === 'assistant'
         )
       ).toBe(true)
+    })
+
+    it('commits a UUID Run start before registration and a matching terminal after execution', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
+      const order: string[] = []
+      const tape = sessionData.tapeStore
+      const commitRunStarted = tape.commitRunStarted.bind(tape)
+      const commitRunTerminal = tape.commitRunTerminal.bind(tape)
+      const registerActiveGeneration = instance.registerActiveGeneration.bind(instance)
+
+      vi.spyOn(tape, 'commitRunStarted').mockImplementation((input) => {
+        order.push('journal:started')
+        return commitRunStarted(input)
+      })
+      vi.spyOn(instance, 'registerActiveGeneration').mockImplementation((run) => {
+        order.push('runtime:registered')
+        return registerActiveGeneration(run)
+      })
+      vi.spyOn(tape, 'commitRunTerminal').mockImplementation((input) => {
+        order.push('journal:terminal')
+        return commitRunTerminal(input)
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+        order.push('process:entered')
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.processMessage('s1', 'Hello')
+
+      expect(order).toEqual([
+        'journal:started',
+        'runtime:registered',
+        'process:entered',
+        'journal:terminal'
+      ])
+      const journalRows = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .filter((row: any) => row.name?.startsWith('execution/'))
+      expect(journalRows).toHaveLength(2)
+      const started = JSON.parse(journalRows[0].payload_json).data
+      const terminal = JSON.parse(journalRows[1].payload_json).data
+      expect(started.runId).toMatch(UUID_PATTERN)
+      expect(terminal).toMatchObject({
+        runId: started.runId,
+        messageId: started.messageId,
+        outcome: 'completed',
+        stopReason: 'complete'
+      })
+    })
+
+    it('does not register or terminally project a Run when its start commit fails', async () => {
+      vi.spyOn(sessionData.tapeStore, 'commitRunStarted').mockImplementation(() => {
+        throw new ExecutionJournalError('run start unavailable', 'persistence_failed')
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).rejects.toThrow('run start unavailable')
+
+      expect(processStream).not.toHaveBeenCalled()
+      expect(agent.getActiveGeneration('s1')).toBeNull()
+      expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).not.toHaveBeenCalled()
+      expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
+    })
+
+    it('does not terminally project a Run when its terminal commit fails', async () => {
+      vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockImplementation(() => {
+        throw new ExecutionJournalError('run terminal unavailable', 'persistence_failed')
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).rejects.toThrow('run terminal unavailable')
+
+      expect(processStream).toHaveBeenCalledOnce()
+      expect(agent.getActiveGeneration('s1')).toBeNull()
+      expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).not.toHaveBeenCalled()
+      expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
+    })
+
+    it('keeps a committed terminal authoritative when its projection fails', async () => {
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        params.commitRunTerminal({ outcome: 'completed', stopReason: 'complete' })
+        throw new Error('terminal projection failed')
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).rejects.toMatchObject({
+        name: 'CommittedRunProjectionError',
+        cause: expect.objectContaining({ message: 'terminal projection failed' })
+      })
+
+      expect(agent.getActiveGeneration('s1')).toBeNull()
+      expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).not.toHaveBeenCalled()
+      expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
+      const terminalRow = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .find((row: any) => row.name === 'execution/run_terminal')
+      expect(JSON.parse(terminalRow.payload_json).data).toMatchObject({
+        outcome: 'completed',
+        stopReason: 'complete'
+      })
+    })
+
+    it('does not project a stale instance error after its terminal was committed', async () => {
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        params.commitRunTerminal({ outcome: 'completed', stopReason: 'complete' })
+        await agent.destroySession('s1')
+        return { status: 'completed', stopReason: 'complete' }
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).rejects.toMatchObject({
+        name: 'CommittedRunProjectionError',
+        terminal: { outcome: 'completed', stopReason: 'complete' }
+      })
+
+      expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).not.toHaveBeenCalled()
+      expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
     })
 
     it('resets agent plan state for each new assistant turn', async () => {
@@ -2557,6 +2678,7 @@ describe('DeepChatAgentHarness', () => {
       await expect(agent.waitForFirstTurnReady('s1', { timeoutMs: 0 })).resolves.toBe(false)
       streamDone.resolve()
       await processPromise
+      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession('s1')).toEqual([])
     })
 
     it('keeps rapid pre-stream Steers ordered and replies in one assistant row', async () => {
@@ -3591,7 +3713,7 @@ describe('DeepChatAgentHarness', () => {
         blocks: []
       })
       expect(typedRateLimitShow).toMatchObject({
-        requestId: expect.stringMatching(/^s1:\d+$/),
+        requestId: callArgs.run.runId,
         sessionId: 's1',
         blocks: [
           expect.objectContaining({
@@ -3602,7 +3724,7 @@ describe('DeepChatAgentHarness', () => {
         ]
       })
       expect(typedRateLimitClear).toMatchObject({
-        requestId: expect.stringMatching(/^s1:\d+$/),
+        requestId: callArgs.run.runId,
         sessionId: 's1',
         blocks: []
       })
