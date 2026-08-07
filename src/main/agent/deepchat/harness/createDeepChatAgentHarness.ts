@@ -39,6 +39,32 @@ import { TurnCoordinator } from '@/agent/deepchat/runtime/turnCoordinator'
 import { DeepChatAgentHarness } from './deepChatAgentHarness'
 import type { DeepChatHarnessDependencies, DeepChatRuntimeServices } from './runtimeServices'
 import { createPendingInputWakeupBinding } from './pendingInputWakeupBinding'
+import type { ExecutionRecoveryReport } from '@/tape/domain/executionJournal'
+import type { ExecutionJournalRecoveryReader } from '@/tape/ports/capabilities'
+
+function requiresStartupRecoveryAttention(report: ExecutionRecoveryReport): boolean {
+  return (
+    report.classification === 'indeterminate' ||
+    report.classification === 'corruption' ||
+    report.terminalOutcome === null
+  )
+}
+
+function reportStartupExecutionRecovery(reader: ExecutionJournalRecoveryReader): void {
+  for (const report of reader.classifyRecoveryCandidates()) {
+    if (!requiresStartupRecoveryAttention(report)) continue
+    const diagnostic = {
+      ...report,
+      disposition: 'parked' as const,
+      automaticRetry: false as const
+    }
+    if (report.classification === 'corruption') {
+      logger.error('[DeepChatAgent] Execution Journal recovery candidate parked', diagnostic)
+    } else {
+      logger.warn('[DeepChatAgent] Execution Journal recovery candidate parked', diagnostic)
+    }
+  }
+}
 
 /**
  * Single composition root for the DeepChat agent runtime. Owners are constructed in dependency
@@ -369,6 +395,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
       },
       input
     )
+
+  reportStartupExecutionRecovery(tapeService)
 
   const recoveredPendingInputs = pendingInputCoordinator.recoverClaimedInputsAfterRestart()
   if (recoveredPendingInputs > 0) {

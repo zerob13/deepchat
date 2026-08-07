@@ -394,6 +394,10 @@ function createMockSqlitePresenter() {
           payload: { name: input.name, data: input.data }
         })
       }),
+      listEventsByNames: vi.fn((names: readonly string[]) => {
+        const nameSet = new Set(names)
+        return tapeEntries.filter((entry) => entry.kind === 'event' && nameSet.has(entry.name))
+      }),
       getBySession: vi.fn((sessionId: string) =>
         tapeEntries.filter((entry) => entry.session_id === sessionId)
       ),
@@ -2149,6 +2153,172 @@ describe('DeepChatAgentHarness', () => {
   }
 
   describe('constructor (crash recovery)', () => {
+    it('classifies Execution Journal facts before pending input and transcript recovery', () => {
+      const order: string[] = []
+      sqlitePresenter.deepchatTapeEntriesTable.listEventsByNames.mockImplementation(() => {
+        order.push('journal')
+        return []
+      })
+      sqlitePresenter.deepchatPendingInputsTable.listActive.mockImplementation(() => {
+        order.push('pending-inputs')
+        return []
+      })
+      sqlitePresenter.deepchatMessagesTable.getByStatus.mockImplementation(() => {
+        order.push('transcript')
+        return []
+      })
+
+      createDeepChatAgentHarness({
+        ...createRuntimeDependencies({ skillService: getSkillServiceMock() }),
+        providerRuntime: llmProvider,
+        providerSettings,
+        agentSettings: providerSettings,
+        database: sqlitePresenter,
+        sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn(),
+          publishMessagesChanged: vi.fn()
+        }),
+        toolService,
+        hookObserver: noopHookObserver
+      })
+
+      expect(order).toEqual(['journal', 'pending-inputs', 'transcript'])
+    })
+
+    it('parks an indeterminate Run without invoking or retrying its tool', () => {
+      const runId = '11111111-1111-4111-8111-111111111111'
+      sessionData.tapeStore.commitRunStarted({
+        sessionId: 's1',
+        runId,
+        messageId: 'm1',
+        runKind: 'loop'
+      })
+      sessionData.tapeStore.commitDispatch({
+        sessionId: 's1',
+        messageId: 'm1',
+        operation: { runId, requestSeq: 1, providerToolCallId: 'call-1' },
+        toolName: 'write_file',
+        toolSource: 'agent',
+        normalizedArguments: { path: 'a.txt' },
+        target: { serverName: 'agent-filesystem', originalName: 'write_file' }
+      })
+      const rowCountBeforeRecovery =
+        sqlitePresenter.deepchatTapeEntriesTable.getBySession('s1').length
+      const loggerWarnMock = vi.mocked(logger.warn)
+      loggerWarnMock.mockClear()
+      toolService.callTool.mockClear()
+
+      createDeepChatAgentHarness({
+        ...createRuntimeDependencies({ skillService: getSkillServiceMock() }),
+        providerRuntime: llmProvider,
+        providerSettings,
+        agentSettings: providerSettings,
+        database: sqlitePresenter,
+        sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn(),
+          publishMessagesChanged: vi.fn()
+        }),
+        toolService,
+        hookObserver: noopHookObserver
+      })
+
+      expect(loggerWarnMock).toHaveBeenCalledWith(
+        '[DeepChatAgent] Execution Journal recovery candidate parked',
+        expect.objectContaining({
+          sessionId: 's1',
+          runId,
+          messageId: 'm1',
+          classification: 'indeterminate',
+          disposition: 'parked',
+          automaticRetry: false
+        })
+      )
+      expect(toolService.callTool).not.toHaveBeenCalled()
+      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession('s1')).toHaveLength(
+        rowCountBeforeRecovery
+      )
+    })
+
+    it('reports a completed operation when its Run terminal fact is missing', () => {
+      const runId = '22222222-2222-4222-8222-222222222222'
+      const operation = { runId, requestSeq: 1, providerToolCallId: 'call-1' }
+      sessionData.tapeStore.commitRunStarted({
+        sessionId: 's1',
+        runId,
+        messageId: 'm1',
+        runKind: 'loop'
+      })
+      sessionData.tapeStore.commitDispatch({
+        sessionId: 's1',
+        messageId: 'm1',
+        operation,
+        toolName: 'write_file',
+        toolSource: 'agent',
+        normalizedArguments: { path: 'a.txt' },
+        target: { serverName: 'agent-filesystem', originalName: 'write_file' }
+      })
+      sessionData.tapeStore.commitToolOutcome({
+        sessionId: 's1',
+        messageId: 'm1',
+        operation,
+        responseText: 'done',
+        isError: false
+      })
+      const loggerWarnMock = vi.mocked(logger.warn)
+      loggerWarnMock.mockClear()
+
+      createDeepChatAgentHarness({
+        ...createRuntimeDependencies({ skillService: getSkillServiceMock() }),
+        providerRuntime: llmProvider,
+        providerSettings,
+        agentSettings: providerSettings,
+        database: sqlitePresenter,
+        sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn(),
+          publishMessagesChanged: vi.fn()
+        }),
+        toolService,
+        hookObserver: noopHookObserver
+      })
+
+      expect(loggerWarnMock).toHaveBeenCalledWith(
+        '[DeepChatAgent] Execution Journal recovery candidate parked',
+        expect.objectContaining({
+          runId,
+          classification: 'completed',
+          terminalOutcome: null,
+          disposition: 'parked',
+          automaticRetry: false
+        })
+      )
+    })
+
+    it('fails startup closed when journal recovery facts cannot be read', () => {
+      sqlitePresenter.deepchatTapeEntriesTable.listEventsByNames.mockImplementation(() => {
+        throw new Error('journal read failed')
+      })
+      sqlitePresenter.deepchatPendingInputsTable.listActive.mockClear()
+      sqlitePresenter.deepchatMessagesTable.getByStatus.mockClear()
+
+      expect(() =>
+        createDeepChatAgentHarness({
+          ...createRuntimeDependencies({ skillService: getSkillServiceMock() }),
+          providerRuntime: llmProvider,
+          providerSettings,
+          agentSettings: providerSettings,
+          database: sqlitePresenter,
+          sessionData: createSessionDataFromDatabase(sqlitePresenter as never, {
+            publishPendingInputsChanged: vi.fn(),
+            publishMessagesChanged: vi.fn()
+          }),
+          toolService,
+          hookObserver: noopHookObserver
+        })
+      ).toThrow('journal read failed')
+      expect(sqlitePresenter.deepchatPendingInputsTable.listActive).not.toHaveBeenCalled()
+      expect(sqlitePresenter.deepchatMessagesTable.getByStatus).not.toHaveBeenCalled()
+    })
+
     it('calls pending status query on init', () => {
       expect(sqlitePresenter.deepchatMessagesTable.getByStatus).toHaveBeenCalledWith('pending')
     })
