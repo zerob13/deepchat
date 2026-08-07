@@ -19,6 +19,7 @@ import {
   type ExecutionOperationIdentity
 } from '@/tape/domain/executionJournal'
 import { ExecutionJournalService } from '@/tape/application/executionJournalService'
+import { buildEffectiveTapeView, searchEffectiveTapeRows } from '@/tape/domain/effectiveView'
 
 const RUN_IDS = {
   notDispatched: '11111111-1111-4111-8111-111111111111',
@@ -208,6 +209,38 @@ describe('Execution Journal domain and strict persistence', () => {
         terminalOutcome: 'error'
       })
     )
+  })
+
+  it('keeps journal facts out of default Context Tape views and search', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    table.appendEvent({
+      sessionId: 'session-1',
+      name: 'context/example',
+      data: { marker: 'context-search-marker' }
+    })
+    commitStarted(service, RUN_IDS.completed)
+    commitDispatch(service, RUN_IDS.completed)
+    service.commitToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed),
+      responseText: 'journal-search-marker',
+      isError: false
+    })
+
+    const defaultNames = buildEffectiveTapeView(entries).rows.map((row) => row.name)
+    expect(defaultNames).toContain('context/example')
+    expect(
+      defaultNames.some((rowName) => EXECUTION_JOURNAL_EVENT_NAMES.some((name) => name === rowName))
+    ).toBe(false)
+    expect(searchEffectiveTapeRows(entries, 'context-search-marker')).toHaveLength(1)
+    expect(searchEffectiveTapeRows(entries, 'journal-search-marker')).toEqual([])
+    expect(
+      buildEffectiveTapeView(entries, { includeAuditEvents: true }).rows.filter((row) =>
+        EXECUTION_JOURNAL_EVENT_NAMES.some((name) => name === row.name)
+      )
+    ).toHaveLength(3)
   })
 
   it('rejects new operation facts after a Run terminal while preserving idempotent retries', () => {

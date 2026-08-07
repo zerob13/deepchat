@@ -1,5 +1,6 @@
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import type { DeepChatTapeEntryKind, DeepChatTapeEntryRow, DeepChatTapeSearchInput } from './entry'
+import { EXECUTION_JOURNAL_EVENT_NAMES } from './executionJournal'
 import {
   parseNestedTapeJsonObject,
   readTapeMessageRetractionId,
@@ -91,7 +92,8 @@ function isAuditEvent(row: DeepChatTapeEntryRow): boolean {
   return (
     row.name === 'message/retracted' ||
     row.name === 'message/compaction_indicator' ||
-    row.name === 'migration/backfill'
+    row.name === 'migration/backfill' ||
+    EXECUTION_JOURNAL_EVENT_NAMES.some((name) => name === row.name)
   )
 }
 
