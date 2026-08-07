@@ -6,17 +6,17 @@
 - [x] Define v1 fact names, structured identities, failure semantics, and compatibility constraints.
 - [x] Define implementation order, recovery policy, test strategy, and commit review requirements.
 - [x] Review the SDD before source implementation.
-- [ ] Commit the reviewed SDD before source implementation.
+- [x] Commit the reviewed SDD before source implementation.
 
 ## 2. Journal Domain And Persistence
 
-- [ ] Add protocol constants, fact types, identity validation, parsers, errors, and classifier.
-- [ ] Add collision-safe provenance derivation and canonical payload hashing.
-- [ ] Add strict same-payload idempotency and conflicting-payload corruption detection.
-- [ ] Add the journal event query and supporting SQLite index.
-- [ ] Expose narrow writer and recovery-reader capabilities through `SessionTape`.
-- [ ] Add pure and native SQLite tests.
-- [ ] Review and commit the persistence slice.
+- [x] Add protocol constants, fact types, identity validation, parsers, errors, and classifier.
+- [x] Add collision-safe provenance derivation and canonical payload hashing.
+- [x] Add strict same-payload idempotency and conflicting-payload corruption detection.
+- [x] Add the journal event query and supporting SQLite index.
+- [x] Expose narrow writer and recovery-reader capabilities through `SessionTape`.
+- [x] Add pure and native SQLite tests.
+- [x] Review and commit the persistence slice.
 
 ## 3. Normal Run Lifecycle
 

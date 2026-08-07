@@ -136,6 +136,10 @@ function createTapeTableMock() {
         payload: { name: input.name, data: input.data }
       })
     ),
+    listEventsByNames: vi.fn((names: readonly string[]) => {
+      const nameSet = new Set(names)
+      return entries.filter((entry) => entry.kind === 'event' && nameSet.has(entry.name))
+    }),
     runInTransaction: vi.fn((operation: () => unknown) => {
       const snapshot = entries.map((entry) => ({ ...entry }))
       try {

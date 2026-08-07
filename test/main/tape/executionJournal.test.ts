@@ -1,0 +1,525 @@
+import {
+  DatabaseCtor,
+  DeepChatTapeEntriesTable,
+  createTapeService,
+  createTapeTableMock,
+  describe,
+  expect,
+  it,
+  itIfSqlite
+} from '../session/data/tapeTestHarness'
+import {
+  EXECUTION_JOURNAL_EVENT_NAMES,
+  ExecutionJournalCorruptionError,
+  MAX_EXECUTION_JOURNAL_RESPONSE_CHARS,
+  buildExecutionJournalMeta,
+  buildExecutionOperationProvenanceKey,
+  buildToolOutcomeData,
+  classifyExecutionJournalRows,
+  type ExecutionOperationIdentity
+} from '@/tape/domain/executionJournal'
+import { ExecutionJournalService } from '@/tape/application/executionJournalService'
+
+const RUN_IDS = {
+  notDispatched: '11111111-1111-4111-8111-111111111111',
+  completed: '22222222-2222-4222-8222-222222222222',
+  indeterminate: '33333333-3333-4333-8333-333333333333',
+  corruption: '44444444-4444-4444-8444-444444444444'
+} as const
+
+function operation(runId: string, providerToolCallId = 'call_0'): ExecutionOperationIdentity {
+  return { runId, requestSeq: 1, providerToolCallId }
+}
+
+function commitStarted(
+  service: ReturnType<typeof createTapeService>,
+  runId: string,
+  messageId = 'assistant-1'
+) {
+  return service.commitRunStarted({
+    sessionId: 'session-1',
+    runId,
+    messageId,
+    runKind: 'loop',
+    createdAt: 100
+  })
+}
+
+function commitDispatch(
+  service: ReturnType<typeof createTapeService>,
+  runId: string,
+  normalizedArguments: Record<string, unknown> = { path: '/tmp/file' }
+) {
+  return service.commitDispatch({
+    sessionId: 'session-1',
+    messageId: 'assistant-1',
+    operation: operation(runId),
+    toolName: 'write',
+    toolSource: 'agent',
+    normalizedArguments,
+    target: { serverName: 'agent-filesystem', originalName: 'write' },
+    createdAt: 110
+  })
+}
+
+describe('Execution Journal domain and strict persistence', () => {
+  it('treats an identical fact as idempotent and rejects a conflicting payload', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+
+    expect(commitStarted(service, RUN_IDS.completed)).toMatchObject({ created: true })
+    expect(
+      service.commitRunStarted({
+        sessionId: 'session-1',
+        runId: RUN_IDS.completed,
+        messageId: 'assistant-1',
+        runKind: 'loop',
+        createdAt: 999
+      })
+    ).toMatchObject({ created: false })
+    expect(entries.filter((entry) => entry.name === 'execution/run_started')).toHaveLength(1)
+
+    expect(() =>
+      service.commitRunStarted({
+        sessionId: 'session-1',
+        runId: RUN_IDS.completed,
+        messageId: 'different-message',
+        runKind: 'loop'
+      })
+    ).toThrow(ExecutionJournalCorruptionError)
+    expect(entries.filter((entry) => entry.name === 'execution/run_started')).toHaveLength(1)
+  })
+
+  it('requires native causal prerequisites in the same Tape', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+
+    expect(() => commitDispatch(service, RUN_IDS.completed)).toThrow(
+      /prerequisite execution\/run_started is missing/
+    )
+
+    commitStarted(service, RUN_IDS.completed)
+    expect(() =>
+      service.commitToolOutcome({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: operation(RUN_IDS.completed),
+        responseText: 'done',
+        isError: false
+      })
+    ).toThrow(/prerequisite execution\/dispatch_committed is missing/)
+  })
+
+  it('detects an argument conflict without persisting raw arguments', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+    commitDispatch(service, RUN_IDS.completed, { token: 'secret-value', count: 1 })
+
+    const dispatchRow = entries.find((entry) => entry.name === 'execution/dispatch_committed')!
+    expect(dispatchRow.payload_json).not.toContain('secret-value')
+    expect(dispatchRow.payload_json).toContain('argumentsHash')
+    expect(() =>
+      commitDispatch(service, RUN_IDS.completed, { token: 'different-value', count: 1 })
+    ).toThrow(ExecutionJournalCorruptionError)
+  })
+
+  it('bounds persisted response text before append', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+    commitDispatch(service, RUN_IDS.completed)
+
+    expect(() =>
+      service.commitToolOutcome({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: operation(RUN_IDS.completed),
+        responseText: 'x'.repeat(MAX_EXECUTION_JOURNAL_RESPONSE_CHARS + 1),
+        isError: false
+      })
+    ).toThrow(/responseText exceeds/)
+    expect(entries.some((entry) => entry.name === 'execution/tool_outcome')).toBe(false)
+  })
+
+  it('propagates persistence failures and rolls back the journal fact', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+    table.appendEvent.mockImplementationOnce(() => {
+      throw new Error('disk write failed')
+    })
+
+    expect(() => commitDispatch(service, RUN_IDS.completed)).toThrow(
+      /Failed to persist execution\/dispatch_committed/
+    )
+    expect(entries.some((entry) => entry.name === 'execution/dispatch_committed')).toBe(false)
+  })
+
+  it('rejects non-JSON arguments and invalid timestamps before append', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+
+    expect(() => commitDispatch(service, RUN_IDS.completed, circular)).toThrow(
+      /must be JSON serializable/
+    )
+    expect(() => commitDispatch(service, RUN_IDS.completed, { optional: undefined })).toThrow(
+      /must be JSON serializable/
+    )
+    expect(() =>
+      service.commitRunTerminal({
+        sessionId: 'session-1',
+        runId: RUN_IDS.completed,
+        messageId: 'assistant-1',
+        outcome: 'error',
+        stopReason: 'test',
+        createdAt: -1
+      })
+    ).toThrow(/createdAt must be a non-negative safe integer/)
+    expect(entries.filter((entry) => entry.name?.startsWith('execution/'))).toHaveLength(1)
+  })
+
+  it('stores only a hash of terminal error details', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+
+    service.commitRunTerminal({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      outcome: 'error',
+      stopReason: 'provider_error',
+      errorMessage: 'authorization secret-value'
+    })
+
+    const terminal = entries.find((entry) => entry.name === 'execution/run_terminal')!
+    expect(terminal.payload_json).not.toContain('secret-value')
+    expect(terminal.payload_json).toContain('errorHash')
+    expect(service.classifyRecoveryCandidates()).toContainEqual(
+      expect.objectContaining({
+        runId: RUN_IDS.completed,
+        classification: 'not_dispatched',
+        terminalOutcome: 'error'
+      })
+    )
+  })
+
+  it('rejects new operation facts after a Run terminal while preserving idempotent retries', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+    commitDispatch(service, RUN_IDS.completed)
+    const pendingOperation = operation(RUN_IDS.completed, 'call_1')
+    service.commitDispatch({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: pendingOperation,
+      toolName: 'write',
+      toolSource: 'agent',
+      normalizedArguments: { pending: true },
+      target: { serverName: 'agent-filesystem' }
+    })
+    service.commitToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed),
+      responseText: 'done',
+      isError: false
+    })
+    service.commitRunTerminal({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      outcome: 'aborted',
+      stopReason: 'test_abort'
+    })
+
+    expect(commitDispatch(service, RUN_IDS.completed)).toMatchObject({ created: false })
+    expect(() =>
+      service.commitToolOutcome({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: pendingOperation,
+        responseText: 'late',
+        isError: false
+      })
+    ).toThrow(/after run_terminal/)
+    expect(() =>
+      service.commitDispatch({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: operation(RUN_IDS.completed, 'call_2'),
+        toolName: 'write',
+        toolSource: 'agent',
+        normalizedArguments: {},
+        target: { serverName: 'agent-filesystem' }
+      })
+    ).toThrow(/after run_terminal/)
+  })
+
+  it('preserves prototype-shaped argument keys in the canonical dispatch hash', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+
+    commitDispatch(service, RUN_IDS.completed, JSON.parse('{"__proto__":{"allowed":true}}'))
+
+    expect(() => commitDispatch(service, RUN_IDS.completed, {})).toThrow(
+      ExecutionJournalCorruptionError
+    )
+  })
+
+  it('rejects unsupported nested identity and target fields', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+
+    expect(() =>
+      service.commitDispatch({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: { ...operation(RUN_IDS.completed), invocationId: 'unsupported' } as never,
+        toolName: 'write',
+        toolSource: 'agent',
+        normalizedArguments: {},
+        target: { serverName: 'agent-filesystem' }
+      })
+    ).toThrow(/operation has unsupported or missing fields/)
+    expect(() =>
+      service.commitDispatch({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: operation(RUN_IDS.completed),
+        toolName: 'write',
+        toolSource: 'agent',
+        normalizedArguments: {},
+        target: { serverName: 'agent-filesystem', endpoint: 'unsupported' } as never
+      })
+    ).toThrow(/target has unsupported or missing fields/)
+  })
+
+  it('classifies native facts into all four recovery states', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+
+    commitStarted(service, RUN_IDS.notDispatched)
+
+    commitStarted(service, RUN_IDS.completed)
+    commitDispatch(service, RUN_IDS.completed)
+    service.commitToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed),
+      responseText: 'done',
+      isError: false,
+      createdAt: 120
+    })
+
+    commitStarted(service, RUN_IDS.indeterminate)
+    commitDispatch(service, RUN_IDS.indeterminate)
+
+    const orphanOperation = operation(RUN_IDS.corruption)
+    const orphanData = buildToolOutcomeData({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: orphanOperation,
+      responseText: 'orphan',
+      isError: true
+    })
+    table.appendEvent({
+      sessionId: 'session-1',
+      name: 'execution/tool_outcome',
+      source: { type: 'runtime_event', id: RUN_IDS.corruption, seq: 1 },
+      provenanceKey: buildExecutionOperationProvenanceKey(orphanOperation, 'outcome'),
+      data: orphanData,
+      meta: buildExecutionJournalMeta()
+    })
+
+    expect(service.classifyRecoveryCandidates()).toEqual([
+      expect.objectContaining({
+        runId: RUN_IDS.notDispatched,
+        classification: 'not_dispatched',
+        dispatchCount: 0,
+        outcomeCount: 0
+      }),
+      expect.objectContaining({
+        runId: RUN_IDS.completed,
+        classification: 'completed',
+        dispatchCount: 1,
+        outcomeCount: 1
+      }),
+      expect.objectContaining({
+        runId: RUN_IDS.indeterminate,
+        classification: 'indeterminate',
+        dispatchCount: 1,
+        outcomeCount: 0
+      }),
+      expect.objectContaining({
+        runId: RUN_IDS.corruption,
+        classification: 'corruption',
+        reasons: expect.arrayContaining(['missing_run_started', 'outcome_without_dispatch'])
+      })
+    ])
+  })
+
+  it('treats a tampered outcome hash as corruption', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+    commitDispatch(service, RUN_IDS.completed)
+    service.commitToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed),
+      responseText: 'done',
+      isError: false
+    })
+    const outcome = entries.find((entry) => entry.name === 'execution/tool_outcome')!
+    const payload = JSON.parse(outcome.payload_json)
+    payload.data.responseHash = '0'.repeat(64)
+    outcome.payload_json = JSON.stringify(payload)
+
+    expect(
+      classifyExecutionJournalRows(
+        entries.filter((entry) => EXECUTION_JOURNAL_EVENT_NAMES.includes(entry.name))
+      )
+    ).toContainEqual(
+      expect.objectContaining({ runId: RUN_IDS.completed, classification: 'corruption' })
+    )
+  })
+
+  it('treats unsupported fields and facts appended after a terminal as corruption', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+    service.commitRunTerminal({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      outcome: 'completed',
+      stopReason: 'end_turn'
+    })
+
+    const started = entries.find((entry) => entry.name === 'execution/run_started')!
+    const startedPayload = JSON.parse(started.payload_json)
+    startedPayload.data.unsupported = true
+    started.payload_json = JSON.stringify(startedPayload)
+
+    const lateDispatch = buildExecutionOperationProvenanceKey(
+      operation(RUN_IDS.completed),
+      'dispatch'
+    )
+    table.appendEvent({
+      sessionId: 'session-1',
+      name: 'execution/dispatch_committed',
+      source: { type: 'runtime_event', id: RUN_IDS.completed, seq: 1 },
+      provenanceKey: lateDispatch,
+      data: {
+        protocolVersion: 1,
+        operation: operation(RUN_IDS.completed),
+        messageId: 'assistant-1',
+        toolName: 'write',
+        toolSource: 'agent',
+        argumentsHash: '0'.repeat(64),
+        target: { serverName: 'agent-filesystem' }
+      },
+      meta: buildExecutionJournalMeta()
+    })
+
+    expect(service.classifyRecoveryCandidates()).toContainEqual(
+      expect.objectContaining({
+        runId: RUN_IDS.completed,
+        classification: 'corruption',
+        reasons: expect.arrayContaining(['fact_after_run_terminal'])
+      })
+    )
+  })
+
+  it('treats a Run UUID reused across Sessions as corruption', () => {
+    const first = createTapeTableMock()
+    const firstService = createTapeService(first.table)
+    commitStarted(firstService, RUN_IDS.completed)
+
+    const second = createTapeTableMock()
+    const secondService = createTapeService(second.table)
+    secondService.commitRunStarted({
+      sessionId: 'session-2',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-2',
+      runKind: 'loop'
+    })
+
+    const rows = [...first.entries, ...second.entries].filter((entry) =>
+      EXECUTION_JOURNAL_EVENT_NAMES.includes(entry.name)
+    )
+    expect(classifyExecutionJournalRows(rows)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'session-1',
+          classification: 'corruption',
+          reasons: expect.arrayContaining(['run_identity_reused_across_sessions'])
+        }),
+        expect.objectContaining({
+          sessionId: 'session-2',
+          classification: 'corruption',
+          reasons: expect.arrayContaining(['run_identity_reused_across_sessions'])
+        })
+      ])
+    )
+  })
+})
+
+itIfSqlite('queries only journal events through the dedicated SQLite index', () => {
+  const db = new DatabaseCtor(':memory:')
+  const table = new DeepChatTapeEntriesTable(db)
+  table.createTable()
+  const service = new ExecutionJournalService({ getEntryStore: () => table })
+
+  table.appendEvent({ sessionId: 'session-1', name: 'context/example', data: { value: 1 } })
+  service.commitRunStarted({
+    sessionId: 'session-1',
+    runId: RUN_IDS.completed,
+    messageId: 'assistant-1',
+    runKind: 'loop'
+  })
+  expect(
+    service.commitRunStarted({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      runKind: 'loop'
+    })
+  ).toMatchObject({ created: false })
+  expect(() =>
+    service.commitRunStarted({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-conflict',
+      runKind: 'loop'
+    })
+  ).toThrow(ExecutionJournalCorruptionError)
+
+  expect(table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)).toHaveLength(1)
+  const indexes = db.prepare("PRAGMA index_list('deepchat_tape_entries')").all() as Array<{
+    name: string
+  }>
+  expect(indexes.map((index) => index.name)).toContain('idx_deepchat_tape_entries_event_name')
+  const placeholders = EXECUTION_JOURNAL_EVENT_NAMES.map(() => '?').join(', ')
+  const queryPlan = db
+    .prepare(
+      `EXPLAIN QUERY PLAN
+       SELECT *
+       FROM deepchat_tape_entries
+       WHERE kind = 'event' AND name IN (${placeholders})
+       ORDER BY session_id ASC, entry_id ASC`
+    )
+    .all(...EXECUTION_JOURNAL_EVENT_NAMES) as Array<{ detail: string }>
+  expect(queryPlan.map((step) => step.detail).join('\n')).toContain(
+    'idx_deepchat_tape_entries_event_name'
+  )
+  db.close()
+})

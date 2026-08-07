@@ -51,6 +51,9 @@ const TAPE_ENTRY_INDEX_SQL = `
     ON deepchat_tape_entries(session_id, name, entry_id);
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_source
     ON deepchat_tape_entries(session_id, source_type, source_id, source_seq);
+  CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_event_name
+    ON deepchat_tape_entries(name, session_id, entry_id)
+    WHERE kind = 'event';
   CREATE UNIQUE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_provenance
     ON deepchat_tape_entries(session_id, provenance_key)
     WHERE provenance_key IS NOT NULL;
@@ -554,6 +557,20 @@ export class DeepChatTapeEntriesTable
       createdAt: input.createdAt,
       idempotent: input.idempotent
     })
+  }
+
+  listEventsByNames(names: readonly string[]): DeepChatTapeEntryRow[] {
+    const normalizedNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))]
+    if (normalizedNames.length === 0) return []
+    const placeholders = normalizedNames.map(() => '?').join(', ')
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE kind = 'event' AND name IN (${placeholders})
+         ORDER BY session_id ASC, entry_id ASC`
+      )
+      .all(...normalizedNames) as DeepChatTapeEntryRow[]
   }
 
   ensureBootstrapAnchor(sessionId: string): void {

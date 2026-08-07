@@ -19,6 +19,7 @@ export interface TapeEntryStore {
   append(input: DeepChatTapeAppendInput): DeepChatTapeEntryRow
   appendAnchor(input: TapeAnchorAppendInput): DeepChatTapeEntryRow
   appendEvent(input: TapeEventAppendInput): DeepChatTapeEntryRow
+  listEventsByNames(names: readonly string[]): DeepChatTapeEntryRow[]
   getBySession(sessionId: string): DeepChatTapeEntryRow[]
   getMaxEventSourceSeq(
     sessionId: string,

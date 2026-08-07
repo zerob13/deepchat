@@ -22,6 +22,14 @@ import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '../domain/entr
 import type { TapeEntryRef, TapeToolFactInput } from '../domain/facts'
 import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
 import type {
+  CommitExecutionDispatchInput,
+  CommitExecutionRunStartedInput,
+  CommitExecutionRunTerminalInput,
+  CommitExecutionToolOutcomeInput,
+  ExecutionJournalCommitReceipt,
+  ExecutionRecoveryReport
+} from '../domain/executionJournal'
+import type {
   TapeAnchorReader,
   TapeAnchorWriter,
   TapeEffectiveMessageSourceEntry,
@@ -30,6 +38,8 @@ import type {
   TapeMessageFactWriter,
   TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
+  ExecutionJournalRecoveryReader,
+  ExecutionJournalWriter,
   TapeRawEntryReader,
   TapeReconciliationPort,
   TapeToolFactWriter,
@@ -65,6 +75,7 @@ import { TapeProviderAttemptService } from './providerAttemptService'
 import { TapeRecallService } from './recallService'
 import { TapeReconcilerService } from './reconcilerService'
 import { TapeViewReplayService } from './viewReplayService'
+import { ExecutionJournalService } from './executionJournalService'
 
 export type {
   AgentTapeViewErrorCode,
@@ -91,7 +102,9 @@ export class SessionTape
     TapeAnchorReader,
     TapeAnchorWriter,
     TapeInspectionReader,
-    TapeLifecycleAdmin
+    TapeLifecycleAdmin,
+    ExecutionJournalWriter,
+    ExecutionJournalRecoveryReader
 {
   private readonly providers: TapeApplicationProviders
   private readonly facts: TapeFactService
@@ -99,6 +112,7 @@ export class SessionTape
   private readonly recall: TapeRecallService
   private readonly lineage: TapeLineageService
   private readonly providerAttempts: TapeProviderAttemptService
+  private readonly executionJournal: ExecutionJournalService
   private readonly viewReplay: TapeViewReplayService
   private readonly forks: TapeForkService
 
@@ -107,6 +121,7 @@ export class SessionTape
     this.facts = new TapeFactService(this.providers)
     this.lineage = new TapeLineageService(this.providers)
     this.providerAttempts = new TapeProviderAttemptService(this.providers)
+    this.executionJournal = new ExecutionJournalService(this.providers)
     this.reconciler = new TapeReconcilerService(this.providers, this.facts)
     this.recall = new TapeRecallService(this.providers, this.lineage)
     this.viewReplay = new TapeViewReplayService(this.providers)
@@ -142,6 +157,26 @@ export class SessionTape
 
   getMaxProviderAttemptRequestSeq(sessionId: string, messageId: string): number {
     return this.providerAttempts.getMaxProviderAttemptRequestSeq(sessionId, messageId)
+  }
+
+  commitRunStarted(input: CommitExecutionRunStartedInput): ExecutionJournalCommitReceipt {
+    return this.executionJournal.commitRunStarted(input)
+  }
+
+  commitDispatch(input: CommitExecutionDispatchInput): ExecutionJournalCommitReceipt {
+    return this.executionJournal.commitDispatch(input)
+  }
+
+  commitToolOutcome(input: CommitExecutionToolOutcomeInput): ExecutionJournalCommitReceipt {
+    return this.executionJournal.commitToolOutcome(input)
+  }
+
+  commitRunTerminal(input: CommitExecutionRunTerminalInput): ExecutionJournalCommitReceipt {
+    return this.executionJournal.commitRunTerminal(input)
+  }
+
+  classifyRecoveryCandidates(): ExecutionRecoveryReport[] {
+    return this.executionJournal.classifyRecoveryCandidates()
   }
 
   getMessageRecords(sessionId: string): ChatMessageRecord[] {
