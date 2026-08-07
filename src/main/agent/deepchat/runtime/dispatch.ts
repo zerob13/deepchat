@@ -66,7 +66,7 @@ import {
   CommittedToolOutcomeProjectionError,
   ExecutionJournalDuplicateDispatchError,
   ExecutionJournalError,
-  MAX_EXECUTION_JOURNAL_RESPONSE_CHARS,
+  boundExecutionJournalResponseText,
   isExecutionJournalError,
   type ExecutionOperationIdentity
 } from '@/tape/domain/executionJournal'
@@ -921,19 +921,6 @@ function buildReturnedToolResultOutcome(
     },
     toolsChanged: false
   }
-}
-
-const EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER =
-  '\n[Execution Journal response truncated]'
-
-function boundExecutionJournalResponseText(responseText: string): string {
-  if (responseText.length <= MAX_EXECUTION_JOURNAL_RESPONSE_CHARS) {
-    return responseText
-  }
-  return `${responseText.slice(
-    0,
-    MAX_EXECUTION_JOURNAL_RESPONSE_CHARS - EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER.length
-  )}${EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER}`
 }
 
 function commitDispatchedToolOutcome(

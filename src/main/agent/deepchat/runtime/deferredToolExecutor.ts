@@ -1,8 +1,26 @@
+import { randomUUID } from 'node:crypto'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
-import type { MCPToolCall, MCPToolResponse, ToolCallImagePreview } from '@shared/types/core/mcp'
+import type {
+  MCPToolCall,
+  MCPToolResponse,
+  ToolCallImagePreview,
+  ToolDispatchCommitInput,
+  ToolOutcomeProjection
+} from '@shared/types/core/mcp'
 import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import { extractToolCallImagePreviews } from '@/lib/toolCallImagePreviews'
+import {
+  CommittedToolOutcomeProjectionError,
+  ExecutionJournalCorruptionError,
+  ExecutionJournalDuplicateDispatchError,
+  ExecutionJournalError,
+  boundExecutionJournalResponseText,
+  isExecutionJournalError,
+  type ExecutionOperationIdentity,
+  type ExecutionRunOutcome
+} from '@/tape/domain/executionJournal'
+import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
 import type { PendingToolInteraction } from './types'
 import type { DeepChatToolResolver } from './toolResolver'
 import type { MessageProjectionService } from './messageProjectionService'
@@ -42,6 +60,7 @@ export interface DeferredToolExecutorDependencies {
   sessionState: Pick<SessionStateResolver, 'get'>
   identity: Pick<SessionIdentityService, 'getAgentId'>
   messageProjection: Pick<MessageProjectionService, 'updateSubagentToolCallProgress'>
+  executionJournal: ExecutionJournalWriter
 }
 
 function throwIfAbortRequested(signal?: AbortSignal): void {
@@ -52,6 +71,19 @@ function throwIfAbortRequested(signal?: AbortSignal): void {
   const error = new Error('Aborted')
   error.name = 'AbortError'
   throw error
+}
+
+function commitExecutionJournalFact<T>(fact: string, commit: () => T): T {
+  try {
+    return commit()
+  } catch (error) {
+    if (isExecutionJournalError(error)) throw error
+    throw new ExecutionJournalError(
+      `Failed to commit deferred tool ${fact}.`,
+      'persistence_failed',
+      { cause: error }
+    )
+  }
 }
 
 export class DeferredToolExecutor {
@@ -70,13 +102,141 @@ export class DeferredToolExecutor {
         isError: true
       }
     }
+    if (!toolCall.id) {
+      return {
+        responseText: 'Invalid tool call without tool call id.',
+        isError: true
+      }
+    }
+    const toolCallId = toolCall.id
 
-    const deferredAbortController = toolCall.id
-      ? this.dependencies.runLifecycle.registerDeferredToolController(sessionId, toolCall.id)
-      : null
+    const deferredAbortController = this.dependencies.runLifecycle.registerDeferredToolController(
+      sessionId,
+      toolCallId
+    )
     const deferredAbortSignal =
       deferredAbortController?.signal ?? this.dependencies.runLifecycle.getAbortSignal(sessionId)
     let invoked = false
+    let runId: string | null = null
+    let runStartedCommitted = false
+    let terminalCommitAttempted = false
+    let dispatchCommitted = false
+    let outcomeCommitted = false
+    let returnedToolResponse: MCPToolResponse | null = null
+    const pendingOutcomeProjections: ToolOutcomeProjection[] = []
+
+    const operation = (): ExecutionOperationIdentity => {
+      if (!runId) {
+        throw new ExecutionJournalError(
+          'Deferred tool operation identity was requested before run_started.',
+          'invalid_fact'
+        )
+      }
+      return { runId, requestSeq: 1, providerToolCallId: toolCallId }
+    }
+    const commitRunTerminal = (input: {
+      outcome: ExecutionRunOutcome
+      stopReason: string
+      errorMessage?: string
+    }): void => {
+      if (!runId || !runStartedCommitted) {
+        throw new ExecutionJournalError(
+          'Deferred tool terminal was requested before run_started.',
+          'invalid_fact'
+        )
+      }
+      if (terminalCommitAttempted) {
+        throw new ExecutionJournalCorruptionError(
+          `Deferred tool Run ${runId} attempted more than one terminal commit.`
+        )
+      }
+      const committedRunId = runId
+      terminalCommitAttempted = true
+      const receipt = commitExecutionJournalFact('run_terminal', () =>
+        this.dependencies.executionJournal.commitRunTerminal({
+          sessionId,
+          runId: committedRunId,
+          messageId,
+          ...input
+        })
+      )
+      if (!receipt.created) {
+        throw new ExecutionJournalCorruptionError(
+          `Execution Journal terminal for deferred tool Run ${committedRunId} already existed.`
+        )
+      }
+    }
+    const releaseOutcomeProjections = (): void => {
+      if (pendingOutcomeProjections.length === 0) return
+      if (!dispatchCommitted) {
+        throw new ExecutionJournalError(
+          `Deferred tool ${toolCallId} registered an outcome projection without a committed dispatch.`,
+          'invalid_fact'
+        )
+      }
+      const projections = pendingOutcomeProjections.splice(0)
+      try {
+        for (const project of projections) project()
+      } catch (error) {
+        throw new CommittedToolOutcomeProjectionError(operation(), { cause: error })
+      }
+    }
+    const commitToolOutcome = (input: {
+      responseText: string
+      isError: boolean
+      offloadPath?: string
+    }): void => {
+      if (!dispatchCommitted) {
+        releaseOutcomeProjections()
+        return
+      }
+      if (outcomeCommitted) {
+        throw new ExecutionJournalCorruptionError(
+          `Deferred tool operation ${toolCallId} attempted more than one outcome commit.`
+        )
+      }
+      const receipt = commitExecutionJournalFact('tool_outcome', () =>
+        this.dependencies.executionJournal.commitToolOutcome({
+          sessionId,
+          messageId,
+          operation: operation(),
+          responseText: boundExecutionJournalResponseText(input.responseText),
+          isError: input.isError,
+          ...(input.offloadPath === undefined ? {} : { offloadPath: input.offloadPath })
+        })
+      )
+      if (!receipt.created) {
+        throw new ExecutionJournalCorruptionError(
+          `Execution Journal outcome for deferred tool operation ${toolCallId} already existed.`
+        )
+      }
+      outcomeCommitted = true
+      releaseOutcomeProjections()
+    }
+    const settleFailClosed = (error: unknown): DeferredToolExecutionResult => {
+      let terminalError = error instanceof Error ? error.message : String(error)
+      if (runStartedCommitted && !terminalCommitAttempted) {
+        try {
+          commitRunTerminal({
+            outcome: 'error',
+            stopReason: 'journal_error',
+            errorMessage: terminalError
+          })
+        } catch (terminalCommitError) {
+          terminalError = `${terminalError} Terminal journal commit also failed: ${
+            terminalCommitError instanceof Error
+              ? terminalCommitError.message
+              : String(terminalCommitError)
+          }`
+        }
+      }
+      return {
+        responseText: `Error: ${terminalError}`,
+        isError: true,
+        invoked,
+        terminalError
+      }
+    }
 
     try {
       throwIfAbortRequested(deferredAbortSignal)
@@ -129,7 +289,7 @@ export class DeferredToolExecutor {
         }
       }
       const request: MCPToolCall = {
-        id: toolCall.id || '',
+        id: toolCallId,
         type: 'function',
         function: {
           name: toolName,
@@ -139,6 +299,25 @@ export class DeferredToolExecutor {
         conversationId: sessionId,
         providerId: sessionState.providerId.trim() || undefined
       }
+
+      const deferredRunId = randomUUID()
+      runId = deferredRunId
+      const runStarted = commitExecutionJournalFact('run_started', () =>
+        this.dependencies.executionJournal.commitRunStarted({
+          sessionId,
+          runId: deferredRunId,
+          messageId,
+          runKind: 'deferred_tool'
+        })
+      )
+      if (!runStarted.created) {
+        throw new ExecutionJournalCorruptionError(
+          `Execution Journal deferred tool Run identity ${deferredRunId} was already committed.`
+        )
+      }
+      runStartedCommitted = true
+
+      throwIfAbortRequested(deferredAbortSignal)
       invoked = true
       onToolCallStarted?.()
       const result = await this.dependencies.toolExecutionPort.execute(request, {
@@ -149,26 +328,55 @@ export class DeferredToolExecutor {
           extensionPolicy.enabledMcpServerIds
         ),
         onProgress: (update) => {
-          if (
-            update.kind !== 'subagent_orchestrator' ||
-            update.toolCallId !== (toolCall.id || '')
-          ) {
+          if (update.kind !== 'subagent_orchestrator' || update.toolCallId !== toolCallId) {
             return
           }
 
           this.dependencies.messageProjection.updateSubagentToolCallProgress(
             sessionId,
             messageId,
-            toolCall.id || '',
+            toolCallId,
             update.responseMarkdown,
             update.progressJson
           )
         },
+        commitDispatch: (input: ToolDispatchCommitInput) => {
+          const receipt = commitExecutionJournalFact('dispatch_committed', () =>
+            this.dependencies.executionJournal.commitDispatch({
+              sessionId,
+              messageId,
+              operation: operation(),
+              ...input
+            })
+          )
+          if (!receipt.created) {
+            throw new ExecutionJournalDuplicateDispatchError(operation())
+          }
+          dispatchCommitted = true
+        },
+        registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection),
         signal: deferredAbortSignal
       })
-      throwIfAbortRequested(deferredAbortSignal)
       const rawData = result.rawData as MCPToolResponse
+      if (rawData.requiresPermission && dispatchCommitted) {
+        const terminalError = `Tool ${toolName} requested permission after dispatch.`
+        commitToolOutcome({ responseText: `Error: ${terminalError}`, isError: true })
+        commitRunTerminal({
+          outcome: 'error',
+          stopReason: 'post_dispatch_permission',
+          errorMessage: terminalError
+        })
+        return {
+          responseText: `Error: ${terminalError}`,
+          isError: true,
+          invoked,
+          terminalError
+        }
+      }
+      returnedToolResponse = rawData.requiresPermission ? null : rawData
+      throwIfAbortRequested(deferredAbortSignal)
       if (rawData.requiresPermission) {
+        commitRunTerminal({ outcome: 'paused', stopReason: 'interaction' })
         return {
           responseText: toolContentToText(rawData.content),
           isError: true,
@@ -182,24 +390,32 @@ export class DeferredToolExecutor {
           ? (rawData.toolResult as Record<string, unknown>)
           : null
       if (typeof subagentToolResult?.subagentProgress === 'string') {
-        this.dependencies.messageProjection.updateSubagentToolCallProgress(
-          sessionId,
-          messageId,
-          toolCall.id || '',
-          toolContentToText(rawData.content),
-          subagentToolResult.subagentProgress,
+        const subagentProgress = subagentToolResult.subagentProgress
+        const subagentFinal =
           typeof subagentToolResult.subagentFinal === 'string'
             ? subagentToolResult.subagentFinal
             : undefined
+        pendingOutcomeProjections.push(() =>
+          this.dependencies.messageProjection.updateSubagentToolCallProgress(
+            sessionId,
+            messageId,
+            toolCallId,
+            toolContentToText(rawData.content),
+            subagentProgress,
+            subagentFinal
+          )
         )
       } else if (typeof subagentToolResult?.subagentFinal === 'string') {
-        this.dependencies.messageProjection.updateSubagentToolCallProgress(
-          sessionId,
-          messageId,
-          toolCall.id || '',
-          toolContentToText(rawData.content),
-          undefined,
-          subagentToolResult.subagentFinal
+        const subagentFinal = subagentToolResult.subagentFinal
+        pendingOutcomeProjections.push(() =>
+          this.dependencies.messageProjection.updateSubagentToolCallProgress(
+            sessionId,
+            messageId,
+            toolCallId,
+            toolContentToText(rawData.content),
+            undefined,
+            subagentFinal
+          )
         )
       }
       const imagePreviews =
@@ -214,7 +430,7 @@ export class DeferredToolExecutor {
       throwIfAbortRequested(deferredAbortSignal)
       const normalizedContent = await this.dependencies.toolResultPort.normalize({
         sessionId,
-        toolCallId: toolCall.id || '',
+        toolCallId,
         toolName,
         toolArgs: toolCall.params || '{}',
         content: rawData.content,
@@ -227,7 +443,7 @@ export class DeferredToolExecutor {
       const prepared = await awaitWithAbort(
         this.dependencies.toolResultPort.prepare({
           sessionId,
-          toolCallId: toolCall.id || '',
+          toolCallId,
           toolName,
           rawContent: responseText
         }),
@@ -235,15 +451,24 @@ export class DeferredToolExecutor {
       )
       throwIfAbortRequested(deferredAbortSignal)
       if (prepared.kind === 'tool_error') {
+        commitToolOutcome({ responseText: prepared.message, isError: true })
+        commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
         return {
           responseText: prepared.message,
           isError: true,
           invoked
         }
       }
+      const isError = Boolean(rawData.isError)
+      commitToolOutcome({
+        responseText: prepared.content,
+        isError,
+        ...(prepared.offloadPath === undefined ? {} : { offloadPath: prepared.offloadPath })
+      })
+      commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
       return {
         responseText: prepared.content,
-        isError: Boolean(rawData.isError),
+        isError,
         invoked,
         toolSource: toolDefinition.source,
         serverName: toolDefinition.server.name,
@@ -254,23 +479,57 @@ export class DeferredToolExecutor {
         imagePreviews
       }
     } catch (error) {
+      if (isExecutionJournalError(error)) {
+        return settleFailClosed(error)
+      }
       if (deferredAbortSignal?.aborted) {
+        try {
+          if (returnedToolResponse && dispatchCommitted && !outcomeCommitted) {
+            commitToolOutcome({
+              responseText: toolContentToText(returnedToolResponse.content),
+              isError: returnedToolResponse.isError === true
+            })
+          }
+          if (runStartedCommitted && !terminalCommitAttempted) {
+            commitRunTerminal({
+              outcome: 'aborted',
+              stopReason: 'user_stop',
+              errorMessage: error instanceof Error ? error.message : String(error)
+            })
+          }
+        } catch (journalError) {
+          if (isExecutionJournalError(journalError)) {
+            return settleFailClosed(journalError)
+          }
+          throw journalError
+        }
         throw error
       }
       const errorText = error instanceof Error ? error.message : String(error)
+      try {
+        if (dispatchCommitted && !outcomeCommitted) {
+          commitToolOutcome({ responseText: `Error: ${errorText}`, isError: true })
+        }
+        if (runStartedCommitted && !terminalCommitAttempted) {
+          commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
+        }
+      } catch (journalError) {
+        if (isExecutionJournalError(journalError)) {
+          return settleFailClosed(journalError)
+        }
+        throw journalError
+      }
       return {
         responseText: `Error: ${errorText}`,
         isError: true,
         invoked
       }
     } finally {
-      if (toolCall.id) {
-        this.dependencies.runLifecycle.clearDeferredToolController(
-          sessionId,
-          toolCall.id,
-          deferredAbortController ?? undefined
-        )
-      }
+      this.dependencies.runLifecycle.clearDeferredToolController(
+        sessionId,
+        toolCallId,
+        deferredAbortController ?? undefined
+      )
     }
   }
 }

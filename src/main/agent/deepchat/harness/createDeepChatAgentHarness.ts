@@ -216,7 +216,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     sessionSettings,
     sessionState,
     identity,
-    messageProjection
+    messageProjection,
+    executionJournal: tapeService
   })
   const inputPreparationCoordinator = new InputPreparationCoordinator()
   const contextCoordinator = new DeepChatContextCoordinator()

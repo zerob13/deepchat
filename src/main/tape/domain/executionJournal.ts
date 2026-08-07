@@ -21,6 +21,7 @@ export type ExecutionRecoveryClassification =
   | 'corruption'
 
 export const MAX_EXECUTION_JOURNAL_RESPONSE_CHARS = 256_000
+const EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER = '\n[Execution Journal response truncated]'
 const MAX_IDENTITY_CHARS = 1_024
 const MAX_TOOL_NAME_CHARS = 512
 const MAX_TARGET_FIELD_CHARS = 1_024
@@ -181,6 +182,16 @@ export class CommittedToolOutcomeProjectionError extends ExecutionJournalError {
     )
     this.name = 'CommittedToolOutcomeProjectionError'
   }
+}
+
+export function boundExecutionJournalResponseText(responseText: string): string {
+  if (responseText.length <= MAX_EXECUTION_JOURNAL_RESPONSE_CHARS) {
+    return responseText
+  }
+  return `${responseText.slice(
+    0,
+    MAX_EXECUTION_JOURNAL_RESPONSE_CHARS - EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER.length
+  )}${EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER}`
 }
 
 export function isExecutionJournalError(error: unknown): error is ExecutionJournalError {

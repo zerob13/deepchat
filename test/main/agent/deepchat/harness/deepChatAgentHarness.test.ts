@@ -12666,6 +12666,53 @@ describe('DeepChatAgentHarness', () => {
       }
     })
 
+    it('settles a deferred interaction after T2 persistence fails without replaying the tool', async () => {
+      toolService.getAllToolDefinitions.mockResolvedValueOnce([
+        {
+          type: 'function',
+          source: 'agent',
+          function: {
+            name: 'write_file',
+            description: 'Write a file',
+            parameters: { type: 'object', properties: {} }
+          },
+          server: { name: 'agent-filesystem', icons: '', description: '' }
+        }
+      ])
+      toolService.callTool.mockImplementationOnce(async (_request: unknown, options?: any) => {
+        options?.commitDispatch?.({
+          toolName: 'write_file',
+          toolSource: 'agent',
+          normalizedArguments: { path: 'a.txt' },
+          target: { serverName: 'agent-filesystem', originalName: 'write_file' }
+        })
+        return {
+          content: 'done',
+          rawData: { content: 'done', isError: false }
+        }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const row = installPendingPermission({
+        toolName: 'write_file',
+        params: '{"path":"a.txt"}'
+      })
+      vi.spyOn(sessionData.tapeStore, 'commitToolOutcome').mockImplementationOnce(() => {
+        throw new ExecutionJournalError('T2 unavailable', 'persistence_failed')
+      })
+
+      await expect(approvePendingTool()).resolves.toEqual({ resumed: false })
+      await expect(approvePendingTool()).rejects.toThrow(
+        'No pending interaction found in target message.'
+      )
+
+      expect(toolService.callTool).toHaveBeenCalledOnce()
+      expect(JSON.parse(row.content) as AssistantMessageBlock[]).toMatchObject([
+        { status: 'error', tool_call: { response: 'T2 unavailable' } },
+        { status: 'granted', extra: { needsUserAction: false } }
+      ])
+    })
+
     it('passes provider and hydrated permission mode to deferred MCP tool calls', async () => {
       toolService.getAllToolDefinitions.mockResolvedValueOnce([
         {
@@ -12912,12 +12959,20 @@ describe('DeepChatAgentHarness', () => {
           server: { name: 'agent', icons: '', description: '' }
         }
       ])
-      toolService.callTool.mockResolvedValueOnce({
-        content: 'Final summary',
-        rawData: {
+      toolService.callTool.mockImplementationOnce(async (_request: unknown, options?: any) => {
+        options?.commitDispatch?.({
+          toolName: 'subagent_orchestrator',
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'agent', originalName: 'subagent_orchestrator' }
+        })
+        return {
           content: 'Final summary',
-          isError: false,
-          toolResult: { subagentFinal }
+          rawData: {
+            content: 'Final summary',
+            isError: false,
+            toolResult: { subagentFinal }
+          }
         }
       })
 

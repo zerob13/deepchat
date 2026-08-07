@@ -42,8 +42,8 @@
 
 ## 5. Deferred Execution And Recovery
 
-- [ ] Give deferred approval execution a fresh UUID Run and request sequence `1`.
-- [ ] Apply run start, T1, T2, and terminal ordering to deferred execution.
+- [x] Give deferred approval execution a fresh UUID Run and request sequence `1`.
+- [x] Apply run start, T1, T2, and terminal ordering to deferred execution.
 - [ ] Classify native v1 journal facts before pending transcript recovery at startup.
 - [ ] Keep `indeterminate` and `corruption` parked with no automatic tool retry.
 - [ ] Add failpoints and restart/crash tests around T1, T2, and terminal boundaries.
