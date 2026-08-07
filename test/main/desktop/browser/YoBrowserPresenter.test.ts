@@ -345,6 +345,25 @@ describe('YoBrowserPresenter', () => {
     webContents?.finishLoad()
   })
 
+  it('does not commit navigation when no host window is available', async () => {
+    const { presenter } = await setupPresenter()
+    const beforeDispatch = vi.fn()
+
+    await expect(
+      presenter.loadUrl(
+        'session-a',
+        'https://example.com',
+        undefined,
+        undefined,
+        'agent',
+        'run-a',
+        beforeDispatch
+      )
+    ).rejects.toThrow('No host window available for YoBrowser')
+
+    expect(beforeDispatch).not.toHaveBeenCalled()
+  })
+
   it('resolves loadUrl only after the first dom-ready', async () => {
     const { presenter, windows, getSessionWebContents } = await setupPresenter()
     windows.set(1, new MockBrowserWindow(1))

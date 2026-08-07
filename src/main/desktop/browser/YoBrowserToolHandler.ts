@@ -40,10 +40,18 @@ export class YoBrowserToolHandler {
           if (!url) {
             throw new Error('url is required')
           }
-          beforeInvoke?.({ url })
+          const beforeDispatch = beforeInvoke ? () => beforeInvoke({ url }) : undefined
           return JSON.stringify(
-            runId
-              ? await this.presenter.loadUrl(sessionId, url, undefined, undefined, 'agent', runId)
+            runId || beforeDispatch
+              ? await this.presenter.loadUrl(
+                  sessionId,
+                  url,
+                  undefined,
+                  undefined,
+                  'agent',
+                  runId,
+                  beforeDispatch
+                )
               : await this.presenter.loadUrl(sessionId, url, undefined, undefined, 'agent')
           )
         }
@@ -61,10 +69,18 @@ export class YoBrowserToolHandler {
 
           try {
             const params = this.normalizeCdpParams(args.params)
-            beforeInvoke?.({ method, params })
-            const response = runId
-              ? await this.presenter.sendCdpCommand(sessionId, method, params, 'agent', runId)
-              : await this.presenter.sendCdpCommand(sessionId, method, params, 'agent')
+            const beforeDispatch = beforeInvoke ? () => beforeInvoke({ method, params }) : undefined
+            const response =
+              runId || beforeDispatch
+                ? await this.presenter.sendCdpCommand(
+                    sessionId,
+                    method,
+                    params,
+                    'agent',
+                    runId,
+                    beforeDispatch
+                  )
+                : await this.presenter.sendCdpCommand(sessionId, method, params, 'agent')
             return JSON.stringify(response ?? {})
           } catch (error) {
             if (error instanceof Error && error.name === 'YoBrowserNotReadyError') {

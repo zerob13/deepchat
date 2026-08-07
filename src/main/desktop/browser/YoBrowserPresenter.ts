@@ -129,7 +129,8 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
     timeoutMs?: number,
     hostWindowId?: number,
     activitySource?: YoBrowserActivitySource,
-    agentRunId?: string
+    agentRunId?: string,
+    beforeDispatch?: () => void
   ): Promise<YoBrowserStatus> {
     const normalizedSessionId = sessionId.trim()
     if (!normalizedSessionId) {
@@ -165,7 +166,7 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
       state.agentRunId
     )
 
-    const navigate = () => state.page.navigateUntilDomReady(url, timeoutMs ?? 30000)
+    const navigate = () => state.page.navigateUntilDomReady(url, timeoutMs ?? 30000, beforeDispatch)
     if (activitySource === 'agent') {
       await this.runAgentActivity(
         normalizedSessionId,
@@ -464,7 +465,8 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
     method: string,
     params?: Record<string, unknown>,
     activitySource?: YoBrowserActivitySource,
-    agentRunId?: string
+    agentRunId?: string,
+    beforeDispatch?: () => void
   ): Promise<unknown> {
     const state = this.sessionBrowsers.get(sessionId)
     if (!state) {
@@ -486,11 +488,11 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
     const descriptor = this.describeCdpActivity(method, params)
     if (activitySource === 'agent' && descriptor) {
       return await this.runAgentActivity(sessionId, descriptor, () =>
-        state.page.sendCdpCommand(method, params)
+        state.page.sendCdpCommand(method, params, beforeDispatch)
       )
     }
 
-    return await state.page.sendCdpCommand(method, params)
+    return await state.page.sendCdpCommand(method, params, beforeDispatch)
   }
 
   async startDownload(url: string, savePath?: string): Promise<DownloadInfo> {
