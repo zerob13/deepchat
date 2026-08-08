@@ -20,12 +20,9 @@ export type ExecutionRecoveryClassification =
   | 'indeterminate'
   | 'corruption'
 
-export const MAX_EXECUTION_JOURNAL_RESPONSE_CHARS = 256_000
-const EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER = '\n[Execution Journal response truncated]'
 const MAX_IDENTITY_CHARS = 1_024
 const MAX_TOOL_NAME_CHARS = 512
 const MAX_TARGET_FIELD_CHARS = 1_024
-const MAX_OFFLOAD_PATH_CHARS = 4_096
 const MAX_STOP_REASON_CHARS = 1_024
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -67,7 +64,6 @@ export interface CommitExecutionToolOutcomeInput {
   operation: ExecutionOperationIdentity
   responseText: string
   isError: boolean
-  offloadPath?: string
   createdAt?: number
 }
 
@@ -111,10 +107,8 @@ export interface ExecutionDispatchFact extends ExecutionFactBase<'execution/disp
 
 export interface ExecutionToolOutcomeFact extends ExecutionFactBase<'execution/tool_outcome'> {
   operation: ExecutionOperationIdentity
-  responseText: string
   responseHash: string
   isError: boolean
-  offloadPath?: string
 }
 
 export interface ExecutionRunTerminalFact extends ExecutionFactBase<'execution/run_terminal'> {
@@ -186,19 +180,6 @@ export class CommittedToolOutcomeProjectionError extends ExecutionJournalError {
 
 export function isExecutionJournalReservedName(name: unknown): name is string {
   return typeof name === 'string' && name.startsWith('execution/')
-}
-
-export function boundExecutionJournalResponseText(responseText: string): string {
-  if (responseText.length <= MAX_EXECUTION_JOURNAL_RESPONSE_CHARS) {
-    return responseText
-  }
-  let sliceEnd =
-    MAX_EXECUTION_JOURNAL_RESPONSE_CHARS - EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER.length
-  const lastCodeUnit = responseText.charCodeAt(sliceEnd - 1)
-  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) {
-    sliceEnd -= 1
-  }
-  return `${responseText.slice(0, sliceEnd)}${EXECUTION_JOURNAL_RESPONSE_TRUNCATION_MARKER}`
 }
 
 export function isExecutionJournalError(error: unknown): error is ExecutionJournalError {
@@ -424,30 +405,15 @@ export function buildToolOutcomeData(input: CommitExecutionToolOutcomeInput) {
   if (typeof input.responseText !== 'string') {
     throw new ExecutionJournalError('responseText must be a string.', 'invalid_fact')
   }
-  if (input.responseText.length > MAX_EXECUTION_JOURNAL_RESPONSE_CHARS) {
-    throw new ExecutionJournalError(
-      `responseText exceeds ${MAX_EXECUTION_JOURNAL_RESPONSE_CHARS} characters.`,
-      'invalid_fact'
-    )
-  }
   if (typeof input.isError !== 'boolean') {
     throw new ExecutionJournalError('isError must be a boolean.', 'invalid_fact')
   }
-  const responseText = input.responseText
   return {
     protocolVersion: EXECUTION_JOURNAL_PROTOCOL_VERSION,
     operation: normalizeExecutionOperationIdentity(input.operation),
     messageId: requireMessageId(input.messageId),
-    responseText,
-    responseHash: hashJson(responseText),
-    isError: input.isError,
-    ...(input.offloadPath === undefined
-      ? {}
-      : {
-          offloadPath: requireString(input.offloadPath, 'offloadPath', MAX_OFFLOAD_PATH_CHARS, {
-            preserveWhitespace: true
-          })
-        })
+    responseHash: hashJson(input.responseText),
+    isError: input.isError
   }
 }
 
@@ -610,25 +576,13 @@ export function parseExecutionJournalFact(row: DeepChatTapeEntryRow): ExecutionJ
       'protocolVersion',
       'operation',
       'messageId',
-      'responseText',
       'responseHash',
-      'isError',
-      ...(common.data.offloadPath === undefined ? [] : ['offloadPath'])
+      'isError'
     ])
     const operation = normalizeExecutionOperationIdentity(
       common.data.operation as ExecutionOperationIdentity
     )
-    const responseText = common.data.responseText
-    if (
-      typeof responseText !== 'string' ||
-      responseText.length > MAX_EXECUTION_JOURNAL_RESPONSE_CHARS
-    ) {
-      throw new ExecutionJournalError('responseText is invalid.', 'invalid_fact')
-    }
     const responseHash = requireHash(common.data.responseHash, 'responseHash')
-    if (responseHash !== hashJson(responseText)) {
-      throw new ExecutionJournalError('responseHash does not match responseText.', 'invalid_fact')
-    }
     if (typeof common.data.isError !== 'boolean') {
       throw new ExecutionJournalError('isError must be a boolean.', 'invalid_fact')
     }
@@ -646,19 +600,8 @@ export function parseExecutionJournalFact(row: DeepChatTapeEntryRow): ExecutionJ
       type: common.name,
       messageId: requireMessageId(common.data.messageId),
       operation,
-      responseText,
       responseHash,
-      isError: common.data.isError,
-      ...(common.data.offloadPath === undefined
-        ? {}
-        : {
-            offloadPath: requireString(
-              common.data.offloadPath,
-              'offloadPath',
-              MAX_OFFLOAD_PATH_CHARS,
-              { preserveWhitespace: true }
-            )
-          })
+      isError: common.data.isError
     }
   }
 

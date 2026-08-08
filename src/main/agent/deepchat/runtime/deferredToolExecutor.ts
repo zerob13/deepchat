@@ -15,7 +15,6 @@ import {
   ExecutionJournalCorruptionError,
   ExecutionJournalDuplicateDispatchError,
   ExecutionJournalError,
-  boundExecutionJournalResponseText,
   isExecutionJournalError,
   type ExecutionOperationIdentity,
   type ExecutionRunOutcome
@@ -208,9 +207,8 @@ export class DeferredToolExecutor {
           sessionId,
           messageId,
           operation: operation(),
-          responseText: boundExecutionJournalResponseText(input.responseText),
-          isError: input.isError,
-          ...(input.offloadPath === undefined ? {} : { offloadPath: input.offloadPath })
+          responseText: input.responseText,
+          isError: input.isError
         })
       )
       if (!receipt.created) {

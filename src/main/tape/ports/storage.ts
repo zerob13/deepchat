@@ -77,7 +77,7 @@ export interface ExecutionJournalPersistenceStore
   appendExecutionJournalEvent(
     input: TapeEventAppendInput & { name: ExecutionJournalEventName }
   ): DeepChatTapeEntryRow
-  listEventsByNames(names: readonly string[]): Iterable<DeepChatTapeEntryRow>
+  listUnterminatedRunEvents(): Iterable<DeepChatTapeEntryRow>
   getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
 }
 

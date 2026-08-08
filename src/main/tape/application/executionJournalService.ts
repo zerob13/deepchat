@@ -1,5 +1,4 @@
 import {
-  EXECUTION_JOURNAL_EVENT_NAMES,
   EXECUTION_JOURNAL_PROTOCOL_VERSION,
   ExecutionJournalCorruptionError,
   ExecutionJournalError,
@@ -161,9 +160,7 @@ export class ExecutionJournalService
   }
 
   classifyRecoveryCandidates(): ExecutionRecoveryReport[] {
-    return classifyExecutionJournalRows(
-      this.getStore().listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)
-    )
+    return classifyExecutionJournalRows(this.getStore().listUnterminatedRunEvents())
   }
 
   private commitStrictEvent(

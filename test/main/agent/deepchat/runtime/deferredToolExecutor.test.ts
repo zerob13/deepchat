@@ -389,7 +389,10 @@ describe('DeferredToolExecutor Execution Journal', () => {
 
     expect(order).toContain('journal.outcome')
     expect(executionJournal.commitToolOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({ responseText: 'done', isError: false })
+      expect.objectContaining({
+        responseText: 'done',
+        isError: false
+      })
     )
     expect(executionJournal.commitRunTerminal).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'aborted', stopReason: 'user_stop' })

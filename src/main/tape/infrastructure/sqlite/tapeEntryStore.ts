@@ -61,9 +61,47 @@ const TAPE_ENTRY_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_event_name
     ON deepchat_tape_entries(name, session_id, entry_id)
     WHERE kind = 'event';
+  CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_execution_run
+    ON deepchat_tape_entries(name, session_id, source_id, entry_id)
+    WHERE kind = 'event' AND source_type = 'runtime_event';
   CREATE UNIQUE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_provenance
     ON deepchat_tape_entries(session_id, provenance_key)
     WHERE provenance_key IS NOT NULL;
+`
+
+const EXECUTION_JOURNAL_EVENT_NAMES_SQL = EXECUTION_JOURNAL_EVENT_NAMES.map(
+  (name) => `'${name}'`
+).join(', ')
+
+export const UNTERMINATED_EXECUTION_JOURNAL_EVENTS_SQL = `
+  WITH unterminated_runs AS (
+    SELECT DISTINCT started.session_id, started.source_id AS run_id
+    FROM deepchat_tape_entries AS started
+    WHERE started.kind = 'event'
+      AND started.name = 'execution/run_started'
+      AND started.source_type = 'runtime_event'
+      AND started.source_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM deepchat_tape_entries AS terminal
+        WHERE terminal.kind = 'event'
+          AND terminal.name = 'execution/run_terminal'
+          AND terminal.source_type = 'runtime_event'
+          AND terminal.source_seq = 0
+          AND terminal.session_id = started.session_id
+          AND terminal.source_id = started.source_id
+          AND terminal.entry_id > started.entry_id
+      )
+  )
+  SELECT journal.*
+  FROM unterminated_runs AS run
+  JOIN deepchat_tape_entries AS journal
+    ON journal.session_id = run.session_id
+   AND journal.source_id = run.run_id
+  WHERE journal.kind = 'event'
+    AND journal.source_type = 'runtime_event'
+    AND journal.name IN (${EXECUTION_JOURNAL_EVENT_NAMES_SQL})
+  ORDER BY journal.session_id ASC, journal.entry_id ASC
 `
 
 function safeJsonStringify(value: Record<string, unknown> | undefined): string {
@@ -639,20 +677,6 @@ export class DeepChatTapeEntriesTable
     })
   }
 
-  listEventsByNames(names: readonly string[]): Iterable<DeepChatTapeEntryRow> {
-    const normalizedNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))]
-    if (normalizedNames.length === 0) return []
-    const placeholders = normalizedNames.map(() => '?').join(', ')
-    return this.db
-      .prepare(
-        `SELECT *
-         FROM deepchat_tape_entries
-         WHERE kind = 'event' AND name IN (${placeholders})
-         ORDER BY session_id ASC, entry_id ASC`
-      )
-      .iterate(...normalizedNames) as IterableIterator<DeepChatTapeEntryRow>
-  }
-
   ensureBootstrapAnchor(sessionId: string): void {
     const existing = this.db
       .prepare(
@@ -1207,6 +1231,12 @@ export class DeepChatExecutionJournalStore
   extends DeepChatTapeEntriesTable
   implements ExecutionJournalPersistenceStore
 {
+  listUnterminatedRunEvents(): Iterable<DeepChatTapeEntryRow> {
+    return this.db
+      .prepare(UNTERMINATED_EXECUTION_JOURNAL_EVENTS_SQL)
+      .iterate() as IterableIterator<DeepChatTapeEntryRow>
+  }
+
   appendExecutionJournalEvent(
     input: TapeEventAppendInput & { name: ExecutionJournalEventName }
   ): DeepChatTapeEntryRow {

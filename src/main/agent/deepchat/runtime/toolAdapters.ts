@@ -12,7 +12,6 @@ import { CUA_PLUGIN_ID } from '@shared/types/plugin'
 import { resolveSessionVisionTarget } from '@/agent/vision/sessionVisionResolver'
 import type { ToolOutputGuard } from './toolOutputGuard'
 import type { AgentSettingsPort } from '@/agent/settings'
-import { ExecutionJournalError } from '@/tape/domain/executionJournal'
 
 export interface ToolCatalogCacheEntry<TProfile extends string = string> {
   profile: TProfile
@@ -58,15 +57,7 @@ export function createToolCatalogPort<TProfile extends string>(input: {
 export function createToolExecutionPort(toolService: ToolServicePort): ToolExecutionPort {
   return {
     preCheck: (call, options) => toolService.preCheckToolPermission(call, options),
-    execute: async (call, options) => {
-      if (typeof options?.commitDispatch !== 'function') {
-        throw new ExecutionJournalError(
-          `Tool ${call.function.name} is missing its dispatch commit capability.`,
-          'persistence_failed'
-        )
-      }
-      return await toolService.callTool(call, options)
-    }
+    execute: (call, options) => toolService.callTool(call, options)
   }
 }
 

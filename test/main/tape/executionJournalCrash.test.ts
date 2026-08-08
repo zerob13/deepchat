@@ -2,7 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DeepChatExecutionJournalStore } from '@/tape/infrastructure/sqlite/tapeEntryStore'
-import { ExecutionJournalService } from '@/tape/application/executionJournalService'
+import {
+  EXECUTION_JOURNAL_EVENT_NAMES,
+  classifyExecutionJournalRows
+} from '@/tape/domain/executionJournal'
 import { nativeSqliteItIf, requireDatabase } from '../nativeSqliteHarness'
 
 const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
@@ -161,7 +164,11 @@ function classify(databasePath: string) {
   try {
     const table = new DeepChatExecutionJournalStore(database)
     table.createTable()
-    return new ExecutionJournalService(() => table).classifyRecoveryCandidates()
+    return classifyExecutionJournalRows(
+      table
+        .getBySession('crash-session')
+        .filter((row) => EXECUTION_JOURNAL_EVENT_NAMES.some((name) => row.name === name))
+    )
   } finally {
     database.close()
   }

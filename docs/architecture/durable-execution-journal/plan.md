@@ -179,7 +179,7 @@ before the harness applies the finalized result to conversation messages, assist
 transcript, or UI. Live progress, runtime activation, and other events emitted inside an Agent tool
 belong to the target invocation itself and can occur between T1 and T2; a crash in that interval is
 classified from the resulting T1-without-T2 evidence.
-The caller hashes the prepared response and gives the strict writer only that hash and the error bit.
+The strict writer hashes the prepared response and persists only that hash and the error bit.
 Response text and temporary offload paths remain with the projection consumer and are never persisted
 as Journal facts.
 Harness-owned skill activation occurs after T2. Activation failure is a projection/context failure

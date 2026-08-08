@@ -405,10 +405,11 @@ function createMockSqlitePresenter() {
           payload: { name: input.name, data: input.data }
         })
       }),
-      listEventsByNames: vi.fn((names: readonly string[]) => {
-        const nameSet = new Set(names)
-        return tapeEntries.filter((entry) => entry.kind === 'event' && nameSet.has(entry.name))
-      }),
+      listUnterminatedRunEvents: vi.fn(() =>
+        tapeEntries.filter(
+          (entry) => entry.kind === 'event' && entry.name?.startsWith('execution/')
+        )
+      ),
       getBySession: vi.fn((sessionId: string) =>
         tapeEntries.filter((entry) => entry.session_id === sessionId)
       ),
@@ -2169,7 +2170,7 @@ describe('DeepChatAgentHarness', () => {
   describe('constructor (crash recovery)', () => {
     it('classifies Execution Journal facts before pending input and transcript recovery', () => {
       const order: string[] = []
-      sqlitePresenter.deepchatTapeEntriesTable.listEventsByNames.mockImplementation(() => {
+      sqlitePresenter.deepchatTapeEntriesTable.listUnterminatedRunEvents.mockImplementation(() => {
         order.push('journal')
         return []
       })
@@ -2418,7 +2419,7 @@ describe('DeepChatAgentHarness', () => {
     })
 
     it('sanitizes malformed recovery identities before structured logging', () => {
-      sqlitePresenter.deepchatTapeEntriesTable.listEventsByNames.mockReturnValue([
+      sqlitePresenter.deepchatTapeEntriesTable.listUnterminatedRunEvents.mockReturnValue([
         {
           session_id: `unsafe\nsession-${'s'.repeat(3_000)}`,
           entry_id: 1,
@@ -2460,7 +2461,7 @@ describe('DeepChatAgentHarness', () => {
     })
 
     it('fails startup closed when journal recovery facts cannot be read', () => {
-      sqlitePresenter.deepchatTapeEntriesTable.listEventsByNames.mockImplementation(() => {
+      sqlitePresenter.deepchatTapeEntriesTable.listUnterminatedRunEvents.mockImplementation(() => {
         throw new Error('journal read failed')
       })
       sqlitePresenter.deepchatPendingInputsTable.listActive.mockClear()

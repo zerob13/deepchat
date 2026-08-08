@@ -13,7 +13,6 @@ import {
 import {
   EXECUTION_JOURNAL_EVENT_NAMES,
   ExecutionJournalCorruptionError,
-  MAX_EXECUTION_JOURNAL_RESPONSE_CHARS,
   buildExecutionJournalMeta,
   buildExecutionOperationProvenanceKey,
   buildToolOutcomeData,
@@ -27,6 +26,7 @@ import {
 import { buildEffectiveTapeView, searchEffectiveTapeRows } from '@/tape/domain/effectiveView'
 import { MainDatabase } from '@/data/mainDatabase'
 import { SessionDatabase } from '@/session/data/database'
+import { UNTERMINATED_EXECUTION_JOURNAL_EVENTS_SQL } from '@/tape/infrastructure/sqlite/tapeEntryStore'
 
 const RUN_IDS = {
   notDispatched: '11111111-1111-4111-8111-111111111111',
@@ -37,6 +37,12 @@ const RUN_IDS = {
 
 function operation(runId: string, providerToolCallId = 'call_0'): ExecutionOperationIdentity {
   return { runId, requestSeq: 1, providerToolCallId }
+}
+
+function classifyAllJournalRows(entries: ReturnType<typeof createTapeTableMock>['entries']) {
+  return classifyExecutionJournalRows(
+    entries.filter((entry) => EXECUTION_JOURNAL_EVENT_NAMES.some((name) => entry.name === name))
+  )
 }
 
 function commitStarted(
@@ -132,22 +138,56 @@ describe('Execution Journal domain and strict persistence', () => {
     ).toThrow(ExecutionJournalCorruptionError)
   })
 
-  it('bounds persisted response text before append', () => {
+  it('persists only an outcome fingerprint and error bit', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
     commitStarted(service, RUN_IDS.completed)
     commitDispatch(service, RUN_IDS.completed)
+    const responseText = `secret-result:${'x'.repeat(256_001)}`
 
-    expect(() =>
-      service.commitToolOutcome({
-        sessionId: 'session-1',
-        messageId: 'assistant-1',
-        operation: operation(RUN_IDS.completed),
-        responseText: 'x'.repeat(MAX_EXECUTION_JOURNAL_RESPONSE_CHARS + 1),
+    service.commitToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed),
+      responseText,
+      isError: false
+    })
+
+    const outcome = entries.find((entry) => entry.name === 'execution/tool_outcome')!
+    const data = JSON.parse(outcome.payload_json).data
+    expect(outcome.payload_json).not.toContain('secret-result')
+    expect(data).not.toHaveProperty('responseText')
+    expect(data).not.toHaveProperty('offloadPath')
+    expect(data).toEqual(
+      expect.objectContaining({
+        responseHash: expect.stringMatching(/^[0-9a-f]{64}$/),
         isError: false
       })
-    ).toThrow(/responseText exceeds/)
-    expect(entries.some((entry) => entry.name === 'execution/tool_outcome')).toBe(false)
+    )
+  })
+
+  it('uses the response hash to distinguish idempotent and conflicting outcomes', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    commitStarted(service, RUN_IDS.completed)
+    commitDispatch(service, RUN_IDS.completed)
+    const input = {
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed),
+      responseText: 'done',
+      isError: false
+    }
+
+    expect(service.commitToolOutcome(input)).toMatchObject({ created: true })
+    expect(service.commitToolOutcome(input)).toMatchObject({ created: false })
+    expect(() =>
+      service.commitToolOutcome({
+        ...input,
+        responseText: 'different'
+      })
+    ).toThrow(ExecutionJournalCorruptionError)
+    expect(entries.filter((entry) => entry.name === 'execution/tool_outcome')).toHaveLength(1)
   })
 
   it('propagates persistence failures and rolls back the journal fact', () => {
@@ -255,7 +295,7 @@ describe('Execution Journal domain and strict persistence', () => {
     expect(terminal.payload_json).not.toContain('secret-value')
     expect(terminal.payload_json).not.toContain(errorMessage)
     expect(terminal.payload_json).toContain('errorHash')
-    expect(service.classifyRecoveryCandidates()).toContainEqual(
+    expect(classifyAllJournalRows(entries)).toContainEqual(
       expect.objectContaining({
         runId: RUN_IDS.completed,
         classification: 'not_dispatched',
@@ -345,7 +385,7 @@ describe('Execution Journal domain and strict persistence', () => {
   })
 
   it('rejects new operation facts after a Run terminal while preserving idempotent retries', () => {
-    const { table } = createTapeTableMock()
+    const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
     commitStarted(service, RUN_IDS.completed)
     commitDispatch(service, RUN_IDS.completed)
@@ -439,7 +479,7 @@ describe('Execution Journal domain and strict persistence', () => {
   })
 
   it('classifies native facts into all four recovery states', () => {
-    const { table } = createTapeTableMock()
+    const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
 
     commitStarted(service, RUN_IDS.notDispatched)
@@ -475,7 +515,7 @@ describe('Execution Journal domain and strict persistence', () => {
       meta: buildExecutionJournalMeta()
     })
 
-    expect(service.classifyRecoveryCandidates()).toEqual([
+    expect(classifyAllJournalRows(entries)).toEqual([
       expect.objectContaining({
         runId: RUN_IDS.notDispatched,
         classification: 'not_dispatched',
@@ -502,7 +542,7 @@ describe('Execution Journal domain and strict persistence', () => {
     ])
   })
 
-  it('treats a tampered outcome hash as corruption', () => {
+  it('treats an invalid outcome hash as corruption', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
     commitStarted(service, RUN_IDS.completed)
@@ -516,7 +556,7 @@ describe('Execution Journal domain and strict persistence', () => {
     })
     const outcome = entries.find((entry) => entry.name === 'execution/tool_outcome')!
     const payload = JSON.parse(outcome.payload_json)
-    payload.data.responseHash = '0'.repeat(64)
+    payload.data.responseHash = 'not-a-sha-256'
     outcome.payload_json = JSON.stringify(payload)
 
     expect(
@@ -566,7 +606,7 @@ describe('Execution Journal domain and strict persistence', () => {
       meta: buildExecutionJournalMeta()
     })
 
-    expect(service.classifyRecoveryCandidates()).toContainEqual(
+    expect(classifyAllJournalRows(entries)).toContainEqual(
       expect.objectContaining({
         runId: RUN_IDS.completed,
         classification: 'corruption',
@@ -609,7 +649,7 @@ describe('Execution Journal domain and strict persistence', () => {
   })
 })
 
-itIfSqlite('queries only journal events through the dedicated SQLite index', () => {
+itIfSqlite('loads only unterminated Runs through the dedicated SQLite index', () => {
   const db = new DatabaseCtor(':memory:')
   try {
     const table = new DeepChatExecutionJournalStore(db)
@@ -623,40 +663,55 @@ itIfSqlite('queries only journal events through the dedicated SQLite index', () 
       messageId: 'assistant-1',
       runKind: 'loop'
     })
-    expect(
-      service.commitRunStarted({
-        sessionId: 'session-1',
-        runId: RUN_IDS.completed,
-        messageId: 'assistant-1',
-        runKind: 'loop'
-      })
-    ).toMatchObject({ created: false })
-    expect(() =>
-      service.commitRunStarted({
-        sessionId: 'session-1',
-        runId: RUN_IDS.completed,
-        messageId: 'assistant-conflict',
-        runKind: 'loop'
-      })
-    ).toThrow(ExecutionJournalCorruptionError)
+    service.commitRunTerminal({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      outcome: 'completed',
+      stopReason: 'end_turn'
+    })
+    service.commitRunStarted({
+      sessionId: 'session-1',
+      runId: RUN_IDS.indeterminate,
+      messageId: 'assistant-2',
+      runKind: 'loop'
+    })
+    service.commitDispatch({
+      sessionId: 'session-1',
+      messageId: 'assistant-2',
+      operation: operation(RUN_IDS.indeterminate),
+      toolName: 'write',
+      toolSource: 'agent',
+      normalizedArguments: {},
+      target: { serverName: 'agent-filesystem' }
+    })
 
-    expect([...table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)]).toHaveLength(1)
+    expect([...table.listUnterminatedRunEvents()].map((row) => row.name)).toEqual([
+      'execution/run_started',
+      'execution/dispatch_committed'
+    ])
+    expect(service.classifyRecoveryCandidates()).toEqual([
+      expect.objectContaining({
+        runId: RUN_IDS.indeterminate,
+        classification: 'indeterminate'
+      })
+    ])
     const indexes = db.prepare("PRAGMA index_list('deepchat_tape_entries')").all() as Array<{
       name: string
     }>
-    expect(indexes.map((index) => index.name)).toContain('idx_deepchat_tape_entries_event_name')
-    const placeholders = EXECUTION_JOURNAL_EVENT_NAMES.map(() => '?').join(', ')
+    expect(indexes.map((index) => index.name)).toContain('idx_deepchat_tape_entries_execution_run')
     const queryPlan = db
-      .prepare(
-        `EXPLAIN QUERY PLAN
-       SELECT *
-       FROM deepchat_tape_entries
-       WHERE kind = 'event' AND name IN (${placeholders})
-       ORDER BY session_id ASC, entry_id ASC`
-      )
-      .all(...EXECUTION_JOURNAL_EVENT_NAMES) as Array<{ detail: string }>
-    expect(queryPlan.map((step) => step.detail).join('\n')).toContain(
-      'idx_deepchat_tape_entries_event_name'
+      .prepare(`EXPLAIN QUERY PLAN ${UNTERMINATED_EXECUTION_JOURNAL_EVENTS_SQL}`)
+      .all() as Array<{ detail: string }>
+    const planDetails = queryPlan.map((step) => step.detail).join('\n')
+    expect(planDetails).toMatch(
+      /SEARCH started USING (?:COVERING )?INDEX idx_deepchat_tape_entries_execution_run/
+    )
+    expect(planDetails).toMatch(
+      /SEARCH terminal USING (?:COVERING )?INDEX idx_deepchat_tape_entries_execution_run/
+    )
+    expect(planDetails).toMatch(
+      /SEARCH journal USING (?:COVERING )?INDEX idx_deepchat_tape_entries_(?:execution_run|session_source)/
     )
   } finally {
     db.close()
@@ -697,6 +752,7 @@ itIfSqlite('reserves execution event names for the strict writer', () => {
     const table = new DeepChatTapeEntriesTable(db)
     table.createTable()
     expect('appendExecutionJournalEvent' in table).toBe(false)
+    expect('listUnterminatedRunEvents' in table).toBe(false)
 
     expect(() =>
       table.appendEvent({
@@ -713,7 +769,7 @@ itIfSqlite('reserves execution event names for the strict writer', () => {
         payload: { name: 'execution/tool_outcome', data: { reconstructed: true } }
       })
     ).toThrow('reserved for the strict Execution Journal writer')
-    expect([...table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)]).toEqual([])
+    expect(table.getBySession('session-1')).toEqual([])
   } finally {
     db.close()
   }
@@ -737,7 +793,7 @@ itIfSqlite('rejects Journal commits owned by an active host transaction', () => 
       ).toThrow('inside an active host transaction')
     })()
 
-    expect([...table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)]).toEqual([])
+    expect(table.getBySession('session-1')).toEqual([])
   } finally {
     db.close()
   }

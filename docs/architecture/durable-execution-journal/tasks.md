@@ -113,8 +113,8 @@
 ## 10. Review Scope And Startup Cost
 
 - [x] Re-specify synchronous startup around unterminated Runs instead of complete Journal history.
-- [ ] Add an indexed store query that returns facts only for Runs without `run_terminal`.
-- [ ] Remove response text and temporary offload paths from durable outcome facts.
-- [ ] Require the dispatch commit capability in the harness-internal execution port type.
-- [ ] Add focused query, payload-minimization, and port-contract coverage.
-- [ ] Run required validation, review unstaged and staged diffs, commit, and push normally.
+- [x] Add an indexed store query that returns facts only for Runs without `run_terminal`.
+- [x] Remove response text and temporary offload paths from durable outcome facts.
+- [x] Require the dispatch commit capability in the harness-internal execution port type.
+- [x] Add focused query, payload-minimization, and port-contract coverage.
+- [x] Run required validation, review unstaged and staged diffs, commit, and push normally.

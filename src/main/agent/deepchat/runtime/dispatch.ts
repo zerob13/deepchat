@@ -67,7 +67,6 @@ import {
   ExecutionJournalCorruptionError,
   ExecutionJournalDuplicateDispatchError,
   ExecutionJournalError,
-  boundExecutionJournalResponseText,
   isExecutionJournalError,
   normalizeExecutionOperationIdentity,
   type ExecutionOperationIdentity
@@ -937,11 +936,8 @@ function commitDispatchedToolOutcome(
     sessionId: io.sessionId,
     messageId: io.messageId,
     operation: stagedResult.operation,
-    responseText: boundExecutionJournalResponseText(stagedResult.responseText),
-    isError: stagedResult.isError,
-    ...(stagedResult.offloadPath === undefined
-      ? {}
-      : { offloadPath: stagedResult.offloadPath })
+    responseText: stagedResult.responseText,
+    isError: stagedResult.isError
   })
   if (!receipt.created) {
     throw new ExecutionJournalCorruptionError(

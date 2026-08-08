@@ -768,7 +768,10 @@ describe('dispatch', () => {
       )
 
       expect(commitToolOutcome).toHaveBeenCalledWith(
-        expect.objectContaining({ responseText: 'Error: target failed', isError: true })
+        expect.objectContaining({
+          responseText: 'Error: target failed',
+          isError: true
+        })
       )
       expect(conversation.at(-1)).toEqual({
         role: 'tool',
@@ -3148,7 +3151,10 @@ describe('dispatch', () => {
 
       expect(commitToolOutcome).toHaveBeenCalledOnce()
       expect(commitToolOutcome).toHaveBeenCalledWith(
-        expect.objectContaining({ responseText: 'activated', isError: false })
+        expect.objectContaining({
+          responseText: 'activated',
+          isError: false
+        })
       )
       expect(state.blocks[0]).toMatchObject({
         status: 'pending',

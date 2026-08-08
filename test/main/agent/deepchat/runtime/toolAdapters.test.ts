@@ -181,22 +181,6 @@ describe('DeepChat tool adapters', () => {
     })
   })
 
-  it('fails closed before execution when the dispatch capability is missing', async () => {
-    const callTool = vi.fn()
-    const port = createToolExecutionPort(createToolService({ callTool }))
-    const call: MCPToolCall = {
-      id: 'call-1',
-      type: 'function',
-      function: { name: 'write', arguments: '{}' },
-      conversationId: 'session-1'
-    }
-
-    await expect(port.execute(call, {})).rejects.toMatchObject({
-      code: 'persistence_failed'
-    })
-    expect(callTool).not.toHaveBeenCalled()
-  })
-
   it('delegates success, error, screenshot fallback, preparation and batch fitting', async () => {
     const normalize: ToolResultPort['normalize'] = vi.fn(async ({ content, isError }) =>
       isError ? content : 'English screenshot summary'

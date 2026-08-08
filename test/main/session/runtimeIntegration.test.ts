@@ -93,10 +93,9 @@ function createMockSqlitePresenter() {
         payload: { name: input.name, data: input.data }
       })
     ),
-    listEventsByNames: vi.fn((names: readonly string[]) => {
-      const nameSet = new Set(names)
-      return tapeEntries.filter((entry) => entry.kind === 'event' && nameSet.has(entry.name))
-    }),
+    listUnterminatedRunEvents: vi.fn(() =>
+      tapeEntries.filter((entry) => entry.kind === 'event' && entry.name?.startsWith('execution/'))
+    ),
     getBySession: vi.fn((sessionId: string) =>
       tapeEntries.filter((entry) => entry.session_id === sessionId)
     ),

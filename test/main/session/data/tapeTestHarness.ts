@@ -17,6 +17,7 @@ import {
 import { buildRequestRefs } from '@/session/data/tapeViewManifest'
 import { DeepChatTapeEntriesTable } from '@/session/data/tables/deepchatTapeEntries'
 import { DeepChatExecutionJournalStore } from '@/tape/infrastructure/sqlite/tapeEntryStore'
+import { EXECUTION_JOURNAL_EVENT_NAMES } from '@/tape/domain/executionJournal'
 import { SqliteTapeLifecycleAdapter } from '@/tape/infrastructure/sqlite/tapeLifecycleAdapter'
 import {
   DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION,
@@ -145,9 +146,37 @@ function createTapeTableMock() {
         payload: { name: input.name, data: input.data }
       })
     ),
-    listEventsByNames: vi.fn((names: readonly string[]) => {
-      const nameSet = new Set(names)
-      return entries.filter((entry) => entry.kind === 'event' && nameSet.has(entry.name))
+    listUnterminatedRunEvents: vi.fn(() => {
+      const runKey = (sessionId: string, runId: string) => JSON.stringify([sessionId, runId])
+      const unterminatedRunKeys = new Set(
+        entries
+          .filter(
+            (entry) =>
+              entry.kind === 'event' &&
+              entry.name === 'execution/run_started' &&
+              entry.source_type === 'runtime_event' &&
+              entry.source_id !== null &&
+              !entries.some(
+                (terminal) =>
+                  terminal.kind === 'event' &&
+                  terminal.name === 'execution/run_terminal' &&
+                  terminal.source_type === 'runtime_event' &&
+                  terminal.source_seq === 0 &&
+                  terminal.session_id === entry.session_id &&
+                  terminal.source_id === entry.source_id &&
+                  terminal.entry_id > entry.entry_id
+              )
+          )
+          .map((entry) => runKey(entry.session_id, entry.source_id!))
+      )
+      return entries.filter(
+        (entry) =>
+          entry.kind === 'event' &&
+          entry.source_type === 'runtime_event' &&
+          entry.source_id !== null &&
+          EXECUTION_JOURNAL_EVENT_NAMES.some((name) => entry.name === name) &&
+          unterminatedRunKeys.has(runKey(entry.session_id, entry.source_id))
+      )
     }),
     runInTransaction: vi.fn((operation: () => unknown) => {
       const snapshot = entries.map((entry) => ({ ...entry }))
