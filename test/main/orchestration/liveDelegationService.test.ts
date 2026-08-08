@@ -3,7 +3,8 @@ import { AgentInvocationAdmission } from '@/agent/invocationAdmission'
 import { TOOL_EXECUTION } from '@shared/types/mcp'
 import {
   LIVE_DELEGATION_MAX_ACTIVE_PER_PARENT,
-  LIVE_DELEGATION_MAX_MESSAGE_BYTES
+  LIVE_DELEGATION_MAX_MESSAGE_BYTES,
+  LiveDelegationDetailSchema
 } from '@shared/orchestration/liveDelegation'
 import type { ConversationSessionInfo } from '@/tool/runtimePorts'
 import type { SessionRuntimeUpdate } from '@/session/runtimeEvents'
@@ -190,6 +191,10 @@ describeIfSqlite('LiveDelegationService', () => {
 
     const inspected = service.inspect('parent', detail.delegation.id)
     expect(inspected.turns[0]!.evaluation).toEqual(waitedEvaluation)
+    expect(() => LiveDelegationDetailSchema.parse(inspected)).not.toThrow()
+    expect(inspected.turns[0]).not.toHaveProperty('taskContract')
+    expect(inspected.turns[0]).not.toHaveProperty('taskContractRef')
+    expect(inspected.turns[0]).not.toHaveProperty('inheritedTaskContractRef')
 
     const page = await service.readResult('parent', detail.delegation.id, {
       turnId: inspected.turns[0]!.id

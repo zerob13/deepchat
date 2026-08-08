@@ -1912,7 +1912,17 @@ function projectDelegationSummary(delegation: LiveDelegation): LiveDelegationSum
 }
 
 function projectTurnSummary(turn: LiveDelegationTurn): LiveDelegationTurnSummary {
-  const { prompt, resultSummary, error, evaluation, evaluationRef, ...identity } = turn
+  const {
+    prompt,
+    resultSummary,
+    error,
+    taskContract: _taskContract,
+    taskContractRef: _taskContractRef,
+    inheritedTaskContractRef: _inheritedTaskContractRef,
+    evaluation,
+    evaluationRef,
+    ...identity
+  } = turn
   return {
     ...identity,
     promptPreview: truncateUtf8(prompt, MAX_MODEL_PREVIEW_BYTES),
