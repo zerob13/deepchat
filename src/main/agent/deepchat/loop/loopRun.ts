@@ -1,10 +1,12 @@
 import type { AppSessionId } from '@/agent/shared/agentSessionIds'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
+import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 
 export interface LoopRunResources {
   toolDefinitions: MCPToolDefinition[]
   activeSkillNames: string[]
+  promptAssembly?: DeepChatPromptAssembly
 }
 
 export interface LoopRunProviderRecovery {
@@ -38,6 +40,7 @@ export interface CreateLoopRunInput<TStreamState> {
   resources: {
     toolDefinitions: readonly MCPToolDefinition[]
     activeSkillNames: readonly string[]
+    promptAssembly?: DeepChatPromptAssembly
   }
   initialRequestSeq?: number
   initialLogicalRound?: number
@@ -66,7 +69,8 @@ export function createLoopRun<TStreamState>(
     streamState: input.streamState,
     resources: {
       toolDefinitions: [...input.resources.toolDefinitions],
-      activeSkillNames: [...input.resources.activeSkillNames]
+      activeSkillNames: [...input.resources.activeSkillNames],
+      ...(input.resources.promptAssembly ? { promptAssembly: input.resources.promptAssembly } : {})
     },
     providerRecovery: {
       contextOverflowHandoffAttempted: false,

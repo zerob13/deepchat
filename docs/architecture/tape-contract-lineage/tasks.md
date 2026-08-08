@@ -10,10 +10,11 @@
 ## P0: Contract Domains And Prompt Provenance
 
 - [ ] Add canonical contract schemas, builders, hash versions, and domain tests.
-- [ ] Return structured prompt sections without changing provider-visible prompt text.
-- [ ] Record AGENTS.md freshness/degradation and pinned-skill/tooling omissions.
-- [ ] Thread prompt provenance through turn and loop assembly.
-- [ ] Review and commit the prompt/contract-domain slice.
+- [x] Return structured prompt sections without changing provider-visible prompt text.
+- [x] Record AGENTS.md freshness/degradation and pinned-skill/tooling omissions.
+- [x] Thread prompt provenance through turn and loop assembly.
+- [x] Review and commit the prompt-provenance slice.
+- [ ] Review and commit the canonical contract-domain slice.
 
 ## P0: ViewManifest V5 And Enforcement
 

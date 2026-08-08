@@ -35,6 +35,10 @@ import {
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
 import type { OutputSink } from '@/agent/deepchat/loop/ports'
 import { buildTapeToolFactInputs } from '@/tape/application/factPersistence'
+import {
+  createOpaquePromptAssembly,
+  reconcilePromptAssembly
+} from '@/agent/deepchat/resources/promptAssembly'
 
 const UNKNOWN_CONTEXT_LIMIT = Number.MAX_SAFE_INTEGER
 const MAX_TRUNCATED_TOOL_RECOVERY_ATTEMPTS = 1
@@ -1288,7 +1292,20 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                   activeSkillNames,
                   currentTools
                 )
-                replaceLeadingSystemMessage(conversationMessages, refreshedSystemPrompt)
+                const refreshedAssembly =
+                  typeof refreshedSystemPrompt === 'string'
+                    ? createOpaquePromptAssembly(refreshedSystemPrompt)
+                    : refreshedSystemPrompt
+                replaceLeadingSystemMessage(conversationMessages, refreshedAssembly.prompt)
+                const effectiveSystemPrompt =
+                  conversationMessages[0]?.role === 'system' &&
+                  typeof conversationMessages[0].content === 'string'
+                    ? conversationMessages[0].content
+                    : ''
+                run.resources.promptAssembly = reconcilePromptAssembly(
+                  refreshedAssembly,
+                  effectiveSystemPrompt
+                )
               } catch (error) {
                 console.warn(
                   '[ProcessStream] failed to refresh system prompt after skill activation:',

@@ -2508,7 +2508,7 @@ describe('processStream', () => {
     const resolveTools = vi
       .fn()
       .mockResolvedValue([makeTool('skill_view'), makeTool('deepchat_settings_set_theme')])
-    const refreshSystemPrompt = vi.fn().mockResolvedValue('refreshed skill prompt')
+    const refreshSystemPrompt = vi.fn().mockResolvedValue('  refreshed skill prompt\n')
 
     const coreStream = vi.fn(
       function (messages, _modelId, _modelConfig, _temperature, _maxTokens, tools) {
@@ -2530,7 +2530,7 @@ describe('processStream', () => {
           })()
         }
         if (callCount === 2) {
-          expect(messages[0]).toEqual({ role: 'system', content: 'refreshed skill prompt' })
+          expect(messages[0]).toEqual({ role: 'system', content: '  refreshed skill prompt\n' })
           expect(tools.map((tool) => tool.function.name)).toEqual([
             'skill_view',
             'deepchat_settings_set_theme'
@@ -2588,6 +2588,15 @@ describe('processStream', () => {
     )
     expect(coreStream).toHaveBeenCalledTimes(3)
     expect(toolService.callTool).toHaveBeenCalledTimes(2)
+    expect(params.run.resources.promptAssembly).toMatchObject({
+      prompt: '  refreshed skill prompt\n',
+      sections: [
+        expect.objectContaining({
+          kind: 'effective_system_prompt',
+          degradationCodes: ['legacy_prompt_provenance']
+        })
+      ]
+    })
   })
 
   it('does not refresh tools after linked-file skill_view reads', async () => {

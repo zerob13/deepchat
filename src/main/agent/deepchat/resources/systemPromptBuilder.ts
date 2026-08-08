@@ -1,12 +1,21 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
 import fs from "fs";
 import path from "path";
+import type {
+  DeepChatPromptAssembly,
+  DeepChatPromptAssemblySection,
+  DeepChatPromptDegradationCode
+} from '@shared/types/prompt-assembly'
 import type { SkillServicePort } from '@shared/types/skill';
 import type { MCPToolDefinition } from "@shared/types/core/mcp";
 import type { ToolServicePort } from "@shared/types/tool";
 import type { DeepChatAgentInstance } from "@/agent/deepchat/instance/deepChatAgentInstance";
 import type { ProviderCatalogPort } from '@/provider/ports'
-import { buildRuntimeCapabilitiesPrompt, buildSystemEnvPrompt } from "./systemEnvPromptBuilder";
+import {
+  buildRuntimeCapabilitiesPrompt,
+  buildSystemEnvPromptAssembly
+} from "./systemEnvPromptBuilder";
+import { assemblePromptSections, createPromptAssemblySection } from './promptAssembly'
 import type { SkillSettingsPort } from "@/skill/settings";
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { UNTRUSTED_CHILD_OUTPUT_POLICY } from '@shared/orchestration/resultSafety'
@@ -86,10 +95,10 @@ function getVerificationScriptNames(manifest: PackageJsonManifest | null): strin
     .map(([name]) => name);
 }
 
-export async function buildSystemPromptWithSkills(
+export async function buildSystemPromptAssemblyWithSkills(
   dependencies: SystemPromptBuilderDependencies,
   input: SystemPromptBuildInput,
-): Promise<string> {
+): Promise<DeepChatPromptAssembly> {
   const { sessionId, basePrompt, toolDefinitions, activeSkillNamesOverride, resourceInstance } =
     input;
   dependencies.assertCurrent(sessionId, resourceInstance);
@@ -98,7 +107,13 @@ export async function buildSystemPromptWithSkills(
   const providerId = state?.providerId?.trim() || "unknown-provider";
   const modelId = state?.modelId?.trim() || "unknown-model";
   if (dependencies.isAcpBackedSubagentSession(sessionId, providerId)) {
-    return normalizedBase;
+    return assemblePromptSections([
+      createPromptAssemblySection({
+        kind: 'configured_prompt',
+        sourceRef: 'session:generation-settings.system-prompt',
+        content: normalizedBase
+      })
+    ]);
   }
 
   const workdir = resourceInstance.hasProjectDir()
@@ -108,6 +123,8 @@ export async function buildSystemPromptWithSkills(
 
   const skillsEnabled = dependencies.skillSettings.isEnabled();
   const skillService = dependencies.skillService;
+  const skillsMetadataDegradations: DeepChatPromptDegradationCode[] = [];
+  const pinnedSkillsDegradations: DeepChatPromptDegradationCode[] = [];
   let sessionAgentId: string | null = null;
   if (skillsEnabled) {
     try {
@@ -117,6 +134,10 @@ export async function buildSystemPromptWithSkills(
         `[DeepChatAgent] Failed to resolve agent id for skills in session ${sessionId}:`,
         error,
       );
+    }
+    if (!sessionAgentId) {
+      skillsMetadataDegradations.push('skill_agent_unavailable');
+      pinnedSkillsDegradations.push('skill_agent_unavailable');
     }
   }
   const availableSkills: Array<{
@@ -150,6 +171,7 @@ export async function buildSystemPromptWithSkills(
         `[DeepChatAgent] Failed to load skills metadata for session ${sessionId}:`,
         error,
       );
+      skillsMetadataDegradations.push('skill_metadata_unavailable');
     }
     dependencies.logSlowStep(sessionId, "system-prompt.skills-metadata-load", metadataStartedAt);
 
@@ -168,6 +190,7 @@ export async function buildSystemPromptWithSkills(
           `[DeepChatAgent] Failed to load active skills for session ${sessionId}:`,
           error,
         );
+        pinnedSkillsDegradations.push('active_skills_unavailable');
       }
       dependencies.logSlowStep(
         sessionId,
@@ -180,9 +203,13 @@ export async function buildSystemPromptWithSkills(
   let stepStartedAt = Date.now();
   const normalizedAvailableSkills = normalizeSkillMetadata(availableSkills);
   const availableSkillNames = new Set(normalizedAvailableSkills.map((skill) => skill.name));
-  const normalizedActiveSkills = normalizeStringList(
-    activeSkillNames.filter((skillName) => availableSkillNames.has(skillName)),
+  const requestedActiveSkills = normalizeStringList(activeSkillNames);
+  const normalizedActiveSkills = requestedActiveSkills.filter((skillName) =>
+    availableSkillNames.has(skillName),
   );
+  if (normalizedActiveSkills.length !== requestedActiveSkills.length) {
+    pinnedSkillsDegradations.push('pinned_skill_unavailable');
+  }
   const agentToolNames = getAgentToolNames(toolDefinitions);
   const runtimePrompt = buildRuntimeCapabilitiesPrompt({
     hasYoBrowser: toolDefinitions.some(
@@ -216,34 +243,54 @@ export async function buildSystemPromptWithSkills(
         const content = skill?.content?.trim();
         if (content) {
           skillSections.push(`### ${skillName}\n${content}`);
+        } else {
+          pinnedSkillsDegradations.push('pinned_skill_unavailable');
         }
       } catch (error) {
         console.warn(
           `[DeepChatAgent] Failed to load skill content for "${skillName}" in session ${sessionId}:`,
           error,
         );
+        pinnedSkillsDegradations.push('pinned_skill_load_failed');
       }
     }
     skillsPrompt = buildPinnedSkillsPrompt(skillSections);
     dependencies.logSlowStep(sessionId, "system-prompt.pinned-skills-load", stepStartedAt);
   }
 
-  let envPrompt = "";
+  let envSections: readonly DeepChatPromptAssemblySection[] = [];
   try {
     stepStartedAt = Date.now();
-    envPrompt = await buildSystemEnvPrompt({
+    envSections = (
+      await buildSystemEnvPromptAssembly({
       providerId,
       modelId,
       workdir,
       now,
       modelLookup: dependencies.providerCatalogPort,
-    });
+      })
+    ).sections;
     dependencies.logSlowStep(sessionId, "system-prompt.env-prompt", stepStartedAt);
   } catch (error) {
     console.warn(`[DeepChatAgent] Failed to build env prompt for session ${sessionId}:`, error);
+    envSections = [
+      createPromptAssemblySection({
+        kind: 'system_environment',
+        sourceRef: 'runtime:environment',
+        content: '',
+        degradationCodes: ['environment_build_failed']
+      }),
+      createPromptAssemblySection({
+        kind: 'agents_instructions',
+        sourceRef: 'workspace:AGENTS.md',
+        content: '',
+        degradationCodes: ['environment_build_failed']
+      })
+    ];
   }
 
   let toolingPrompt = "";
+  const toolingDegradations: DeepChatPromptDegradationCode[] = [];
   try {
     stepStartedAt = Date.now();
     toolingPrompt = dependencies.toolService.buildToolSystemPrompt({
@@ -253,24 +300,67 @@ export async function buildSystemPromptWithSkills(
     dependencies.logSlowStep(sessionId, "system-prompt.tooling-prompt", stepStartedAt);
   } catch (error) {
     console.warn(`[DeepChatAgent] Failed to build tooling prompt for session ${sessionId}:`, error);
+    toolingDegradations.push('tooling_build_failed');
   }
 
   stepStartedAt = Date.now();
-  const composedPrompt = composePromptSections([
-    normalizedBase,
-    runtimePrompt,
-    envPrompt,
-    skillsMetadataPrompt,
-    skillsPrompt,
-    toolingPrompt,
-    buildOrchestrationPolicyPrompt(input.orchestrationPolicy, agentToolNames),
-    buildPermissionRulesPrompt(agentToolNames),
-    buildVerificationPolicyPrompt(workdir),
+  const assembly = assemblePromptSections([
+    createPromptAssemblySection({
+      kind: 'configured_prompt',
+      sourceRef: 'session:generation-settings.system-prompt',
+      content: normalizedBase
+    }),
+    createPromptAssemblySection({
+      kind: 'runtime_capabilities',
+      sourceRef: 'runtime:tool-capabilities',
+      content: runtimePrompt
+    }),
+    ...envSections,
+    createPromptAssemblySection({
+      kind: 'skills_metadata',
+      sourceRef: 'skills:catalog',
+      content: skillsMetadataPrompt,
+      degradationCodes: skillsMetadataDegradations
+    }),
+    createPromptAssemblySection({
+      kind: 'pinned_skills',
+      sourceRef: 'skills:active',
+      content: skillsPrompt,
+      degradationCodes: pinnedSkillsDegradations
+    }),
+    createPromptAssemblySection({
+      kind: 'tooling',
+      sourceRef: 'runtime:tool-system-prompt',
+      content: toolingPrompt,
+      degradationCodes: toolingDegradations
+    }),
+    createPromptAssemblySection({
+      kind: 'orchestration_policy',
+      sourceRef: 'session:orchestration-policy',
+      content: buildOrchestrationPolicyPrompt(input.orchestrationPolicy, agentToolNames)
+    }),
+    createPromptAssemblySection({
+      kind: 'permission_rules',
+      sourceRef: 'runtime:tool-execution-policy',
+      content: buildPermissionRulesPrompt(agentToolNames)
+    }),
+    createPromptAssemblySection({
+      kind: 'verification_policy',
+      sourceRef: 'runtime:workspace-verification-policy',
+      content: buildVerificationPolicyPrompt(workdir)
+    })
   ]);
   dependencies.logSlowStep(sessionId, "system-prompt.compose", stepStartedAt);
 
   dependencies.assertCurrent(sessionId, resourceInstance);
-  return composedPrompt;
+  return assembly;
+}
+
+export async function buildSystemPromptWithSkills(
+  dependencies: SystemPromptBuilderDependencies,
+  input: SystemPromptBuildInput,
+): Promise<string> {
+  return (await buildSystemPromptAssemblyWithSkills(dependencies, input)).prompt;
 }
 
 function buildOrchestrationPolicyPrompt(
@@ -307,13 +397,6 @@ function buildOrchestrationPolicyPrompt(
     'Do not run overlapping write-heavy children in the same workspace. Account for every spawned child until it reaches a terminal state.'
   )
   return lines.join('\n')
-}
-
-function composePromptSections(sections: string[]): string {
-  return sections
-    .map((section) => section.trim())
-    .filter((section) => section.length > 0)
-    .join("\n\n");
 }
 
 function buildPermissionRulesPrompt(agentToolNames: Set<string>): string {

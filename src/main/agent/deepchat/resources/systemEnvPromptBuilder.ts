@@ -1,7 +1,13 @@
 import * as fs from 'node:fs'
 import path from 'node:path'
 import logger from '@shared/logger'
+import type {
+  DeepChatPromptAssembly,
+  DeepChatPromptDegradationCode,
+  DeepChatPromptSourceFreshness
+} from '@shared/types/prompt-assembly'
 import type { ProviderCatalogPort } from '@/provider/ports'
+import { assemblePromptSections, createPromptAssemblySection } from './promptAssembly'
 
 export interface BuildSystemEnvPromptOptions {
   providerId?: string
@@ -23,10 +29,23 @@ const SYSTEM_ENV_SLOW_STEP_MS = 500
 const AGENTS_READ_BUDGET_MS = 200
 const AGENTS_CACHE_TTL_MS = 30_000
 
-type AgentsCacheEntry = {
+type AgentsReadState = 'fresh' | 'missing' | 'read_error'
+
+type SettledAgentsRead = {
   content: string
+  state: AgentsReadState
+}
+
+type AgentsInstructionsResult = {
+  content: string
+  freshness: DeepChatPromptSourceFreshness
+  degradationCodes?: readonly DeepChatPromptDegradationCode[]
+}
+
+type AgentsCacheEntry = {
+  settled?: SettledAgentsRead
   refreshedAt: number
-  pending?: Promise<string>
+  pending?: Promise<SettledAgentsRead>
 }
 
 const agentsInstructionsCache = new Map<string, AgentsCacheEntry>()
@@ -107,13 +126,16 @@ function isGitRepository(workdir: string): boolean {
   }
 }
 
-async function readAgentsInstructionsFromDisk(sourcePath: string): Promise<string> {
+async function readAgentsInstructionsFromDisk(sourcePath: string): Promise<SettledAgentsRead> {
   try {
-    return await fs.promises.readFile(sourcePath, 'utf8')
+    return {
+      content: await fs.promises.readFile(sourcePath, 'utf8'),
+      state: 'fresh'
+    }
   } catch (error) {
     const nodeError = error as NodeJS.ErrnoException
     if (nodeError.code === 'ENOENT' || nodeError.code === 'ENOTDIR') {
-      return ''
+      return { content: '', state: 'missing' }
     }
 
     logger.warn('[SystemEnvPromptBuilder] Failed to read AGENTS.md', {
@@ -121,21 +143,21 @@ async function readAgentsInstructionsFromDisk(sourcePath: string): Promise<strin
       code: nodeError.code,
       message: error instanceof Error ? error.message : String(error)
     })
-    return ''
+    return { content: '', state: 'read_error' }
   }
 }
 
 function refreshAgentsInstructions(sourcePath: string, fallback: AgentsCacheEntry | undefined) {
-  const pending = readAgentsInstructionsFromDisk(sourcePath).then((content) => {
+  const pending = readAgentsInstructionsFromDisk(sourcePath).then((settled) => {
     agentsInstructionsCache.set(sourcePath, {
-      content,
+      settled,
       refreshedAt: Date.now()
     })
-    return content
+    return settled
   })
 
   agentsInstructionsCache.set(sourcePath, {
-    content: fallback?.content ?? '',
+    ...(fallback?.settled ? { settled: fallback.settled } : {}),
     refreshedAt: fallback?.refreshedAt ?? 0,
     pending
   })
@@ -145,12 +167,12 @@ function refreshAgentsInstructions(sourcePath: string, fallback: AgentsCacheEntr
 
 async function waitForAgentsInstructions(
   sourcePath: string,
-  pending: Promise<string>,
-  fallback: string
-): Promise<string> {
+  pending: Promise<SettledAgentsRead>,
+  fallback: SettledAgentsRead | undefined
+): Promise<AgentsInstructionsResult> {
   let timeout: NodeJS.Timeout | undefined
   const result = await Promise.race([
-    pending.then((content) => ({ content })),
+    pending.then((settled) => ({ settled })),
     new Promise<{ timedOut: true }>((resolve) => {
       timeout = setTimeout(() => resolve({ timedOut: true }), AGENTS_READ_BUDGET_MS)
     })
@@ -165,29 +187,60 @@ async function waitForAgentsInstructions(
       sourcePath,
       budgetMs: AGENTS_READ_BUDGET_MS
     })
-    return fallback
+    return {
+      content: fallback?.content ?? '',
+      freshness: 'deferred',
+      degradationCodes: ['agents_file_deferred']
+    }
   }
 
-  return result.content
+  return projectAgentsInstructions(result.settled, 'fresh')
 }
 
-async function readAgentsInstructions(sourcePath: string): Promise<string> {
+function projectAgentsInstructions(
+  settled: SettledAgentsRead,
+  freshness: 'fresh' | 'cached'
+): AgentsInstructionsResult {
+  if (settled.state === 'missing') {
+    return {
+      content: settled.content,
+      freshness: 'missing',
+      degradationCodes: ['agents_file_missing']
+    }
+  }
+  if (settled.state === 'read_error') {
+    return {
+      content: settled.content,
+      freshness: 'read_error',
+      degradationCodes: ['agents_file_read_error']
+    }
+  }
+  return { content: settled.content, freshness }
+}
+
+async function readAgentsInstructions(sourcePath: string): Promise<AgentsInstructionsResult> {
   const cached = agentsInstructionsCache.get(sourcePath)
   const now = Date.now()
-  if (cached && now - cached.refreshedAt < AGENTS_CACHE_TTL_MS) {
-    return cached.content
+  if (cached?.settled && now - cached.refreshedAt < AGENTS_CACHE_TTL_MS) {
+    return projectAgentsInstructions(cached.settled, 'cached')
   }
 
   if (cached?.pending) {
-    return cached.content
+    return cached.settled
+      ? projectAgentsInstructions(cached.settled, 'cached')
+      : {
+          content: '',
+          freshness: 'deferred',
+          degradationCodes: ['agents_file_deferred']
+        }
   }
 
   const pending = refreshAgentsInstructions(sourcePath, cached)
-  if (cached) {
-    return cached.content
+  if (cached?.settled) {
+    return projectAgentsInstructions(cached.settled, 'cached')
   }
 
-  return waitForAgentsInstructions(sourcePath, pending, '')
+  return waitForAgentsInstructions(sourcePath, pending, undefined)
 }
 
 export function buildRuntimeCapabilitiesPrompt(
@@ -221,9 +274,9 @@ export function buildRuntimeCapabilitiesPrompt(
   return lines.length > 1 ? lines.join('\n') : ''
 }
 
-export async function buildSystemEnvPrompt(
+export async function buildSystemEnvPromptAssembly(
   options: BuildSystemEnvPromptOptions = {}
-): Promise<string> {
+): Promise<DeepChatPromptAssembly> {
   const now = options.now ?? new Date()
   const platform = options.platform ?? process.platform
   const workdir = resolveWorkdir(options.workdir)
@@ -231,7 +284,7 @@ export async function buildSystemEnvPrompt(
     ? path.resolve(options.agentsFilePath)
     : path.join(workdir, 'AGENTS.md')
   let stepStartedAt = Date.now()
-  const agentsContent = await readAgentsInstructions(agentsFilePath)
+  const agentsInstructions = await readAgentsInstructions(agentsFilePath)
   logSlowSystemEnvStep('read-agents', stepStartedAt)
   stepStartedAt = Date.now()
   const { modelName, exactModelId } = resolveModelIdentity(
@@ -244,7 +297,7 @@ export async function buildSystemEnvPrompt(
   const isGitRepo = isGitRepository(workdir)
   logSlowSystemEnvStep('git-detect', stepStartedAt)
 
-  const promptLines = [
+  const environmentContent = [
     `You are powered by the model named ${modelName}.`,
     `The exact model ID is ${exactModelId}`,
     `Here is some useful information about the environment you are running in:`,
@@ -254,11 +307,31 @@ export async function buildSystemEnvPrompt(
     `Platform: ${platform}`,
     `Today's date: ${now.toDateString()}`,
     '</env>'
-  ]
+  ].join('\n')
+  const agentsContent = agentsInstructions.content.trim()
+    ? `Instructions from: ${agentsFilePath}\n\n${agentsInstructions.content}`
+    : ''
 
-  if (agentsContent.trim().length > 0) {
-    promptLines.push(`Instructions from: ${agentsFilePath}\n`, agentsContent)
-  }
+  return assemblePromptSections([
+    createPromptAssemblySection({
+      kind: 'system_environment',
+      sourceRef: 'runtime:environment',
+      content: environmentContent
+    }),
+    createPromptAssemblySection({
+      kind: 'agents_instructions',
+      sourceRef: 'workspace:AGENTS.md',
+      content: agentsContent,
+      separatorBefore: '\n',
+      freshness: agentsInstructions.freshness,
+      degradationCodes: agentsInstructions.degradationCodes,
+      normalize: 'trim_end'
+    })
+  ])
+}
 
-  return promptLines.join('\n')
+export async function buildSystemEnvPrompt(
+  options: BuildSystemEnvPromptOptions = {}
+): Promise<string> {
+  return (await buildSystemEnvPromptAssembly(options)).prompt
 }

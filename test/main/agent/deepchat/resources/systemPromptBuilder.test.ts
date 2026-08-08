@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
-import { buildSystemPromptWithSkills } from '@/agent/deepchat/resources/systemPromptBuilder'
+import {
+  buildSystemPromptAssemblyWithSkills,
+  buildSystemPromptWithSkills
+} from '@/agent/deepchat/resources/systemPromptBuilder'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { UNTRUSTED_CHILD_OUTPUT_POLICY } from '@shared/orchestration/resultSafety'
 
@@ -57,6 +60,21 @@ describe('DeepChat system prompt builder', () => {
       toolDefinitions: [],
       resourceInstance: instance
     })
+    const assembly = await buildSystemPromptAssemblyWithSkills(dependencies, {
+      sessionId: 'session-1',
+      basePrompt: '  BASE PROMPT  ',
+      toolDefinitions: [],
+      resourceInstance: instance
+    })
+    const acpAssembly = await buildSystemPromptAssemblyWithSkills(
+      { ...dependencies, isAcpBackedSubagentSession: () => true },
+      {
+        sessionId: 'session-1',
+        basePrompt: '  BASE PROMPT  ',
+        toolDefinitions: [],
+        resourceInstance: instance
+      }
+    )
     const explicit = await buildSystemPromptWithSkills(dependencies, {
       sessionId: 'session-1',
       basePrompt: '  BASE PROMPT  ',
@@ -101,6 +119,50 @@ describe('DeepChat system prompt builder', () => {
     expect(first).toContain('## Verification Policy')
     expect(first).not.toContain('## Multi-Agent Orchestration Policy')
     expect(second).toBe(first)
+    expect(assembly.prompt).toBe(first)
+    expect(acpAssembly).toMatchObject({
+      prompt: 'BASE PROMPT',
+      sections: [{ kind: 'configured_prompt', inclusion: 'included' }]
+    })
+    expect(first).toBe(
+      [
+        'BASE PROMPT',
+        [
+          'You are powered by the model named GPT-4o.',
+          'The exact model ID is openai/gpt-4o',
+          'Here is some useful information about the environment you are running in:',
+          '<env>',
+          'Working directory: /tmp/deepchat-system-prompt-builder-test-no-agents',
+          'Is directory a git repo: no',
+          `Platform: ${process.platform}`,
+          `Today's date: ${new Date().toDateString()}`,
+          '</env>'
+        ].join('\n'),
+        [
+          '## Verification Policy',
+          'After changing code, configuration, tests, docs that affect behavior, or generated assets, check verification status before the final response.',
+          'If verification was not run, state the reason explicitly in the final response.'
+        ].join('\n')
+      ].join('\n\n')
+    )
+    expect(assembly.sections.map((section) => section.kind)).toEqual([
+      'configured_prompt',
+      'runtime_capabilities',
+      'system_environment',
+      'agents_instructions',
+      'skills_metadata',
+      'pinned_skills',
+      'tooling',
+      'orchestration_policy',
+      'permission_rules',
+      'verification_policy'
+    ])
+    expect(assembly.sections.find((section) => section.kind === 'configured_prompt')).toMatchObject(
+      {
+        inclusion: 'included',
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      }
+    )
     expect(explicit).toContain('## Multi-Agent Orchestration Policy')
     expect(explicit).toContain('explicit multi-Agent collaboration')
     expect(explicit).toContain('user, an active Skill, or project instructions explicitly request')
@@ -235,5 +297,127 @@ describe('DeepChat system prompt builder', () => {
     expect(second).not.toContain('TOOL PROMPT ONE')
     expect(second).not.toContain('`verify`')
     expect(fs.readFileSync).toHaveBeenCalledTimes(2)
+  })
+
+  it('records pinned-skill and tooling degradation without blocking assembly', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    vi.mocked(fs.promises.readFile).mockRejectedValue(
+      Object.assign(new Error('missing'), { code: 'ENOENT' })
+    )
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const instance = {
+      getRuntimeState: () => ({ providerId: 'openai', modelId: 'gpt-4o' }),
+      hasProjectDir: () => true,
+      getProjectDir: () => '/tmp/deepchat-system-prompt-builder-degraded'
+    } as unknown as DeepChatAgentInstance
+
+    try {
+      const assembly = await buildSystemPromptAssemblyWithSkills(
+        {
+          providerSettings: {} as unknown as ProviderSettingsPort,
+          skillSettings: {
+            isEnabled: () => true,
+            isDraftSuggestionsEnabled: () => false
+          },
+          providerCatalogPort: {
+            getProviderModels: () => [{ id: 'gpt-4o', name: 'GPT-4o' }],
+            getCustomModels: () => []
+          },
+          skillService: {
+            resolveSessionAgentId: vi.fn().mockResolvedValue('writer'),
+            getMetadataList: vi.fn().mockResolvedValue([
+              { name: 'skill-a', description: 'Skill A' },
+              { name: 'skill-b', description: 'Skill B' }
+            ]),
+            getActiveSkills: vi.fn().mockResolvedValue([]),
+            loadSkillContent: vi.fn(async (_agentId: string, skillName: string) => {
+              if (skillName === 'skill-b') throw new Error('unavailable')
+              return { name: skillName, content: `${skillName} instructions` }
+            })
+          },
+          toolService: {
+            buildToolSystemPrompt: vi.fn(() => {
+              throw new Error('tooling unavailable')
+            })
+          },
+          assertCurrent: vi.fn(),
+          isAcpBackedSubagentSession: () => false,
+          resolveProjectDir: () => null,
+          logSlowStep: vi.fn()
+        },
+        {
+          sessionId: 'session-1',
+          basePrompt: '',
+          toolDefinitions: [],
+          activeSkillNamesOverride: ['skill-a', 'skill-b'],
+          resourceInstance: instance
+        }
+      )
+
+      expect(assembly.prompt).toContain('### skill-a')
+      expect(assembly.prompt).not.toContain('### skill-b')
+      expect(assembly.sections.find((section) => section.kind === 'pinned_skills')).toMatchObject({
+        inclusion: 'degraded',
+        degradationCodes: ['pinned_skill_load_failed']
+      })
+      expect(assembly.sections.find((section) => section.kind === 'tooling')).toMatchObject({
+        inclusion: 'omitted',
+        degradationCodes: ['tooling_build_failed']
+      })
+    } finally {
+      consoleWarn.mockRestore()
+    }
+  })
+
+  it('records a missing scoped Agent identity even when resolution returns null', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    vi.mocked(fs.promises.readFile).mockRejectedValue(
+      Object.assign(new Error('missing'), { code: 'ENOENT' })
+    )
+    const instance = {
+      getRuntimeState: () => ({ providerId: 'openai', modelId: 'gpt-4o' }),
+      hasProjectDir: () => true,
+      getProjectDir: () => '/tmp/deepchat-system-prompt-builder-no-agent'
+    } as unknown as DeepChatAgentInstance
+
+    const assembly = await buildSystemPromptAssemblyWithSkills(
+      {
+        providerSettings: {} as unknown as ProviderSettingsPort,
+        skillSettings: {
+          isEnabled: () => true,
+          isDraftSuggestionsEnabled: () => false
+        },
+        providerCatalogPort: {
+          getProviderModels: () => [{ id: 'gpt-4o', name: 'GPT-4o' }],
+          getCustomModels: () => []
+        },
+        skillService: {
+          resolveSessionAgentId: vi.fn().mockResolvedValue(null),
+          getMetadataList: vi.fn().mockResolvedValue([]),
+          getActiveSkills: vi.fn().mockResolvedValue([]),
+          loadSkillContent: vi.fn()
+        },
+        toolService: { buildToolSystemPrompt: vi.fn().mockReturnValue('') },
+        assertCurrent: vi.fn(),
+        isAcpBackedSubagentSession: () => false,
+        resolveProjectDir: () => null,
+        logSlowStep: vi.fn()
+      },
+      {
+        sessionId: 'session-1',
+        basePrompt: '',
+        toolDefinitions: [],
+        resourceInstance: instance
+      }
+    )
+
+    expect(assembly.sections.find((section) => section.kind === 'skills_metadata')).toMatchObject({
+      inclusion: 'omitted',
+      degradationCodes: ['skill_agent_unavailable']
+    })
+    expect(assembly.sections.find((section) => section.kind === 'pinned_skills')).toMatchObject({
+      inclusion: 'omitted',
+      degradationCodes: ['skill_agent_unavailable']
+    })
   })
 })

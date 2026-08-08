@@ -7,6 +7,7 @@ import type {
 } from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
+import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type {
   ProviderExecutionPort,
   ModelConfig,
@@ -29,6 +30,10 @@ import type { SessionPendingInputs } from '@/session/data/pendingInputs'
 import {
   resolveEffectiveActiveSkillNames
 } from '@/agent/deepchat/resources/systemPromptBuilder'
+import {
+  createOpaquePromptAssembly,
+  reconcilePromptAssembly
+} from '@/agent/deepchat/resources/promptAssembly'
 import type { SessionPermissionPort } from '@/session/contracts'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import {
@@ -181,6 +186,7 @@ export type DeepChatLoopRunInput = {
   providerModelFacts?: ProviderModelRuntimeFacts
   tools?: MCPToolDefinition[]
   baseSystemPrompt?: string
+  basePromptAssembly?: DeepChatPromptAssembly
   contextContributions?: ContextRuntimeContributions
   initialBlocks?: AssistantMessageBlock[]
   initialAccounting?: MessageMetadata
@@ -192,7 +198,7 @@ export type DeepChatLoopRunInput = {
   refreshSystemPrompt?: (
     activeSkillNames: string[] | undefined,
     toolDefinitions: MCPToolDefinition[]
-  ) => Promise<string>
+  ) => Promise<DeepChatPromptAssembly | string>
   maxProviderRounds?: number
   onBeforeProviderStream?: () => void
   onRunRegistered?: (runId: string) => void
@@ -352,6 +358,7 @@ export class DeepChatLoopRunner {
       providerModelFacts: providedProviderModelFacts,
       tools: providedTools,
       baseSystemPrompt,
+      basePromptAssembly,
       contextContributions,
       initialBlocks,
       initialAccounting,
@@ -450,6 +457,17 @@ export class DeepChatLoopRunner {
     )
     const temperature = generationSettings.temperature
     const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
+    const effectiveSystemPrompt =
+      messages[0]?.role === 'system' && typeof messages[0].content === 'string'
+        ? messages[0].content
+        : ''
+    const declaredPromptAssembly =
+      basePromptAssembly ??
+      createOpaquePromptAssembly(baseSystemPrompt ?? effectiveSystemPrompt)
+    const initialPromptAssembly = reconcilePromptAssembly(
+      declaredPromptAssembly,
+      effectiveSystemPrompt
+    )
 
     const streamSessionActiveSkillNames = await awaitWithAbort(
       this.ports.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
@@ -492,7 +510,8 @@ export class DeepChatLoopRunner {
       streamState: createState(),
       resources: {
         toolDefinitions: tools,
-        activeSkillNames: getEffectiveRuntimeSkillNames()
+        activeSkillNames: getEffectiveRuntimeSkillNames(),
+        promptAssembly: initialPromptAssembly
       },
       initialRequestSeq
     })
@@ -587,17 +606,22 @@ export class DeepChatLoopRunner {
         toolCatalog,
         refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
           if (refreshSystemPrompt) {
-            return await refreshSystemPrompt(
+            const refreshed = await refreshSystemPrompt(
               getEffectiveRuntimeSkillNames(activeSkillNames),
               refreshedTools
             )
+            return typeof refreshed === 'string'
+              ? createOpaquePromptAssembly(refreshed)
+              : refreshed
           }
-          return await this.ports.promptAssembly.createBasePromptAssembler(resourceInstance).assemble({
-            sessionId: toAppSessionId(sessionId),
-            configuredPrompt: generationSettings.systemPrompt,
-            toolDefinitions: refreshedTools,
-            activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames)
-          })
+          return await this.ports.promptAssembly
+            .createBasePromptAssembler(resourceInstance)
+            .assembleWithProvenance({
+              sessionId: toAppSessionId(sessionId),
+              configuredPrompt: generationSettings.systemPrompt,
+              toolDefinitions: refreshedTools,
+              activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames)
+            })
         },
         toolExecution: this.ports.toolExecutionPort,
         toolResults: this.ports.toolResultPort,

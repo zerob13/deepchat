@@ -11,8 +11,23 @@ const SESSION_ID = 'session'
 const buildSystemPromptWithSkills = vi.hoisted(() =>
   vi.fn(async () => 'assembled system prompt')
 )
+const buildSystemPromptAssemblyWithSkills = vi.hoisted(() =>
+  vi.fn(async () => ({
+    prompt: 'assembled system prompt',
+    sections: [
+      {
+        kind: 'configured_prompt',
+        sourceRef: 'session:generation-settings.system-prompt',
+        inclusion: 'included',
+        contentHash: 'a'.repeat(64),
+        content: 'assembled system prompt'
+      }
+    ]
+  }))
+)
 
 vi.mock('@/agent/deepchat/resources/systemPromptBuilder', () => ({
+  buildSystemPromptAssemblyWithSkills,
   buildSystemPromptWithSkills
 }))
 
@@ -102,6 +117,31 @@ describe('PromptAssemblyService', () => {
 
     expect(assembled).toBe('assembled system prompt')
     const input = buildSystemPromptWithSkills.mock.calls[0][1] as any
+    expect(input.resourceInstance).toBe(instance)
+    expect(input.activeSkillNamesOverride).toEqual(activeSkillNames)
+    expect(input.activeSkillNamesOverride).not.toBe(activeSkillNames)
+    expect(input.toolDefinitions).not.toBe(toolDefinitions)
+  })
+
+  it('returns structured provenance through the bound assembler without sharing mutable inputs', async () => {
+    const { runtime, service } = createHarness()
+    buildSystemPromptAssemblyWithSkills.mockClear()
+    const instance = runtime.getOrHydrate(toAppSessionId('structured'))
+    const toolDefinitions = [] as never[]
+    const activeSkillNames = ['skill-a']
+
+    const assembled = await service.createBasePromptAssembler(instance).assembleWithProvenance({
+      sessionId: SESSION_ID,
+      configuredPrompt: 'base',
+      toolDefinitions,
+      activeSkillNames
+    })
+
+    expect(assembled).toMatchObject({
+      prompt: 'assembled system prompt',
+      sections: [{ kind: 'configured_prompt', inclusion: 'included' }]
+    })
+    const input = buildSystemPromptAssemblyWithSkills.mock.calls[0][1] as any
     expect(input.resourceInstance).toBe(instance)
     expect(input.activeSkillNamesOverride).toEqual(activeSkillNames)
     expect(input.activeSkillNamesOverride).not.toBe(activeSkillNames)

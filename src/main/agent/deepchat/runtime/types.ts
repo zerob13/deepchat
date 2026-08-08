@@ -16,6 +16,7 @@ import type {
 } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
+import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { DeepchatEventName } from '@shared/contracts/events'
 import type { DeepChatInternalSessionUpdate } from './sessionUpdates'
 import type { SessionTranscript } from '@/session/data/transcript'
@@ -229,7 +230,7 @@ export interface ProcessParams {
   refreshSystemPrompt?: (
     activeSkillNames: string[] | undefined,
     toolDefinitions: MCPToolDefinition[]
-  ) => Promise<string>
+  ) => Promise<DeepChatPromptAssembly | string>
   toolExecution: ToolExecutionPort
   toolResults: ToolResultPort
   coreStream: (

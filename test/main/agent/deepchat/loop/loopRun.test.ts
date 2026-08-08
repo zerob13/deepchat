@@ -95,6 +95,32 @@ describe('LoopRun', () => {
     ).toBe(0)
   })
 
+  it('retains the exact immutable prompt assembly on the run path', () => {
+    const promptAssembly = Object.freeze({
+      prompt: 'system prompt',
+      sections: Object.freeze([
+        Object.freeze({
+          kind: 'configured_prompt' as const,
+          sourceRef: 'session:generation-settings.system-prompt',
+          inclusion: 'included' as const,
+          contentHash: 'a'.repeat(64),
+          content: 'system prompt'
+        })
+      ])
+    })
+    const run = createLoopRun({
+      runId: 'run',
+      sessionId: toAppSessionId('session'),
+      messageId: 'message',
+      abortController: new AbortController(),
+      messages: [{ role: 'system', content: promptAssembly.prompt }],
+      streamState: {},
+      resources: { toolDefinitions: [], activeSkillNames: [], promptAssembly }
+    })
+
+    expect(run.resources.promptAssembly).toBe(promptAssembly)
+  })
+
   it('fails explicitly instead of wrapping an exhausted request sequence', () => {
     const run = createRun('session', Number.MAX_SAFE_INTEGER)
 

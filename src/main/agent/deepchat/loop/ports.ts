@@ -10,6 +10,7 @@ import type {
 } from '@shared/types/core/mcp'
 import type { ToolCallOptions, ToolPermissionPreCheckResult } from '@shared/types/tool'
 import type { ModelConfig } from '@shared/types/provider'
+import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { MemorySessionHandle } from '@/agent/deepchat/memory/memoryPromptContributor'
 import type { ContextRuntimeContributions } from '@/agent/deepchat/runtime/contextContributions'
 
@@ -197,6 +198,7 @@ export interface BasePromptAssemblyInput {
 
 export interface BasePromptAssembler {
   assemble(input: BasePromptAssemblyInput): Promise<string>
+  assembleWithProvenance(input: BasePromptAssemblyInput): Promise<DeepChatPromptAssembly>
 }
 
 export interface PromptReconstructionAnchor {
