@@ -94,10 +94,10 @@
 
 - [x] Replace reason/correction inference with an explicit record-vs-order replacement contract.
 - [x] Materialize only shifted messages in batches of at most 500 inside the compaction transaction.
-- [ ] Stop order-only live replacements from rewriting tool facts.
-- [ ] Derive effective tool order from the effective message with a legacy payload fallback.
-- [ ] Skip backfill tool facts only when their non-order content matches the current effective
+- [x] Stop order-only live replacements from rewriting tool facts.
+- [x] Derive effective tool order from the effective message with a legacy payload fallback.
+- [x] Skip backfill tool facts only when their non-order content matches the current effective
   revision.
-- [ ] Cover repeated shift, shift-then-backfill, recall ordering, legacy fallback, and content
+- [x] Cover repeated shift, shift-then-backfill, recall ordering, legacy fallback, and content
   revision behavior with focused regressions.
 - [ ] Preserve any future non-corruption Journal failure subtype through terminal error wrapping.

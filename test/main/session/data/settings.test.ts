@@ -408,6 +408,62 @@ describeIfSqlite('SessionSettingsStore tape summary state', () => {
 })
 
 describeIfSqlite('Session transcript and Tape order consistency', () => {
+  it('does not rewrite tool facts for repeated shifts or the following backfill', () => {
+    const connection = new MainDatabaseCtor(':memory:')
+    try {
+      const database = new SessionDatabaseCtor(connection)
+      const tape = new SessionTapeCtor(database)
+      const transcript = new SessionTranscriptCtor(database, tape)
+      const assistantMessageId = transcript.createAssistantMessage('s1', 1)
+      transcript.finalizeAssistantMessage(
+        assistantMessageId,
+        [
+          {
+            type: 'tool_call',
+            status: 'success',
+            timestamp: 100,
+            tool_call: {
+              id: 'tool-1',
+              name: 'search',
+              params: '{"q":"stable"}',
+              response: 'stable tool response'
+            }
+          }
+        ],
+        '{}'
+      )
+      const readToolRows = () =>
+        database.deepchatTapeEntriesTable
+          .getBySession('s1')
+          .filter((row) => row.kind === 'tool_call' || row.kind === 'tool_result')
+
+      expect(readToolRows()).toHaveLength(2)
+      transcript.createCompactionMessageAtOrderSeq('s1', 1, 'compacting', null, {
+        shiftExistingMessages: true
+      })
+      transcript.createCompactionMessageAtOrderSeq('s1', 1, 'compacting', null, {
+        shiftExistingMessages: true
+      })
+      expect(readToolRows()).toHaveLength(2)
+
+      tape.ensureSessionTapeReady('s1', transcript)
+
+      const persistedToolRows = readToolRows()
+      expect(persistedToolRows).toHaveLength(2)
+      expect(persistedToolRows.map((row) => JSON.parse(row.payload_json).orderSeq)).toEqual([1, 1])
+      const effectiveToolRows = buildEffectiveTapeViewFn(
+        database.deepchatTapeEntriesTable.getBySession('s1'),
+        { includePending: false }
+      ).rows.filter((row) => row.kind === 'tool_call' || row.kind === 'tool_result')
+      expect(effectiveToolRows.map((row) => JSON.parse(row.payload_json).orderSeq)).toEqual([3, 3])
+      expect(
+        tape.search('s1', 'stable tool response', { kinds: ['tool_result'] })[0]?.refs?.orderSeq
+      ).toBe(3)
+    } finally {
+      connection.close()
+    }
+  })
+
   it('materializes only shifted messages in bounded batches', () => {
     const connection = new MainDatabaseCtor(':memory:')
     try {

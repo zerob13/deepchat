@@ -134,9 +134,11 @@ from default Context views, search, and recovery diagnostics.
 - Tool fact order is derived from the corresponding effective message. The persisted tool payload
   `orderSeq` remains a legacy fallback when no effective message is available, but an order-only
   message replacement does not append new tool facts.
-- Backfill compares a candidate tool fact with the current effective revision using content that
-  excludes `orderSeq`. It skips only an order-only difference; a changed response, arguments, or
-  other tool payload content remains a new immutable revision.
+- Backfill compares a candidate tool fact with the current effective revision using its kind, name,
+  terminal status, and payload content excluding `orderSeq`. It skips only an order-only difference;
+  a changed response, arguments, status, name, or other tool payload content remains a new immutable
+  revision. If the changed content reuses an older payload hash, its provenance identifies the
+  effective entry it supersedes rather than resolving to the historical row.
 - A synthetic summary checkpoint cites the reconstruction anchor entry that supplied its summary.
   An unrelated anchor must not be recorded as summary provenance.
 
@@ -211,7 +213,8 @@ recovery until they execute through a journal-aware harness boundary.
 - Existing Context Tape event names and payloads are unchanged.
 - Existing tool facts keep their persisted `orderSeq` and provenance keys. The field remains
   readable for orphan or legacy facts but is no longer authoritative when an effective message is
-  available. No payload migration or historical backfill rewrite is introduced.
+  available. New content-revision keys may add a superseded-entry suffix; no payload migration or
+  historical backfill rewrite is introduced.
 - Existing transcript backfill remains available for legacy context facts and remains fail-open.
 - No renderer or IPC contract changes are required in v1.
 - Existing run IDs in historical transcript metadata remain readable. Only new physical Runs use the

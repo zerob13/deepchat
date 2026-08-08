@@ -113,7 +113,7 @@ export class TapeFactService
   }
 
   async appendToolFact(input: TapeToolFactInput): Promise<TapeEntryRef> {
-    const row = appendTapeToolFact(this.table, input, 'live', 'tool_loop')
+    const row = appendTapeToolFact(this.table, input, 'live', { reason: 'tool_loop' })
     if (!row) throw new Error('Tape tool fact was not appendable.')
     return { sessionId: input.sessionId, entryId: row.entry_id }
   }

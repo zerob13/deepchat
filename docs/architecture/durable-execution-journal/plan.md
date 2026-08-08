@@ -260,13 +260,15 @@ queries, and all batches execute synchronously inside the existing outer transac
 An order-only replacement appends the corrected message or compaction-indicator fact but does not
 rewrite its tool call/result facts. Effective views project tool `orderSeq` from the corresponding
 effective message and use the persisted tool payload value only when no effective message can be
-resolved. The old payload field and provenance format remain unchanged for compatibility.
+resolved. Existing payloads and provenance keys remain unchanged. When changed content returns to a
+previous payload hash, the new fact keeps the legacy hash prefix and adds the effective entry it
+supersedes so the append cannot resolve to the older revision.
 
 Reconciliation builds a map of the current effective tool revision by logical tool identity. Its
-content fingerprint excludes `orderSeq` but includes all other persisted tool payload fields. A
-backfill candidate equal to that current content is skipped; a changed candidate is appended and
-becomes the new effective revision. Comparing only with the current revision is required so a
-legitimate A -> B -> A content change is not mistaken for an old duplicate.
+semantic fingerprint includes kind, name, terminal status, and every persisted tool payload field
+except `orderSeq`. A backfill candidate equal to that current content is skipped; a changed candidate
+is appended and becomes the new effective revision. Comparing only with the current revision is
+required so a legitimate A -> B -> A content change is not mistaken for an old duplicate.
 
 Synthetic summary checkpoint contributions cite the reconstruction anchor entry only when that
 anchor carries the same normalized summary. This keeps ViewManifest lineage auditable without

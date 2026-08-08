@@ -3,6 +3,7 @@ import type { DeepChatTapeEntryKind, DeepChatTapeEntryRow, DeepChatTapeSearchInp
 import { EXECUTION_JOURNAL_EVENT_NAMES } from './executionJournal'
 import {
   parseNestedTapeJsonObject,
+  parseTapeJsonObject,
   readTapeMessageRetractionId,
   readTapeToolIdentity,
   tapeEntryToMessageRecord,
@@ -49,6 +50,24 @@ const DEFAULT_EXCLUDED_TAPE_EVENT_NAME_SET = new Set<string>(DEFAULT_EXCLUDED_TA
 type EffectiveMessageCandidate = {
   row: DeepChatTapeEntryRow
   record: ChatMessageRecord
+}
+
+export function projectTapeToolOrderSeq(
+  row: DeepChatTapeEntryRow,
+  effectiveMessageOrderSeqById: ReadonlyMap<string, number>
+): DeepChatTapeEntryRow {
+  const identity = readTapeToolIdentity(row)
+  if (!identity) return row
+
+  const effectiveOrderSeq = effectiveMessageOrderSeqById.get(identity.messageId)
+  if (effectiveOrderSeq === undefined) return row
+
+  const payload = parseTapeJsonObject(row.payload_json)
+  if (payload.orderSeq === effectiveOrderSeq) return row
+  return {
+    ...row,
+    payload_json: JSON.stringify({ ...payload, orderSeq: effectiveOrderSeq })
+  }
 }
 
 function compareSqliteBinaryText(left: string, right: string): number {
@@ -211,9 +230,12 @@ export function buildEffectiveTapeView(
         compareSqliteBinaryText(left.record.id, right.record.id)
     )
   const effectiveMessageIds = new Set(messageRows.map((candidate) => candidate.record.id))
+  const effectiveMessageOrderSeqById = new Map(
+    messageRows.map((candidate) => [candidate.record.id, candidate.record.orderSeq])
+  )
   const effectiveToolRows = [...toolRows.values()]
     .filter((candidate) => effectiveMessageIds.has(candidate.messageId))
-    .map((candidate) => candidate.row)
+    .map((candidate) => projectTapeToolOrderSeq(candidate.row, effectiveMessageOrderSeqById))
   const effectiveRows = [
     ...anchorRows,
     ...eventRows,
