@@ -664,5 +664,38 @@ describe('ExecutionContract domain', () => {
     stored.contractHash = hashJsonData(draft)
 
     expect(isDeepChatExecutionContract(stored)).toBe(true)
+
+    const taskContext = buildTaskContext({ workspace: 'C:/workspace/project/' })
+    const contract = buildExecutionContract(
+      buildInput({
+        tools: [agentTool('read')],
+        workspace: { kind: 'path', path: 'C:/workspace/project/child/' },
+        maxSubagentDepth: 0,
+        taskContractContext: taskContext
+      })
+    )
+    expect(contract.ceilings.workspace).toEqual({
+      kind: 'path',
+      path: 'C:\\workspace\\project\\child\\'
+    })
+    expect(() =>
+      assertExecutionContractAllowsDispatch(contract, {
+        request: contract.request,
+        currentTool: agentTool('read'),
+        currentWorkspace: { kind: 'path', path: 'C:/workspace/project/child/' },
+        currentMaxSubagentDepth: 0,
+        requestedSubagentDepth: 0
+      })
+    ).not.toThrow()
+    expect(() =>
+      buildExecutionContract(
+        buildInput({
+          tools: [agentTool('read')],
+          workspace: { kind: 'path', path: 'C:/workspace/other/' },
+          maxSubagentDepth: 0,
+          taskContractContext: taskContext
+        })
+      )
+    ).toThrow(/workspace ceiling/u)
   })
 })

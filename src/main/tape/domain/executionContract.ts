@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import path from 'node:path'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import {
   stripToolExecutionContract,
@@ -33,6 +32,11 @@ import {
 import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import { canonicalJsonStringifyData, hashJsonData } from './canonicalJson'
 import { isDeepChatTaskContract, isDeepChatTaskContractRef } from './taskContract'
+import {
+  isWorkspacePathWithin,
+  normalizeAbsoluteWorkspacePath,
+  workspacePathsMatch
+} from './workspacePath'
 
 export const MAX_EXECUTION_CONTRACT_BYTES = 64 * 1024
 export const MAX_EXECUTION_CONTRACT_BINDING_BYTES = 4 * 1024
@@ -591,10 +595,11 @@ function normalizeWorkspace(
   const workspacePath = requireString(workspace.path, 'workspace.path', MAX_WORKSPACE_PATH_BYTES, {
     preserveOuterWhitespace: true
   })
-  if (!path.isAbsolute(workspacePath)) {
+  const normalized = normalizeAbsoluteWorkspacePath(workspacePath)
+  if (normalized === null) {
     throw new ExecutionContractError('workspace.path must be absolute.', 'invalid_input')
   }
-  return { kind: 'path', path: path.normalize(workspacePath) }
+  return { kind: 'path', path: normalized.path }
 }
 
 function normalizeMaxSubagentDepth(value: unknown): number {
@@ -684,10 +689,7 @@ function isStoredWorkspace(value: unknown): value is DeepChatExecutionWorkspaceC
   ) {
     return false
   }
-  return (
-    (path.posix.isAbsolute(value.path) && path.posix.normalize(value.path) === value.path) ||
-    (path.win32.isAbsolute(value.path) && path.win32.normalize(value.path) === value.path)
-  )
+  return normalizeAbsoluteWorkspacePath(value.path)?.path === value.path
 }
 
 function isStoredPromptSection(value: unknown): value is DeepChatPromptSectionProvenance {
@@ -861,19 +863,6 @@ export function meetToolEffects(left: ToolEffect, right: ToolEffect): ToolEffect
   return isToolEffectWithinCeiling(left, right) ? left : right
 }
 
-function normalizeWorkspaceForComparison(
-  workspace: DeepChatExecutionWorkspaceCeiling
-): string | null {
-  if (workspace.kind === 'runtime_default') return null
-  if (path.win32.isAbsolute(workspace.path)) {
-    return `win32:${path.win32.resolve(workspace.path)}`
-  }
-  if (path.posix.isAbsolute(workspace.path)) {
-    return `posix:${path.posix.resolve(workspace.path)}`
-  }
-  return null
-}
-
 function executionWorkspacesMatch(
   current: DeepChatExecutionWorkspaceCeiling,
   ceiling: DeepChatExecutionWorkspaceCeiling
@@ -881,9 +870,7 @@ function executionWorkspacesMatch(
   if (current.kind === 'runtime_default' || ceiling.kind === 'runtime_default') {
     return current.kind === ceiling.kind
   }
-  const currentPath = normalizeWorkspaceForComparison(current)
-  const ceilingPath = normalizeWorkspaceForComparison(ceiling)
-  return currentPath !== null && currentPath === ceilingPath
+  return workspacePathsMatch(current.path, ceiling.path)
 }
 
 function isExecutionWorkspaceWithinTaskCeiling(
@@ -894,11 +881,7 @@ function isExecutionWorkspaceWithinTaskCeiling(
     return execution.kind === taskCeiling.kind
   }
 
-  const relative = path.relative(path.resolve(taskCeiling.path), path.resolve(execution.path))
-  return (
-    relative === '' ||
-    (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-  )
+  return isWorkspacePathWithin(execution.path, taskCeiling.path)
 }
 
 function normalizeTaskContractRef(

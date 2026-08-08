@@ -111,6 +111,18 @@ describe('TaskContract domain', () => {
     ).toThrow(/creationReason is invalid/u)
   })
 
+  it('keeps canonical workspace paths portable across host platforms', () => {
+    const contract = buildTaskContract(
+      buildInput({ workspace: { kind: 'path', path: 'C:/workspace/project/' } })
+    )
+
+    expect(contract.taskHarness.ceilings.workspace).toEqual({
+      kind: 'path',
+      path: 'C:\\workspace\\project\\'
+    })
+    expect(restoreTaskContract(JSON.parse(serializeTaskContract(contract)))).toEqual(contract)
+  })
+
   it('rejects predecessor evaluations from another parent Session', () => {
     const predecessorEvaluationRef = {
       schemaVersion: 1 as const,

@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer'
-import path from 'node:path'
 import {
   DEEPCHAT_TASK_CONTRACT_HASH_VERSION,
   DEEPCHAT_TASK_CONTRACT_SCHEMA_VERSION,
@@ -14,6 +13,7 @@ import {
 } from '@shared/types/task-contract'
 import type { JsonValue } from '@shared/contracts/json'
 import { canonicalJsonStringifyData, hashJsonData } from './canonicalJson'
+import { normalizeAbsoluteWorkspacePath } from './workspacePath'
 
 const MAX_IDENTITY_BYTES = 1_024
 const MAX_TITLE_BYTES = 1_024
@@ -124,15 +124,16 @@ function normalizeWorkspace(workspace: DeepChatTaskWorkspaceCeiling): DeepChatTa
   if (workspace?.kind !== 'path' || typeof workspace.path !== 'string') {
     throw new TaskContractError('workspace.kind is invalid.', 'invalid_input')
   }
+  const normalized = normalizeAbsoluteWorkspacePath(workspace.path)
   if (
     !workspace.path ||
     workspace.path.includes('\0') ||
     utf8Length(workspace.path) > MAX_WORKSPACE_PATH_BYTES ||
-    !path.isAbsolute(workspace.path)
+    normalized === null
   ) {
     throw new TaskContractError('workspace.path must be a bounded absolute path.', 'invalid_input')
   }
-  return { kind: 'path', path: path.normalize(workspace.path) }
+  return { kind: 'path', path: normalized.path }
 }
 
 function normalizeEvaluationRef(value: DeepChatEvaluationRef | null): DeepChatEvaluationRef | null {
