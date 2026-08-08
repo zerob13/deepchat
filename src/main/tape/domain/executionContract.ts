@@ -48,6 +48,48 @@ const PROMPT_SECTION_INCLUSIONS = new Set<string>(DEEPCHAT_PROMPT_SECTION_INCLUS
 const PROMPT_SOURCE_FRESHNESS_VALUES = new Set<string>(DEEPCHAT_PROMPT_SOURCE_FRESHNESS_VALUES)
 const PROMPT_DEGRADATION_CODES = new Set<string>(DEEPCHAT_PROMPT_DEGRADATION_CODES)
 const PERMISSION_MODES = new Set<PermissionMode>(['default', 'auto_approve', 'full_access'])
+const EXECUTION_CONTRACT_KEYS = [
+  'schemaVersion',
+  'hashVersion',
+  'request',
+  'ceilings',
+  'dynamicControlSnapshot',
+  'provenance',
+  'contractHash'
+] as const
+const EXECUTION_REQUEST_KEYS = ['sessionId', 'messageId', 'runId', 'requestSeq'] as const
+const EXECUTION_CEILINGS_KEYS = ['tools', 'workspace', 'maxSubagentDepth'] as const
+const EXECUTION_TOOL_CEILING_KEYS = ['target', 'execution'] as const
+const EXECUTION_TOOL_TARGET_KEYS = [
+  'providerVisibleName',
+  'source',
+  'serverName',
+  'serverId',
+  'configGeneration',
+  'bindingHash',
+  'originalName'
+] as const
+const EXECUTION_POLICY_KEYS = ['effect', 'mode'] as const
+const DYNAMIC_CONTROL_KEYS = ['permissionMode', 'requestAdmitted', 'cancellationRequested'] as const
+const EXECUTION_PROVENANCE_KEYS = [
+  'promptSections',
+  'providerId',
+  'modelId',
+  'promptHash',
+  'effectiveGenerationConfigHash',
+  'providerVisibleToolDefinitionsHash',
+  'internalExecutionPolicyHash',
+  'assemblerVersion',
+  'taskContractRef'
+] as const
+const PROMPT_SECTION_KEYS = [
+  'kind',
+  'sourceRef',
+  'inclusion',
+  'contentHash',
+  'freshness',
+  'degradationCodes'
+] as const
 
 export interface BuildExecutionContractInput {
   request: DeepChatExecutionContractRequest
@@ -150,6 +192,50 @@ function hashData(value: unknown, label: string, omitUndefinedProperties = false
       cause: error
     })
   }
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+function hasExactKeys(
+  value: unknown,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[] = []
+): value is Record<string, unknown> {
+  if (!isRecordObject(value)) return false
+  const actualKeys = Object.keys(value)
+  const allowedKeys = new Set([...requiredKeys, ...optionalKeys])
+  return (
+    requiredKeys.every((key) => Object.hasOwn(value, key)) &&
+    actualKeys.every((key) => allowedKeys.has(key)) &&
+    actualKeys.length >= requiredKeys.length
+  )
+}
+
+function matchesNormalizedString(
+  value: unknown,
+  label: string,
+  maxBytes: number,
+  options?: { preserveOuterWhitespace?: boolean }
+): value is string {
+  try {
+    return requireString(value, label, maxBytes, options) === value
+  } catch {
+    return false
+  }
+}
+
+function matchesNormalizedUuid(value: unknown, label: string): value is string {
+  try {
+    return requireUuid(value, label) === value
+  } catch {
+    return false
+  }
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && SHA_256_PATTERN.test(value)
 }
 
 function compareCodePoints(left: string, right: string): number {
@@ -450,6 +536,185 @@ function resolveLeadingSystemPrompt(messages: readonly ChatMessage[]): string {
   return first?.role === 'system' && typeof first.content === 'string' ? first.content : ''
 }
 
+function isStoredToolTarget(value: unknown): value is DeepChatExecutionToolTargetIdentity {
+  if (!hasExactKeys(value, EXECUTION_TOOL_TARGET_KEYS)) return false
+  if (value.source !== 'agent' && value.source !== 'mcp') return false
+  if (
+    !matchesNormalizedString(
+      value.providerVisibleName,
+      'target.providerVisibleName',
+      MAX_IDENTITY_BYTES
+    ) ||
+    !matchesNormalizedString(value.serverName, 'target.serverName', MAX_IDENTITY_BYTES) ||
+    !matchesNormalizedString(value.originalName, 'target.originalName', MAX_IDENTITY_BYTES)
+  ) {
+    return false
+  }
+
+  const hasNullBinding =
+    value.serverId === null && value.configGeneration === null && value.bindingHash === null
+  const hasStableBinding =
+    matchesNormalizedUuid(value.serverId, 'target.serverId') &&
+    Number.isSafeInteger(value.configGeneration) &&
+    (value.configGeneration as number) > 0 &&
+    isSha256(value.bindingHash)
+  return value.source === 'mcp' ? hasStableBinding : hasNullBinding || hasStableBinding
+}
+
+function isStoredExecutionPolicy(value: unknown): value is ToolExecutionContract {
+  if (!hasExactKeys(value, EXECUTION_POLICY_KEYS)) return false
+  return (
+    (value.effect === 'read' && (value.mode === 'sequential' || value.mode === 'parallel')) ||
+    (value.effect === 'write' && value.mode === 'sequential')
+  )
+}
+
+function isStoredWorkspace(value: unknown): value is DeepChatExecutionWorkspaceCeiling {
+  if (!isRecordObject(value)) return false
+  if (value.kind === 'runtime_default') {
+    return hasExactKeys(value, ['kind'])
+  }
+  if (value.kind !== 'path' || !hasExactKeys(value, ['kind', 'path'])) return false
+  if (
+    !matchesNormalizedString(value.path, 'workspace.path', MAX_WORKSPACE_PATH_BYTES, {
+      preserveOuterWhitespace: true
+    })
+  ) {
+    return false
+  }
+  return (
+    (path.posix.isAbsolute(value.path) && path.posix.normalize(value.path) === value.path) ||
+    (path.win32.isAbsolute(value.path) && path.win32.normalize(value.path) === value.path)
+  )
+}
+
+function isStoredPromptSection(value: unknown): value is DeepChatPromptSectionProvenance {
+  if (
+    !hasExactKeys(value, PROMPT_SECTION_KEYS.slice(0, 3), PROMPT_SECTION_KEYS.slice(3)) ||
+    !PROMPT_SECTION_KINDS.has(value.kind as string) ||
+    !matchesNormalizedString(value.sourceRef, 'promptSection.sourceRef', MAX_SOURCE_REF_BYTES) ||
+    !PROMPT_SECTION_INCLUSIONS.has(value.inclusion as string)
+  ) {
+    return false
+  }
+  if (
+    value.freshness !== undefined &&
+    !PROMPT_SOURCE_FRESHNESS_VALUES.has(value.freshness as string)
+  ) {
+    return false
+  }
+  if (value.contentHash !== undefined && !isSha256(value.contentHash)) return false
+
+  const degradationCodes = value.degradationCodes
+  if (degradationCodes !== undefined) {
+    if (
+      !Array.isArray(degradationCodes) ||
+      degradationCodes.length === 0 ||
+      degradationCodes.length > MAX_SECTION_DEGRADATION_CODES ||
+      degradationCodes.some(
+        (code, index) =>
+          typeof code !== 'string' ||
+          !PROMPT_DEGRADATION_CODES.has(code) ||
+          (index > 0 && compareCodePoints(degradationCodes[index - 1], code) >= 0)
+      )
+    ) {
+      return false
+    }
+  }
+
+  const hasContentHash = value.contentHash !== undefined
+  const hasDegradation = degradationCodes !== undefined
+  return (
+    (value.inclusion === 'omitted' && !hasContentHash) ||
+    (value.inclusion === 'included' && hasContentHash && !hasDegradation) ||
+    (value.inclusion === 'degraded' && hasContentHash && hasDegradation)
+  )
+}
+
+function isStoredExecutionContractRequest(
+  value: unknown
+): value is DeepChatExecutionContractRequest {
+  return (
+    hasExactKeys(value, EXECUTION_REQUEST_KEYS) &&
+    matchesNormalizedString(value.sessionId, 'request.sessionId', MAX_IDENTITY_BYTES) &&
+    matchesNormalizedString(value.messageId, 'request.messageId', MAX_IDENTITY_BYTES) &&
+    matchesNormalizedUuid(value.runId, 'request.runId') &&
+    Number.isSafeInteger(value.requestSeq) &&
+    (value.requestSeq as number) > 0
+  )
+}
+
+function isStoredExecutionCeilings(value: unknown): value is DeepChatExecutionContract['ceilings'] {
+  if (
+    !hasExactKeys(value, EXECUTION_CEILINGS_KEYS) ||
+    !Array.isArray(value.tools) ||
+    value.tools.length > MAX_EXECUTION_CONTRACT_TOOLS ||
+    !isStoredWorkspace(value.workspace) ||
+    !Number.isSafeInteger(value.maxSubagentDepth) ||
+    (value.maxSubagentDepth as number) < 0 ||
+    (value.maxSubagentDepth as number) > MAX_EXECUTION_CONTRACT_SUBAGENT_DEPTH
+  ) {
+    return false
+  }
+
+  let previousTargetKey: string | null = null
+  const targetKeyByVisibleName = new Map<string, string>()
+  for (const tool of value.tools) {
+    if (
+      !hasExactKeys(tool, EXECUTION_TOOL_CEILING_KEYS) ||
+      !isStoredToolTarget(tool.target) ||
+      !isStoredExecutionPolicy(tool.execution)
+    ) {
+      return false
+    }
+    const targetKey = buildExecutionToolTargetKey(tool.target)
+    if (previousTargetKey !== null && compareCodePoints(previousTargetKey, targetKey) >= 0) {
+      return false
+    }
+    const previousVisibleTarget = targetKeyByVisibleName.get(tool.target.providerVisibleName)
+    if (previousVisibleTarget !== undefined && previousVisibleTarget !== targetKey) return false
+    targetKeyByVisibleName.set(tool.target.providerVisibleName, targetKey)
+    previousTargetKey = targetKey
+  }
+  return true
+}
+
+function isStoredDynamicControlSnapshot(
+  value: unknown
+): value is DeepChatExecutionDynamicControlSnapshot {
+  return (
+    hasExactKeys(value, DYNAMIC_CONTROL_KEYS) &&
+    PERMISSION_MODES.has(value.permissionMode as PermissionMode) &&
+    typeof value.requestAdmitted === 'boolean' &&
+    typeof value.cancellationRequested === 'boolean'
+  )
+}
+
+function isStoredExecutionProvenance(
+  value: unknown,
+  ceilings: DeepChatExecutionContract['ceilings']
+): value is DeepChatExecutionContract['provenance'] {
+  return (
+    hasExactKeys(value, EXECUTION_PROVENANCE_KEYS) &&
+    Array.isArray(value.promptSections) &&
+    value.promptSections.length <= MAX_EXECUTION_CONTRACT_PROMPT_SECTIONS &&
+    value.promptSections.every(isStoredPromptSection) &&
+    matchesNormalizedString(value.providerId, 'provenance.providerId', MAX_IDENTITY_BYTES) &&
+    matchesNormalizedString(value.modelId, 'provenance.modelId', MAX_IDENTITY_BYTES) &&
+    isSha256(value.promptHash) &&
+    isSha256(value.effectiveGenerationConfigHash) &&
+    isSha256(value.providerVisibleToolDefinitionsHash) &&
+    isSha256(value.internalExecutionPolicyHash) &&
+    value.internalExecutionPolicyHash === hashData(ceilings, 'internal execution policy') &&
+    matchesNormalizedString(
+      value.assemblerVersion,
+      'provenance.assemblerVersion',
+      MAX_ASSEMBLER_VERSION_BYTES
+    ) &&
+    value.taskContractRef === null
+  )
+}
+
 export function buildEffectiveGenerationConfigHash(input: {
   modelConfig: ModelConfig
   temperature: number
@@ -467,6 +732,10 @@ export function buildEffectiveGenerationConfigHash(input: {
     'generation config',
     true
   )
+}
+
+export function buildProviderMessagesHash(messages: readonly ChatMessage[]): string {
+  return hashData(messages, 'provider messages', true)
 }
 
 export function buildProviderVisibleToolDefinitionsHash(
@@ -528,7 +797,7 @@ export function buildExecutionContract(
       promptSections: normalizePromptSections(input.promptAssembly),
       providerId: requireString(input.providerId, 'providerId', MAX_IDENTITY_BYTES),
       modelId: requireString(input.modelId, 'modelId', MAX_IDENTITY_BYTES),
-      promptHash: hashData(input.providerMessages, 'provider messages', true),
+      promptHash: buildProviderMessagesHash(input.providerMessages),
       effectiveGenerationConfigHash: buildEffectiveGenerationConfigHash(input),
       providerVisibleToolDefinitionsHash: buildProviderVisibleToolDefinitionsHash(input.tools),
       internalExecutionPolicyHash: hashData(ceilings, 'internal execution policy'),
@@ -564,6 +833,30 @@ export function verifyExecutionContractHash(contract: DeepChatExecutionContract)
     return false
   }
   try {
+    const { contractHash, ...draft } = contract
+    return buildContractHash(draft) === contractHash
+  } catch {
+    return false
+  }
+}
+
+export function isDeepChatExecutionContract(value: unknown): value is DeepChatExecutionContract {
+  try {
+    const serialized = canonicalJsonStringifyData(value)
+    if (
+      utf8Length(serialized) > MAX_EXECUTION_CONTRACT_BYTES ||
+      !hasExactKeys(value, EXECUTION_CONTRACT_KEYS) ||
+      value.schemaVersion !== DEEPCHAT_EXECUTION_CONTRACT_SCHEMA_VERSION ||
+      value.hashVersion !== DEEPCHAT_EXECUTION_CONTRACT_HASH_VERSION ||
+      !isStoredExecutionContractRequest(value.request) ||
+      !isStoredExecutionCeilings(value.ceilings) ||
+      !isStoredDynamicControlSnapshot(value.dynamicControlSnapshot) ||
+      !isStoredExecutionProvenance(value.provenance, value.ceilings) ||
+      !isSha256(value.contractHash)
+    ) {
+      return false
+    }
+    const contract = value as unknown as DeepChatExecutionContract
     const { contractHash, ...draft } = contract
     return buildContractHash(draft) === contractHash
   } catch {

@@ -1,3 +1,5 @@
+import type { DeepChatExecutionContract } from './execution-contract'
+
 export type DeepChatTapeViewTaskType = 'chat' | 'resume' | 'tool_loop'
 
 export type DeepChatTapeViewPolicy =
@@ -92,9 +94,7 @@ export interface DeepChatTapeViewMeta {
   traceDebugEnabled: boolean
 }
 
-export interface DeepChatTapeViewManifest {
-  schemaVersion: 1 | 2 | 3 | 4
-  hashVersion: number
+interface DeepChatTapeViewManifestBase {
   viewId: string
   sessionId: string
   messageId: string
@@ -114,6 +114,20 @@ export interface DeepChatTapeViewManifest {
   meta: DeepChatTapeViewMeta
   assembledAt: number
 }
+
+export interface DeepChatTapeViewManifestLegacy extends DeepChatTapeViewManifestBase {
+  schemaVersion: 1 | 2 | 3 | 4
+  hashVersion: number
+  executionContract?: never
+}
+
+export interface DeepChatTapeViewManifestV5 extends DeepChatTapeViewManifestBase {
+  schemaVersion: 5
+  hashVersion: 3
+  executionContract: DeepChatExecutionContract
+}
+
+export type DeepChatTapeViewManifest = DeepChatTapeViewManifestLegacy | DeepChatTapeViewManifestV5
 
 export type DeepChatTapeViewManifestIntegrity = 'valid' | 'invalid' | 'unverified'
 

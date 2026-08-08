@@ -5,6 +5,7 @@ import {
   assemblePromptSections,
   createPromptAssemblySection
 } from '@/agent/deepchat/resources/promptAssembly'
+import { hashJsonData } from '@/tape/domain/canonicalJson'
 import {
   ExecutionContractError,
   MAX_EXECUTION_CONTRACT_PROMPT_SECTIONS,
@@ -12,6 +13,7 @@ import {
   buildEffectiveGenerationConfigHash,
   buildExecutionContract,
   buildProviderVisibleToolDefinitionsHash,
+  isDeepChatExecutionContract,
   isToolEffectWithinCeiling,
   meetToolEffects,
   verifyExecutionContractHash,
@@ -390,5 +392,15 @@ describe('ExecutionContract domain', () => {
     expect(isToolEffectWithinCeiling('write', 'read')).toBe(false)
     expect(meetToolEffects('read', 'write')).toBe('read')
     expect(meetToolEffects('write', 'write')).toBe('write')
+  })
+
+  it('validates canonical workspace paths independently of the replay host platform', () => {
+    const stored = JSON.parse(JSON.stringify(buildExecutionContract(buildInput())))
+    stored.ceilings.workspace = { kind: 'path', path: 'C:\\workspace\\project\\' }
+    stored.provenance.internalExecutionPolicyHash = hashJsonData(stored.ceilings)
+    const { contractHash: _, ...draft } = stored
+    stored.contractHash = hashJsonData(draft)
+
+    expect(isDeepChatExecutionContract(stored)).toBe(true)
   })
 })

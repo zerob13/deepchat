@@ -1,19 +1,27 @@
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import { stripToolExecutionContract, type MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import type {
   DeepChatTapeViewEntryRef,
   DeepChatTapeViewExcludedRange,
   DeepChatTapeViewExcludedRef,
   DeepChatTapeViewManifest,
   DeepChatTapeViewManifestIntegrity,
+  DeepChatTapeViewManifestLegacy,
   DeepChatTapeViewPolicy,
+  DeepChatTapeViewManifestV5,
   DeepChatTapeViewSyntheticContribution,
   DeepChatTapeViewTaskType,
   DeepChatTapeViewTokenBudget
 } from '@shared/types/tape-view-manifest'
 import { estimateMessagesTokens } from '@shared/utils/messageTokens'
-import { hashJson } from './canonicalJson'
+import { hashJson, hashJsonData } from './canonicalJson'
+import {
+  buildProviderMessagesHash,
+  buildProviderVisibleToolDefinitionsHash,
+  isDeepChatExecutionContract
+} from './executionContract'
 
 export { hashJson, stableJsonStringify } from './canonicalJson'
 
@@ -66,6 +74,7 @@ export type TapeViewManifestBuildInput = {
   supportsVision: boolean
   supportsAudioInput: boolean
   traceDebugEnabled: boolean
+  executionContract?: DeepChatExecutionContract
   assembledAt?: number
 }
 
@@ -119,9 +128,11 @@ export function resolveTapeViewManifestPolicy(
   }
 }
 
-export const TAPE_VIEW_MANIFEST_HASH_VERSION = 2
+const TAPE_VIEW_MANIFEST_LEGACY_HASH_VERSION = 2
+/** Current hash version for contract-bearing ViewManifest values. */
+export const TAPE_VIEW_MANIFEST_HASH_VERSION = 3
 
-function buildManifestHash(manifest: DeepChatTapeViewManifest): string {
+function buildManifestHashable(manifest: DeepChatTapeViewManifest): Record<string, unknown> {
   const hashable: Record<string, unknown> = { ...manifest }
   delete hashable.assembledAt
   delete hashable.viewId
@@ -129,7 +140,80 @@ function buildManifestHash(manifest: DeepChatTapeViewManifest): string {
     promptHash: manifest.hashes.promptHash,
     toolDefinitionsHash: manifest.hashes.toolDefinitionsHash
   }
-  return hashJson(hashable)
+  return hashable
+}
+
+function buildManifestHashV2(manifest: DeepChatTapeViewManifest): string {
+  return hashJson(buildManifestHashable(manifest))
+}
+
+function buildManifestHashV3(manifest: DeepChatTapeViewManifest): string {
+  return hashJsonData(buildManifestHashable(manifest))
+}
+
+function executionContractMatchesManifest(manifest: DeepChatTapeViewManifestV5): boolean {
+  const contract = manifest.executionContract
+  return (
+    isDeepChatExecutionContract(contract) &&
+    contract.request.sessionId === manifest.sessionId &&
+    contract.request.messageId === manifest.messageId &&
+    contract.request.requestSeq === manifest.requestSeq &&
+    contract.provenance.providerId === manifest.meta.providerId &&
+    contract.provenance.modelId === manifest.meta.modelId &&
+    contract.provenance.promptHash === manifest.hashes.promptHash &&
+    contract.provenance.providerVisibleToolDefinitionsHash === manifest.hashes.toolDefinitionsHash
+  )
+}
+
+function isDeeplyFrozen(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return true
+  return Object.isFrozen(value) && Object.values(value).every(isDeeplyFrozen)
+}
+
+function requireExecutionContractMatchesInput(
+  input: TapeViewManifestBuildInput,
+  promptHash: string,
+  toolDefinitionsHash: string
+): DeepChatExecutionContract {
+  const contract = input.executionContract
+  if (!isDeepChatExecutionContract(contract)) {
+    throw new TypeError('Execution contract is missing, malformed, or has an invalid hash.')
+  }
+  if (!isDeeplyFrozen(contract)) {
+    throw new TypeError('Execution contract must be immutable before View construction.')
+  }
+  if (
+    contract.request.sessionId !== input.sessionId ||
+    contract.request.messageId !== input.messageId ||
+    contract.request.requestSeq !== input.requestSeq
+  ) {
+    throw new TypeError('Execution contract request identity does not match the View request.')
+  }
+  if (
+    contract.provenance.providerId !== input.providerId ||
+    contract.provenance.modelId !== input.modelId
+  ) {
+    throw new TypeError('Execution contract provider identity does not match the View request.')
+  }
+  if (contract.provenance.promptHash !== promptHash) {
+    throw new TypeError('Execution contract provider-message hash does not match the View payload.')
+  }
+  if (contract.provenance.providerVisibleToolDefinitionsHash !== toolDefinitionsHash) {
+    throw new TypeError('Execution contract tool-definition hash does not match the View payload.')
+  }
+  return contract
+}
+
+function finalizeManifest<T extends DeepChatTapeViewManifest>(draft: T): T {
+  const manifestHash =
+    draft.hashVersion === TAPE_VIEW_MANIFEST_HASH_VERSION
+      ? buildManifestHashV3(draft)
+      : buildManifestHashV2(draft)
+  return {
+    ...draft,
+    viewId: `view_${manifestHash.slice(0, 16)}`,
+    hashes: { ...draft.hashes, manifestHash }
+  } as T
 }
 
 function buildExcludedRanges(
@@ -156,10 +240,20 @@ function buildExcludedRanges(
 export function verifyTapeViewManifestHash(
   manifest: DeepChatTapeViewManifest
 ): DeepChatTapeViewManifestIntegrity {
-  if (manifest.hashVersion !== TAPE_VIEW_MANIFEST_HASH_VERSION) {
-    return 'unverified'
+  if (manifest.hashVersion === TAPE_VIEW_MANIFEST_LEGACY_HASH_VERSION) {
+    if (Number(manifest.schemaVersion) === 5) return 'invalid'
+    return buildManifestHashV2(manifest) === manifest.hashes.manifestHash ? 'valid' : 'invalid'
   }
-  return buildManifestHash(manifest) === manifest.hashes.manifestHash ? 'valid' : 'invalid'
+  if (manifest.hashVersion === TAPE_VIEW_MANIFEST_HASH_VERSION) {
+    if (manifest.schemaVersion !== 5 || !executionContractMatchesManifest(manifest))
+      return 'invalid'
+    const manifestHash = buildManifestHashV3(manifest)
+    return manifestHash === manifest.hashes.manifestHash &&
+      manifest.viewId === `view_${manifestHash.slice(0, 16)}`
+      ? 'valid'
+      : 'invalid'
+  }
+  return 'unverified'
 }
 
 export function createTapeViewManifest(
@@ -167,9 +261,7 @@ export function createTapeViewManifest(
 ): DeepChatTapeViewManifest {
   const assembledAt = input.assembledAt ?? Date.now()
   const excludedRanges = buildExcludedRanges(input.summaryCursor)
-  const draft: DeepChatTapeViewManifest = {
-    schemaVersion: 4,
-    hashVersion: TAPE_VIEW_MANIFEST_HASH_VERSION,
+  const common = {
     viewId: '',
     sessionId: input.sessionId,
     messageId: input.messageId,
@@ -195,11 +287,6 @@ export function createTapeViewManifest(
       ...input.tokenBudget,
       estimatedPromptTokens: estimateMessagesTokens(input.messages)
     },
-    hashes: {
-      promptHash: hashJson(input.messages),
-      toolDefinitionsHash: hashJson(input.tools.map(stripToolExecutionContract)),
-      manifestHash: ''
-    },
     meta: {
       providerId: input.providerId,
       modelId: input.modelId,
@@ -211,12 +298,35 @@ export function createTapeViewManifest(
     assembledAt
   }
 
-  const manifestHash = buildManifestHash(draft)
-  return {
-    ...draft,
-    viewId: `view_${manifestHash.slice(0, 16)}`,
-    hashes: { ...draft.hashes, manifestHash }
+  if (input.executionContract !== undefined) {
+    const promptHash = buildProviderMessagesHash(input.messages)
+    const toolDefinitionsHash = buildProviderVisibleToolDefinitionsHash(input.tools)
+    const executionContract = requireExecutionContractMatchesInput(
+      input,
+      promptHash,
+      toolDefinitionsHash
+    )
+    const draft: DeepChatTapeViewManifestV5 = {
+      schemaVersion: 5,
+      hashVersion: TAPE_VIEW_MANIFEST_HASH_VERSION,
+      ...common,
+      hashes: { promptHash, toolDefinitionsHash, manifestHash: '' },
+      executionContract
+    }
+    return finalizeManifest(draft)
   }
+
+  const draft: DeepChatTapeViewManifestLegacy = {
+    schemaVersion: 4,
+    hashVersion: TAPE_VIEW_MANIFEST_LEGACY_HASH_VERSION,
+    ...common,
+    hashes: {
+      promptHash: hashJson(input.messages),
+      toolDefinitionsHash: hashJson(input.tools.map(stripToolExecutionContract)),
+      manifestHash: ''
+    }
+  }
+  return finalizeManifest(draft)
 }
 
 export function buildIncludedRefs(

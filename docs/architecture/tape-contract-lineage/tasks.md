@@ -18,7 +18,7 @@
 
 ## P0: ViewManifest V5 And Enforcement
 
-- [ ] Embed ExecutionContract in ViewManifest schema 5 and preserve v1-v4 reads.
+- [x] Embed ExecutionContract in ViewManifest schema 5 and preserve v1-v4 reads.
 - [ ] Keep interactive manifest persistence fail-open and require contract-bearing child manifests.
 - [ ] Carry the exact View contract to tool dispatch without Session-global mutable state.
 - [ ] Enforce stable tool target, effect, workspace, and nesting ceilings with current authority.

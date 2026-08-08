@@ -99,7 +99,7 @@ export function hashJson(value: unknown): string {
   return createHash('sha256').update(stableJsonStringify(value)).digest('hex')
 }
 
-// ViewManifest hashes keep the legacy object accumulator; journal identities need a
+// Legacy ViewManifest hashes keep the old object accumulator. New persisted identities use a
 // null-prototype accumulator so JSON keys such as "__proto__" remain identity-bearing.
 export function canonicalJsonStringifyData(
   value: unknown,
