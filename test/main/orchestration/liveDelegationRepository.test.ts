@@ -998,6 +998,33 @@ describeIfSqlite('LiveDelegationRepository', () => {
     ).toEqual([])
   })
 
+  it('rejects an evaluation reference from another parent Tape incarnation', () => {
+    const created = createDelegation()
+    repository.markTurnStarted(created.turn.id, 110)
+    const settled = repository.finishTurn({
+      turnId: created.turn.id,
+      status: 'completed',
+      candidateResult: completeAcceptedAnswer(),
+      now: 120
+    })
+    const evaluationRef = settled.turn.evaluationRef!
+    const conflictingTapeIdentity = `${evaluationRef.tapeIdentity === '0'.repeat(64) ? '1' : '0'}${evaluationRef.tapeIdentity.slice(1)}`
+    db!
+      .prepare(
+        `UPDATE live_delegation_turns
+         SET evaluation_ref_json = ?
+         WHERE turn_id = ?`
+      )
+      .run(
+        JSON.stringify({ ...evaluationRef, tapeIdentity: conflictingTapeIdentity }),
+        created.turn.id
+      )
+
+    expect(() => repository.requireTurn(created.turn.id)).toThrow(
+      'has a misbound evaluation projection'
+    )
+  })
+
   it('rejects a terminal contract projection that has no evaluation', () => {
     const created = createDelegation()
     db!

@@ -316,6 +316,7 @@ function validateLiveDelegationTurn(
     turn.evaluation.taskContractHash !== turn.taskContract.contractHash ||
     turn.evaluation.executionStatus !== turn.status ||
     turn.evaluationRef.sessionId !== turn.taskContract.taskDescription.parentSessionId ||
+    turn.evaluationRef.tapeIdentity !== turn.taskContractRef?.tapeIdentity ||
     turn.evaluationRef.evaluationHash !== turn.evaluation.evaluationHash
   ) {
     context.addIssue({

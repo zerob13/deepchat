@@ -1088,6 +1088,7 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
       evaluation.taskContractHash !== taskContract.contractHash ||
       evaluation.executionStatus !== row.status ||
       evaluationRef?.sessionId !== taskContract.taskDescription.parentSessionId ||
+      evaluationRef.tapeIdentity !== taskContractRef?.tapeIdentity ||
       evaluationRef.evaluationHash !== evaluation.evaluationHash)
   ) {
     throw new Error(`Live delegation turn ${row.turn_id} has a misbound evaluation projection.`)
