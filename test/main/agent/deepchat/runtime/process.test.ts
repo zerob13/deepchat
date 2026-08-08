@@ -1856,7 +1856,7 @@ describe('processStream', () => {
     await promise
   })
 
-  it('records a provider AbortError as an error while the abort signal remains active', async () => {
+  it('records a provider AbortError as an error while the abort signal remains inactive', async () => {
     const abortError = new Error('Aborted')
     abortError.name = 'AbortError'
     const coreStream = vi.fn(async function* () {

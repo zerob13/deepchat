@@ -16,6 +16,7 @@ import { resolveSessionDir } from '@/agent/shared/storage/sessionPaths'
 
 // Configuration with environment variable support
 const FOREGROUND_PREVIEW_CHARS = 12000
+const FINISHED_SESSION_RETENTION_MS = 5 * 60 * 1000
 const COMPLETED_SESSION_RECONCILIATION_MS = 5 * 60 * 1000
 
 export const getBackgroundExecConfig = () => ({
@@ -155,6 +156,14 @@ interface TrackedSessionMeta {
   command: string
   createdAt: number
   lastAccessedAt: number
+}
+
+interface CompletedTrackedSessionMeta extends TrackedSessionMeta {
+  status: SessionCompletionResult['status']
+  exitCode?: number
+  outputLength: number
+  offloaded: boolean
+  timedOut: boolean
 }
 
 function isMissingUtilitySessionError(
@@ -960,7 +969,7 @@ export class BackgroundExecSessionManager {
           expiredSessions.push({ conversationId, sessionId })
         } else if (
           session.status !== 'running' &&
-          now - session.lastAccessedAt > COMPLETED_SESSION_RECONCILIATION_MS
+          now - session.lastAccessedAt > FINISHED_SESSION_RETENTION_MS
         ) {
           expiredSessions.push({ conversationId, sessionId })
         }
@@ -989,7 +998,7 @@ class BackgroundExecUtilityProxy {
     }
   >()
   private readonly activeSessions = new Map<string, TrackedSessionMeta>()
-  private readonly completedSessions = new Map<string, TrackedSessionMeta>()
+  private readonly completedSessions = new Map<string, CompletedTrackedSessionMeta>()
   private readonly crashedSessions = new Map<string, TrackedSessionMeta>()
   private completedSessionReconciliationTimer: NodeJS.Timeout | null = null
 
@@ -1026,8 +1035,11 @@ class BackgroundExecUtilityProxy {
     const active = Array.from(this.activeSessions.values())
       .filter((session) => session.conversationId === conversationId)
       .map((session) => this.toActiveSessionMeta(session))
+    const completed = Array.from(this.completedSessions.values())
+      .filter((session) => session.conversationId === conversationId)
+      .map((session) => this.toCompletedSessionMeta(session))
     let hostListSucceeded = false
-    let hostSessions = active
+    let hostSessions = [...active, ...completed]
     if (this.host) {
       try {
         hostSessions = await this.request<SessionMeta[]>('list', [conversationId])
@@ -1065,7 +1077,7 @@ class BackgroundExecUtilityProxy {
       return this.toCrashedPollResult(crashed)
     }
     const result = await this.request<PollResult>('poll', [conversationId, sessionId])
-    this.touchOrCompleteSession(conversationId, sessionId, result.status)
+    this.touchOrCompleteSession(conversationId, sessionId, result)
     return result
   }
 
@@ -1083,7 +1095,7 @@ class BackgroundExecUtilityProxy {
       }
     }
     const result = await this.request<LogResult>('log', [conversationId, sessionId, offset, limit])
-    this.touchOrCompleteSession(conversationId, sessionId, result.status)
+    this.touchOrCompleteSession(conversationId, sessionId, result)
     return result
   }
 
@@ -1106,7 +1118,7 @@ class BackgroundExecUtilityProxy {
       yieldMs
     ])
     if (result.kind === 'completed') {
-      this.markSessionCompleted(conversationId, sessionId)
+      this.markSessionCompleted(conversationId, sessionId, result.result)
     }
     return result
   }
@@ -1126,7 +1138,7 @@ class BackgroundExecUtilityProxy {
       sessionId,
       previewChars
     ])
-    this.markSessionCompleted(conversationId, sessionId)
+    this.markSessionCompleted(conversationId, sessionId, result)
     return result
   }
 
@@ -1417,7 +1429,7 @@ class BackgroundExecUtilityProxy {
   private getCompletedSession(
     conversationId: string,
     sessionId: string
-  ): TrackedSessionMeta | null {
+  ): CompletedTrackedSessionMeta | null {
     const session = this.completedSessions.get(sessionId)
     return session?.conversationId === conversationId ? session : null
   }
@@ -1437,26 +1449,38 @@ class BackgroundExecUtilityProxy {
   private touchOrCompleteSession(
     conversationId: string,
     sessionId: string,
-    status: PollResult['status']
+    result: PollResult | LogResult
   ): void {
     const session = this.activeSessions.get(sessionId)
     if (!session || session.conversationId !== conversationId) {
       return
     }
-    if (status === 'running') {
+    if (result.status === 'running') {
       session.lastAccessedAt = Date.now()
       return
     }
-    this.markSessionCompleted(conversationId, sessionId)
+    this.markSessionCompleted(conversationId, sessionId, result)
   }
 
-  private markSessionCompleted(conversationId: string, sessionId: string): void {
+  private markSessionCompleted(
+    conversationId: string,
+    sessionId: string,
+    result: SessionCompletionResult | PollResult | LogResult
+  ): void {
     const session = this.activeSessions.get(sessionId)
-    if (!session || session.conversationId !== conversationId) {
+    if (!session || session.conversationId !== conversationId || result.status === 'running') {
       return
     }
     this.activeSessions.delete(sessionId)
-    this.completedSessions.set(sessionId, { ...session, lastAccessedAt: Date.now() })
+    this.completedSessions.set(sessionId, {
+      ...session,
+      status: result.status,
+      ...(typeof result.exitCode === 'number' ? { exitCode: result.exitCode } : {}),
+      outputLength: 'totalLength' in result ? result.totalLength : result.output.length,
+      offloaded: result.offloaded === true,
+      timedOut: result.timedOut === true,
+      lastAccessedAt: Date.now()
+    })
     this.scheduleCompletedSessionReconciliation()
   }
 
@@ -1523,6 +1547,20 @@ class BackgroundExecUtilityProxy {
       outputLength: 0,
       offloaded: false,
       timedOut: false
+    }
+  }
+
+  private toCompletedSessionMeta(session: CompletedTrackedSessionMeta): SessionMeta {
+    return {
+      sessionId: session.sessionId,
+      command: session.command,
+      status: session.status,
+      createdAt: session.createdAt,
+      lastAccessedAt: session.lastAccessedAt,
+      ...(session.exitCode === undefined ? {} : { exitCode: session.exitCode }),
+      outputLength: session.outputLength,
+      offloaded: session.offloaded,
+      timedOut: session.timedOut
     }
   }
 

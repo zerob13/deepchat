@@ -1068,11 +1068,11 @@ describe('CompactionService', () => {
     expect(sourcedCheckpoint.contributions).toEqual([
       expect.objectContaining({ reason: 'summary_checkpoint', sourceEntryIds: [8] })
     ])
-    expect(
-      unrelatedCheckpoint.contributions.find(
-        (contribution) => contribution.reason === 'summary_checkpoint'
-      )
-    ).not.toHaveProperty('sourceEntryIds')
+    const unrelatedContribution = unrelatedCheckpoint.contributions.find(
+      (contribution) => contribution.reason === 'summary_checkpoint'
+    )
+    expect(unrelatedContribution).toBeDefined()
+    expect(unrelatedContribution).not.toHaveProperty('sourceEntryIds')
   })
 
   it('exposes only allowlisted handoff anchor summary as untrusted data', () => {

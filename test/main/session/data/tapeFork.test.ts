@@ -416,6 +416,11 @@ describe('SessionTape forks', () => {
         name: 'execution/run_started',
         data: { marker: 'must-not-merge' }
       })
+      expect(
+        table
+          .getBySession(fork.forkSessionId)
+          .some((entry) => entry.name === 'execution/run_started')
+      ).toBe(true)
 
       expect(service.mergeFork('parent', 'journal-isolation')).toBe(0)
       expect(

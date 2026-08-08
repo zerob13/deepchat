@@ -299,7 +299,7 @@ describe('BackgroundExecSessionManager', () => {
 
   it('does not commit process mutations rejected by local session preflight', async () => {
     const beforeMutation = vi.fn()
-    setSession(createSession({ status: 'done' }))
+    setSession(createSession({ sessionId: 'bg_other', status: 'done' }))
 
     expect(() => manager.write('conv-1', 'missing', 'data', false, beforeMutation)).toThrow(
       'Session missing not found'
@@ -307,6 +307,14 @@ describe('BackgroundExecSessionManager', () => {
     await expect(manager.kill('conv-1', 'missing', beforeMutation)).rejects.toThrow(
       'Session missing not found'
     )
+
+    expect(beforeMutation).not.toHaveBeenCalled()
+  })
+
+  it('does not commit a kill that is already a local no-op', async () => {
+    const beforeMutation = vi.fn()
+    setSession(createSession({ status: 'done' }))
+
     await manager.kill('conv-1', 'bg_123', beforeMutation)
 
     expect(beforeMutation).not.toHaveBeenCalled()
@@ -528,6 +536,43 @@ describe('backgroundExecSessionManager utility proxy', () => {
     expect(mockUtilityProcessFork).not.toHaveBeenCalled()
   })
 
+  it('keeps completed sessions visible when the utility host cannot list them', async () => {
+    const proxy = backgroundExecSessionManager as any
+    proxy.activeSessions.set('bg_completed', {
+      conversationId: 'conv-1',
+      sessionId: 'bg_completed',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1
+    })
+    const request = vi.spyOn(proxy, 'request').mockResolvedValue({
+      status: 'done',
+      output: 'done',
+      exitCode: 0,
+      offloaded: false,
+      timedOut: false
+    })
+
+    await backgroundExecSessionManager.poll('conv-1', 'bg_completed')
+
+    await expect(backgroundExecSessionManager.list('conv-1')).resolves.toEqual([
+      {
+        sessionId: 'bg_completed',
+        command: 'pnpm test',
+        status: 'done',
+        exitCode: 0,
+        outputLength: 4,
+        offloaded: false,
+        timedOut: false,
+        createdAt: 1,
+        lastAccessedAt: expect.any(Number)
+      }
+    ])
+    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledWith('poll', ['conv-1', 'bg_completed'])
+    expect(mockUtilityProcessFork).not.toHaveBeenCalled()
+  })
+
   it('removes crashed sessions locally without RPC', async () => {
     const proxy = backgroundExecSessionManager as any
     proxy.crashedSessions.set('bg_crashed', {
@@ -597,7 +642,7 @@ describe('backgroundExecSessionManager utility proxy', () => {
       const request = vi.spyOn(proxy, 'request').mockImplementation(async (method: string) => {
         if (method === 'poll') {
           return {
-            status: 'completed',
+            status: 'done',
             output: 'done',
             exitCode: 0,
             offloaded: false,
@@ -606,7 +651,7 @@ describe('backgroundExecSessionManager utility proxy', () => {
         }
         if (method === 'log') {
           return {
-            status: 'completed',
+            status: 'done',
             output: 'done',
             exitCode: 0,
             offloaded: false,
@@ -641,7 +686,7 @@ describe('backgroundExecSessionManager utility proxy', () => {
     const request = vi.spyOn(proxy, 'request').mockImplementation(async (method: string) => {
       if (method === 'poll') {
         return {
-          status: 'completed',
+          status: 'done',
           output: 'done',
           exitCode: 0,
           offloaded: false,

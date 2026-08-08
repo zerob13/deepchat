@@ -110,7 +110,7 @@ domain policy；外部方法的签名、同步/异步行为、异常和 fallback
 | --- | --- |
 | `execution/run_started` | Run 注册、provider 调用或 deferred tool 执行之前 |
 | `execution/dispatch_committed` | 最后一条本地 policy/argument/abort/refusal gate 之后，真实副作用调用之前 |
-| `execution/tool_outcome` | 已知 success/error/cancel outcome 之后，任何 transcript/context/UI result projection 之前 |
+| `execution/tool_outcome` | 已知 success/error outcome 之后，任何 transcript/context/UI result projection 之前 |
 | `execution/run_terminal` | terminal transcript、status、hook 和 renderer projection 之前 |
 
 Journal commit 使用 strict fail-closed contract；它不继承 Context Tape producer 的 warn-only/fail-open

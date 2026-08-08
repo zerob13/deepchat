@@ -265,6 +265,7 @@ describe('SkillExecutionService', () => {
   })
 
   it('does not commit dispatch when the resolved spawn cwd is unusable', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false)
     const plan = {
       command: 'python',
       args: ['/skills/ocr/scripts/run.py'],

@@ -1,8 +1,8 @@
 import { createHash } from 'crypto'
 
-function normalizeForStableJson(value: unknown, preservePrototypeKeys: boolean): unknown {
+function normalizeForStableJson(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeForStableJson(item, preservePrototypeKeys))
+    return value.map((item) => normalizeForStableJson(item))
   }
 
   if (!value || typeof value !== 'object') {
@@ -12,16 +12,13 @@ function normalizeForStableJson(value: unknown, preservePrototypeKeys: boolean):
   const record = value as Record<string, unknown>
   return Object.keys(record)
     .sort()
-    .reduce<Record<string, unknown>>(
-      (result, key) => {
-        const nested = record[key]
-        if (nested !== undefined) {
-          result[key] = normalizeForStableJson(nested, preservePrototypeKeys)
-        }
-        return result
-      },
-      preservePrototypeKeys ? (Object.create(null) as Record<string, unknown>) : {}
-    )
+    .reduce<Record<string, unknown>>((result, key) => {
+      const nested = record[key]
+      if (nested !== undefined) {
+        result[key] = normalizeForStableJson(nested)
+      }
+      return result
+    }, {})
 }
 
 function normalizeJsonData(value: unknown, ancestors: Set<object>): unknown {
@@ -84,7 +81,7 @@ function normalizeJsonData(value: unknown, ancestors: Set<object>): unknown {
 }
 
 export function stableJsonStringify(value: unknown): string {
-  return JSON.stringify(normalizeForStableJson(value, false))
+  return JSON.stringify(normalizeForStableJson(value))
 }
 
 export function hashJson(value: unknown): string {

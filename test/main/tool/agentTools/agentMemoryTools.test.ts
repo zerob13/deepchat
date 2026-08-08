@@ -124,19 +124,19 @@ describe('Agent memory tools', () => {
     })
     const runtimePort = buildRuntimePort({ rememberMemory, forgetMemory })
     const handler = new AgentMemoryToolHandler(runtimePort, runtimePort)
-    const beforeMutation = vi.fn((args) => {
+    const beforeMutation = vi.fn(() => {
       order.push('commit')
-      expect(args).toEqual({
-        content: 'repo uses pnpm',
-        kind: 'semantic',
-        importance: 0.7
-      })
     })
 
     await handler.call(MEMORY_TOOL_NAMES.remember, { content: '  repo uses pnpm  ' }, 'conv-1', {
       beforeMutation
     })
 
+    expect(beforeMutation).toHaveBeenCalledWith({
+      content: 'repo uses pnpm',
+      kind: 'semantic',
+      importance: 0.7
+    })
     expect(order).toEqual(['commit', 'target'])
 
     const journalError = new Error('journal unavailable')

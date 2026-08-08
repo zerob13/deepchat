@@ -57,6 +57,13 @@ function createMockSqlitePresenter() {
     isInTransaction: vi.fn(() => false),
     ensureBootstrapAnchor: vi.fn(),
     append: vi.fn((input: any) => {
+      if (input.idempotent && input.provenanceKey) {
+        const existing = tapeEntries.find(
+          (entry) =>
+            entry.session_id === input.sessionId && entry.provenance_key === input.provenanceKey
+        )
+        if (existing) return existing
+      }
       const row = {
         session_id: input.sessionId,
         entry_id: tapeEntries.length + 1,

@@ -227,6 +227,13 @@ async function commitStagedToolResults(
   } = params
 
   if (stagedResults.length > 0) {
+    for (const stagedResult of stagedResults) {
+      if (stagedResult.operation && !stagedResult.outcomeCommitted) {
+        throw new ExecutionJournalCorruptionError(
+          `Dispatched tool result was not committed for ${stagedResult.toolCallId}.`
+        )
+      }
+    }
     const fittedResults = await toolResults.fitBatch({
       conversationMessages: conversation,
       results: stagedResults.map((result) => ({
@@ -240,13 +247,6 @@ async function commitStagedToolResults(
       contextLength,
       maxTokens
     })
-    for (const stagedResult of stagedResults) {
-      if (stagedResult.operation && !stagedResult.outcomeCommitted) {
-        throw new ExecutionJournalCorruptionError(
-          `Dispatched tool result was not committed for ${stagedResult.toolCallId}.`
-        )
-      }
-    }
     const finalizedInteractions = applyFinalizedToolResults({
       stagedResults,
       fittedResults: fittedResults.results,

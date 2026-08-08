@@ -572,7 +572,10 @@ describe('dispatch', () => {
       }))
       const commitDispatch = vi.fn((input) => {
         if (input.toolName === 'invalid') {
-          throw new ExecutionJournalError('normalizedArguments must be JSON serializable.', 'invalid_fact')
+          throw new ExecutionJournalError(
+            'normalizedArguments must be JSON serializable.',
+            'invalid_fact'
+          )
         }
         return { sessionId: 's1', entryId: 1, created: true }
       })

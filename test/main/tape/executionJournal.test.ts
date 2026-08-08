@@ -611,53 +611,56 @@ describe('Execution Journal domain and strict persistence', () => {
 
 itIfSqlite('queries only journal events through the dedicated SQLite index', () => {
   const db = new DatabaseCtor(':memory:')
-  const table = new DeepChatExecutionJournalStore(db)
-  table.createTable()
-  const service = new ExecutionJournalService(() => table)
+  try {
+    const table = new DeepChatExecutionJournalStore(db)
+    table.createTable()
+    const service = new ExecutionJournalService(() => table)
 
-  table.appendEvent({ sessionId: 'session-1', name: 'context/example', data: { value: 1 } })
-  service.commitRunStarted({
-    sessionId: 'session-1',
-    runId: RUN_IDS.completed,
-    messageId: 'assistant-1',
-    runKind: 'loop'
-  })
-  expect(
+    table.appendEvent({ sessionId: 'session-1', name: 'context/example', data: { value: 1 } })
     service.commitRunStarted({
       sessionId: 'session-1',
       runId: RUN_IDS.completed,
       messageId: 'assistant-1',
       runKind: 'loop'
     })
-  ).toMatchObject({ created: false })
-  expect(() =>
-    service.commitRunStarted({
-      sessionId: 'session-1',
-      runId: RUN_IDS.completed,
-      messageId: 'assistant-conflict',
-      runKind: 'loop'
-    })
-  ).toThrow(ExecutionJournalCorruptionError)
+    expect(
+      service.commitRunStarted({
+        sessionId: 'session-1',
+        runId: RUN_IDS.completed,
+        messageId: 'assistant-1',
+        runKind: 'loop'
+      })
+    ).toMatchObject({ created: false })
+    expect(() =>
+      service.commitRunStarted({
+        sessionId: 'session-1',
+        runId: RUN_IDS.completed,
+        messageId: 'assistant-conflict',
+        runKind: 'loop'
+      })
+    ).toThrow(ExecutionJournalCorruptionError)
 
-  expect([...table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)]).toHaveLength(1)
-  const indexes = db.prepare("PRAGMA index_list('deepchat_tape_entries')").all() as Array<{
-    name: string
-  }>
-  expect(indexes.map((index) => index.name)).toContain('idx_deepchat_tape_entries_event_name')
-  const placeholders = EXECUTION_JOURNAL_EVENT_NAMES.map(() => '?').join(', ')
-  const queryPlan = db
-    .prepare(
-      `EXPLAIN QUERY PLAN
+    expect([...table.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)]).toHaveLength(1)
+    const indexes = db.prepare("PRAGMA index_list('deepchat_tape_entries')").all() as Array<{
+      name: string
+    }>
+    expect(indexes.map((index) => index.name)).toContain('idx_deepchat_tape_entries_event_name')
+    const placeholders = EXECUTION_JOURNAL_EVENT_NAMES.map(() => '?').join(', ')
+    const queryPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN
        SELECT *
        FROM deepchat_tape_entries
        WHERE kind = 'event' AND name IN (${placeholders})
        ORDER BY session_id ASC, entry_id ASC`
+      )
+      .all(...EXECUTION_JOURNAL_EVENT_NAMES) as Array<{ detail: string }>
+    expect(queryPlan.map((step) => step.detail).join('\n')).toContain(
+      'idx_deepchat_tape_entries_event_name'
     )
-    .all(...EXECUTION_JOURNAL_EVENT_NAMES) as Array<{ detail: string }>
-  expect(queryPlan.map((step) => step.detail).join('\n')).toContain(
-    'idx_deepchat_tape_entries_event_name'
-  )
-  db.close()
+  } finally {
+    db.close()
+  }
 })
 
 itIfSqlite('resolves the current Journal store after the application database reopens', () => {
