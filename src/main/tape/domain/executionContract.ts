@@ -19,9 +19,11 @@ import {
   type DeepChatPromptSectionProvenance
 } from '@shared/types/prompt-assembly'
 import {
+  DEEPCHAT_EXECUTION_CONTRACT_BINDING_SCHEMA_VERSION,
   DEEPCHAT_EXECUTION_CONTRACT_HASH_VERSION,
   DEEPCHAT_EXECUTION_CONTRACT_SCHEMA_VERSION,
   type DeepChatExecutionContract,
+  type DeepChatExecutionContractBinding,
   type DeepChatExecutionContractRequest,
   type DeepChatExecutionDynamicControlSnapshot,
   type DeepChatExecutionToolCeiling,
@@ -31,6 +33,7 @@ import {
 import { canonicalJsonStringifyData, hashJsonData } from './canonicalJson'
 
 export const MAX_EXECUTION_CONTRACT_BYTES = 64 * 1024
+export const MAX_EXECUTION_CONTRACT_BINDING_BYTES = 4 * 1024
 export const MAX_EXECUTION_CONTRACT_TOOLS = 256
 export const MAX_EXECUTION_CONTRACT_PROMPT_SECTIONS = 64
 export const MAX_EXECUTION_CONTRACT_SUBAGENT_DEPTH = 1
@@ -58,6 +61,7 @@ const EXECUTION_CONTRACT_KEYS = [
   'contractHash'
 ] as const
 const EXECUTION_REQUEST_KEYS = ['sessionId', 'messageId', 'runId', 'requestSeq'] as const
+const EXECUTION_CONTRACT_BINDING_KEYS = ['schemaVersion', 'request', 'contractHash'] as const
 const EXECUTION_CEILINGS_KEYS = ['tools', 'workspace', 'maxSubagentDepth'] as const
 const EXECUTION_TOOL_CEILING_KEYS = ['target', 'execution'] as const
 const EXECUTION_TOOL_TARGET_KEYS = [
@@ -116,6 +120,95 @@ export class ExecutionContractError extends Error {
     super(message, options)
     this.name = 'ExecutionContractError'
   }
+}
+
+export type ExecutionContractDispatchErrorCode =
+  | 'invalid_contract'
+  | 'identity_mismatch'
+  | 'tool_not_allowed'
+  | 'target_mismatch'
+  | 'effect_exceeds_ceiling'
+  | 'execution_mode_mismatch'
+  | 'workspace_mismatch'
+  | 'subagent_depth_exceeded'
+  | 'invalid_runtime_authority'
+
+export class ExecutionContractDispatchError extends Error {
+  constructor(
+    message: string,
+    readonly code: ExecutionContractDispatchErrorCode,
+    options?: ErrorOptions
+  ) {
+    super(message, options)
+    this.name = 'ExecutionContractDispatchError'
+  }
+}
+
+export interface ExecutionContractDispatchInput {
+  request: DeepChatExecutionContractRequest
+  currentTool: MCPToolDefinition
+  currentWorkspace: DeepChatExecutionWorkspaceCeiling
+  currentMaxSubagentDepth: number
+  requestedSubagentDepth: number
+}
+
+export function buildExecutionContractBinding(
+  contract: DeepChatExecutionContract
+): DeepChatExecutionContractBinding {
+  if (!isDeepChatExecutionContract(contract)) {
+    throw new ExecutionContractError(
+      'ExecutionContract binding requires a canonical contract.',
+      'invalid_input'
+    )
+  }
+  return deepFreeze({
+    schemaVersion: DEEPCHAT_EXECUTION_CONTRACT_BINDING_SCHEMA_VERSION,
+    request: contract.request,
+    contractHash: contract.contractHash
+  })
+}
+
+export function isDeepChatExecutionContractBinding(
+  value: unknown
+): value is DeepChatExecutionContractBinding {
+  return (
+    hasExactKeys(value, EXECUTION_CONTRACT_BINDING_KEYS) &&
+    value.schemaVersion === DEEPCHAT_EXECUTION_CONTRACT_BINDING_SCHEMA_VERSION &&
+    isStoredExecutionContractRequest(value.request) &&
+    isSha256(value.contractHash)
+  )
+}
+
+export function parseExecutionContractBinding(
+  value: unknown
+): DeepChatExecutionContractBinding | null {
+  if (typeof value !== 'string' || utf8Length(value) > MAX_EXECUTION_CONTRACT_BINDING_BYTES) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return isDeepChatExecutionContractBinding(parsed) ? deepFreeze(parsed) : null
+  } catch {
+    return null
+  }
+}
+
+export function executionContractMatchesBinding(
+  contract: unknown,
+  binding: DeepChatExecutionContractBinding
+): contract is DeepChatExecutionContract {
+  return (
+    isDeepChatExecutionContract(contract) &&
+    contract.contractHash === binding.contractHash &&
+    contract.request.sessionId === binding.request.sessionId &&
+    contract.request.messageId === binding.request.messageId &&
+    contract.request.runId === binding.request.runId &&
+    contract.request.requestSeq === binding.request.requestSeq
+  )
+}
+
+export function restoreExecutionContract(value: unknown): DeepChatExecutionContract | null {
+  return isDeepChatExecutionContract(value) ? deepFreeze(value) : null
 }
 
 function utf8Length(value: string): number {
@@ -326,6 +419,12 @@ function normalizeToolCeiling(
     },
     execution: normalizeExecution(definition.execution, `${label}.execution`)
   }
+}
+
+export function buildExecutionToolCeiling(
+  definition: MCPToolDefinition
+): DeepChatExecutionToolCeiling {
+  return normalizeToolCeiling(definition, 0)
 }
 
 export function buildExecutionToolTargetKey(target: DeepChatExecutionToolTargetIdentity): string {
@@ -757,6 +856,130 @@ export function isToolEffectWithinCeiling(effect: ToolEffect, ceiling: ToolEffec
 
 export function meetToolEffects(left: ToolEffect, right: ToolEffect): ToolEffect {
   return isToolEffectWithinCeiling(left, right) ? left : right
+}
+
+function normalizeWorkspaceForComparison(
+  workspace: DeepChatExecutionWorkspaceCeiling
+): string | null {
+  if (workspace.kind === 'runtime_default') return null
+  if (path.win32.isAbsolute(workspace.path)) {
+    return `win32:${path.win32.resolve(workspace.path)}`
+  }
+  if (path.posix.isAbsolute(workspace.path)) {
+    return `posix:${path.posix.resolve(workspace.path)}`
+  }
+  return null
+}
+
+function executionWorkspacesMatch(
+  current: DeepChatExecutionWorkspaceCeiling,
+  ceiling: DeepChatExecutionWorkspaceCeiling
+): boolean {
+  if (current.kind === 'runtime_default' || ceiling.kind === 'runtime_default') {
+    return current.kind === ceiling.kind
+  }
+  const currentPath = normalizeWorkspaceForComparison(current)
+  const ceilingPath = normalizeWorkspaceForComparison(ceiling)
+  return currentPath !== null && currentPath === ceilingPath
+}
+
+export function assertExecutionContractAllowsDispatch(
+  contract: DeepChatExecutionContract,
+  input: ExecutionContractDispatchInput
+): void {
+  if (!isDeepChatExecutionContract(contract)) {
+    throw new ExecutionContractDispatchError(
+      'Tool dispatch requires a canonical ExecutionContract with a valid hash.',
+      'invalid_contract'
+    )
+  }
+  if (
+    contract.request.sessionId !== input.request.sessionId ||
+    contract.request.messageId !== input.request.messageId ||
+    contract.request.runId !== input.request.runId ||
+    contract.request.requestSeq !== input.request.requestSeq
+  ) {
+    throw new ExecutionContractDispatchError(
+      'ExecutionContract identity does not match the active provider View.',
+      'identity_mismatch'
+    )
+  }
+
+  let currentTool: DeepChatExecutionToolCeiling
+  try {
+    currentTool = buildExecutionToolCeiling(input.currentTool)
+  } catch (error) {
+    throw new ExecutionContractDispatchError(
+      'Current tool authority is missing a valid stable identity or execution policy.',
+      'invalid_runtime_authority',
+      { cause: error }
+    )
+  }
+  const ceiling = contract.ceilings.tools.find(
+    (candidate) => candidate.target.providerVisibleName === currentTool.target.providerVisibleName
+  )
+  if (!ceiling) {
+    throw new ExecutionContractDispatchError(
+      `Tool '${currentTool.target.providerVisibleName}' is outside the frozen View ceiling.`,
+      'tool_not_allowed'
+    )
+  }
+  if (
+    buildExecutionToolTargetKey(ceiling.target) !== buildExecutionToolTargetKey(currentTool.target)
+  ) {
+    throw new ExecutionContractDispatchError(
+      `Tool '${currentTool.target.providerVisibleName}' no longer resolves to the frozen target.`,
+      'target_mismatch'
+    )
+  }
+  if (!isToolEffectWithinCeiling(currentTool.execution.effect, ceiling.execution.effect)) {
+    throw new ExecutionContractDispatchError(
+      `Tool '${currentTool.target.providerVisibleName}' exceeds its frozen effect ceiling.`,
+      'effect_exceeds_ceiling'
+    )
+  }
+  if (currentTool.execution.mode !== ceiling.execution.mode) {
+    throw new ExecutionContractDispatchError(
+      `Tool '${currentTool.target.providerVisibleName}' execution mode changed after View assembly.`,
+      'execution_mode_mismatch'
+    )
+  }
+
+  let currentWorkspace: DeepChatExecutionWorkspaceCeiling
+  let currentMaxSubagentDepth: number
+  let requestedSubagentDepth: number
+  try {
+    currentWorkspace = normalizeWorkspace(input.currentWorkspace)
+    currentMaxSubagentDepth = requireNonNegativeSafeInteger(
+      input.currentMaxSubagentDepth,
+      'currentMaxSubagentDepth'
+    )
+    requestedSubagentDepth = requireNonNegativeSafeInteger(
+      input.requestedSubagentDepth,
+      'requestedSubagentDepth'
+    )
+  } catch (error) {
+    throw new ExecutionContractDispatchError(
+      'Current workspace or nesting authority is invalid.',
+      'invalid_runtime_authority',
+      { cause: error }
+    )
+  }
+  if (!executionWorkspacesMatch(currentWorkspace, contract.ceilings.workspace)) {
+    throw new ExecutionContractDispatchError(
+      'Current workspace does not match the frozen View ceiling.',
+      'workspace_mismatch'
+    )
+  }
+  if (
+    requestedSubagentDepth > contract.ceilings.maxSubagentDepth ||
+    requestedSubagentDepth > currentMaxSubagentDepth
+  ) {
+    throw new ExecutionContractDispatchError(
+      'Requested Subagent nesting exceeds the effective runtime ceiling.',
+      'subagent_depth_exceeded'
+    )
+  }
 }
 
 function deepFreeze<T>(value: T): T {

@@ -11845,6 +11845,51 @@ describe('DeepChatAgentHarness', () => {
       expect(instance?.getPendingToolBatchState()).toBeUndefined()
     })
 
+    it('rejects an invalid View binding before granting permission or executing the tool', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      makeAssistantRow({
+        blocks: [
+          {
+            type: 'tool_call',
+            status: 'pending',
+            timestamp: 1,
+            tool_call: { id: 'tc1', name: 'write_file', params: '{}', response: '' }
+          },
+          {
+            type: 'action',
+            action_type: 'tool_call_permission',
+            status: 'pending',
+            timestamp: 2,
+            content: 'Need permission',
+            tool_call: { id: 'tc1', name: 'write_file', params: '{}' },
+            extra: {
+              needsUserAction: true,
+              permissionType: 'write',
+              executionContractBinding: '{',
+              permissionRequest: JSON.stringify({
+                permissionType: 'write',
+                description: 'Need permission',
+                toolName: 'write_file',
+                serverName: 'agent-filesystem',
+                paths: ['a.txt']
+              })
+            }
+          }
+        ]
+      })
+
+      await expect(
+        agent.respondToolInteraction('s1', 'm1', 'tc1', {
+          kind: 'permission',
+          granted: true
+        })
+      ).rejects.toMatchObject({ code: 'invalid_contract' })
+
+      expect(sessionPermissionPort.approvePermission).not.toHaveBeenCalled()
+      expect(toolService.callTool).not.toHaveBeenCalled()
+      expect(runtimeDependencies.interactionContinuationAdmission.resume).not.toHaveBeenCalled()
+    })
+
     it('handles permission grant by executing deferred tool and resuming', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       makeAssistantRow({

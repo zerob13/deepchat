@@ -45,6 +45,11 @@ import {
   resolveProviderTerminalDecision
 } from '@/agent/deepchat/runtime/process'
 import { TRUNCATED_TOOL_CALL_ERROR } from '@/agent/deepchat/runtime/dispatch'
+import { createOpaquePromptAssembly } from '@/agent/deepchat/resources/promptAssembly'
+import {
+  buildExecutionContract,
+  buildExecutionContractBinding
+} from '@/tape/domain/executionContract'
 
 function expectDeepchatEvent(eventName: string, payload: Record<string, unknown>): void {
   expect(publishDeepchatEventMock).toHaveBeenCalledWith(eventName, expect.objectContaining(payload))
@@ -951,12 +956,78 @@ describe('processStream', () => {
       expect(toolService.callTool).toHaveBeenCalled()
       expect((toolService.callTool as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({
         runId: RUN_ID,
+        messageId: 'm1',
         requestSeq: 1,
         executionContract
       })
       expect(
         (toolService.callTool as ReturnType<typeof vi.fn>).mock.calls[0][1].executionContract
       ).toBe(executionContract)
+    })
+
+    it('keeps the exact request contract and a durable View binding across permission pause', async () => {
+      const tools = [{ ...makeTool('action'), source: 'agent' as const }]
+      const run = createLoopRun({
+        runId: RUN_ID,
+        sessionId: toAppSessionId('s1'),
+        messageId: 'm1',
+        abortController: new AbortController(),
+        messages: [{ role: 'user', content: 'Hello' }],
+        streamState: createState(),
+        resources: { toolDefinitions: tools, activeSkillNames: [] },
+        initialRequestSeq: 1
+      })
+      const promptAssembly = createOpaquePromptAssembly('System prompt')
+      const executionContract = buildExecutionContract({
+        request: {
+          sessionId: run.sessionId,
+          messageId: run.messageId,
+          runId: run.runId,
+          requestSeq: 1
+        },
+        promptAssembly,
+        providerMessages: [
+          { role: 'system', content: promptAssembly.prompt },
+          { role: 'user', content: 'Hello' }
+        ],
+        tools,
+        providerId: 'openai',
+        modelId: 'gpt-4',
+        modelConfig: {} as any,
+        temperature: 0.7,
+        maxTokens: 4096,
+        workspace: { kind: 'runtime_default' },
+        maxSubagentDepth: 0,
+        dynamicControlSnapshot: {
+          permissionMode: 'default',
+          requestAdmitted: true,
+          cancellationRequested: false
+        },
+        assemblerVersion: 'test-v1'
+      })
+      bindActiveRequestContract(run, 1, executionContract)
+
+      const result = await processStream(
+        createParams({
+          run,
+          coreStream: createToolRoundStream('action'),
+          toolExecution: createToolExecutionPort(createPostCallPermissionToolService()),
+          tools,
+          permissionMode: 'default'
+        })
+      )
+
+      expect(result.status).toBe('paused')
+      expect(result.toolBatchExecutionState?.executionContract).toBe(executionContract)
+      const finalPauseCall = messageStore.updateAssistantContent.mock.calls.findLast(
+        (call) => typeof call[2] === 'string'
+      )
+      const permissionBlock = finalPauseCall?.[1].find(
+        (block) => block.action_type === 'tool_call_permission'
+      )
+      expect(JSON.parse(permissionBlock?.extra?.executionContractBinding as string)).toEqual(
+        buildExecutionContractBinding(executionContract)
+      )
     })
 
     it('counts a post-call permission tool before persisting pause', async () => {

@@ -33,6 +33,14 @@ export interface DeepChatExecutionContractRequest {
   readonly requestSeq: number
 }
 
+export const DEEPCHAT_EXECUTION_CONTRACT_BINDING_SCHEMA_VERSION = 1 as const
+
+export interface DeepChatExecutionContractBinding {
+  readonly schemaVersion: typeof DEEPCHAT_EXECUTION_CONTRACT_BINDING_SCHEMA_VERSION
+  readonly request: DeepChatExecutionContractRequest
+  readonly contractHash: string
+}
+
 export interface DeepChatExecutionContractCeilings {
   readonly tools: readonly DeepChatExecutionToolCeiling[]
   readonly workspace: DeepChatExecutionWorkspaceCeiling

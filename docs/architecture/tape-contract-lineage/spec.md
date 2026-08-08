@@ -144,6 +144,13 @@ value is retained by the loop run and passed to tool dispatch. A session-global 
 cache is forbidden because retries, tool rounds, steering, and concurrent Session work make it an
 ambiguous authority.
 
+If a tool batch pauses for a host permission interaction, its action projection stores the complete
+View request identity and contract hash while the Session runtime retains the exact contract value.
+Normal continuation uses that runtime value without reading Tape. After process restart, the host
+may reconstruct the value only from the single hash-verified schema-v5 ViewManifest named by the
+binding. A present binding with a missing, duplicate, malformed, or conflicting View fails closed;
+legacy interactive projections without a binding retain their existing compatibility behavior.
+
 ### Runtime Enforcement
 
 Effective authority is a typed meet:
@@ -266,3 +273,5 @@ This table describes write disciplines, not a count of all Tape event families.
 10. Old manifests and historical delegation rows remain readable without fabricated evaluations.
 11. Contract namespace conflicts, idempotency conflicts, dangling origin identity, and malformed
     projections fail closed on automated-consumer paths.
+12. Permission pause and continuation preserve the originating View contract; restart recovery
+    validates the durable binding against exactly one schema-v5 View before deferred dispatch.

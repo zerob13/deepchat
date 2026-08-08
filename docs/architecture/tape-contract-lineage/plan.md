@@ -39,6 +39,8 @@
 
 - Carry ExecutionContract identity through the exact logical round and tool batch that consumed the
   provider response.
+- Persist a bounded View binding on paused permission actions, retain the exact value in the live
+  batch projection, and recover it from a hash-verified v5 manifest only after runtime loss.
 - Validate stable tool target, reviewed effect class, workspace scope, and nesting ceiling before
   crossing ToolService dispatch.
 - Retain existing live permission, workdir, deletion, and Subagent-authority checks as the current

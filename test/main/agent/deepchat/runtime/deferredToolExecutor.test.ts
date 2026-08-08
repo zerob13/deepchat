@@ -4,6 +4,9 @@ import {
   type DeferredToolExecutorDependencies
 } from '@/agent/deepchat/runtime/deferredToolExecutor'
 import { ExecutionJournalError } from '@/tape/domain/executionJournal'
+import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/core/mcp'
+import { createOpaquePromptAssembly } from '@/agent/deepchat/resources/promptAssembly'
+import { buildExecutionContract } from '@/tape/domain/executionContract'
 
 const SESSION_ID = 'session-1'
 const MESSAGE_ID = 'message-1'
@@ -12,6 +15,49 @@ const TOOL_CALL = {
   name: 'write_file',
   params: '{"path":"a.txt"}',
   response: ''
+}
+const CONTRACT_RUN_ID = '11111111-1111-4111-8111-111111111111'
+const TOOL_DEFINITION: MCPToolDefinition = {
+  type: 'function',
+  source: 'agent',
+  execution: TOOL_EXECUTION.write,
+  function: {
+    name: TOOL_CALL.name,
+    description: 'Write a file',
+    parameters: { type: 'object', properties: {} }
+  },
+  server: { name: 'agent-filesystem', icons: '', description: 'Agent filesystem' }
+}
+
+function buildContract() {
+  const promptAssembly = createOpaquePromptAssembly('System prompt')
+  return buildExecutionContract({
+    request: {
+      sessionId: SESSION_ID,
+      messageId: MESSAGE_ID,
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 3
+    },
+    promptAssembly,
+    providerMessages: [
+      { role: 'system', content: promptAssembly.prompt },
+      { role: 'user', content: 'Write a.txt' }
+    ],
+    tools: [TOOL_DEFINITION],
+    providerId: 'openai',
+    modelId: 'gpt-5',
+    modelConfig: {} as any,
+    temperature: 0.2,
+    maxTokens: 100,
+    workspace: { kind: 'path', path: '/workspace' },
+    maxSubagentDepth: 0,
+    dynamicControlSnapshot: {
+      permissionMode: 'default',
+      requestAdmitted: true,
+      cancellationRequested: false
+    },
+    assemblerVersion: 'test-v1'
+  })
 }
 
 type ToolExecutionOptions = Parameters<
@@ -89,14 +135,7 @@ function createHarness(
       fitBatch: vi.fn()
     },
     toolResolver: {
-      loadToolDefinitionsForSession: vi.fn(async () => [
-        {
-          type: 'function',
-          source: 'agent',
-          function: { name: 'write_file' },
-          server: { name: 'agent-filesystem' }
-        }
-      ]),
+      loadToolDefinitionsForSession: vi.fn(async () => [TOOL_DEFINITION]),
       getDisabledAgentTools: vi.fn(() => []),
       resolveAgentExtensionPolicy: vi.fn(async () => ({ enabledMcpServerIds: [] })),
       resolveActiveSkillNamesForToolProfile: vi.fn(async () => []),
@@ -174,6 +213,26 @@ describe('DeferredToolExecutor Execution Journal', () => {
       outcome: 'completed',
       stopReason: 'tool_result'
     })
+  })
+
+  it('uses the originating provider View identity while journaling a distinct deferred run', async () => {
+    const { dependencies, executionJournal, executor } = createHarness()
+    const executionContract = buildContract()
+
+    await executor.execute(SESSION_ID, MESSAGE_ID, TOOL_CALL, undefined, executionContract)
+
+    expect(dependencies.toolExecutionPort.execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        runId: CONTRACT_RUN_ID,
+        messageId: MESSAGE_ID,
+        requestSeq: 3,
+        executionContract
+      })
+    )
+    const deferredRunId = executionJournal.commitRunStarted.mock.calls[0][0].runId
+    expect(deferredRunId).not.toBe(CONTRACT_RUN_ID)
+    expect(executionJournal.commitDispatch.mock.calls[0][0].operation.runId).toBe(deferredRunId)
   })
 
   it('returns a non-retryable terminal error when T2 persistence fails', async () => {

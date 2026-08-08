@@ -1,6 +1,7 @@
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { SessionDatabase } from '@/session/data/database'
+import type { SessionKind } from '@shared/types/agent-interface'
 
 export interface SessionIdentityServiceDependencies {
   registry: SessionScopeRegistry
@@ -24,6 +25,10 @@ export class SessionIdentityService {
     }
 
     return undefined
+  }
+
+  getSessionKind(sessionId: string): SessionKind | null {
+    return this.deps.database.newSessionsTable?.get(sessionId)?.session_kind ?? null
   }
 
   isAcpBackedSubagentSession(sessionId: string, providerId?: string): boolean {

@@ -9,13 +9,19 @@ import { hashJsonData } from '@/tape/domain/canonicalJson'
 import {
   ExecutionContractError,
   MAX_EXECUTION_CONTRACT_PROMPT_SECTIONS,
+  MAX_EXECUTION_CONTRACT_BINDING_BYTES,
   MAX_EXECUTION_CONTRACT_TOOLS,
+  assertExecutionContractAllowsDispatch,
   buildEffectiveGenerationConfigHash,
   buildExecutionContract,
+  buildExecutionContractBinding,
   buildProviderVisibleToolDefinitionsHash,
+  executionContractMatchesBinding,
   isDeepChatExecutionContract,
+  isDeepChatExecutionContractBinding,
   isToolEffectWithinCeiling,
   meetToolEffects,
+  parseExecutionContractBinding,
   verifyExecutionContractHash,
   type BuildExecutionContractInput
 } from '@/tape/domain/executionContract'
@@ -392,6 +398,151 @@ describe('ExecutionContract domain', () => {
     expect(isToolEffectWithinCeiling('write', 'read')).toBe(false)
     expect(meetToolEffects('read', 'write')).toBe('read')
     expect(meetToolEffects('write', 'write')).toBe('write')
+  })
+
+  it('allows only the exact provider View identity and stable tool target', () => {
+    const currentTool = mcpTool()
+    const contract = buildExecutionContract(buildInput({ tools: [currentTool] }))
+    const dispatchInput = {
+      request: contract.request,
+      currentTool,
+      currentWorkspace: { kind: 'path' as const, path: '/workspace/project' },
+      currentMaxSubagentDepth: 1,
+      requestedSubagentDepth: 0
+    }
+
+    expect(() => assertExecutionContractAllowsDispatch(contract, dispatchInput)).not.toThrow()
+    expect(() =>
+      assertExecutionContractAllowsDispatch(contract, {
+        ...dispatchInput,
+        request: { ...contract.request, requestSeq: contract.request.requestSeq + 1 }
+      })
+    ).toThrow(expect.objectContaining({ code: 'identity_mismatch' }))
+
+    const tampered = {
+      ...contract,
+      dynamicControlSnapshot: { ...contract.dynamicControlSnapshot, permissionMode: 'full_access' }
+    } as typeof contract
+    expect(() => assertExecutionContractAllowsDispatch(tampered, dispatchInput)).toThrow(
+      expect.objectContaining({ code: 'invalid_contract' })
+    )
+
+    expect(() =>
+      assertExecutionContractAllowsDispatch(contract, {
+        ...dispatchInput,
+        currentTool: mcpTool({ name: 'new_tool' })
+      })
+    ).toThrow(expect.objectContaining({ code: 'tool_not_allowed' }))
+    expect(() =>
+      assertExecutionContractAllowsDispatch(contract, {
+        ...dispatchInput,
+        currentTool: mcpTool({ serverId: '33333333-3333-4333-8333-333333333333' })
+      })
+    ).toThrow(expect.objectContaining({ code: 'target_mismatch' }))
+  })
+
+  it('binds paused execution to the complete provider View identity and contract hash', () => {
+    const contract = buildExecutionContract(buildInput())
+    const binding = buildExecutionContractBinding(contract)
+
+    expect(binding).toEqual({
+      schemaVersion: 1,
+      request: contract.request,
+      contractHash: contract.contractHash
+    })
+    expect(Object.isFrozen(binding)).toBe(true)
+    expect(isDeepChatExecutionContractBinding(binding)).toBe(true)
+    expect(executionContractMatchesBinding(contract, binding)).toBe(true)
+    expect(
+      executionContractMatchesBinding(contract, {
+        ...binding,
+        request: { ...binding.request, requestSeq: binding.request.requestSeq + 1 }
+      })
+    ).toBe(false)
+    expect(isDeepChatExecutionContractBinding({ ...binding, extra: true })).toBe(false)
+    expect(parseExecutionContractBinding(JSON.stringify(binding))).toEqual(binding)
+    expect(parseExecutionContractBinding('{')).toBeNull()
+    expect(
+      parseExecutionContractBinding('x'.repeat(MAX_EXECUTION_CONTRACT_BINDING_BYTES + 1))
+    ).toBeNull()
+  })
+
+  it('meets frozen effect, execution mode, workspace, and nesting ceilings', () => {
+    const frozenRead = agentTool('inspect', TOOL_EXECUTION.read.sequential)
+    const readContract = buildExecutionContract(buildInput({ tools: [frozenRead] }))
+    const dispatchInput = {
+      request: readContract.request,
+      currentTool: frozenRead,
+      currentWorkspace: { kind: 'path' as const, path: '/workspace/project' },
+      currentMaxSubagentDepth: 1,
+      requestedSubagentDepth: 0
+    }
+
+    expect(() =>
+      assertExecutionContractAllowsDispatch(readContract, {
+        ...dispatchInput,
+        currentTool: agentTool('inspect', TOOL_EXECUTION.write)
+      })
+    ).toThrow(expect.objectContaining({ code: 'effect_exceeds_ceiling' }))
+    expect(() =>
+      assertExecutionContractAllowsDispatch(readContract, {
+        ...dispatchInput,
+        currentTool: agentTool('inspect', TOOL_EXECUTION.read.parallel)
+      })
+    ).toThrow(expect.objectContaining({ code: 'execution_mode_mismatch' }))
+
+    const frozenWrite = agentTool('inspect', TOOL_EXECUTION.write)
+    const writeContract = buildExecutionContract(buildInput({ tools: [frozenWrite] }))
+    expect(() =>
+      assertExecutionContractAllowsDispatch(writeContract, {
+        ...dispatchInput,
+        request: writeContract.request,
+        currentTool: agentTool('inspect', TOOL_EXECUTION.read.sequential)
+      })
+    ).not.toThrow()
+
+    expect(() =>
+      assertExecutionContractAllowsDispatch(readContract, {
+        ...dispatchInput,
+        currentWorkspace: { kind: 'path', path: '/workspace/other' }
+      })
+    ).toThrow(expect.objectContaining({ code: 'workspace_mismatch' }))
+    const defaultWorkspaceContract = buildExecutionContract(
+      buildInput({ tools: [frozenRead], workspace: { kind: 'runtime_default' } })
+    )
+    expect(() =>
+      assertExecutionContractAllowsDispatch(defaultWorkspaceContract, {
+        ...dispatchInput,
+        request: defaultWorkspaceContract.request,
+        currentWorkspace: { kind: 'runtime_default' }
+      })
+    ).not.toThrow()
+
+    const delegationTool = agentTool('deepchat_subagents', TOOL_EXECUTION.write)
+    const noNestingContract = buildExecutionContract(
+      buildInput({ tools: [delegationTool], maxSubagentDepth: 0 })
+    )
+    const nestingInput = {
+      request: noNestingContract.request,
+      currentTool: delegationTool,
+      currentWorkspace: { kind: 'path' as const, path: '/workspace/project' },
+      currentMaxSubagentDepth: 1,
+      requestedSubagentDepth: 1
+    }
+    expect(() => assertExecutionContractAllowsDispatch(noNestingContract, nestingInput)).toThrow(
+      expect.objectContaining({ code: 'subagent_depth_exceeded' })
+    )
+
+    const nestingContract = buildExecutionContract(
+      buildInput({ tools: [delegationTool], maxSubagentDepth: 1 })
+    )
+    expect(() =>
+      assertExecutionContractAllowsDispatch(nestingContract, {
+        ...nestingInput,
+        request: nestingContract.request,
+        currentMaxSubagentDepth: 0
+      })
+    ).toThrow(expect.objectContaining({ code: 'subagent_depth_exceeded' }))
   })
 
   it('validates canonical workspace paths independently of the replay host platform', () => {

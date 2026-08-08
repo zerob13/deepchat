@@ -76,6 +76,7 @@ function createAttemptInput(options?: {
   appendManifest?: (manifest: any) => void
   buildExecutionContract?: (input: any) => any
   viewContext?: false
+  strictViewContract?: boolean
 }) {
   const run = createRun()
   const order: string[] = []
@@ -129,6 +130,7 @@ function createAttemptInput(options?: {
       supportsVision: true,
       supportsAudioInput: true,
       traceDebugEnabled: true,
+      strictViewContract: options?.strictViewContract,
       viewContext:
         options?.viewContext === false
           ? undefined
@@ -486,6 +488,39 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.manifestErrors).toEqual([
       expect.objectContaining({ message: 'manifest unavailable' })
     ])
+  })
+
+  it.each([
+    {
+      name: 'contract construction',
+      create: () =>
+        createAttemptInput({
+          strictViewContract: true,
+          buildExecutionContract: () => {
+            throw new Error('contract unavailable')
+          }
+        }),
+      message: 'contract unavailable'
+    },
+    {
+      name: 'manifest persistence',
+      create: () =>
+        createAttemptInput({
+          strictViewContract: true,
+          appendManifest: () => {
+            throw new Error('manifest unavailable')
+          }
+        }),
+      message: 'manifest unavailable'
+    }
+  ])('fails a strict child View before provider admission on $name failure', async (scenario) => {
+    const fixture = scenario.create()
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow(scenario.message)
+    expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.order).not.toContain('rate')
   })
 
   it('keeps generation fail-open when provider outcome persistence throws', async () => {

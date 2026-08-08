@@ -423,7 +423,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     hookSink,
     turnCoordinator,
     continuationAdmission: deps.interactionContinuationAdmission,
-    interactionParking
+    interactionParking,
+    viewManifests: tapeService
   })
   const transcriptMutation = new TranscriptMutationCoordinator({
     registry: runtime,

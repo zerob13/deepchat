@@ -278,7 +278,8 @@ export class DeepChatAgentInstance {
       callOrder: [...state.callOrder],
       invokedCallIds: [...state.invokedCallIds],
       committedResultCallIds: [...state.committedResultCallIds],
-      pendingInteractionCallIds: [...state.pendingInteractionCallIds]
+      pendingInteractionCallIds: [...state.pendingInteractionCallIds],
+      ...(state.executionContract ? { executionContract: state.executionContract } : {})
     }
   }
 
@@ -289,7 +290,8 @@ export class DeepChatAgentInstance {
           callOrder: [...state.callOrder],
           invokedCallIds: [...state.invokedCallIds],
           committedResultCallIds: [...state.committedResultCallIds],
-          pendingInteractionCallIds: [...state.pendingInteractionCallIds]
+          pendingInteractionCallIds: [...state.pendingInteractionCallIds],
+          ...(state.executionContract ? { executionContract: state.executionContract } : {})
         }
       : undefined
   }

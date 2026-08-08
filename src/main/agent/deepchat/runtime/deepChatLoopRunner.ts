@@ -253,7 +253,7 @@ export interface DeepChatLoopRunnerPorts {
   sessionSettings: Pick<SessionSettingsCoordinator, 'getEffectiveGenerationSettings'>
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
   runLifecycle: LoopRunLifecyclePort
-  identity: Pick<SessionIdentityService, 'getAgentId'>
+  identity: Pick<SessionIdentityService, 'getAgentId' | 'getSessionKind'>
   sessionPermissionPort: SessionPermissionPort
   reviewToolPermission: ToolPermissionReviewer
   hookSink: Pick<RuntimeHookSink, 'scope'>
@@ -405,6 +405,8 @@ export class DeepChatLoopRunner {
     if (messages.length === 0) {
       throw new Error('Request was not sent because the prompt is empty.')
     }
+    const sessionKind = this.ports.identity.getSessionKind(sessionId)
+    const strictViewContract = sessionKind === 'subagent'
 
     const providerModelFacts =
       providedProviderModelFacts ??
@@ -773,6 +775,7 @@ export class DeepChatLoopRunner {
                   }`
                 )
             },
+            strictViewContract,
             manifest: {
               resolvePolicy: resolveTapeViewManifestPolicy,
               append: (manifest) =>

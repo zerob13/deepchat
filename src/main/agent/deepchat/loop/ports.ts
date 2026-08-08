@@ -13,6 +13,7 @@ import type { ModelConfig } from '@shared/types/provider'
 import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { MemorySessionHandle } from '@/agent/deepchat/memory/memoryPromptContributor'
 import type { ContextRuntimeContributions } from '@/agent/deepchat/runtime/contextContributions'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 
 export interface ProviderRequest {
   runId: string
@@ -87,6 +88,7 @@ export interface PersistedToolBatchState {
   readonly invokedCallIds: readonly string[]
   readonly committedResultCallIds: readonly string[]
   readonly pendingInteractionCallIds: readonly string[]
+  readonly executionContract?: DeepChatExecutionContract
 }
 
 export type ToolBatchOutcome<

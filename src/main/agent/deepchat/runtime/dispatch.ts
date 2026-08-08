@@ -13,6 +13,7 @@ import type { AgentToolProgressUpdate } from '@shared/types/tool'
 import type { AssistantMessageBlock, PermissionMode } from '@shared/types/agent-interface'
 import type { AgentPlanSnapshot, AgentPlanTerminalReason } from '@shared/types/agent-plan'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import { buildExecutionContractBinding } from '@/tape/domain/executionContract'
 import {
   parseQuestionToolArgs,
   QUESTION_TOOL_NAME
@@ -165,6 +166,7 @@ type MutableToolBatchState = {
   callOrder: string[]
   invokedCallIds: Set<string>
   committedResultCallIds: Set<string>
+  executionContract?: DeepChatExecutionContract
 }
 
 const USER_CANCELED_GENERATION_ERROR = 'common.error.userCanceledGeneration'
@@ -175,11 +177,15 @@ export type ToolBatchDisposition =
   | { kind: 'execute' }
   | { kind: 'reject'; reason: 'output_truncated' }
 
-function createToolBatchState(toolCalls: readonly ToolCallResult[]): MutableToolBatchState {
+function createToolBatchState(
+  toolCalls: readonly ToolCallResult[],
+  executionContract?: DeepChatExecutionContract | null
+): MutableToolBatchState {
   return {
     callOrder: toolCalls.map((toolCall) => toolCall.id),
     invokedCallIds: new Set(),
-    committedResultCallIds: new Set()
+    committedResultCallIds: new Set(),
+    ...(executionContract ? { executionContract } : {})
   }
 }
 
@@ -288,7 +294,8 @@ function snapshotToolBatchState(
     callOrder: [...state.callOrder],
     invokedCallIds: [...state.invokedCallIds],
     committedResultCallIds: [...state.committedResultCallIds],
-    pendingInteractionCallIds: interactions.map((interaction) => interaction.toolCallId)
+    pendingInteractionCallIds: interactions.map((interaction) => interaction.toolCallId),
+    ...(state.executionContract ? { executionContract: state.executionContract } : {})
   }
 }
 
@@ -1390,7 +1397,8 @@ function appendPermissionActionBlock(
   },
   permission: NonNullable<PendingToolInteraction['permission']>,
   origin: Extract<PendingToolInteractionOrigin, 'pre-check-permission' | 'post-call-permission'>,
-  order: number
+  order: number,
+  executionContract?: DeepChatExecutionContract | null
 ): ToolBatchInteraction {
   state.blocks.push({
     type: 'action',
@@ -1415,6 +1423,13 @@ function appendPermissionActionBlock(
       ...(permission.requestId ? { permissionRequestId: permission.requestId } : {}),
       ...(permission.commandInfo ? { commandInfo: JSON.stringify(permission.commandInfo) } : {}),
       permissionRequest: JSON.stringify(permission),
+      ...(executionContract
+        ? {
+            executionContractBinding: JSON.stringify(
+              buildExecutionContractBinding(executionContract)
+            )
+          }
+        : {}),
       ...(permission.rememberable === false ? { rememberable: false } : {})
     }
   })
@@ -1723,6 +1738,7 @@ async function runToolCall(params: {
       const enabledMcpServerIds = controls?.getEnabledMcpServerIds?.()
       const result = await toolExecution.execute(toolCall, {
         runId: io.requestId,
+        messageId: io.messageId,
         requestSeq: operationScope.requestSeq,
         ...(executionContract ? { executionContract } : {}),
         onProgress: applyProgressUpdate,
@@ -2005,7 +2021,7 @@ export async function settleToolBatch(
   const batchToolCallBlocks = state.blocks
     .slice(prevBlockCount)
     .filter((block) => block.type === 'tool_call')
-  const batchState = createToolBatchState(toolCalls)
+  const batchState = createToolBatchState(toolCalls, executionContract)
   let nextInteractionOrder = 0
   const takeInteractionOrder = () => nextInteractionOrder++
 
@@ -2217,7 +2233,8 @@ export async function settleToolBatch(
           outcome.toolContext,
           outcome.permission,
           'post-call-permission',
-          takeInteractionOrder()
+          takeInteractionOrder(),
+          executionContract
         )
         pendingInteractions.push(interaction)
         updateToolCallBlock(batchToolCallBlocks, outcome.toolContext.id, '', false)
@@ -2374,7 +2391,8 @@ export async function settleToolBatch(
             toolContext,
             preCheckedPermission,
             'pre-check-permission',
-            takeInteractionOrder()
+            takeInteractionOrder(),
+            executionContract
           )
           pendingInteractions.push(interaction)
           updateToolCallBlock(batchToolCallBlocks, tc.id, '', false)
@@ -2415,7 +2433,8 @@ export async function settleToolBatch(
             toolContext,
             reviewPermission,
             'pre-check-permission',
-            takeInteractionOrder()
+            takeInteractionOrder(),
+            executionContract
           )
           pendingInteractions.push(interaction)
           updateToolCallBlock(batchToolCallBlocks, tc.id, '', false)
@@ -2468,7 +2487,8 @@ export async function settleToolBatch(
           toolContext,
           outcome.permission,
           'post-call-permission',
-          takeInteractionOrder()
+          takeInteractionOrder(),
+          executionContract
         )
         pendingInteractions.push(interaction)
         updateToolCallBlock(batchToolCallBlocks, tc.id, '', false)

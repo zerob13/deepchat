@@ -452,6 +452,7 @@ export interface ProviderAttemptInput<TSelection> {
   recovery: ProviderAttemptRecoveryPort
   manifest: ProviderAttemptManifestPort<TSelection>
   executionContract?: ProviderAttemptExecutionContractPort
+  strictViewContract?: boolean
   rateGate: ProviderRateGatePort
   provider: ProviderAttemptStreamPort
   outcome: ProviderAttemptOutcomePort
@@ -616,6 +617,9 @@ export class DeepChatContextCoordinator {
       })
       const contextBuilderVersion = input.viewContext?.contextBuilderVersion ?? 'legacy-v1'
       let executionContract: DeepChatExecutionContract | null = null
+      if (input.strictViewContract && !input.executionContract) {
+        throw new Error('Strict provider View requires an ExecutionContract builder.')
+      }
       if (input.executionContract) {
         try {
           executionContract = input.executionContract.build({
@@ -632,6 +636,7 @@ export class DeepChatContextCoordinator {
           try {
             input.executionContract.onBuildError(error)
           } catch {}
+          if (input.strictViewContract) throw error
         }
       }
       bindActiveRequestContract(input.run, requestSeq, executionContract)
@@ -666,6 +671,7 @@ export class DeepChatContextCoordinator {
         try {
           input.manifest.onAppendError(error)
         } catch {}
+        if (input.strictViewContract) throw error
       }
 
       return { providerMessages, providerMaxTokens, requestSeq, executionContract }

@@ -146,6 +146,7 @@ export type AssistantMessageExtra = Record<string, string | number | object[] | 
   providerId?: string
   permissionRequestId?: string
   permissionRequest?: string
+  executionContractBinding?: string
   commandInfo?: string
   rememberable?: boolean
   questionHeader?: string

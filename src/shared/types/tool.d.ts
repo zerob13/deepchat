@@ -42,6 +42,7 @@ export interface ToolDefinitionContext {
 
 export interface ToolCallOptions {
   runId?: string
+  messageId?: string
   requestSeq?: number
   executionContract?: DeepChatExecutionContract
   onProgress?: (update: AgentToolProgressUpdate) => void

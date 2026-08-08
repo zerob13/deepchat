@@ -58,6 +58,10 @@ import { resolvePluginToolPolicy } from '@/plugin/toolPolicyStore'
 import { composeSubagentAuthority } from '@/session/subagentAuthority'
 import type { LiveDelegationConsentIssuer } from '@/orchestration/liveDelegationConsent'
 import { parseChildAgentResultEnvelopeText } from '@shared/orchestration/resultSafety'
+import {
+  ExecutionContractDispatchError,
+  assertExecutionContractAllowsDispatch
+} from '@/tape/domain/executionContract'
 
 type McpToolPort = Pick<McpServicePort, 'getAllToolDefinitions' | 'callTool'>
 
@@ -134,16 +138,13 @@ export class ToolService implements ToolServicePort {
   private readonly conversationMappers: Map<string, ToolMapper>
   private globalMapperConversationId: string | null = null
   private readonly conversationMcpAccessContexts = new Map<string, StoredMcpAccessContext>()
-  private readonly conversationReviewedExecutions = new Map<
-    string,
-    Map<string, ToolExecutionContract>
-  >()
+  private readonly conversationAgentDefinitions = new Map<string, Map<string, MCPToolDefinition>>()
   private readonly options: ToolServiceOptions
   private readonly permissionBroker: ToolPermissionBroker
   private readonly conversationMcpDefinitions = new Map<string, Map<string, MCPToolDefinition>>()
   private globalMcpDefinitions = new Map<string, MCPToolDefinition>()
   private agentToolManager: AgentToolManager | null = null
-  private globalReviewedExecutions = new Map<string, ToolExecutionContract>()
+  private globalAgentDefinitions = new Map<string, MCPToolDefinition>()
 
   constructor(options: ToolServiceOptions) {
     this.options = options
@@ -295,7 +296,7 @@ export class ToolService implements ToolServicePort {
     }
 
     this.conversationMappers.delete(normalizedConversationId)
-    this.conversationReviewedExecutions.delete(normalizedConversationId)
+    this.conversationAgentDefinitions.delete(normalizedConversationId)
     this.conversationMcpAccessContexts.delete(normalizedConversationId)
     this.conversationMcpDefinitions.delete(normalizedConversationId)
     this.permissionBroker.cancelConversation(normalizedConversationId)
@@ -325,6 +326,7 @@ export class ToolService implements ToolServicePort {
     if (!source) {
       throw new Error(`Tool ${toolName} not found in any source`)
     }
+    await this.assertExecutionContractDispatchAllowed(request, source, options)
     const permissionMode =
       (await this.observeToolAuthorization(request, source, options?.signal))?.permissionMode ??
       options?.permissionMode
@@ -383,6 +385,7 @@ export class ToolService implements ToolServicePort {
         options?.signal
       )
       this.assertSubagentAgentToolAllowed(dispatchPolicy, toolName)
+      await this.assertExecutionContractDispatchAllowed(request, source, options)
       // Route to Agent tool manager
       const response = await this.agentToolManager.callTool(
         toolName,
@@ -467,6 +470,7 @@ export class ToolService implements ToolServicePort {
       definition,
       toolName
     )
+    await this.assertExecutionContractDispatchAllowed(request, source, options)
     return await this.options.mcpService.callTool(request, {
       agentId: options?.agentId ?? storedAccess?.agentId,
       enabledServerIds,
@@ -654,6 +658,105 @@ export class ToolService implements ToolServicePort {
     )
   }
 
+  private async assertExecutionContractDispatchAllowed(
+    request: MCPToolCall,
+    expectedSource: ToolSource,
+    options?: ToolCallOptions
+  ): Promise<void> {
+    const contract = options?.executionContract
+    if (!contract) return
+
+    const sessionId = request.conversationId?.trim()
+    const messageId = options.messageId?.trim()
+    const runId = options.runId?.trim()
+    const requestSeq = options.requestSeq
+    if (
+      !sessionId ||
+      !messageId ||
+      !runId ||
+      !Number.isSafeInteger(requestSeq) ||
+      (requestSeq as number) <= 0
+    ) {
+      throw new ExecutionContractDispatchError(
+        'Contract-bearing tool dispatch requires complete provider View identity.',
+        'identity_mismatch'
+      )
+    }
+
+    options.signal?.throwIfAborted()
+    let currentAuthority
+    try {
+      currentAuthority = await awaitWithAbort(
+        this.options.agentTools.sessions.resolveConversationExecutionAuthority(sessionId),
+        options.signal
+      )
+    } catch (error) {
+      options.signal?.throwIfAborted()
+      throw new ExecutionContractDispatchError(
+        `Session ${sessionId} runtime authority could not be resolved.`,
+        'invalid_runtime_authority',
+        { cause: error }
+      )
+    }
+    options.signal?.throwIfAborted()
+    if (!currentAuthority || currentAuthority.sessionId.trim() !== sessionId) {
+      throw new ExecutionContractDispatchError(
+        `Session ${sessionId} runtime authority is unavailable.`,
+        'invalid_runtime_authority'
+      )
+    }
+
+    const currentSource = this.getToolSource(request.function.name, sessionId)
+    const currentDefinition =
+      currentSource === 'mcp'
+        ? this.getMcpDefinition(request.function.name, sessionId)
+        : currentSource === 'agent'
+          ? this.getAgentDefinition(request.function.name, sessionId)
+          : undefined
+    if (currentSource !== expectedSource || !currentDefinition) {
+      throw new ExecutionContractDispatchError(
+        `Tool '${request.function.name}' no longer resolves to its provider View target.`,
+        'target_mismatch'
+      )
+    }
+    if (
+      currentSource === 'agent' &&
+      isUserConfigurableAgentTool(request.function.name) &&
+      normalizeToolNames(currentAuthority.disabledAgentTools).includes(request.function.name)
+    ) {
+      throw new ExecutionContractDispatchError(
+        `Tool '${request.function.name}' is disabled by current runtime authority.`,
+        'tool_not_allowed'
+      )
+    }
+    if (currentSource === 'mcp' && Array.isArray(currentAuthority.enabledMcpServerIds)) {
+      const serverId = currentDefinition.server.id?.trim()
+      const enabledServerIds = normalizeToolNames(currentAuthority.enabledMcpServerIds)
+      if (!serverId || !enabledServerIds.includes(serverId)) {
+        throw new ExecutionContractDispatchError(
+          `Tool '${request.function.name}' is disabled by current runtime authority.`,
+          'tool_not_allowed'
+        )
+      }
+    }
+
+    const currentProjectDir = currentAuthority.projectDir
+    assertExecutionContractAllowsDispatch(contract, {
+      request: {
+        sessionId,
+        messageId,
+        runId,
+        requestSeq: requestSeq as number
+      },
+      currentTool: currentDefinition,
+      currentWorkspace: currentProjectDir
+        ? { kind: 'path', path: currentProjectDir }
+        : { kind: 'runtime_default' },
+      currentMaxSubagentDepth: currentAuthority.subagentCapability.available ? 1 : 0,
+      requestedSubagentDepth: request.function.name === LIVE_DELEGATION_AGENT_TOOL_NAME ? 1 : 0
+    })
+  }
+
   private async resolveSubagentExecutionToolPolicy(
     conversationId: string | undefined,
     signal?: AbortSignal
@@ -785,14 +888,14 @@ export class ToolService implements ToolServicePort {
     definitions: MCPToolDefinition[]
   ): void {
     const normalizedConversationId = conversationId?.trim()
-    const reviewedExecutions = new Map(
+    const agentDefinitions = new Map(
       definitions
         .filter((definition) => definition.source === 'agent')
-        .map((definition) => [definition.function.name, definition.execution])
+        .map((definition) => [definition.function.name, definition])
     )
     if (normalizedConversationId) {
       this.conversationMappers.set(normalizedConversationId, mapper)
-      this.conversationReviewedExecutions.set(normalizedConversationId, reviewedExecutions)
+      this.conversationAgentDefinitions.set(normalizedConversationId, agentDefinitions)
     }
 
     this.mapper.clear()
@@ -800,7 +903,7 @@ export class ToolService implements ToolServicePort {
       this.mapper.registerTool(mapping.toolName, mapping.source, mapping.originalName)
     }
     this.globalMapperConversationId = normalizedConversationId || null
-    this.globalReviewedExecutions = reviewedExecutions
+    this.globalAgentDefinitions = agentDefinitions
   }
 
   private rememberMcpDefinitions(
@@ -830,6 +933,23 @@ export class ToolService implements ToolServicePort {
       }
     }
     return this.globalMcpDefinitions.get(toolName)
+  }
+
+  private getAgentDefinition(
+    toolName: string,
+    conversationId?: string
+  ): MCPToolDefinition | undefined {
+    const normalizedConversationId = conversationId?.trim()
+    if (normalizedConversationId) {
+      const definitions = this.conversationAgentDefinitions.get(normalizedConversationId)
+      if (definitions) {
+        return definitions.get(toolName)
+      }
+      if (this.globalMapperConversationId !== null) {
+        return undefined
+      }
+    }
+    return this.globalAgentDefinitions.get(toolName)
   }
 
   private createExpectedMcpTarget(
@@ -934,18 +1054,7 @@ export class ToolService implements ToolServicePort {
     toolName: string,
     conversationId?: string
   ): ToolExecutionContract | null {
-    const normalizedConversationId = conversationId?.trim()
-    if (normalizedConversationId) {
-      const executions = this.conversationReviewedExecutions.get(normalizedConversationId)
-      if (executions) {
-        return executions.get(toolName) ?? null
-      }
-      if (this.globalMapperConversationId !== null) {
-        return null
-      }
-    }
-
-    return this.globalReviewedExecutions.get(toolName) ?? null
+    return this.getAgentDefinition(toolName, conversationId)?.execution ?? null
   }
 
   buildToolSystemPrompt(context: {

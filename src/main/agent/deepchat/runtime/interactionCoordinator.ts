@@ -50,6 +50,8 @@ import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { RuntimeHookScope, RuntimeHookSink } from './runtimeHookSink'
 import { ExecutionJournalError, isExecutionJournalError } from '@/tape/domain/executionJournal'
 import type { InteractionParkingRegistry } from './interactionParkingRegistry'
+import type { TapeViewManifestReader } from '@/tape/ports/capabilities'
+import { resolveDeferredExecutionContract } from './deferredExecutionContract'
 
 const DEFERRED_INTERACTION_PARKED_ERROR =
   'Execution is parked after an Execution Journal failure and will not be retried automatically.'
@@ -86,6 +88,7 @@ export interface InteractionCoordinatorPorts {
   continuationAdmission: InteractionContinuationAdmissionPort
   publishEvent: DeepChatEventPublisher
   interactionParking: Pick<InteractionParkingRegistry, 'isParked' | 'park'>
+  viewManifests: Pick<TapeViewManifestReader, 'listViewManifestsByMessage'>
 }
 
 export interface InteractionContinuationAdmissionPort {
@@ -256,6 +259,13 @@ export class InteractionCoordinator {
         let shouldDispatchResolvedToolHook = false
 
         if (response.granted) {
+          const executionContract = resolveDeferredExecutionContract({
+            sessionId,
+            messageId,
+            rawBinding: actionBlock.extra?.executionContractBinding,
+            runtimeContract: instance.getPendingToolBatchState()?.executionContract,
+            viewManifests: this.ports.viewManifests
+          })
           await resumeWaitingAdmission()
           await awaitWithAbort(
             this.grantPermissionForPayload(sessionId, permissionPayload, toolCall),
@@ -290,7 +300,8 @@ export class InteractionCoordinator {
               sessionId,
               messageId,
               toolCall,
-              markDeferredToolCallStarted
+              markDeferredToolCallStarted,
+              executionContract
             )
             const refreshedInteraction = this.readLatestPendingInteraction(
               sessionId,
