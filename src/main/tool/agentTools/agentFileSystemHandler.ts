@@ -119,6 +119,10 @@ const GetFileInfoArgsSchema = z.object({
   path: z.string()
 })
 
+interface FileMutationOptions {
+  beforeMutation?: () => void
+}
+
 interface GrepMatch {
   file: string
   line: number
@@ -838,7 +842,11 @@ export class AgentFileSystemHandler {
     return results.join('\n---\n')
   }
 
-  async writeFile(args: unknown, baseDirectory?: string): Promise<string> {
+  async writeFile(
+    args: unknown,
+    baseDirectory?: string,
+    options: FileMutationOptions = {}
+  ): Promise<string> {
     const parsed = WriteFileArgsSchema.safeParse(args)
     if (!parsed.success) {
       throw new Error(`Invalid arguments: ${parsed.error}`)
@@ -846,6 +854,7 @@ export class AgentFileSystemHandler {
     const validPath = await this.validatePath(parsed.data.path, baseDirectory, {
       accessType: 'write'
     })
+    options.beforeMutation?.()
     await fs.writeFile(validPath, parsed.data.content, 'utf-8')
     return `Successfully wrote to ${parsed.data.path}`
   }
@@ -909,7 +918,11 @@ export class AgentFileSystemHandler {
     return results.join('\n')
   }
 
-  async editText(args: unknown, baseDirectory?: string): Promise<string> {
+  async editText(
+    args: unknown,
+    baseDirectory?: string,
+    options: FileMutationOptions = {}
+  ): Promise<string> {
     const parsed = EditTextArgsSchema.safeParse(args)
     if (!parsed.success) {
       throw new Error(`Invalid arguments: ${parsed.error}`)
@@ -945,6 +958,7 @@ export class AgentFileSystemHandler {
     const { originalCode, updatedCode } = this.buildTruncatedDiff(content, modifiedContent, 3)
     const language = getLanguageFromFilename(validPath)
     if (!parsed.data.dryRun) {
+      options.beforeMutation?.()
       await fs.writeFile(validPath, modifiedContent, 'utf-8')
     }
     const response: DiffToolResponse = {
@@ -1043,7 +1057,11 @@ export class AgentFileSystemHandler {
     return JSON.stringify(response)
   }
 
-  async editFile(args: unknown, baseDirectory?: string): Promise<string> {
+  async editFile(
+    args: unknown,
+    baseDirectory?: string,
+    options: FileMutationOptions = {}
+  ): Promise<string> {
     const parsed = EditFileArgsSchema.safeParse(args)
     if (!parsed.success) {
       throw new Error(`Invalid arguments: ${parsed.error}`)
@@ -1072,6 +1090,7 @@ export class AgentFileSystemHandler {
       return normalizedNewText
     })
 
+    options.beforeMutation?.()
     await fs.writeFile(validPath, modifiedContent, 'utf-8')
 
     const { originalCode, updatedCode } = this.buildTruncatedDiff(
