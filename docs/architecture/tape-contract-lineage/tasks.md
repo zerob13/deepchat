@@ -21,7 +21,8 @@
 - [x] Embed ExecutionContract in ViewManifest schema 5 and preserve v1-v4 reads.
 - [x] Keep interactive manifest persistence fail-open and require contract-bearing child manifests.
 - [x] Carry the exact View contract to tool dispatch without Session-global mutable state.
-- [x] Enforce stable tool target, effect, workspace, and nesting ceilings with current authority.
+- [x] Enforce stable tool target, effect, exact View workdir binding, and nesting ceilings with
+      current authority.
 - [x] Cover retries, tool rounds, revocation, expansion, and contract mismatch.
 - [x] Review and commit the View/enforcement slice.
 
@@ -56,8 +57,32 @@
 
 ## Documentation And Final Validation
 
-- [ ] Update retained Tape and proactive multi-Agent architecture references.
-- [ ] Run format, i18n, lint, Node/web typecheck, focused tests, and relevant main suites.
-- [ ] Review the complete `dev...HEAD` diff and fix findings by severity.
-- [ ] Confirm every task and acceptance criterion is represented in code or documented as deferred.
-- [ ] Confirm the branch has not been pushed.
+- [x] Update retained Tape and proactive multi-Agent architecture references.
+- [x] Run format, i18n, lint, Node/web typecheck, focused tests, and relevant main suites.
+- [x] Review the complete merge-base-to-HEAD diff and fix findings by severity.
+- [x] Confirm every task and acceptance criterion is represented in code or documented as deferred.
+- [x] Confirm the branch has not been pushed.
+
+## Validation Record
+
+Completed on 2026-08-09:
+
+| Gate | Result |
+| --- | --- |
+| `pnpm run format` and `pnpm run format:check` | Passed |
+| `pnpm run i18n` | Passed with no missing or invalid translations |
+| `pnpm run lint` | Passed |
+| `pnpm run typecheck:node` and `pnpm run typecheck:web` | Passed |
+| Focused prompt, View, Tape, dispatch, orchestration, and integration suites | 22 files and 660 tests passed |
+| `pnpm run test:main` | Did not pass because of three independently reproduced baseline assertions described below |
+
+Independent single-file reruns confirmed the same unrelated failures already documented at the
+`dev` merge base in the Agent Memory architecture validation record:
+
+- `test/main/scheduler/schedulerService.test.ts`: one provider-config snapshot expectation;
+- `test/main/app/startupMigrations/sessionDataMigrations.sqlite.test.ts`: two fixture failures because
+  `new_session_active_skills` is absent.
+
+This branch does not modify either failing test or its scheduler, startup-migration, or
+`NewSessionsTable` owner paths. The final severity-ordered review found no unresolved actionable
+findings. The branch has no upstream and was not pushed.

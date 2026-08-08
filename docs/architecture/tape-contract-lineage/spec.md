@@ -2,9 +2,10 @@
 
 ## Status
 
-In implementation. P0 is complete and P1 is in progress. This architecture extends DeepChat's
-existing Tape, provider View, and live-delegation execution planes with explicit task and execution
-contracts. It does not add a second scheduler or make Tape an online permission service.
+V1 implementation and local validation are complete. This architecture extends DeepChat's existing
+Tape, provider View, and live-delegation execution planes with explicit task and execution contracts.
+Automatic repair/retry/override and ReplaySlice expansion remain deferred. The implementation does
+not add a second scheduler or make Tape an online permission service.
 
 Last reviewed: 2026-08-09.
 
@@ -84,8 +85,9 @@ V1 supports two acceptance requirement kinds:
 - `result_schema`: a bounded JSON Schema applied to the body of a named Markdown section.
 
 `result_schema` accepts one JSON value after removing at most one enclosing Markdown code fence.
-It uses Ajv strict validation with remote loading disabled, rejects every `$ref`, and stops after a
-bounded error set. It does not execute custom formats or schema-provided code.
+It uses synchronous Ajv strict validation with remote loading disabled, rejects every `$ref` and
+nested `$async`, and stops after a bounded error set. It does not execute custom formats or
+schema-provided code.
 Ajv and regex-safety dependencies are pinned. Any semantic change to those validators, Markdown
 section extraction, evidence normalization, or verdict reduction must bump `evaluatorVersion`.
 
@@ -134,8 +136,8 @@ recoverable and non-terminal.
 
 Every schema-v5 ViewManifest embeds one ExecutionContract with three structural groups:
 
-- `ceilings`: provider-visible tool identities, reviewed effect ceiling, workspace scope, and
-  Subagent nesting ceiling;
+- `ceilings`: provider-visible tool identities, reviewed effect ceiling, normalized workdir binding,
+  and Subagent nesting ceiling;
 - `dynamicControlSnapshot`: View-time permission and admission/cancellation observations;
 - `provenance`: prompt sections, provider/model identity, effective generation-config hash,
   provider-visible tool-definition hash, internal execution-policy hash, source hashes, and
@@ -170,8 +172,14 @@ Meet semantics are field-specific:
 - sets use intersection;
 - numeric maxima use `min`;
 - side-effect classes use the declared partial order;
-- workspace changes must remain within both the frozen and current scopes;
+- a View workdir must be within the TaskContract workdir at construction, and dispatch requires the
+  current normalized Session workdir to equal the exact frozen View workdir;
 - dynamic controls use the current runtime value and are not frozen ceilings.
+
+The schema retains the field name `workspace`, but V1 uses it only as a workdir identity and stale-
+View guard. It does not inspect tool arguments, establish a filesystem sandbox, or prove that a tool
+cannot access paths outside that directory. Tool-specific path authorization remains a separate
+runtime responsibility. Any workdir change requires a new View before another tool dispatch.
 
 An expansion of a ceiling takes effect only in a later View. Permission, cancellation, admission,
 Session deletion, and revocation remain live controls and may immediately tighten or relax according
@@ -219,7 +227,9 @@ The Tape fact is historical evidence, not a model-facing delivery mechanism. Exi
 
 The existing child-result envelope carries these structured fields outside untrusted child text.
 Parent-initiated `follow_up` creates a new turn and a new TaskContract that references the prior
-evaluation. It is not an automatic replay of the previous attempt.
+evaluation. The predecessor reference must name the same parent Session as the new TaskContract; a
+cross-Session reference is invalid provenance. A follow-up is not an automatic replay of the
+previous attempt.
 
 ## Write Disciplines
 
@@ -237,7 +247,9 @@ This table describes write disciplines, not a count of all Tape event families.
 ## Compatibility
 
 - ViewManifest schemas 1 through 4 and their historical hash versions remain readable.
-- New writes use ViewManifest schema 5 and a new manifest hash version.
+- Normal DeepChat contract-bearing writes use ViewManifest schema 5 and manifest hash version 3.
+  ACP compatibility and an explicitly degraded ordinary interactive request may still write schema
+  4; contract-bearing child requests never take that fallback.
 - New live-delegation contract/evaluation columns are nullable for historical rows.
 - Historical terminal turns remain readable with no evaluation; no facts are fabricated for them.
 - A legacy active turn without a TaskContract must freeze a compatibility contract before it may
@@ -258,8 +270,8 @@ This table describes write disciplines, not a count of all Tape event families.
 - Contract manifests store hashes and bounded source references, not secrets, raw headers, or copied
   prompt source files.
 - Tool ceilings use stable tool target identity, not only a model-visible name.
-- Runtime revalidates current permission, workspace, Session lineage, and tool authority immediately
-  before dispatch.
+- Runtime revalidates current permission, workdir identity, Session lineage, and tool authority
+  immediately before dispatch.
 - Child output remains untrusted even when its contract passes.
 - JSON Schema evaluation is bounded by accepted schema size, candidate size, and evaluator work;
   remote references and executable formats are forbidden.
@@ -267,8 +279,9 @@ This table describes write disciplines, not a count of all Tape event families.
 
 ## Acceptance Criteria
 
-1. Every new DeepChat-owned provider View has a schema-v5 manifest containing a verifiable
-   ExecutionContract built from the exact request inputs.
+1. Every successfully assembled normal DeepChat View has a schema-v5 manifest containing a
+   verifiable ExecutionContract built from the exact request inputs; ACP compatibility and bounded
+   ordinary-interactive degradation retain their documented schema-v4 behavior.
 2. Tool dispatch receives the exact View contract and rejects a tool outside its frozen ceiling even
    when current runtime authority would otherwise permit it.
 3. Current revocation still interrupts or rejects active child work before dispatch.

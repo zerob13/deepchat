@@ -6,7 +6,7 @@
   ExecutionContract, evaluation, verdict, and disposition.
 - Add main-process canonical builders and versioned hashes using the existing canonical JSON helper.
 - Add Ajv as a direct runtime dependency for bounded local result-schema validation; disable remote
-  loading, `$ref`, custom executable formats, and unbounded error collection.
+  loading, `$ref`, `$async`, custom executable formats, and unbounded error collection.
 - Define stable tool target identity and typed ceiling comparison without importing runtime services
   into the domain layer.
 - Add focused domain tests for canonical ordering, hash exclusion rules, bounds, typed meet, and
@@ -29,7 +29,8 @@
 - Construct one immutable ExecutionContract after final provider messages, tools, model identity,
   token budget, runtime settings, and TaskContract context are known.
 - Store the value on the request/run path; do not add a per-Session latest-contract cache.
-- Upgrade ViewManifest writes to schema 5 and the next hash version while preserving v1-v4 readers.
+- Upgrade normal DeepChat ViewManifest writes to schema 5 and the next hash version while preserving
+  v1-v4 readers plus ACP and explicit ordinary-interactive schema-v4 fallback writes.
 - Include full ExecutionContract content in `view/assembled`; reference the TaskContract by durable
   local/origin identity where present.
 - Keep interactive writes fail-open with explicit degradation and make contract-bearing child View
@@ -41,10 +42,11 @@
   provider response.
 - Persist a bounded View binding on paused permission actions, retain the exact value in the live
   batch projection, and recover it from a hash-verified v5 manifest only after runtime loss.
-- Validate stable tool target, reviewed effect class, workspace scope, and nesting ceiling before
-  crossing ToolService dispatch.
-- Retain existing live permission, workdir, deletion, and Subagent-authority checks as the current
-  runtime side of the meet.
+- Validate stable tool target, reviewed effect class, exact normalized View workdir binding, and
+  nesting ceiling before crossing ToolService dispatch.
+- Retain existing live permission, workdir identity, deletion, and Subagent-authority checks as the
+  current runtime side of the meet; do not represent the workdir binding as argument-level path
+  authorization.
 - Reject stale, missing, or mismatched contract identity for contract-bearing child dispatch.
 - Add tests for mid-run revocation, permission relaxation, tool-catalog expansion, workdir change,
   transient provider retry, and multiple logical rounds.
