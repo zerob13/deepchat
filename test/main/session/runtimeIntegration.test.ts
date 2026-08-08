@@ -1,3 +1,4 @@
+import * as fs from 'node:fs'
 import { AppSessionService } from '@/agent/shared/appSessionService'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createDeepChatAgentHarness, type DeepChatAgentHarness } from '@/agent/deepchat/harness'
@@ -40,6 +41,12 @@ vi.mock('@/events', async (importOriginal) => {
       ERROR: 'stream:error'
     }
   }
+})
+
+beforeEach(() => {
+  vi.mocked(fs.promises.readFile).mockRejectedValue(
+    Object.assign(new Error('AGENTS.md does not exist'), { code: 'ENOENT' })
+  )
 })
 
 function createMockSqlitePresenter() {
