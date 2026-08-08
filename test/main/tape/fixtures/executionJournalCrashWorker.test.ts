@@ -55,7 +55,7 @@ describe('Execution Journal crash worker', () => {
           if (point === crashPoint) holdAtCrashPoint(point)
         }
       }
-      const journal = new ExecutionJournalService(table, failpoint)
+      const journal = new ExecutionJournalService(() => table, failpoint)
 
       journal.commitRunStarted({
         sessionId: SESSION_ID,

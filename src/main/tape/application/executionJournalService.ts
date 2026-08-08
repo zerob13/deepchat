@@ -64,7 +64,7 @@ export class ExecutionJournalService
   implements ExecutionJournalWriter, ExecutionJournalRecoveryReader
 {
   constructor(
-    private readonly store: ExecutionJournalPersistenceStore,
+    private readonly getStore: () => ExecutionJournalPersistenceStore,
     private readonly commitFailpoint?: ExecutionJournalCommitFailpoint
   ) {}
 
@@ -161,7 +161,9 @@ export class ExecutionJournalService
   }
 
   classifyRecoveryCandidates(): ExecutionRecoveryReport[] {
-    return classifyExecutionJournalRows(this.store.listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES))
+    return classifyExecutionJournalRows(
+      this.getStore().listEventsByNames(EXECUTION_JOURNAL_EVENT_NAMES)
+    )
   }
 
   private commitStrictEvent(
@@ -169,7 +171,7 @@ export class ExecutionJournalService
     requirePrerequisite?: (table: ExecutionJournalPersistenceStore) => void,
     validateNewFact?: (table: ExecutionJournalPersistenceStore) => void
   ): ExecutionJournalCommitReceipt {
-    const table = this.store
+    const table = this.getStore()
     this.commitFailpoint?.reach({ eventName: input.name, phase: 'before' })
     let receipt: ExecutionJournalCommitReceipt
     try {

@@ -40,6 +40,11 @@ function buildMessageProvenanceKey(
   return `message:${record.id}:revision:${record.status}:${record.updatedAt}`
 }
 
+function buildMessageReplacementProvenanceKey(record: ChatMessageRecord, reason: string): string {
+  const orderRevision = reason === 'compaction_order_shifted' ? `:order_seq:${record.orderSeq}` : ''
+  return `message:${record.id}:revision:${record.updatedAt}${orderRevision}`
+}
+
 function buildToolFactProvenanceKey(
   kind: 'tool_call' | 'tool_result',
   messageId: string,
@@ -283,7 +288,7 @@ export function appendMessageReplacementToTape(
       id: record.id,
       seq: record.updatedAt
     },
-    provenanceKey: `message:${record.id}:revision:${record.updatedAt}`,
+    provenanceKey: buildMessageReplacementProvenanceKey(record, reason),
     payload: {
       record: {
         id: record.id,

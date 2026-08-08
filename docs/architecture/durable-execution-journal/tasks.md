@@ -78,3 +78,12 @@
 - [x] Remove native Journal append from the generic Context Tape storage capability.
 - [x] Retain deferred parking across runtime cleanup after projection failure.
 - [x] Document complete recovery scanning and defer durable acknowledgement/retention.
+
+## 8. Connection And Projection Consistency
+
+- [x] Resolve the strict Journal store lazily across application database reopen.
+- [x] Reconcile completed process ownership with utility-host TTL cleanup.
+- [x] Append atomic Tape replacements for compaction-driven transcript order shifts.
+- [x] Preserve both Run and terminal-commit failures without erasing Journal corruption identity.
+- [x] Add focused connection-reopen, TTL-race, and effective-order regression tests.
+- [x] Run required validation, review unstaged and staged diffs, commit, and do not push.

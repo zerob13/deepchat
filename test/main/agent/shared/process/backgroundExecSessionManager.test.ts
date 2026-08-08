@@ -457,6 +457,7 @@ describe('BackgroundExecSessionManager', () => {
 describe('backgroundExecSessionManager utility proxy', () => {
   const resetProxyState = () => {
     const proxy = backgroundExecSessionManager as any
+    proxy.stopCompletedSessionReconciliation()
     proxy.host = null
     proxy.hostReady = null
     proxy.shuttingDown = false
@@ -473,6 +474,8 @@ describe('backgroundExecSessionManager utility proxy', () => {
 
   afterEach(() => {
     resetProxyState()
+    vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('forks the dedicated entrypoint for the utility host', async () => {
@@ -621,6 +624,86 @@ describe('backgroundExecSessionManager utility proxy', () => {
 
       expect(beforeMutation).toHaveBeenCalledOnce()
       expect(request).toHaveBeenCalledWith(mutation, ['conv-1', sessionId])
+    }
+  )
+
+  it('reconciles completed ownership after the utility-host cleanup interval', async () => {
+    vi.useFakeTimers()
+    const proxy = backgroundExecSessionManager as any
+    proxy.host = new MockUtilityProcess()
+    proxy.activeSessions.set('bg_completed', {
+      conversationId: 'conv-1',
+      sessionId: 'bg_completed',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1
+    })
+    const request = vi.spyOn(proxy, 'request').mockImplementation(async (method: string) => {
+      if (method === 'poll') {
+        return {
+          status: 'completed',
+          output: 'done',
+          exitCode: 0,
+          offloaded: false,
+          timedOut: false
+        }
+      }
+      if (method === 'list') return []
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    await backgroundExecSessionManager.poll('conv-1', 'bg_completed')
+    expect(proxy.completedSessions.has('bg_completed')).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+    expect(request).toHaveBeenCalledWith('list', ['conv-1'])
+    expect(proxy.completedSessions.has('bg_completed')).toBe(false)
+    expect(proxy.completedSessionReconciliationTimer).toBeNull()
+  })
+
+  it.each(['kill', 'clear', 'remove'] as const)(
+    'treats %s as idempotent when host TTL cleanup already removed a completed session',
+    async (mutation) => {
+      const proxy = backgroundExecSessionManager as any
+      proxy.completedSessions.set('bg_expired', {
+        conversationId: 'conv-1',
+        sessionId: 'bg_expired',
+        command: 'pnpm test',
+        createdAt: 1,
+        lastAccessedAt: 1
+      })
+      const beforeMutation = vi.fn()
+      vi.spyOn(proxy, 'request').mockRejectedValue(new Error('Session bg_expired not found'))
+
+      await expect(
+        backgroundExecSessionManager[mutation]('conv-1', 'bg_expired', beforeMutation)
+      ).resolves.toBeUndefined()
+
+      expect(beforeMutation).toHaveBeenCalledOnce()
+      expect(proxy.completedSessions.has('bg_expired')).toBe(false)
+    }
+  )
+
+  it.each(['kill', 'clear', 'remove'] as const)(
+    'does not hide unrelated utility-host errors during completed-session %s',
+    async (mutation) => {
+      const proxy = backgroundExecSessionManager as any
+      proxy.completedSessions.set('bg_completed', {
+        conversationId: 'conv-1',
+        sessionId: 'bg_completed',
+        command: 'pnpm test',
+        createdAt: 1,
+        lastAccessedAt: 1
+      })
+      const transportError = new Error('Utility host transport failed')
+      vi.spyOn(proxy, 'request').mockRejectedValue(transportError)
+
+      await expect(backgroundExecSessionManager[mutation]('conv-1', 'bg_completed')).rejects.toBe(
+        transportError
+      )
+
+      expect(proxy.completedSessions.has('bg_completed')).toBe(true)
     }
   )
 })

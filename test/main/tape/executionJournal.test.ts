@@ -2,6 +2,7 @@ import {
   DatabaseCtor,
   DeepChatExecutionJournalStore,
   DeepChatTapeEntriesTable,
+  SessionTape,
   createTapeService,
   createTapeTableMock,
   describe,
@@ -24,6 +25,8 @@ import {
   type ExecutionJournalCommitFailpoint
 } from '@/tape/application/executionJournalService'
 import { buildEffectiveTapeView, searchEffectiveTapeRows } from '@/tape/domain/effectiveView'
+import { MainDatabase } from '@/data/mainDatabase'
+import { SessionDatabase } from '@/session/data/database'
 
 const RUN_IDS = {
   notDispatched: '11111111-1111-4111-8111-111111111111',
@@ -190,7 +193,7 @@ describe('Execution Journal domain and strict persistence', () => {
     const failpoint: ExecutionJournalCommitFailpoint = {
       reach: ({ phase }) => timeline.push(`failpoint:${phase}`)
     }
-    const service = new ExecutionJournalService(table, failpoint)
+    const service = new ExecutionJournalService(() => table, failpoint)
 
     service.commitRunStarted({
       sessionId: 'session-1',
@@ -610,7 +613,7 @@ itIfSqlite('queries only journal events through the dedicated SQLite index', () 
   const db = new DatabaseCtor(':memory:')
   const table = new DeepChatExecutionJournalStore(db)
   table.createTable()
-  const service = new ExecutionJournalService(table)
+  const service = new ExecutionJournalService(() => table)
 
   table.appendEvent({ sessionId: 'session-1', name: 'context/example', data: { value: 1 } })
   service.commitRunStarted({
@@ -657,6 +660,34 @@ itIfSqlite('queries only journal events through the dedicated SQLite index', () 
   db.close()
 })
 
+itIfSqlite('resolves the current Journal store after the application database reopens', () => {
+  const connection = new MainDatabase(':memory:')
+  try {
+    const tape = new SessionTape(new SessionDatabase(connection))
+    expect(
+      tape.commitRunStarted({
+        sessionId: 'session-1',
+        runId: RUN_IDS.completed,
+        messageId: 'assistant-1',
+        runKind: 'loop'
+      })
+    ).toMatchObject({ created: true })
+
+    connection.reopen()
+
+    expect(
+      tape.commitRunStarted({
+        sessionId: 'session-1',
+        runId: RUN_IDS.indeterminate,
+        messageId: 'assistant-2',
+        runKind: 'loop'
+      })
+    ).toMatchObject({ created: true })
+  } finally {
+    connection.close()
+  }
+})
+
 itIfSqlite('reserves execution event names for the strict writer', () => {
   const db = new DatabaseCtor(':memory:')
   try {
@@ -690,7 +721,7 @@ itIfSqlite('rejects Journal commits owned by an active host transaction', () => 
   try {
     const table = new DeepChatExecutionJournalStore(db)
     table.createTable()
-    const service = new ExecutionJournalService(table)
+    const service = new ExecutionJournalService(() => table)
 
     db.transaction(() => {
       expect(() =>

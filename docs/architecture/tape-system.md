@@ -6,8 +6,9 @@ Tape 是 Session 同寿命的 append-only fact store，在同一个物理 entry 
   服务 context assembly、recall、replay 与审计；
 - Execution Journal 保存 Run、工具副作用和终态的原生边界事实，服务失败分类与崩溃后对账。
 
-message transcript 是面向 UI 的 projection，不是 Tape 的替代品。legacy transcript reconciliation 只可
-重建 Context Tape，不得制造 `execution/*` 事实。
+message transcript 是活跃 message state 和 UI read model，也是当前 Context Tape message fact 的生产
+来源；它不是 Execution Journal 的 authority。legacy transcript reconciliation 只可重建 Context Tape，
+不得制造 `execution/*` 事实。
 
 ## 所有权和分层
 

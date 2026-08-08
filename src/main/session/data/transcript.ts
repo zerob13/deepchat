@@ -254,11 +254,31 @@ export class SessionTranscript {
     let messageId = ''
     this.runInDatabaseTransaction(() => {
       if (options?.shiftExistingMessages) {
+        const shiftedMessageIds = this.database.deepchatMessagesTable.getIdsFromOrderSeq(
+          sessionId,
+          orderSeq
+        )
         this.database.deepchatMessagesTable.incrementOrderSeqFrom(sessionId, orderSeq)
+        this.appendCompactionOrderShiftFacts(sessionId, shiftedMessageIds)
       }
       messageId = this.insertCompactionMessageRecord(sessionId, orderSeq, status, summaryUpdatedAt)
     })
     return messageId
+  }
+
+  private appendCompactionOrderShiftFacts(sessionId: string, messageIds: string[]): void {
+    if (messageIds.length === 0) return
+
+    const shiftedMessageIds = new Set(messageIds)
+    const shiftedRecords = this.getMessages(sessionId).filter((record) =>
+      shiftedMessageIds.has(record.id)
+    )
+    if (shiftedRecords.length !== shiftedMessageIds.size) {
+      throw new Error('Failed to materialize every message shifted by compaction.')
+    }
+    for (const record of shiftedRecords) {
+      this.tapeFacts.appendMessageReplacement(record, 'compaction_order_shifted')
+    }
   }
 
   updateAssistantContent(

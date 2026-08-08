@@ -94,10 +94,13 @@ from default Context views, search, and recovery diagnostics.
   finalized tool result. Target-owned live/runtime events emitted during an Agent tool invocation
   are part of that claimed invocation and are not T2-gated projections.
 - Skill activation and other harness-owned context mutations occur after T2. Their failure cannot
-  replace or contradict the target outcome already recorded by T2.
+  replace or contradict the target outcome already recorded by T2. Activation failure stops the
+  current Run after T2 rather than continuing another provider round with stale Skill context.
 - `run_terminal` is committed before transcript status, runtime status, terminal hooks, or UI
   completion/failure projection advances.
 - Journal persistence failure propagates through the Run. It is never reduced to a warning.
+- If Run execution and its fallback terminal commit both fail, propagation retains the execution
+  cause and the terminal failure cause without erasing a concrete Journal corruption type.
 - A Journal failure still releases claimed inputs and exits transient runtime states. If no matching
   terminal fact was committed, cleanup must not manufacture a terminal transcript or UI projection.
 - If a deferred Run cannot commit its terminal after T1, the originating interaction is parked. The
@@ -109,6 +112,9 @@ from default Context views, search, and recovery diagnostics.
   fact throws a typed corruption error.
 - Journal commits cannot run inside a host transaction whose rollback could erase the committed
   receipt independently of the external effect.
+- Every Journal commit and recovery read resolves its storage capability from the current Session
+  database connection. Closing and reopening the application database cannot leave the long-lived
+  `SessionTape` facade holding a store backed by the closed connection.
 - Only the strict Journal writer may append names in the reserved `execution/*` namespace. Fork
   merge and generic Context Tape append paths cannot copy or create those facts. The native append
   operation is absent from the generic `TapeEntryStore` capability.
@@ -116,6 +122,9 @@ from default Context views, search, and recovery diagnostics.
 - Recovery never reuses an old `runId` and never automatically retries an indeterminate operation.
 - Context Tape facts, search projection, recall, anchors, and ViewManifest retain their current
   fail-open behavior where already specified.
+- A transcript operation that shifts persisted message order appends matching Context Tape
+  replacement facts in the same database transaction. Effective Tape ordering must not retain the
+  pre-shift `orderSeq` values.
 
 ## Failure Semantics
 
@@ -220,6 +229,8 @@ recovery until they execute through a journal-aware harness boundary.
 16. A completed background process session retains conversation ownership until explicit cleanup or
     utility-host expiry, so cleanup mutations remain authorized without allowing cross-conversation
     access.
+17. A fallback terminal-commit failure retains both failure causes and its concrete Journal error
+    classification.
 
 ## Constraints
 

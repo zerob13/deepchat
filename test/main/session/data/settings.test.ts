@@ -13,16 +13,26 @@ const sessionDatabaseModule = sqliteModule
 const sessionTapeModule = sqliteModule
   ? await import('../../../../src/main/tape/application/sessionTape')
   : null
+const sessionTranscriptModule = sqliteModule
+  ? await import('../../../../src/main/session/data/transcript')
+  : null
+const effectiveTapeViewModule = sqliteModule
+  ? await import('../../../../src/main/tape/domain/effectiveView')
+  : null
 
 const Database = sqliteModule?.default
 const MainDatabase = sqlitePresenterModule?.MainDatabase
 const SessionSettingsStore = sessionStoreModule?.SessionSettingsStore
 const SessionDatabase = sessionDatabaseModule?.SessionDatabase
 const SessionTape = sessionTapeModule?.SessionTape
+const SessionTranscript = sessionTranscriptModule?.SessionTranscript
+const buildEffectiveTapeView = effectiveTapeViewModule?.buildEffectiveTapeView
 const MainDatabaseCtor = MainDatabase!
 const SessionSettingsStoreCtor = SessionSettingsStore!
 const SessionDatabaseCtor = SessionDatabase!
 const SessionTapeCtor = SessionTape!
+const SessionTranscriptCtor = SessionTranscript!
+const buildEffectiveTapeViewFn = buildEffectiveTapeView!
 
 let sqliteAvailable = false
 if (Database) {
@@ -394,5 +404,56 @@ describeIfSqlite('SessionSettingsStore tape summary state', () => {
     })
 
     connection.close()
+  })
+})
+
+describeIfSqlite('Session transcript and Tape order consistency', () => {
+  it('records replacements for messages shifted by compaction insertion', () => {
+    const connection = new MainDatabaseCtor(':memory:')
+    try {
+      const database = new SessionDatabaseCtor(connection)
+      const tape = new SessionTapeCtor(database)
+      const transcript = new SessionTranscriptCtor(database, tape)
+      const firstMessageId = transcript.createUserMessage('s1', 1, {
+        text: 'first',
+        files: [],
+        links: [],
+        search: false,
+        think: false
+      })
+      const shiftedMessageId = transcript.createUserMessage('s1', 2, {
+        text: 'second',
+        files: [],
+        links: [],
+        search: false,
+        think: false
+      })
+
+      const compactionMessageId = transcript.createCompactionMessageAtOrderSeq(
+        's1',
+        2,
+        'compacting',
+        null,
+        { shiftExistingMessages: true }
+      )
+
+      expect(
+        transcript.getMessages('s1').map((record) => ({ id: record.id, orderSeq: record.orderSeq }))
+      ).toEqual([
+        { id: firstMessageId, orderSeq: 1 },
+        { id: compactionMessageId, orderSeq: 2 },
+        { id: shiftedMessageId, orderSeq: 3 }
+      ])
+      expect(
+        buildEffectiveTapeViewFn(database.deepchatTapeEntriesTable.getBySession('s1'), {
+          includePending: true
+        }).messageRecords.map((record) => ({ id: record.id, orderSeq: record.orderSeq }))
+      ).toEqual([
+        { id: firstMessageId, orderSeq: 1 },
+        { id: shiftedMessageId, orderSeq: 3 }
+      ])
+    } finally {
+      connection.close()
+    }
   })
 })

@@ -54,7 +54,10 @@ import { nanoid } from 'nanoid'
 import { createSessionData, createSessionDataFromDatabase } from '@/session/data'
 import { SessionTranscriptMutations } from '@/session/transcriptMutations'
 import { LiveDelegationAgentTool } from '@/tool/agentTools/liveDelegationTool'
-import { ExecutionJournalError } from '@/tape/domain/executionJournal'
+import {
+  ExecutionJournalCorruptionError,
+  ExecutionJournalError
+} from '@/tape/domain/executionJournal'
 
 vi.mock('nanoid', () => ({ nanoid: vi.fn(() => 'mock-msg-id') }))
 
@@ -2953,6 +2956,53 @@ describe('DeepChatAgentHarness', () => {
       expect(terminalError.cause).toBe(persistenceCause)
       expect(agent.getActiveGeneration('s1')).toBeNull()
       expect((await agent.getSessionState('s1'))?.status).toBe('idle')
+    })
+
+    it('preserves corruption identity when fallback terminal commit conflicts', async () => {
+      const executionError = new Error('provider failed')
+      const persistenceCause = new Error('conflicting terminal fact')
+      const terminalError = new ExecutionJournalCorruptionError('run terminal conflicted', {
+        cause: persistenceCause
+      })
+      vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockImplementation(() => {
+        throw terminalError
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(executionError)
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      const propagated = await agent.processMessage('s1', 'Hello').catch((error) => error)
+
+      expect(propagated).toBeInstanceOf(ExecutionJournalCorruptionError)
+      expect(propagated).toMatchObject({
+        name: 'ExecutionJournalCorruptionError',
+        message: terminalError.message,
+        code: terminalError.code,
+        cause: expect.any(AggregateError)
+      })
+      expect((propagated.cause as AggregateError).errors).toEqual([
+        executionError,
+        persistenceCause
+      ])
+    })
+
+    it('retains both failures when a terminal commit throws an untyped error', async () => {
+      const executionError = new Error('provider failed')
+      const terminalError = new Error('terminal storage failed')
+      vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockImplementation(() => {
+        throw terminalError
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(executionError)
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      const propagated = await agent.processMessage('s1', 'Hello').catch((error) => error)
+
+      expect(propagated).toMatchObject({
+        name: 'ExecutionJournalError',
+        message: terminalError.message,
+        code: 'persistence_failed',
+        cause: expect.any(AggregateError)
+      })
+      expect((propagated.cause as AggregateError).errors).toEqual([executionError, terminalError])
     })
 
     it('keeps a committed terminal authoritative when its projection fails', async () => {

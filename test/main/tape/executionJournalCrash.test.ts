@@ -161,7 +161,7 @@ function classify(databasePath: string) {
   try {
     const table = new DeepChatExecutionJournalStore(database)
     table.createTable()
-    return new ExecutionJournalService(table).classifyRecoveryCandidates()
+    return new ExecutionJournalService(() => table).classifyRecoveryCandidates()
   } finally {
     database.close()
   }

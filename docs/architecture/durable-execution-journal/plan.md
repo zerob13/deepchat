@@ -31,6 +31,11 @@ accepts only the four protocol event names. That method is exposed through a ded
 persistence port and is absent from the generic `TapeEntryStore` port. Fork merge excludes the
 entire reserved namespace.
 
+`SessionTape` is process-lived while the Session SQLite connection can be closed and reopened by
+import, encryption, and maintenance flows. The Journal service therefore receives a lazy store
+provider and resolves it for every commit and recovery scan, matching the existing Context Tape
+provider pattern. No store object backed by a concrete SQLite handle is cached across reopen.
+
 ## Domain Model
 
 Create `src/main/tape/domain/executionJournal.ts` with:
@@ -113,7 +118,9 @@ projection error. Completed or paused terminal projection failures only clear tr
 state because the outer coordinator cannot reconstruct their full output.
 If `run_started` or `run_terminal` persistence itself fails, the coordinator releases queued claims
 and clears transient status without fabricating transcript/UI terminal evidence, then propagates the
-Journal error.
+Journal error. When Run execution and its fallback terminal commit both fail, a fresh typed error
+retains both causes and preserves a concrete corruption classification without mutating either
+captured error object.
 Steer claims are the exception to release: their user messages are already durable and visible, so a
 Journal failure consumes the claim to prevent duplicate replay. Cancellation classification is based
 on the owned abort signal, never only on an exception name.
@@ -163,7 +170,9 @@ transcript, or UI. Live progress, runtime activation, and other events emitted i
 belong to the target invocation itself and can occur between T1 and T2; a crash in that interval is
 classified from the resulting T1-without-T2 evidence.
 Harness-owned skill activation occurs after T2. Activation failure is a projection/context failure
-and cannot rewrite a successful target response as an error outcome.
+and cannot rewrite a successful target response as an error outcome. It still stops the current Run
+so the next provider request cannot proceed with an outcome that claims activation while runtime
+context lacks the activated Skill.
 Thrown target errors are known error outcomes and receive T2. Abort or process loss before a known
 result intentionally leaves T1 without T2. Permission retries clear prior attempt results before the
 approved attempt begins, while a target result that has already returned is retained if cancellation
@@ -232,6 +241,24 @@ Recovery normalizes inherited non-interaction `pending` or `loading` blocks to e
 Run begins. Pending permission and question blocks remain resumable. A current Run still fails loudly
 if it attempts to project a paused terminal with unresolved non-interaction work.
 
+## Transcript Order Corrections
+
+Compaction can insert a status message at an existing transcript `orderSeq` and shift later rows by
+one. The shift and a Context Tape replacement for every affected message run in the same SQLite
+transaction before the compaction indicator is inserted. Shift replacements use provenance that
+includes the resulting order so multiple shifts within one clock tick cannot collapse into one
+idempotent row. Effective Tape and transcript ordering therefore remain identical after compaction,
+resume, or steer insertion.
+
+## Completed Process Session Reconciliation
+
+The main process retains completed utility-process session ownership so the owning conversation can
+clear, kill, or remove a completed session without opening cross-conversation access. A single
+unref'ed reconciliation timer queries each affected conversation at the utility host's cleanup
+cadence and removes local completed entries only after the host confirms they are absent. Explicit
+remove remains idempotent when host TTL cleanup wins the race, while transport and unrelated host
+errors continue to propagate.
+
 ## Test Strategy
 
 ### Pure Unit Tests
@@ -263,6 +290,7 @@ if it attempts to project a paused terminal with unresolved non-interaction work
 - committed error and aborted outcomes select their matching finalizers even when projection throws;
 - a parallel sibling failure leaves earlier T2 facts intact without claiming atomic batch delivery;
 - terminal commit precedes every terminal projection and failure prevents projection;
+- terminal fallback failure preserves the Run error, commit cause, and Journal corruption subtype;
 - deferred approval uses a new Run and obeys the same ordering;
 - startup classification runs before interrupted transcript recovery and never executes tools.
 - Run-start and terminal persistence failures release claims and clear transient status without
@@ -273,6 +301,10 @@ if it attempts to project a paused terminal with unresolved non-interaction work
   side effect follows T1;
 - completed process sessions retain owner metadata until explicit cleanup or confirmed utility-host
   expiry, while cross-conversation mutations remain rejected;
+- completed process-session ownership is periodically reconciled with the utility host, and a
+  cleanup request remains idempotent when the host already removed the completed session by TTL;
+- closing and reopening the Session database does not invalidate later Journal commits;
+- compaction insertion that shifts transcript order produces matching effective Tape order;
 - visible steer claims are consumed when the next Run cannot commit `run_started`;
 - concurrent cancellation cannot turn deferred Journal parking into an aborted terminal projection;
 - projection failure followed by runtime cleanup cannot make a parked deferred tool replayable;
