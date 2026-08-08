@@ -41,6 +41,7 @@ export interface DeepChatTaskSchema {
 export interface DeepChatTaskConfig {
   readonly completionMode: 'single_response'
   readonly retryMode: 'parent_follow_up'
+  readonly creationReason: 'delegation_created' | 'legacy_recovery'
   readonly predecessorEvaluationRef: DeepChatEvaluationRef | null
 }
 
@@ -95,6 +96,11 @@ export interface DeepChatTaskContract {
   readonly taskDescription: DeepChatTaskDescription
   readonly taskHarness: DeepChatTaskHarness
   readonly contractHash: string
+}
+
+export interface DeepChatTaskContractContext {
+  readonly contract: DeepChatTaskContract
+  readonly localRef: DeepChatTaskContractRef
 }
 
 const StoredIdSchema = z.string().trim().min(1).max(256)
@@ -162,6 +168,7 @@ export const DeepChatTaskContractProjectionSchema: z.ZodType<DeepChatTaskContrac
       .object({
         completionMode: z.literal('single_response'),
         retryMode: z.literal('parent_follow_up'),
+        creationReason: z.enum(['delegation_created', 'legacy_recovery']),
         predecessorEvaluationRef: DeepChatEvaluationRefSchema.nullable()
       })
       .strict(),

@@ -88,6 +88,9 @@ import {
 import { PENDING_INPUT_ABORT_REASON, throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { RuntimeHookSink } from './runtimeHookSink'
+import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
+import type { SessionIdentityService } from './sessionIdentityService'
+import { meetTaskContractToolDefinitions } from './taskContractCapability'
 import type {
   ClaimedPendingInputHandle,
   TurnCompletion
@@ -151,6 +154,8 @@ export interface TurnCoordinatorPorts {
     'resolveProjectDir' | 'getEffectiveGenerationSettings'
   >
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
+  identity: Pick<SessionIdentityService, 'getSessionKind'>
+  taskContractContext: DeepChatTaskContractContextPort
   loopRunner: Pick<DeepChatLoopRunner, 'run'>
   messageProjection: Pick<MessageProjectionService, 'refresh'>
   hookSink: Pick<RuntimeHookSink, 'scope'>
@@ -235,7 +240,7 @@ export class TurnCoordinator {
     )
     this.ports.runLifecycle.assertCurrentInstance(sessionId, instance)
     const activeSkillNames = resolveEffectiveActiveSkillNames(sessionActiveSkillNames, instance)
-    const tools = await this.runPreStreamStep(
+    const resolvedTools = await this.runPreStreamStep(
       { sessionId, messageId, step: 'tool-definitions', signal },
       () =>
         awaitWithAbort(
@@ -248,6 +253,11 @@ export class TurnCoordinator {
           signal
         )
     )
+    const taskContractContext =
+      this.ports.identity.getSessionKind(sessionId) === 'subagent'
+        ? this.ports.taskContractContext.prepare(sessionId)
+        : null
+    const tools = meetTaskContractToolDefinitions(sessionId, resolvedTools, taskContractContext)
     const toolReserveTokens = estimateToolReserveTokens(tools)
     throwIfAbortRequested(signal)
     const basePromptAssembler = this.ports.promptAssembly.createBasePromptAssembler(instance)

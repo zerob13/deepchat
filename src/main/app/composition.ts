@@ -1503,6 +1503,9 @@ export async function createMainProcessControl(dependencies: {
       resume: async (sessionId, signal) =>
         await liveDelegationService.beforeInteractionContinuation(sessionId, signal),
       suspend: (sessionId) => liveDelegationService.suspendInteractionContinuation(sessionId)
+    },
+    taskContractContext: {
+      prepare: (sessionId) => liveDelegationService.prepareTaskContractContext(sessionId)
     }
   })
   const sessionTranscriptMutations = new SessionTranscriptMutations({

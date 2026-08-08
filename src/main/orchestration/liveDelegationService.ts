@@ -38,12 +38,17 @@ import type {
   PermissionMode,
   SubagentTapeLinkReceipt
 } from '@shared/types/agent-interface'
+import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import type { SessionRuntimeUpdate } from '@/session/runtimeEvents'
 import type { SessionDeletionGatePort } from '@/session/deletionGate'
 import { classifyToolEffect } from '@/tool/effectClassification'
 import type { ToolEffectObservation } from '@/tool/effectObserver'
 import { resolveToolPermissionMode } from '@/tool/permission/permissionMode'
-import type { ActiveLiveDelegationTurn, LiveDelegationRepository } from './liveDelegationRepository'
+import {
+  LiveDelegationTaskContractError,
+  type ActiveLiveDelegationTurn,
+  type LiveDelegationRepository
+} from './liveDelegationRepository'
 import type {
   LiveDelegationSafetyPort,
   LiveDelegationTurnExecutionSnapshot
@@ -54,6 +59,7 @@ import type {
   LiveDelegationConsentVerifier
 } from './liveDelegationConsent'
 import {
+  createLegacyLiveDelegationTaskContractInput,
   createLiveDelegationTaskContractInput,
   LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS
 } from './liveDelegationTaskContract'
@@ -191,6 +197,19 @@ export class LiveDelegationService {
     this.reconcilePromise = this.reconcileActiveTurns(activeRecords).catch((error) => {
       console.error('[LiveDelegationService] Failed to reconcile active turns:', error)
     })
+  }
+
+  prepareTaskContractContext(childSessionId: string): DeepChatTaskContractContext | null {
+    const context = this.options.repository.prepareActiveTaskContractContext(childSessionId)
+    const admittedTurnId = this.childToTurn.get(childSessionId)
+    if (context === null) {
+      if (admittedTurnId === undefined) return null
+    } else if (admittedTurnId === context.contract.taskDescription.turnId) {
+      return context
+    }
+    throw new LiveDelegationTaskContractError(
+      `Child Session ${childSessionId} has no admitted live-delegation runtime matching its TaskContract.`
+    )
   }
 
   async stop(): Promise<void> {
@@ -781,6 +800,10 @@ export class LiveDelegationService {
       await active.admissionLease.resume()
       await task()
     } catch (error) {
+      if (error instanceof LiveDelegationTaskContractError) {
+        this.parkTaskContractBoundary(active, error)
+        return
+      }
       if (
         active.admissionLease.state === 'suspended' &&
         !active.controller.signal.aborted &&
@@ -793,6 +816,18 @@ export class LiveDelegationService {
         error: errorMessage(error)
       })
     }
+  }
+
+  private parkTaskContractBoundary(active: ActiveTurn, error: unknown): void {
+    console.error('[LiveDelegationService] TaskContract boundary remains recoverable:', {
+      delegationId: active.delegationId,
+      turnId: active.turnId,
+      error
+    })
+    active.admissionLease.release()
+    if (active.childSessionId) this.childToTurn.delete(active.childSessionId)
+    this.activeTurns.delete(active.turnId)
+    active.completion.resolve()
   }
 
   private createActiveTurn(delegation: LiveDelegation, turn: LiveDelegationTurn): ActiveTurn {
@@ -846,6 +881,7 @@ export class LiveDelegationService {
       bound,
       turn.kind === 'follow_up' ? executionSnapshot : null
     )
+    this.options.repository.ensureInheritedTaskContract(turn.id, child.sessionId)
     this.childToTurn.set(child.sessionId, active.turnId)
     active.controller.signal.throwIfAborted()
 
@@ -1298,7 +1334,7 @@ export class LiveDelegationService {
           record.delegation.id
         )
     if (!this.started) return
-    const turn = this.options.repository.getTurn(record.turn.id)
+    let turn = this.options.repository.getTurn(record.turn.id)
     if (!turn || !isActiveTurnStatus(turn.status)) {
       if (record.delegation.childSessionId) {
         this.childToTurn.delete(record.delegation.childSessionId)
@@ -1321,6 +1357,20 @@ export class LiveDelegationService {
       return
     }
 
+    if (child.status === 'generating' || turn.startedAt !== null) {
+      if (!turn.taskContract) {
+        const projectDir = await this.options.sessions.resolveConversationWorkdir(
+          delegation.parentSessionId
+        )
+        if (!this.started) return
+        turn = this.options.repository.freezeLegacyTaskContract(
+          turn.id,
+          createLegacyLiveDelegationTaskContractInput(projectDir)
+        ).turn
+      }
+      this.options.repository.ensureInheritedTaskContract(turn.id, child.sessionId)
+    }
+
     const active = this.createActiveTurn(delegation, turn)
     active.childSessionId = child.sessionId
     active.started = turn.startedAt !== null || child.status === 'generating'
@@ -1335,6 +1385,11 @@ export class LiveDelegationService {
       return
     }
     if (turn.startedAt === null) {
+      if (turn.taskContract) {
+        active.runtimeStatus = null
+        this.scheduleTurn(delegation, turn, createTurnExecutionSnapshot(child))
+        return
+      }
       const settled = this.options.repository.finishTurn({
         turnId: turn.id,
         status: 'interrupted',
@@ -1360,6 +1415,12 @@ export class LiveDelegationService {
       error
     })
     if (!this.started) return
+    if (error instanceof LiveDelegationTaskContractError) {
+      if (record.delegation.childSessionId) {
+        this.childToTurn.delete(record.delegation.childSessionId)
+      }
+      return
+    }
     try {
       const current = this.options.repository.getTurn(record.turn.id)
       if (!current || !isActiveTurnStatus(current.status)) {

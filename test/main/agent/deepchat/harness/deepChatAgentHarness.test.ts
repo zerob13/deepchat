@@ -11,7 +11,7 @@ import type {
   DeepChatSessionState
 } from '@shared/types/agent-interface'
 import type { ChatMessage } from '@shared/types/core/chat-message'
-import type { MCPToolDefinition } from '@shared/types/core/mcp'
+import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
 import { ApiEndpointType, ModelType } from '@shared/model'
 import {
@@ -59,6 +59,8 @@ import {
   ExecutionJournalCorruptionError,
   ExecutionJournalError
 } from '@/tape/domain/executionJournal'
+import { buildTaskContract } from '@/tape/domain/taskContract'
+import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 
 vi.mock('nanoid', () => ({ nanoid: vi.fn(() => 'mock-msg-id') }))
 
@@ -818,6 +820,9 @@ function createRuntimeDependencies(
     interactionContinuationAdmission: options.interactionContinuationAdmission ?? {
       resume: vi.fn().mockResolvedValue(false),
       suspend: vi.fn()
+    },
+    taskContractContext: {
+      prepare: vi.fn().mockReturnValue(null)
     }
   }
 }
@@ -4073,6 +4078,104 @@ describe('DeepChatAgentHarness', () => {
       expect(manifests[1].executionContract.provenance.providerVisibleToolDefinitionsHash).toBe(
         manifests[1].hashes.toolDefinitionsHash
       )
+    })
+
+    it('resolves the child-local TaskContract independently for every provider View', async () => {
+      const taskContract = buildTaskContract({
+        delegationId: 'delegation-1',
+        turnId: 'turn-1',
+        turnSeq: 1,
+        turnKind: 'initial',
+        parentSessionId: 'parent-1',
+        slotId: 'reviewer',
+        targetAgentId: 'deepchat',
+        title: 'Review provider Views',
+        prompt: 'Keep each View attached to the active task.',
+        workspace: { kind: 'runtime_default' },
+        acceptance: [],
+        maxToolEffect: 'read',
+        maxSubagentDepth: 0
+      })
+      const contextForTape = (tapeIdentity: string, entryId: number) => ({
+        contract: taskContract,
+        localRef: {
+          schemaVersion: 1 as const,
+          sessionId: 's1',
+          tapeIdentity,
+          entryId,
+          contractHash: taskContract.contractHash
+        }
+      })
+      sqlitePresenter.newSessionsTable.get.mockImplementation((sessionId: string) =>
+        sessionId === 's1'
+          ? {
+              id: 's1',
+              agent_id: 'deepchat',
+              session_kind: 'subagent',
+              parent_session_id: 'parent-1'
+            }
+          : sessionId === 'parent-1'
+            ? { id: 'parent-1', agent_id: 'deepchat', session_kind: 'regular' }
+            : undefined
+      )
+      const prepareTaskContract = vi.mocked(runtimeDependencies.taskContractContext.prepare)
+      prepareTaskContract
+        .mockReturnValueOnce(contextForTape('c'.repeat(64), 2))
+        .mockReturnValueOnce(contextForTape('c'.repeat(64), 2))
+        .mockReturnValueOnce(contextForTape('d'.repeat(64), 3))
+        .mockReturnValueOnce(null)
+      const agentTool = (
+        name: string,
+        execution: MCPToolDefinition['execution']
+      ): MCPToolDefinition => ({
+        source: 'agent',
+        execution,
+        type: 'function',
+        function: {
+          name,
+          description: `${name} description`,
+          parameters: { type: 'object', properties: {} }
+        },
+        server: { name: 'agent-tools', icons: '', description: 'Agent tools' }
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue([
+        agentTool('read_file', TOOL_EXECUTION.read.parallel),
+        agentTool('write_file', TOOL_EXECUTION.write),
+        agentTool(LIVE_DELEGATION_AGENT_TOOL_NAME, TOOL_EXECUTION.read.sequential)
+      ])
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(
+        callArgs.run.resources.toolDefinitions.map((tool: MCPToolDefinition) => tool.function.name)
+      ).toEqual(['read_file'])
+
+      for (let index = 0; index < 3; index += 1) {
+        for await (const _event of callArgs.coreStream(
+          callArgs.run.messages,
+          callArgs.modelId,
+          callArgs.modelConfig,
+          callArgs.temperature,
+          callArgs.maxTokens,
+          callArgs.run.resources.toolDefinitions
+        )) {
+        }
+      }
+
+      const manifests = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
+        .map((row: any) => JSON.parse(row.payload_json).data.manifest)
+      expect(prepareTaskContract).toHaveBeenCalledTimes(4)
+      expect(prepareTaskContract).toHaveBeenNthCalledWith(1, 's1')
+      expect(
+        manifests.map((manifest: any) => manifest.executionContract.provenance.taskContractRef)
+      ).toEqual([
+        contextForTape('c'.repeat(64), 2).localRef,
+        contextForTape('d'.repeat(64), 3).localRef,
+        null
+      ])
     })
 
     it('continues provider requests when view manifest persistence fails', async () => {

@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { z } from 'zod'
 import type { SubagentTapeLinkReceipt } from '@shared/types/agent-interface'
+import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import {
   LIVE_DELEGATION_MAX_EFFECT_EVIDENCE_BYTES,
   LIVE_DELEGATION_MAX_ACTIVE_PER_PARENT,
@@ -32,7 +33,7 @@ import type { LiveDelegationDatabase } from './data/database'
 import type { LiveDelegationEventRow } from './data/tables/liveDelegationEvents'
 import type { LiveDelegationRow } from './data/tables/liveDelegations'
 import type { LiveDelegationTurnRow } from './data/tables/liveDelegationTurns'
-import type { ParentTaskContractWriter } from '@/tape/application/taskContractService'
+import type { TaskContractWriter } from '@/tape/application/taskContractService'
 import {
   buildTaskContract,
   restoreTaskContract,
@@ -40,7 +41,10 @@ import {
   serializeTaskContract,
   serializeTaskContractRef
 } from '@/tape/domain/taskContract'
-import type { LiveDelegationTaskContractInput } from './liveDelegationTaskContract'
+import type {
+  LegacyLiveDelegationTaskContractInput,
+  LiveDelegationTaskContractInput
+} from './liveDelegationTaskContract'
 
 const MAX_RETAINED_CONSUMED_MESSAGES_PER_PARENT = 500
 const MAX_LIST_LIMIT = 100
@@ -82,10 +86,17 @@ export interface LiveDelegationWithTurn {
 
 export interface ActiveLiveDelegationTurn extends LiveDelegationWithTurn {}
 
+export class LiveDelegationTaskContractError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'LiveDelegationTaskContractError'
+  }
+}
+
 export class LiveDelegationRepository {
   constructor(
     private readonly database: LiveDelegationDatabase,
-    private readonly taskContracts: ParentTaskContractWriter
+    private readonly taskContracts: TaskContractWriter
   ) {}
 
   create(input: CreateLiveDelegationInput, beforeMutation?: () => void): LiveDelegationWithTurn {
@@ -271,6 +282,184 @@ export class LiveDelegationRepository {
       }
     }
     return this.require(id)
+  }
+
+  freezeLegacyTaskContract(
+    turnId: string,
+    input: LegacyLiveDelegationTaskContractInput,
+    now = Date.now()
+  ): LiveDelegationWithTurn {
+    const normalizedTurnId = StoredIdSchema.parse(turnId)
+    const timestamp = validateTimestamp(now)
+    const db = this.database.getDatabase()
+
+    try {
+      return db.transaction(() => {
+        const turn = this.requireTurn(normalizedTurnId)
+        const delegation = this.require(turn.delegationId)
+        if (!isActiveTurnStatus(turn.status)) {
+          throw new LiveDelegationTaskContractError(
+            `Live delegation turn ${turn.id} is already terminal.`
+          )
+        }
+        if (turn.taskContract !== null) return { delegation, turn }
+        if (turn.taskContractRef !== null || turn.inheritedTaskContractRef !== null) {
+          throw new LiveDelegationTaskContractError(
+            `Live delegation turn ${turn.id} has an incomplete TaskContract projection.`
+          )
+        }
+
+        const contract = buildTaskContract({
+          ...input,
+          delegationId: delegation.id,
+          turnId: turn.id,
+          turnSeq: turn.seq,
+          turnKind: turn.kind,
+          parentSessionId: delegation.parentSessionId,
+          slotId: delegation.slotId,
+          targetAgentId: delegation.targetAgentId,
+          title: delegation.title,
+          prompt: turn.prompt
+        })
+        const frozen = this.taskContracts.freezeParentTaskContract({
+          parentSessionId: delegation.parentSessionId,
+          contract,
+          createdAt: timestamp
+        })
+        const updated = db
+          .prepare(
+            `UPDATE live_delegation_turns
+             SET task_contract_json = ?, task_contract_ref_json = ?
+             WHERE turn_id = ? AND task_contract_json IS NULL AND task_contract_ref_json IS NULL`
+          )
+          .run(serializeTaskContract(contract), serializeTaskContractRef(frozen.ref), turn.id)
+        if (updated.changes !== 1) {
+          throw new LiveDelegationTaskContractError(
+            `Legacy TaskContract projection changed while freezing turn ${turn.id}.`
+          )
+        }
+        return { delegation: this.require(delegation.id), turn: this.requireTurn(turn.id) }
+      })()
+    } catch (error) {
+      if (error instanceof LiveDelegationTaskContractError) throw error
+      throw new LiveDelegationTaskContractError(
+        `Failed to freeze the compatibility TaskContract for turn ${normalizedTurnId}.`,
+        { cause: error }
+      )
+    }
+  }
+
+  ensureInheritedTaskContract(
+    turnId: string,
+    childSessionId: string,
+    now = Date.now()
+  ): DeepChatTaskContractContext {
+    const normalizedTurnId = StoredIdSchema.parse(turnId)
+    const normalizedChildSessionId = StoredIdSchema.parse(childSessionId)
+    const timestamp = validateTimestamp(now)
+    const db = this.database.getDatabase()
+
+    try {
+      return db.transaction(() => {
+        const turn = this.requireTurn(normalizedTurnId)
+        const delegation = this.require(turn.delegationId)
+        if (!isActiveTurnStatus(turn.status)) {
+          throw new LiveDelegationTaskContractError(
+            `Live delegation turn ${turn.id} is already terminal.`
+          )
+        }
+        if (delegation.childSessionId !== normalizedChildSessionId) {
+          throw new LiveDelegationTaskContractError(
+            `Live delegation ${delegation.id} is not bound to child Session ${normalizedChildSessionId}.`
+          )
+        }
+        if (!turn.taskContract || !turn.taskContractRef) {
+          throw new LiveDelegationTaskContractError(
+            `Live delegation turn ${turn.id} has no active TaskContract.`
+          )
+        }
+        const description = turn.taskContract.taskDescription
+        if (
+          description.parentSessionId !== delegation.parentSessionId ||
+          description.delegationId !== delegation.id ||
+          description.slotId !== delegation.slotId ||
+          description.targetAgentId !== delegation.targetAgentId ||
+          description.title !== delegation.title
+        ) {
+          throw new LiveDelegationTaskContractError(
+            `Live delegation turn ${turn.id} has a misbound TaskContract identity.`
+          )
+        }
+
+        const parent = this.taskContracts.ensureParentTaskContract({
+          parentSessionId: delegation.parentSessionId,
+          contract: turn.taskContract,
+          currentRef: turn.taskContractRef,
+          createdAt: timestamp
+        })
+        const child = this.taskContracts.ensureChildTaskContract({
+          childSessionId: normalizedChildSessionId,
+          contract: turn.taskContract,
+          originRef: parent.ref,
+          currentRef: turn.inheritedTaskContractRef,
+          createdAt: timestamp
+        })
+        const parentRefJson = serializeTaskContractRef(parent.ref)
+        const childRefJson = serializeTaskContractRef(child.ref)
+        const referencesChanged =
+          parentRefJson !== serializeTaskContractRef(turn.taskContractRef) ||
+          turn.inheritedTaskContractRef === null ||
+          childRefJson !== serializeTaskContractRef(turn.inheritedTaskContractRef)
+        if (referencesChanged) {
+          const updated = db
+            .prepare(
+              `UPDATE live_delegation_turns
+               SET task_contract_ref_json = ?, inherited_task_contract_ref_json = ?
+               WHERE turn_id = ?`
+            )
+            .run(parentRefJson, childRefJson, turn.id)
+          if (updated.changes !== 1) {
+            throw new LiveDelegationTaskContractError(
+              `TaskContract references could not be projected for turn ${turn.id}.`
+            )
+          }
+        }
+
+        return Object.freeze({ contract: turn.taskContract, localRef: child.ref })
+      })()
+    } catch (error) {
+      if (error instanceof LiveDelegationTaskContractError) throw error
+      throw new LiveDelegationTaskContractError(
+        `Failed to inherit the TaskContract for turn ${normalizedTurnId}.`,
+        { cause: error }
+      )
+    }
+  }
+
+  prepareActiveTaskContractContext(
+    childSessionId: string,
+    now = Date.now()
+  ): DeepChatTaskContractContext | null {
+    const normalizedChildSessionId = StoredIdSchema.parse(childSessionId)
+    const rows = this.database
+      .getDatabase()
+      .prepare(
+        `SELECT t.turn_id
+         FROM live_delegation_turns AS t
+         INNER JOIN live_delegations AS d ON d.delegation_id = t.delegation_id
+         WHERE d.child_session_id = ?
+           AND t.status IN ('queued', 'running', 'waiting_permission', 'waiting_question')
+         ORDER BY t.seq DESC
+         LIMIT 2`
+      )
+      .all(normalizedChildSessionId) as Array<{ turn_id: string }>
+    if (rows.length === 0) return null
+    if (rows.length > 1) {
+      throw new LiveDelegationTaskContractError(
+        `Child Session ${normalizedChildSessionId} has multiple active live-delegation turns.`
+      )
+    }
+    return this.ensureInheritedTaskContract(rows[0]!.turn_id, normalizedChildSessionId, now)
   }
 
   createMessage(

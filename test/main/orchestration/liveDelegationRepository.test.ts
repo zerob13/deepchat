@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Database, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
-import { createLiveDelegationTaskContractInput } from '@/orchestration/liveDelegationTaskContract'
+import {
+  createLegacyLiveDelegationTaskContractInput,
+  createLiveDelegationTaskContractInput
+} from '@/orchestration/liveDelegationTaskContract'
 
 const databaseModule = Database
   ? await import('@/orchestration/data/database').catch(() => null)
@@ -237,7 +240,9 @@ describeIfSqlite('LiveDelegationRepository', () => {
         ) => {
           strictWriter.freezeParentTaskContract(input)
           throw new Error('projection write failed')
-        }
+        },
+        ensureParentTaskContract: (input) => strictWriter.ensureParentTaskContract(input),
+        ensureChildTaskContract: (input) => strictWriter.ensureChildTaskContract(input)
       }
     )
 
@@ -403,6 +408,173 @@ describeIfSqlite('LiveDelegationRepository', () => {
     expect(() => repository.bindChild('delegation-1', 'child-2', 130)).toThrow(
       'already bound to another child session'
     )
+  })
+
+  it('inherits one canonical TaskContract into the bound child idempotently', () => {
+    const created = createDelegation()
+    addSession('child-1', 'parent')
+    repository.bindChild(created.delegation.id, 'child-1', 110)
+
+    const first = repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 120)
+    const second = repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 130)
+    const projected = repository.requireTurn(created.turn.id)
+    const childFacts = contractStore
+      .getBySession('child-1')
+      .filter((row) => row.name === 'contract/task_frozen')
+
+    expect(second).toEqual(first)
+    expect(first.contract).toEqual(created.turn.taskContract)
+    expect(first.localRef.sessionId).toBe('child-1')
+    expect(projected.inheritedTaskContractRef).toEqual(first.localRef)
+    expect(childFacts).toHaveLength(1)
+    expect(JSON.parse(childFacts[0]!.payload_json).data).toMatchObject({
+      delivery: 'child_inherited',
+      contract: first.contract,
+      originRef: projected.taskContractRef,
+      supersedesRef: null
+    })
+    expect(repository.prepareActiveTaskContractContext('child-1', 140)).toEqual(first)
+    expect(repository.prepareActiveTaskContractContext('unbound-child', 140)).toBeNull()
+  })
+
+  it('re-anchors parent and child references independently after Tape reset', () => {
+    const created = createDelegation()
+    addSession('child-1', 'parent')
+    repository.bindChild(created.delegation.id, 'child-1', 110)
+    repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 120)
+    const original = repository.requireTurn(created.turn.id)
+
+    contractStore.runInTransaction(() => {
+      db!.prepare('DELETE FROM deepchat_tape_entries WHERE session_id = ?').run('parent')
+      contractStore.ensureBootstrapAnchor('parent')
+    })
+    repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 130)
+    const parentRecovered = repository.requireTurn(created.turn.id)
+
+    expect(parentRecovered.taskContractRef?.tapeIdentity).not.toBe(
+      original.taskContractRef?.tapeIdentity
+    )
+    expect(parentRecovered.inheritedTaskContractRef).toEqual(original.inheritedTaskContractRef)
+    expect(
+      JSON.parse(
+        contractStore.getBySession('parent').find((row) => row.name === 'contract/task_frozen')!
+          .payload_json
+      ).data
+    ).toMatchObject({
+      delivery: 'projection_recovery',
+      supersedesRef: original.taskContractRef
+    })
+
+    contractStore.runInTransaction(() => {
+      db!.prepare('DELETE FROM deepchat_tape_entries WHERE session_id = ?').run('child-1')
+      contractStore.ensureBootstrapAnchor('child-1')
+    })
+    repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 140)
+    const childRecovered = repository.requireTurn(created.turn.id)
+    const recoveredChildFact = contractStore
+      .getBySession('child-1')
+      .find((row) => row.name === 'contract/task_frozen')!
+
+    expect(childRecovered.taskContractRef).toEqual(parentRecovered.taskContractRef)
+    expect(childRecovered.inheritedTaskContractRef?.tapeIdentity).not.toBe(
+      original.inheritedTaskContractRef?.tapeIdentity
+    )
+    expect(JSON.parse(recoveredChildFact.payload_json).data).toMatchObject({
+      delivery: 'projection_recovery',
+      originRef: parentRecovered.taskContractRef,
+      supersedesRef: original.inheritedTaskContractRef
+    })
+  })
+
+  it('rolls back a child fact when its runtime reference cannot be projected', () => {
+    const created = createDelegation()
+    addSession('child-1', 'parent')
+    repository.bindChild(created.delegation.id, 'child-1', 110)
+    const strictWriter = new TaskContractServiceCtor(() => contractStore)
+    const failingRepository = new LiveDelegationRepositoryCtor(
+      new LiveDelegationDatabaseCtor({ getDatabase: () => db! }),
+      {
+        freezeParentTaskContract: (input) => strictWriter.freezeParentTaskContract(input),
+        ensureParentTaskContract: (input) => strictWriter.ensureParentTaskContract(input),
+        ensureChildTaskContract: (input) => {
+          strictWriter.ensureChildTaskContract(input)
+          throw new Error('projection write failed')
+        }
+      }
+    )
+
+    expect(() =>
+      failingRepository.ensureInheritedTaskContract(created.turn.id, 'child-1', 120)
+    ).toThrow(/Failed to inherit/u)
+    expect(contractStore.getBySession('child-1')).toEqual([])
+    expect(repository.requireTurn(created.turn.id).inheritedTaskContractRef).toBeNull()
+  })
+
+  it('fails closed when the child-local origin fact is corrupted', () => {
+    const created = createDelegation()
+    addSession('child-1', 'parent')
+    repository.bindChild(created.delegation.id, 'child-1', 110)
+    repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 120)
+    const fact = contractStore
+      .getBySession('child-1')
+      .find((row) => row.name === 'contract/task_frozen')!
+    const payload = JSON.parse(fact.payload_json)
+    payload.data.originRef.contractHash = 'f'.repeat(64)
+    db!
+      .prepare(
+        `UPDATE deepchat_tape_entries SET payload_json = ?
+         WHERE session_id = ? AND entry_id = ?`
+      )
+      .run(JSON.stringify(payload), fact.session_id, fact.entry_id)
+
+    expect(() => repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 130)).toThrow(
+      /Failed to inherit/u
+    )
+  })
+
+  it('fails closed when the runtime projection names another child-local entry', () => {
+    const created = createDelegation()
+    addSession('child-1', 'parent')
+    repository.bindChild(created.delegation.id, 'child-1', 110)
+    repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 120)
+    const currentRef = repository.requireTurn(created.turn.id).inheritedTaskContractRef!
+    db!
+      .prepare(
+        `UPDATE live_delegation_turns SET inherited_task_contract_ref_json = ?
+         WHERE turn_id = ?`
+      )
+      .run(JSON.stringify({ ...currentRef, entryId: currentRef.entryId + 1 }), created.turn.id)
+
+    expect(() => repository.ensureInheritedTaskContract(created.turn.id, 'child-1', 130)).toThrow(
+      /Failed to inherit/u
+    )
+  })
+
+  it('freezes an explicit compatibility contract for a legacy active turn', () => {
+    const created = createDelegation()
+    contractStore.runInTransaction(() => {
+      db!.prepare('DELETE FROM deepchat_tape_entries WHERE session_id = ?').run('parent')
+      db!
+        .prepare(
+          `UPDATE live_delegation_turns
+           SET task_contract_json = NULL, task_contract_ref_json = NULL
+           WHERE turn_id = ?`
+        )
+        .run(created.turn.id)
+    })
+
+    const recovered = repository.freezeLegacyTaskContract(
+      created.turn.id,
+      createLegacyLiveDelegationTaskContractInput('/repo'),
+      120
+    )
+
+    expect(recovered.turn.taskContract).toMatchObject({
+      taskConfig: { creationReason: 'legacy_recovery' },
+      taskHarness: { acceptance: [] }
+    })
+    expect(recovered.turn.taskContractRef?.sessionId).toBe('parent')
+    expect(recovered.turn.inheritedTaskContractRef).toBeNull()
   })
 
   it('rejects unrelated children and removes owned history with the parent session', () => {

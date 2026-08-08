@@ -106,6 +106,9 @@ describe('TaskContract domain', () => {
     expect(isDeepChatTaskContract(tampered)).toBe(false)
     expect(restoreTaskContract(tampered)).toBeNull()
     expect(restoreTaskContract(JSON.parse(JSON.stringify(contract)))).toEqual(contract)
+    expect(() =>
+      buildTaskContract(buildInput({ creationReason: 'unknown' as 'delegation_created' }))
+    ).toThrow(/creationReason is invalid/u)
   })
 
   it('rejects duplicate sections, remote references, and bounded-input overflow', () => {

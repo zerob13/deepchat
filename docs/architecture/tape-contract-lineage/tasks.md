@@ -31,17 +31,17 @@
 - [x] Add complete Tape identity and canonical conflict validation.
 - [x] Add nullable live-delegation contract/evaluation projection columns and migration coverage.
 - [x] Atomically freeze parent TaskContract with initial and follow-up turn creation.
-- [ ] Re-anchor hash-verified runtime projections after parent Tape reset.
+- [x] Re-anchor hash-verified runtime projections after parent Tape reset.
 - [x] Review and commit the parent-freeze/storage foundation slice.
 
 ## P1: Child Inheritance
 
-- [ ] Strictly append the inherited TaskContract to child Tape before Handoff dispatch.
-- [ ] Persist child-local reference and expose active contract context through a narrow port.
-- [ ] Re-inherit the contract after child Tape reset before the next provider request.
-- [ ] Reconcile legacy active turns with an explicit compatibility contract.
-- [ ] Cover restart, repeated inheritance, reset/incarnation conflict, and missing child Tape.
-- [ ] Review and commit the child-inheritance slice.
+- [x] Strictly append the inherited TaskContract to child Tape before Handoff dispatch.
+- [x] Persist child-local reference and expose active contract context through a narrow port.
+- [x] Re-inherit the contract after child Tape reset before the next provider request.
+- [x] Reconcile legacy active turns with an explicit compatibility contract.
+- [x] Cover restart, repeated inheritance, reset/incarnation conflict, and missing child Tape.
+- [x] Review and commit the child-inheritance slice.
 
 ## P1: Evaluation And Parent Visibility
 

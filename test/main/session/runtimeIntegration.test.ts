@@ -814,6 +814,9 @@ function createRuntimeDependencies() {
         summary: { status: 'ready' as const, issues: [], suggestedActions: [] }
       }))
     },
+    taskContractContext: {
+      prepare: vi.fn().mockReturnValue(null)
+    },
     skillService: {
       getMetadataList: vi.fn().mockResolvedValue([]),
       getActiveSkills: vi.fn().mockResolvedValue([]),

@@ -359,6 +359,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     identity,
     sessionPermissionPort,
     reviewToolPermission: createToolPermissionReviewer(toolRuntimeBindings),
+    taskContractContext: deps.taskContractContext,
     hookSink,
     compaction
   })
@@ -384,6 +385,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     attachmentRouter,
     sessionSettings,
     promptAssembly,
+    identity,
+    taskContractContext: deps.taskContractContext,
     loopRunner,
     messageProjection,
     hookSink

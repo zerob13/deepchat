@@ -14,6 +14,7 @@ import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { MemorySessionHandle } from '@/agent/deepchat/memory/memoryPromptContributor'
 import type { ContextRuntimeContributions } from '@/agent/deepchat/runtime/contextContributions'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 
 export interface ProviderRequest {
   runId: string
@@ -36,6 +37,10 @@ export interface ProviderPort {
 
 export interface ToolCatalogPort {
   resolve(input?: { activeSkillNames?: string[] }): Promise<MCPToolDefinition[]>
+}
+
+export interface DeepChatTaskContractContextPort {
+  prepare(sessionId: string): DeepChatTaskContractContext | null
 }
 
 export type ToolExecutionOptions = Omit<ToolCallOptions, 'commitDispatch'> & {

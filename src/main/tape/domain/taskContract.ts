@@ -56,6 +56,7 @@ export interface BuildTaskContractInput {
   prompt: string
   workspace: DeepChatTaskWorkspaceCeiling
   acceptance: readonly DeepChatTaskAcceptanceRequirement[]
+  creationReason?: 'delegation_created' | 'legacy_recovery'
   predecessorEvaluationRef?: DeepChatEvaluationRef | null
   maxToolEffect?: 'read' | 'write'
   maxSubagentDepth?: number
@@ -343,6 +344,10 @@ function buildTaskContractDraft(
   if (maxToolEffect !== 'read' && maxToolEffect !== 'write') {
     throw new TaskContractError('maxToolEffect is invalid.', 'invalid_input')
   }
+  const creationReason = input.creationReason ?? 'delegation_created'
+  if (creationReason !== 'delegation_created' && creationReason !== 'legacy_recovery') {
+    throw new TaskContractError('creationReason is invalid.', 'invalid_input')
+  }
 
   return {
     schemaVersion: DEEPCHAT_TASK_CONTRACT_SCHEMA_VERSION,
@@ -354,6 +359,7 @@ function buildTaskContractDraft(
     taskConfig: {
       completionMode: 'single_response',
       retryMode: 'parent_follow_up',
+      creationReason,
       predecessorEvaluationRef: normalizeEvaluationRef(input.predecessorEvaluationRef ?? null)
     },
     taskDescription: {
@@ -417,6 +423,7 @@ export function isDeepChatTaskContract(value: unknown): value is DeepChatTaskCon
       ...contract.taskDescription,
       workspace: contract.taskHarness.ceilings.workspace,
       acceptance: contract.taskHarness.acceptance,
+      creationReason: contract.taskConfig.creationReason,
       predecessorEvaluationRef: contract.taskConfig.predecessorEvaluationRef,
       maxToolEffect: contract.taskHarness.ceilings.maxToolEffect,
       maxSubagentDepth: contract.taskHarness.ceilings.maxSubagentDepth
@@ -439,26 +446,29 @@ export function serializeTaskContract(contract: DeepChatTaskContract): string {
 }
 
 export function serializeTaskContractRef(ref: DeepChatTaskContractRef): string {
-  if (
-    !hasExactKeys(ref, TASK_CONTRACT_REF_KEYS) ||
-    ref?.schemaVersion !== 1 ||
-    requireString(ref.sessionId, 'TaskContractRef.sessionId', MAX_IDENTITY_BYTES, 256) !==
-      ref.sessionId ||
-    !SHA_256_PATTERN.test(ref.tapeIdentity) ||
-    !SHA_256_PATTERN.test(ref.contractHash) ||
-    requirePositiveSafeInteger(ref.entryId, 'TaskContractRef.entryId') !== ref.entryId
-  ) {
+  if (!isDeepChatTaskContractRef(ref)) {
     throw new TaskContractError('TaskContractRef is invalid.', 'invalid_input')
   }
   return canonicalJsonStringifyData(ref)
 }
 
-export function restoreTaskContractRef(value: unknown): DeepChatTaskContractRef | null {
+export function isDeepChatTaskContractRef(value: unknown): value is DeepChatTaskContractRef {
+  if (!hasExactKeys(value, TASK_CONTRACT_REF_KEYS) || value.schemaVersion !== 1) return false
   try {
-    const ref = value as DeepChatTaskContractRef
-    serializeTaskContractRef(ref)
-    return deepFreeze(ref)
+    return (
+      requireString(value.sessionId, 'TaskContractRef.sessionId', MAX_IDENTITY_BYTES, 256) ===
+        value.sessionId &&
+      typeof value.tapeIdentity === 'string' &&
+      SHA_256_PATTERN.test(value.tapeIdentity) &&
+      typeof value.contractHash === 'string' &&
+      SHA_256_PATTERN.test(value.contractHash) &&
+      requirePositiveSafeInteger(value.entryId, 'TaskContractRef.entryId') === value.entryId
+    )
   } catch {
-    return null
+    return false
   }
+}
+
+export function restoreTaskContractRef(value: unknown): DeepChatTaskContractRef | null {
+  return isDeepChatTaskContractRef(value) ? deepFreeze(value) : null
 }

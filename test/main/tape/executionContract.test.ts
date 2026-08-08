@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ModelType } from '@shared/model'
 import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/core/mcp'
@@ -25,6 +26,7 @@ import {
   verifyExecutionContractHash,
   type BuildExecutionContractInput
 } from '@/tape/domain/executionContract'
+import { buildTaskContract } from '@/tape/domain/taskContract'
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
 const SERVER_ID = '22222222-2222-4222-8222-222222222222'
@@ -138,6 +140,42 @@ function buildInput(
   }
 }
 
+function buildTaskContext(
+  overrides: {
+    sessionId?: string
+    workspace?: string
+    maxToolEffect?: 'read' | 'write'
+    maxSubagentDepth?: number
+    contractHash?: string
+  } = {}
+) {
+  const contract = buildTaskContract({
+    delegationId: 'delegation-1',
+    turnId: 'turn-1',
+    turnSeq: 1,
+    turnKind: 'initial',
+    parentSessionId: 'parent-1',
+    slotId: 'reviewer',
+    targetAgentId: 'agent-1',
+    title: 'Review boundaries',
+    prompt: 'Inspect the contract boundary.',
+    workspace: { kind: 'path', path: overrides.workspace ?? path.resolve('task-workspace') },
+    acceptance: [],
+    maxToolEffect: overrides.maxToolEffect ?? 'write',
+    maxSubagentDepth: overrides.maxSubagentDepth ?? 1
+  })
+  return {
+    contract,
+    localRef: {
+      schemaVersion: 1 as const,
+      sessionId: overrides.sessionId ?? 'session-1',
+      tapeIdentity: 'c'.repeat(64),
+      entryId: 2,
+      contractHash: overrides.contractHash ?? contract.contractHash
+    }
+  }
+}
+
 describe('ExecutionContract domain', () => {
   it('builds a bounded immutable contract without persisting prompt bodies', () => {
     const contract = buildExecutionContract(buildInput())
@@ -186,6 +224,79 @@ describe('ExecutionContract domain', () => {
     expect(Object.isFrozen(contract.ceilings.tools[0].target)).toBe(true)
     expect(Object.isFrozen(contract.provenance.promptSections)).toBe(true)
     expect(verifyExecutionContractHash(contract)).toBe(true)
+  })
+
+  it('binds a child-local TaskContract and rejects View ceiling expansion', () => {
+    const taskWorkspace = path.resolve('task-workspace')
+    const context = buildTaskContext({ workspace: taskWorkspace })
+    const contract = buildExecutionContract(
+      buildInput({
+        tools: [agentTool('read')],
+        workspace: { kind: 'path', path: path.join(taskWorkspace, 'child') },
+        maxSubagentDepth: 1,
+        taskContractContext: context
+      })
+    )
+
+    expect(contract.provenance.taskContractRef).toEqual(context.localRef)
+    expect(Object.isFrozen(contract.provenance.taskContractRef)).toBe(true)
+    expect(isDeepChatExecutionContract(contract)).toBe(true)
+
+    const crossSession = JSON.parse(JSON.stringify(contract))
+    crossSession.provenance.taskContractRef.sessionId = 'another-child'
+    const { contractHash: _, ...crossSessionDraft } = crossSession
+    crossSession.contractHash = hashJsonData(crossSessionDraft)
+    expect(isDeepChatExecutionContract(crossSession)).toBe(false)
+
+    expect(() =>
+      buildExecutionContract(
+        buildInput({
+          tools: [mcpTool()],
+          workspace: { kind: 'path', path: taskWorkspace },
+          maxSubagentDepth: 0,
+          taskContractContext: buildTaskContext({
+            workspace: taskWorkspace,
+            maxToolEffect: 'read'
+          })
+        })
+      )
+    ).toThrow(/effect ceiling/u)
+    expect(() =>
+      buildExecutionContract(
+        buildInput({
+          tools: [agentTool('read')],
+          workspace: { kind: 'path', path: path.resolve('outside-task-workspace') },
+          maxSubagentDepth: 0,
+          taskContractContext: context
+        })
+      )
+    ).toThrow(/workspace ceiling/u)
+    expect(() =>
+      buildExecutionContract(
+        buildInput({
+          tools: [agentTool('read')],
+          workspace: { kind: 'path', path: taskWorkspace },
+          maxSubagentDepth: 1,
+          taskContractContext: buildTaskContext({
+            workspace: taskWorkspace,
+            maxSubagentDepth: 0
+          })
+        })
+      )
+    ).toThrow(/Subagent ceiling/u)
+    expect(() =>
+      buildExecutionContract(
+        buildInput({
+          tools: [agentTool('read')],
+          workspace: { kind: 'path', path: taskWorkspace },
+          maxSubagentDepth: 0,
+          taskContractContext: buildTaskContext({
+            sessionId: 'another-child',
+            workspace: taskWorkspace
+          })
+        })
+      )
+    ).toThrow(/provider request Session/u)
   })
 
   it('hashes the exact provider order while canonicalizing the enforcement projection', () => {

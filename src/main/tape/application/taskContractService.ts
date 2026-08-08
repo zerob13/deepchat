@@ -3,7 +3,11 @@ import {
   type DeepChatTaskContract,
   type DeepChatTaskContractRef
 } from '@shared/types/task-contract'
-import { isDeepChatTaskContract, serializeTaskContractRef } from '../domain/taskContract'
+import {
+  isDeepChatTaskContract,
+  isDeepChatTaskContractRef,
+  serializeTaskContractRef
+} from '../domain/taskContract'
 import { canonicalJsonStringifyData } from '../domain/canonicalJson'
 import { computeTapeIdentity } from '../domain/tapeIdentity'
 import type { DeepChatTapeEntryRow, TapeEventAppendInput } from '../domain/entry'
@@ -13,24 +17,38 @@ const TASK_CONTRACT_FACT_SCHEMA_VERSION = 1 as const
 const TASK_CONTRACT_FACT_NAME = 'contract/task_frozen' as const
 const TASK_CONTRACT_FACT_PROTOCOL_VERSION = 1 as const
 
-type ParentTaskContractFactData = {
+type TaskContractFactDelivery = 'parent_frozen' | 'child_inherited' | 'projection_recovery'
+
+type TaskContractFactData = {
   schemaVersion: typeof TASK_CONTRACT_FACT_SCHEMA_VERSION
-  delivery: 'parent_frozen'
+  delivery: TaskContractFactDelivery
   contract: DeepChatTaskContract
-  originRef: null
-  supersedesRef: null
+  originRef: DeepChatTaskContractRef | null
+  supersedesRef: DeepChatTaskContractRef | null
 }
 
 type StrictTaskContractEventInput = Omit<TapeEventAppendInput, 'name'> & {
   name: typeof TASK_CONTRACT_FACT_NAME
   source: NonNullable<TapeEventAppendInput['source']>
   provenanceKey: string
-  data: ParentTaskContractFactData
+  data: TaskContractFactData
 }
 
 export interface FreezeParentTaskContractInput {
   parentSessionId: string
   contract: DeepChatTaskContract
+  createdAt?: number
+}
+
+export interface EnsureParentTaskContractInput extends FreezeParentTaskContractInput {
+  currentRef: DeepChatTaskContractRef
+}
+
+export interface EnsureChildTaskContractInput {
+  childSessionId: string
+  contract: DeepChatTaskContract
+  originRef: DeepChatTaskContractRef
+  currentRef: DeepChatTaskContractRef | null
   createdAt?: number
 }
 
@@ -42,6 +60,11 @@ export interface TaskContractCommitReceipt {
 
 export interface ParentTaskContractWriter {
   freezeParentTaskContract(input: FreezeParentTaskContractInput): TaskContractCommitReceipt
+}
+
+export interface TaskContractWriter extends ParentTaskContractWriter {
+  ensureParentTaskContract(input: EnsureParentTaskContractInput): TaskContractCommitReceipt
+  ensureChildTaskContract(input: EnsureChildTaskContractInput): TaskContractCommitReceipt
 }
 
 export class TaskContractPersistenceError extends Error {
@@ -84,6 +107,71 @@ function rowMatchesTaskContractFact(
   )
 }
 
+function rowContainsReferencedTaskContractFact(
+  row: DeepChatTapeEntryRow,
+  input: CommitTaskContractInput,
+  provenanceKey: string
+): boolean {
+  if (
+    row.session_id !== input.targetSessionId ||
+    row.kind !== 'event' ||
+    row.name !== TASK_CONTRACT_FACT_NAME ||
+    row.source_type !== 'subagent' ||
+    row.source_id !== input.contract.taskDescription.turnId ||
+    row.source_seq !== input.contract.taskDescription.turnSeq ||
+    row.provenance_key !== provenanceKey ||
+    !canonicalJsonEquals(row.meta_json, { protocolVersion: TASK_CONTRACT_FACT_PROTOCOL_VERSION })
+  ) {
+    return false
+  }
+
+  try {
+    const payload = JSON.parse(row.payload_json) as {
+      name?: unknown
+      data?: Record<string, unknown>
+    }
+    const data = payload.data
+    if (
+      payload.name !== TASK_CONTRACT_FACT_NAME ||
+      !data ||
+      Object.keys(data).length !== 5 ||
+      data.schemaVersion !== TASK_CONTRACT_FACT_SCHEMA_VERSION ||
+      canonicalJsonStringifyData(data.contract) !== canonicalJsonStringifyData(input.contract)
+    ) {
+      return false
+    }
+
+    const delivery = data.delivery
+    const originRef = data.originRef
+    const supersedesRef = data.supersedesRef
+    if (input.role === 'parent') {
+      if (delivery !== 'parent_frozen' && delivery !== 'projection_recovery') return false
+      if (originRef !== null) return false
+    } else {
+      if (delivery !== 'child_inherited' && delivery !== 'projection_recovery') return false
+      if (
+        !isDeepChatTaskContractRef(originRef) ||
+        originRef.sessionId !== input.contract.taskDescription.parentSessionId ||
+        originRef.contractHash !== input.contract.contractHash
+      ) {
+        return false
+      }
+    }
+
+    if (delivery === 'projection_recovery') {
+      return (
+        isDeepChatTaskContractRef(supersedesRef) &&
+        supersedesRef.sessionId === input.targetSessionId &&
+        supersedesRef.contractHash === input.contract.contractHash &&
+        supersedesRef.tapeIdentity !== input.currentRef?.tapeIdentity
+      )
+    }
+    return supersedesRef === null
+  } catch {
+    return false
+  }
+}
+
 function buildTaskContractRef(
   row: DeepChatTapeEntryRow,
   tapeIdentity: string,
@@ -100,10 +188,52 @@ function buildTaskContractRef(
   return Object.freeze(ref)
 }
 
-export class TaskContractService implements ParentTaskContractWriter {
+type CommitTaskContractInput = {
+  targetSessionId: string
+  role: 'parent' | 'child'
+  contract: DeepChatTaskContract
+  originRef: DeepChatTaskContractRef | null
+  currentRef: DeepChatTaskContractRef | null
+  createdAt?: number
+}
+
+export class TaskContractService implements TaskContractWriter {
   constructor(private readonly getStore: () => ContractPersistenceStore) {}
 
   freezeParentTaskContract(input: FreezeParentTaskContractInput): TaskContractCommitReceipt {
+    return this.commitTaskContract({
+      targetSessionId: input.parentSessionId,
+      role: 'parent',
+      contract: input.contract,
+      originRef: null,
+      currentRef: null,
+      createdAt: input.createdAt
+    })
+  }
+
+  ensureParentTaskContract(input: EnsureParentTaskContractInput): TaskContractCommitReceipt {
+    return this.commitTaskContract({
+      targetSessionId: input.parentSessionId,
+      role: 'parent',
+      contract: input.contract,
+      originRef: null,
+      currentRef: input.currentRef,
+      createdAt: input.createdAt
+    })
+  }
+
+  ensureChildTaskContract(input: EnsureChildTaskContractInput): TaskContractCommitReceipt {
+    return this.commitTaskContract({
+      targetSessionId: input.childSessionId,
+      role: 'child',
+      contract: input.contract,
+      originRef: input.originRef,
+      currentRef: input.currentRef,
+      createdAt: input.createdAt
+    })
+  }
+
+  private commitTaskContract(input: CommitTaskContractInput): TaskContractCommitReceipt {
     if (!isDeepChatTaskContract(input.contract)) {
       throw new TaskContractPersistenceError(
         'Cannot freeze a malformed or non-canonical TaskContract.',
@@ -111,9 +241,35 @@ export class TaskContractService implements ParentTaskContractWriter {
       )
     }
     const description = input.contract.taskDescription
-    if (input.parentSessionId !== description.parentSessionId) {
+    if (
+      (input.role === 'parent' && input.targetSessionId !== description.parentSessionId) ||
+      (input.role === 'child' && input.targetSessionId === description.parentSessionId)
+    ) {
       throw new TaskContractPersistenceError(
-        'TaskContract parent Session does not match its persistence target.',
+        'TaskContract Session does not match its persistence role.',
+        'invalid_contract'
+      )
+    }
+    if (
+      (input.role === 'parent' && input.originRef !== null) ||
+      (input.role === 'child' &&
+        (!isDeepChatTaskContractRef(input.originRef) ||
+          input.originRef.sessionId !== description.parentSessionId ||
+          input.originRef.contractHash !== input.contract.contractHash))
+    ) {
+      throw new TaskContractPersistenceError(
+        'TaskContract origin reference is invalid.',
+        'invalid_contract'
+      )
+    }
+    if (
+      input.currentRef !== null &&
+      (!isDeepChatTaskContractRef(input.currentRef) ||
+        input.currentRef.sessionId !== input.targetSessionId ||
+        input.currentRef.contractHash !== input.contract.contractHash)
+    ) {
+      throw new TaskContractPersistenceError(
+        'TaskContract runtime reference is invalid.',
         'invalid_contract'
       )
     }
@@ -130,43 +286,67 @@ export class TaskContractService implements ParentTaskContractWriter {
     const store = this.getStore()
     if (!store.isInTransaction()) {
       throw new TaskContractPersistenceError(
-        'Parent TaskContract freeze requires the live-delegation host transaction.',
+        'TaskContract persistence requires the live-delegation host transaction.',
         'transaction_required'
       )
     }
 
     try {
-      store.ensureBootstrapAnchor(input.parentSessionId)
-      const firstEntry = store.getFirstEntriesBySessions([input.parentSessionId])[0]
-      if (!firstEntry || firstEntry.session_id !== input.parentSessionId) {
+      store.ensureBootstrapAnchor(input.targetSessionId)
+      const firstEntry = store.getFirstEntriesBySessions([input.targetSessionId])[0]
+      if (!firstEntry || firstEntry.session_id !== input.targetSessionId) {
         throw new TaskContractPersistenceError(
-          `Parent Tape ${input.parentSessionId} has no stable identity.`,
+          `Tape ${input.targetSessionId} has no stable identity.`,
           'persistence_failed'
         )
       }
       const tapeIdentity = computeTapeIdentity(firstEntry)
-      const provenanceKey = `contract:task_frozen:v1:parent:${description.turnId}`
+      const provenanceKey = `contract:task_frozen:v1:${input.role}:${description.turnId}`
+      const recovering = input.currentRef !== null && input.currentRef.tapeIdentity !== tapeIdentity
+      const delivery: TaskContractFactDelivery = recovering
+        ? 'projection_recovery'
+        : input.role === 'parent'
+          ? 'parent_frozen'
+          : 'child_inherited'
       const event: StrictTaskContractEventInput = {
-        sessionId: input.parentSessionId,
+        sessionId: input.targetSessionId,
         name: TASK_CONTRACT_FACT_NAME,
         source: { type: 'subagent', id: description.turnId, seq: description.turnSeq },
         provenanceKey,
         data: {
           schemaVersion: TASK_CONTRACT_FACT_SCHEMA_VERSION,
-          delivery: 'parent_frozen',
+          delivery,
           contract: input.contract,
-          originRef: null,
-          supersedesRef: null
+          originRef: input.originRef,
+          supersedesRef: recovering ? input.currentRef : null
         },
         meta: { protocolVersion: TASK_CONTRACT_FACT_PROTOCOL_VERSION },
         createdAt: input.createdAt
       }
 
-      const existing = store.getByProvenanceKey(input.parentSessionId, provenanceKey)
+      const existing = store.getByProvenanceKey(input.targetSessionId, provenanceKey)
       if (existing) {
-        if (!rowMatchesTaskContractFact(existing, event)) {
+        const currentRefNamesExisting =
+          input.currentRef !== null &&
+          input.currentRef.tapeIdentity === tapeIdentity &&
+          input.currentRef.entryId === existing.entry_id
+        if (
+          !rowMatchesTaskContractFact(existing, event) &&
+          (!currentRefNamesExisting ||
+            !rowContainsReferencedTaskContractFact(existing, input, provenanceKey))
+        ) {
           throw new TaskContractPersistenceError(
             `Stored TaskContract conflicts with turn ${description.turnId}.`,
+            'corruption'
+          )
+        }
+        if (
+          input.currentRef !== null &&
+          input.currentRef.tapeIdentity === tapeIdentity &&
+          input.currentRef.entryId !== existing.entry_id
+        ) {
+          throw new TaskContractPersistenceError(
+            `Stored TaskContract reference conflicts with turn ${description.turnId}.`,
             'corruption'
           )
         }
@@ -175,6 +355,13 @@ export class TaskContractService implements ParentTaskContractWriter {
           ref: buildTaskContractRef(existing, tapeIdentity, input.contract.contractHash),
           created: false
         }
+      }
+
+      if (input.currentRef !== null && input.currentRef.tapeIdentity === tapeIdentity) {
+        throw new TaskContractPersistenceError(
+          `Stored TaskContract is missing for turn ${description.turnId}.`,
+          'corruption'
+        )
       }
 
       const row = store.appendContractEvent({ ...event, idempotent: false })

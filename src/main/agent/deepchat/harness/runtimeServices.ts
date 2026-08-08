@@ -33,6 +33,7 @@ import type {
   DeepChatEventPublisher,
   DeepChatSessionUpdatePublisher
 } from '@/agent/deepchat/runtime/types'
+import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
 
 export type DeepChatHarnessSkillPort = Pick<
   SkillServicePort,
@@ -71,6 +72,7 @@ export interface DeepChatHarnessDependencies {
   promptSettings: Pick<PromptSettings, 'getDefaultSystemPrompt'>
   attachmentRouter: Pick<AttachmentCapabilityRouter, 'prepare'>
   interactionContinuationAdmission: InteractionContinuationAdmissionPort
+  taskContractContext: DeepChatTaskContractContextPort
 }
 
 /**

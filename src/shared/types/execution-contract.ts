@@ -1,6 +1,7 @@
 import type { PermissionMode } from './agent-interface'
 import type { ToolExecutionContract } from './core/mcp'
 import type { DeepChatPromptSectionProvenance } from './prompt-assembly'
+import type { DeepChatTaskContractRef } from './task-contract'
 
 export const DEEPCHAT_EXECUTION_CONTRACT_SCHEMA_VERSION = 1 as const
 export const DEEPCHAT_EXECUTION_CONTRACT_HASH_VERSION = 1 as const
@@ -62,7 +63,7 @@ export interface DeepChatExecutionContractProvenance {
   readonly providerVisibleToolDefinitionsHash: string
   readonly internalExecutionPolicyHash: string
   readonly assemblerVersion: string
-  readonly taskContractRef: null
+  readonly taskContractRef: DeepChatTaskContractRef | null
 }
 
 export interface DeepChatExecutionContract {

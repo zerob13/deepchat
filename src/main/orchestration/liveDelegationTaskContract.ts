@@ -21,6 +21,10 @@ export interface LiveDelegationTaskContractInput {
   maxSubagentDepth: number
 }
 
+export type LegacyLiveDelegationTaskContractInput = LiveDelegationTaskContractInput & {
+  creationReason: 'legacy_recovery'
+}
+
 export function createLiveDelegationTaskContractInput(
   projectDir: string | null,
   predecessorEvaluationRef: DeepChatEvaluationRef | null = null
@@ -38,5 +42,15 @@ export function createLiveDelegationTaskContractInput(
     predecessorEvaluationRef,
     maxToolEffect: 'write',
     maxSubagentDepth: 0
+  }
+}
+
+export function createLegacyLiveDelegationTaskContractInput(
+  projectDir: string | null
+): LegacyLiveDelegationTaskContractInput {
+  return {
+    ...createLiveDelegationTaskContractInput(projectDir),
+    acceptance: [],
+    creationReason: 'legacy_recovery'
   }
 }

@@ -74,6 +74,10 @@ tape.systems:
 For a contract-bearing child, every per-View ExecutionContract ceiling must be less than or equal
 to the stable Task Harness ceiling. A later View may narrow that maximum but cannot expand it.
 
+TaskConfig v1 records `creationReason=delegation_created|legacy_recovery`. Compatibility recovery
+uses `legacy_recovery` with no retroactive acceptance requirements, so a recovered contract remains
+distinguishable without adding a second runtime flag.
+
 V1 supports two acceptance requirement kinds:
 
 - `required_sections`: required level-two Markdown section names;
@@ -241,6 +245,10 @@ This table describes write disciplines, not a count of all Tape event families.
   than silently committing a terminal state.
 - A reset parent or child Tape re-anchors the hash-verified runtime projection into the new
   incarnation before the next strict contract boundary.
+- A contract-bearing queued turn with a bound idle child and no `startedAt` may resend its Handoff
+  after restart: the existing write-ahead protocol records `startedAt` before crossing delivery, so
+  its absence proves that delivery did not begin. Legacy rows without a contract keep the existing
+  interruption behavior.
 - Ordinary interactive chat keeps its current non-blocking ViewManifest failure behavior.
 
 ## Security And Privacy

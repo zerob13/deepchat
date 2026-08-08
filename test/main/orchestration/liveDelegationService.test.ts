@@ -43,6 +43,7 @@ const LiveDelegationsTableCtor = delegationsModule?.LiveDelegationsTable!
 const LiveDelegationTurnsTableCtor = turnsModule?.LiveDelegationTurnsTable!
 const LiveDelegationEventsTableCtor = eventsModule?.LiveDelegationEventsTable!
 const LiveDelegationRepositoryCtor = repositoryModule?.LiveDelegationRepository!
+const LiveDelegationTaskContractErrorCtor = repositoryModule?.LiveDelegationTaskContractError!
 const LiveDelegationServiceCtor = serviceModule?.LiveDelegationService!
 const DeepChatContractStoreCtor = tapeStoreModule?.DeepChatContractStore!
 const TaskContractServiceCtor = taskContractServiceModule?.TaskContractService!
@@ -53,6 +54,7 @@ const describeIfSqlite = nativeSqliteDescribeIf(
     LiveDelegationTurnsTableCtor &&
     LiveDelegationEventsTableCtor &&
     LiveDelegationRepositoryCtor &&
+    LiveDelegationTaskContractErrorCtor &&
     LiveDelegationServiceCtor &&
     DeepChatContractStoreCtor &&
     TaskContractServiceCtor
@@ -63,6 +65,7 @@ const describeIfSqlite = nativeSqliteDescribeIf(
 describeIfSqlite('LiveDelegationService', () => {
   let db: InstanceType<typeof DatabaseCtor> | null
   let repository: InstanceType<typeof LiveDelegationRepositoryCtor>
+  let contractStore: InstanceType<typeof DeepChatContractStoreCtor>
   let service: InstanceType<typeof LiveDelegationServiceCtor>
   let harness: ReturnType<typeof createSessionHarness>
   let deletionGate: SessionDeletionGate
@@ -83,7 +86,7 @@ describeIfSqlite('LiveDelegationService', () => {
     new LiveDelegationsTableCtor(db).createTable()
     new LiveDelegationTurnsTableCtor(db).createTable()
     new LiveDelegationEventsTableCtor(db).createTable()
-    const contractStore = new DeepChatContractStoreCtor(db)
+    contractStore = new DeepChatContractStoreCtor(db)
     contractStore.createTable()
     repository = new LiveDelegationRepositoryCtor(
       new LiveDelegationDatabaseCtor({ getDatabase: () => db! }),
@@ -146,6 +149,87 @@ describeIfSqlite('LiveDelegationService', () => {
         outcome: 'completed'
       })
     )
+  })
+
+  it('makes the inherited TaskContract durable before crossing the child Handoff boundary', async () => {
+    let observedDurableContract = false
+    expect(service.prepareTaskContractContext('generic-child')).toBeNull()
+    harness.sessions.sendConversationMessage.mockImplementationOnce(
+      async (childSessionId: string) => {
+        const active = repository.listActiveTurns()[0]!
+        const inheritedRef = active.turn.inheritedTaskContractRef
+        const fact = contractStore
+          .getBySession(childSessionId)
+          .find((row) => row.name === 'contract/task_frozen')
+        expect(inheritedRef).toMatchObject({
+          sessionId: childSessionId,
+          contractHash: active.turn.taskContract?.contractHash
+        })
+        expect(fact?.entry_id).toBe(inheritedRef?.entryId)
+        expect(service.prepareTaskContractContext(childSessionId)).toEqual({
+          contract: active.turn.taskContract,
+          localRef: inheritedRef
+        })
+        observedDurableContract = true
+      }
+    )
+
+    await service.spawn('parent', {
+      slotId: 'reviewer',
+      title: 'Verify contract delivery',
+      prompt: 'Check the child inheritance boundary.'
+    })
+    await vi.waitFor(() => expect(observedDurableContract).toBe(true))
+  })
+
+  it('keeps a TaskContract persistence failure recoverable without dispatching the child', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.spyOn(repository, 'ensureInheritedTaskContract').mockImplementationOnce(() => {
+      throw new LiveDelegationTaskContractErrorCtor('contract store unavailable')
+    })
+
+    const created = await service.spawn('parent', {
+      slotId: 'reviewer',
+      title: 'Park failed inheritance',
+      prompt: 'Do not dispatch without a durable contract.'
+    })
+    const turnId = repository.listTurns(created.delegation.id)[0]!.id
+    await vi.waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[LiveDelegationService] TaskContract boundary remains recoverable:',
+        expect.objectContaining({ turnId })
+      )
+    )
+
+    const childSessionId = repository.require(created.delegation.id).childSessionId!
+    expect(repository.requireTurn(turnId).status).toBe('queued')
+    expect(harness.sessions.sendConversationMessage).not.toHaveBeenCalled()
+    expect(admission.snapshot().active).toBe(0)
+    expect(repository.listEvents('parent')).toEqual([])
+    expect(() => service.prepareTaskContractContext(childSessionId)).toThrow(
+      /no admitted live-delegation runtime/u
+    )
+
+    await service.stop()
+    harness.sessions.sendConversationMessage.mockClear()
+    admission = new AgentInvocationAdmission(2, 10)
+    service = new LiveDelegationServiceCtor({
+      repository,
+      sessions: harness.sessions,
+      safety: harness.safety,
+      consent: consentAuthority,
+      admission,
+      deletionGate
+    })
+    service.start()
+
+    await vi.waitFor(() =>
+      expect(harness.sessions.sendConversationMessage).toHaveBeenCalledWith(
+        childSessionId,
+        expect.stringContaining('Park failed inheritance')
+      )
+    )
+    expect(repository.requireTurn(turnId).status).toBe('running')
   })
 
   it('requires a matching explicit-user receipt at the service boundary', async () => {
@@ -1731,6 +1815,58 @@ describeIfSqlite('LiveDelegationService', () => {
     expect(repository.require(created.delegation.id).status).toBe('idle')
   })
 
+  it('freezes and inherits a compatibility contract before resuming a legacy active child', async () => {
+    await service.stop()
+    const created = repository.create({
+      id: 'delegation-legacy-recovery',
+      initialTurnId: 'turn-legacy-recovery',
+      parentSessionId: 'parent',
+      slotId: 'reviewer',
+      targetAgentId: 'agent-1',
+      title: 'Recover legacy task',
+      prompt: 'Continue with explicit compatibility semantics.',
+      taskContract: createLiveDelegationTaskContractInput(null),
+      now: 100
+    })
+    harness.addChild('child-legacy-recovery', created.delegation.id, 'generating')
+    repository.bindChild(created.delegation.id, 'child-legacy-recovery', 110)
+    repository.markTurnStarted(created.turn.id, 120)
+    contractStore.runInTransaction(() => {
+      db!.prepare('DELETE FROM deepchat_tape_entries WHERE session_id = ?').run('parent')
+      db!
+        .prepare(
+          `UPDATE live_delegation_turns
+           SET task_contract_json = NULL, task_contract_ref_json = NULL
+           WHERE turn_id = ?`
+        )
+        .run(created.turn.id)
+    })
+
+    service = new LiveDelegationServiceCtor({
+      repository,
+      sessions: harness.sessions,
+      safety: harness.safety,
+      consent: consentAuthority,
+      admission: new AgentInvocationAdmission(2, 10),
+      deletionGate
+    })
+    service.start()
+    await vi.waitFor(() => {
+      const turn = repository.requireTurn(created.turn.id)
+      expect(turn.taskContract).toMatchObject({
+        taskConfig: { creationReason: 'legacy_recovery' },
+        taskHarness: { acceptance: [] }
+      })
+      expect(turn.inheritedTaskContractRef?.sessionId).toBe('child-legacy-recovery')
+    })
+
+    const context = service.prepareTaskContractContext('child-legacy-recovery')
+    expect(context?.contract.taskConfig.creationReason).toBe('legacy_recovery')
+    expect(context?.localRef).toEqual(
+      repository.requireTurn(created.turn.id).inheritedTaskContractRef
+    )
+  })
+
   it('does not reuse an older child answer while recovering a later turn', async () => {
     await service.stop()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -1869,7 +2005,7 @@ describeIfSqlite('LiveDelegationService', () => {
     expect(repository.requireTurn(created.turn.id).effectState).toBe('none')
   })
 
-  it('treats an idle child without accepted handoff evidence as interrupted', async () => {
+  it('resumes an idle contract-bearing child when handoff intent was not recorded', async () => {
     await service.stop()
     const created = repository.create({
       id: 'delegation-crash-window',
@@ -1893,9 +2029,15 @@ describeIfSqlite('LiveDelegationService', () => {
       deletionGate
     })
     service.start()
-    const result = await service.wait('parent', { after: 0, timeoutMs: 1_000 })
+    await vi.waitFor(() =>
+      expect(harness.sessions.sendConversationMessage).toHaveBeenCalledWith(
+        'child-crash-window',
+        expect.stringContaining('Crash window')
+      )
+    )
 
-    expect(result.events).toEqual([expect.objectContaining({ kind: 'turn_interrupted' })])
+    expect(repository.requireTurn(created.turn.id).status).toBe('running')
+    expect(repository.listEvents('parent')).toEqual([])
     expect(harness.sessions.linkSubagentTape).not.toHaveBeenCalled()
   })
 

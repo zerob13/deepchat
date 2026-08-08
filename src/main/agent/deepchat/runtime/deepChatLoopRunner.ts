@@ -21,7 +21,6 @@ import type {
   DeepChatTapeViewTokenBudget
 } from '@shared/types/tape-view-manifest'
 import { randomUUID } from 'node:crypto'
-import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { getReasoningEffectiveEnabledForProvider } from '@shared/types/model-db'
 import { isTtsModelConfig, isTtsModelId } from '@shared/ttsSettings'
 import { nanoid } from 'nanoid'
@@ -93,7 +92,11 @@ import type {
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
 import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
-import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
+import type {
+  DeepChatTaskContractContextPort,
+  ToolExecutionPort,
+  ToolResultPort
+} from '@/agent/deepchat/loop/ports'
 import {
   buildContextCheckpoint,
   createEmptyContextRuntimeContributions,
@@ -114,6 +117,10 @@ import { throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
+import {
+  meetTaskContractToolDefinitions,
+  resolveExecutionContractSubagentDepth
+} from './taskContractCapability'
 import type { PromptAssemblyService } from './promptAssemblyService'
 import type { SessionIdentityService } from './sessionIdentityService'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
@@ -256,6 +263,7 @@ export interface DeepChatLoopRunnerPorts {
   identity: Pick<SessionIdentityService, 'getAgentId' | 'getSessionKind'>
   sessionPermissionPort: SessionPermissionPort
   reviewToolPermission: ToolPermissionReviewer
+  taskContractContext: DeepChatTaskContractContextPort
   hookSink: Pick<RuntimeHookSink, 'scope'>
   compaction: Pick<CompactionRuntimeCoordinator, 'apply'>
 }
@@ -301,15 +309,6 @@ function buildProviderContextOverflowAfterRecoveryErrorMessage(
     `DeepChat local estimate: usable context ${formatTokenCount(diagnostics.usableContextLength)} tokens, estimated input ${formatTokenCount(diagnostics.inputTokens)} tokens, tool schemas ${formatTokenCount(diagnostics.toolReserveTokens)} tokens, requested output ${formatTokenCount(diagnostics.requestedMaxTokens)} tokens, effective output ${formatTokenCount(diagnostics.effectiveMaxTokens)} tokens, remaining output room ${formatTokenCount(diagnostics.remainingOutputTokens)} tokens.`,
     'The provider may count tokens, system prompts, or tool schemas differently. Try shortening the latest input or attachments, reducing active tools, skills, or system prompt content, lowering max output tokens, or increasing context length.'
   ].join(' ')
-}
-
-function resolveExecutionContractSubagentDepth(tools: readonly MCPToolDefinition[]): number {
-  return tools.some(
-    (tool) =>
-      tool.source === 'agent' && tool.function.name === LIVE_DELEGATION_AGENT_TOOL_NAME
-  )
-    ? 1
-    : 0
 }
 
 function selectProcessTerminal(result: ProcessResult): ProcessTerminalSelection {
@@ -496,11 +495,20 @@ export class DeepChatLoopRunner {
     resourceScope.assertCurrent()
     const getEffectiveRuntimeSkillNames = (baseSkillNames = streamSessionActiveSkillNames) =>
       resolveEffectiveActiveSkillNames(baseSkillNames, resourceInstance)
-    const toolCatalog = this.ports.toolResolver.createSessionToolCatalogPort(
+    const unconstrainedToolCatalog = this.ports.toolResolver.createSessionToolCatalogPort(
       sessionId,
       projectDir,
       resourceInstance
     )
+    const toolCatalog = {
+      resolve: async (request?: { activeSkillNames?: string[] }) => {
+        const resolved = await unconstrainedToolCatalog.resolve(request)
+        const taskContractContext = strictViewContract
+          ? this.ports.taskContractContext.prepare(sessionId)
+          : null
+        return meetTaskContractToolDefinitions(sessionId, resolved, taskContractContext)
+      }
+    }
     const tools =
       providedTools ??
       (await awaitWithAbort(
@@ -741,6 +749,9 @@ export class DeepChatLoopRunner {
                   effectiveSystemPrompt
                 )
                 const cancellationRequested = abortSignal.aborted
+                const taskContractContext = strictViewContract
+                  ? ports.taskContractContext.prepare(sessionId)
+                  : null
                 return buildExecutionContract({
                   request: {
                     sessionId,
@@ -765,7 +776,8 @@ export class DeepChatLoopRunner {
                     requestAdmitted: !cancellationRequested,
                     cancellationRequested
                   },
-                  assemblerVersion: contextBuilderVersion
+                  assemblerVersion: contextBuilderVersion,
+                  taskContractContext
                 })
               },
               onBuildError: (error) =>

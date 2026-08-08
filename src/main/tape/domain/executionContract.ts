@@ -30,7 +30,9 @@ import {
   type DeepChatExecutionToolTargetIdentity,
   type DeepChatExecutionWorkspaceCeiling
 } from '@shared/types/execution-contract'
+import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import { canonicalJsonStringifyData, hashJsonData } from './canonicalJson'
+import { isDeepChatTaskContract, isDeepChatTaskContractRef } from './taskContract'
 
 export const MAX_EXECUTION_CONTRACT_BYTES = 64 * 1024
 export const MAX_EXECUTION_CONTRACT_BINDING_BYTES = 4 * 1024
@@ -109,6 +111,7 @@ export interface BuildExecutionContractInput {
   maxSubagentDepth: number
   dynamicControlSnapshot: DeepChatExecutionDynamicControlSnapshot
   assemblerVersion: string
+  taskContractContext?: DeepChatTaskContractContext | null
 }
 
 export class ExecutionContractError extends Error {
@@ -810,7 +813,7 @@ function isStoredExecutionProvenance(
       'provenance.assemblerVersion',
       MAX_ASSEMBLER_VERSION_BYTES
     ) &&
-    value.taskContractRef === null
+    (value.taskContractRef === null || isDeepChatTaskContractRef(value.taskContractRef))
   )
 }
 
@@ -881,6 +884,72 @@ function executionWorkspacesMatch(
   const currentPath = normalizeWorkspaceForComparison(current)
   const ceilingPath = normalizeWorkspaceForComparison(ceiling)
   return currentPath !== null && currentPath === ceilingPath
+}
+
+function isExecutionWorkspaceWithinTaskCeiling(
+  execution: DeepChatExecutionWorkspaceCeiling,
+  taskCeiling: DeepChatExecutionWorkspaceCeiling
+): boolean {
+  if (execution.kind === 'runtime_default' || taskCeiling.kind === 'runtime_default') {
+    return execution.kind === taskCeiling.kind
+  }
+
+  const relative = path.relative(path.resolve(taskCeiling.path), path.resolve(execution.path))
+  return (
+    relative === '' ||
+    (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  )
+}
+
+function normalizeTaskContractRef(
+  context: DeepChatTaskContractContext | null | undefined,
+  request: DeepChatExecutionContractRequest,
+  ceilings: DeepChatExecutionContract['ceilings']
+): DeepChatExecutionContract['provenance']['taskContractRef'] {
+  if (context == null) return null
+  if (!isDeepChatTaskContract(context.contract) || !isDeepChatTaskContractRef(context.localRef)) {
+    throw new ExecutionContractError('TaskContract context is not canonical.', 'invalid_input')
+  }
+  if (
+    context.localRef.sessionId !== request.sessionId ||
+    context.localRef.contractHash !== context.contract.contractHash
+  ) {
+    throw new ExecutionContractError(
+      'TaskContract context does not belong to the provider request Session.',
+      'invalid_input'
+    )
+  }
+
+  const taskCeilings = context.contract.taskHarness.ceilings
+  const exceedingTool = ceilings.tools.find(
+    (tool) => !isToolEffectWithinCeiling(tool.execution.effect, taskCeilings.maxToolEffect)
+  )
+  if (exceedingTool) {
+    throw new ExecutionContractError(
+      `Tool '${exceedingTool.target.providerVisibleName}' exceeds the TaskContract effect ceiling.`,
+      'invalid_input'
+    )
+  }
+  if (!isExecutionWorkspaceWithinTaskCeiling(ceilings.workspace, taskCeilings.workspace)) {
+    throw new ExecutionContractError(
+      'Execution workspace exceeds the TaskContract workspace ceiling.',
+      'invalid_input'
+    )
+  }
+  if (ceilings.maxSubagentDepth > taskCeilings.maxSubagentDepth) {
+    throw new ExecutionContractError(
+      'Execution nesting exceeds the TaskContract Subagent ceiling.',
+      'invalid_input'
+    )
+  }
+
+  return {
+    schemaVersion: context.localRef.schemaVersion,
+    sessionId: context.localRef.sessionId,
+    tapeIdentity: context.localRef.tapeIdentity,
+    entryId: context.localRef.entryId,
+    contractHash: context.localRef.contractHash
+  }
 }
 
 export function assertExecutionContractAllowsDispatch(
@@ -1010,10 +1079,12 @@ export function buildExecutionContract(
     workspace: normalizeWorkspace(input.workspace),
     maxSubagentDepth: normalizeMaxSubagentDepth(input.maxSubagentDepth)
   }
+  const request = normalizeRequest(input.request)
+  const taskContractRef = normalizeTaskContractRef(input.taskContractContext, request, ceilings)
   const draft: Omit<DeepChatExecutionContract, 'contractHash'> = {
     schemaVersion: DEEPCHAT_EXECUTION_CONTRACT_SCHEMA_VERSION,
     hashVersion: DEEPCHAT_EXECUTION_CONTRACT_HASH_VERSION,
-    request: normalizeRequest(input.request),
+    request,
     ceilings,
     dynamicControlSnapshot: normalizeDynamicControlSnapshot(input.dynamicControlSnapshot),
     provenance: {
@@ -1029,7 +1100,7 @@ export function buildExecutionContract(
         'assemblerVersion',
         MAX_ASSEMBLER_VERSION_BYTES
       ),
-      taskContractRef: null
+      taskContractRef
     }
   }
   const contract: DeepChatExecutionContract = {
@@ -1076,6 +1147,12 @@ export function isDeepChatExecutionContract(value: unknown): value is DeepChatEx
       !isStoredDynamicControlSnapshot(value.dynamicControlSnapshot) ||
       !isStoredExecutionProvenance(value.provenance, value.ceilings) ||
       !isSha256(value.contractHash)
+    ) {
+      return false
+    }
+    if (
+      value.provenance.taskContractRef !== null &&
+      value.provenance.taskContractRef.sessionId !== value.request.sessionId
     ) {
       return false
     }
