@@ -101,3 +101,11 @@
 - [x] Cover repeated shift, shift-then-backfill, recall ordering, legacy fallback, and content
   revision behavior with focused regressions.
 - [ ] Preserve any future non-corruption Journal failure subtype through terminal error wrapping.
+- [ ] Align linked SQL Tape search for tool facts with the effective message-derived `orderSeq`
+  search corpus.
+- [ ] Replace the low-frequency full-session Tape read used by production assistant `record`
+  revisions with a targeted tool revision index.
+- [ ] If profiling shows revision-index hashing is material, select winning terminal entries before
+  computing SHA-256 fingerprints.
+- [ ] When next revising the spec, clarify that production effective reads filter orphan tool facts
+  before the legacy payload-order fallback can apply.
