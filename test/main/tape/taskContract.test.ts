@@ -148,7 +148,7 @@ describe('TaskContract domain', () => {
     ).toThrow(/must belong to the parent Session/u)
   })
 
-  it('rejects duplicate sections, remote references, and bounded-input overflow', () => {
+  it('rejects duplicate sections, asynchronous schemas, and bounded-input overflow', () => {
     expect(() =>
       buildTaskContract(
         buildInput({
@@ -177,6 +177,20 @@ describe('TaskContract domain', () => {
         })
       )
     ).toThrow(/must not contain \$ref/u)
+    expect(() =>
+      buildTaskContract(
+        buildInput({
+          acceptance: [
+            {
+              id: 'async-schema',
+              kind: 'result_schema',
+              section: 'Result',
+              schema: { $async: true, type: 'object' }
+            }
+          ]
+        })
+      )
+    ).toThrow(/must not contain \$async/u)
     expect(() =>
       buildTaskContract(
         buildInput({

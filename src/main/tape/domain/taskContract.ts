@@ -241,8 +241,8 @@ function assertBoundedJsonSchema(
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TaskContractError(`${label} must contain only data properties.`, 'invalid_input')
       }
-      if (key === '$ref') {
-        throw new TaskContractError(`${label} must not contain $ref.`, 'invalid_input')
+      if (key === '$ref' || key === '$async') {
+        throw new TaskContractError(`${label} must not contain ${key}.`, 'invalid_input')
       }
       assertBoundedJsonSchema(descriptor.value, label, depth + 1, state)
     }
