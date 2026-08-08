@@ -251,6 +251,23 @@ idempotent row. Effective Tape and transcript ordering therefore remain identica
 resume, or steer insertion. A replacement for a compaction placeholder preserves its excluded
 `message/compaction_indicator` event shape rather than creating a normal assistant message fact.
 
+Replacement writers receive an explicit revision kind. Record revisions retain the existing
+updated-at identity, while order revisions add the resulting `orderSeq`; neither provenance rule is
+inferred from the reason text or correction metadata. Order-shift materialization fetches only the
+captured message IDs in batches of at most 500. Each batch also bounds the normalized child-table
+queries, and all batches execute synchronously inside the existing outer transaction.
+
+An order-only replacement appends the corrected message or compaction-indicator fact but does not
+rewrite its tool call/result facts. Effective views project tool `orderSeq` from the corresponding
+effective message and use the persisted tool payload value only when no effective message can be
+resolved. The old payload field and provenance format remain unchanged for compatibility.
+
+Reconciliation builds a map of the current effective tool revision by logical tool identity. Its
+content fingerprint excludes `orderSeq` but includes all other persisted tool payload fields. A
+backfill candidate equal to that current content is skipped; a changed candidate is appended and
+becomes the new effective revision. Comparing only with the current revision is required so a
+legitimate A -> B -> A content change is not mistaken for an old duplicate.
+
 Synthetic summary checkpoint contributions cite the reconstruction anchor entry only when that
 anchor carries the same normalized summary. This keeps ViewManifest lineage auditable without
 attributing a legacy or otherwise unrelated summary to the latest anchor.
@@ -283,10 +300,14 @@ errors continue to propagate.
 - journal name query uses the intended index and ignores Context Tape events;
 - restart-style reconstruction from persisted rows.
 - reserved namespace guards, fork exclusion, and rejection of commits inside host transactions.
+- bounded compaction-shift message materialization under the portable SQLite parameter limit.
+- repeated order shifts followed by reconciliation without tool fact growth.
 
 ### Runtime Tests
 
 - UUID Run creation and run-start-before-registration ordering;
+- explicit record/order replacement modes and order-derived tool recall refs;
+- tool content revisions remain append-only and supersede the prior effective revision;
 - MCP validation/policy/target failures produce no T1;
 - MCP T1 precedes the target call and duplicate T1 prevents a second call;
 - representative Agent mutation boundaries produce the same ordering;

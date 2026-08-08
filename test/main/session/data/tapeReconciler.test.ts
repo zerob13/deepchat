@@ -14,6 +14,27 @@ import {
 } from './tapeTestHarness'
 
 describe('SessionTape reconciliation and facts', () => {
+  it('uses the explicit replacement revision kind instead of the reason text', () => {
+    const { table, entries } = createTapeTableMock()
+    appendMessageReplacementToTape(
+      table as any,
+      createRecord({ id: 'record-revision', orderSeq: 7, updatedAt: 300 }),
+      { reason: 'compaction_order_shifted', revisionKind: 'record' }
+    )
+    appendMessageReplacementToTape(
+      table as any,
+      createRecord({ id: 'order-revision', orderSeq: 7, updatedAt: 300 }),
+      { reason: 'test_edit', revisionKind: 'order' }
+    )
+
+    expect(entries.find((entry) => entry.source_id === 'record-revision')?.provenance_key).toBe(
+      'message:record-revision:revision:300'
+    )
+    expect(entries.find((entry) => entry.source_id === 'order-revision')?.provenance_key).toBe(
+      'message:order-revision:revision:300:order_seq:7'
+    )
+  })
+
   it('keeps unkeyed idempotent harness appends distinct like the SQLite store', () => {
     const { table, entries } = createTapeTableMock()
     const input = {
@@ -371,7 +392,7 @@ describe('SessionTape reconciliation and facts', () => {
         }),
         updatedAt: 300
       }),
-      'test_edit'
+      { reason: 'test_edit', revisionKind: 'record' }
     )
 
     expect(JSON.parse(service.getMessageRecords('s1')[0].content).text).toBe('edited')

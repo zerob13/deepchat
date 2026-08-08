@@ -1,5 +1,10 @@
 import type { AssistantMessageBlock, ChatMessageRecord } from '@shared/types/agent-interface'
-import { toTapeSessionId, type TapeFactSource, type TapeToolFactInput } from '@/tape/domain/facts'
+import {
+  toTapeSessionId,
+  type TapeFactSource,
+  type TapeMessageReplacementOptions,
+  type TapeToolFactInput
+} from '@/tape/domain/facts'
 import type { DeepChatTapeEntryRow } from '@/tape/domain/entry'
 import type { TapeBootstrapStore, TapeEntryStore } from '@/tape/ports/storage'
 import { buildEffectiveTapeView } from '@/tape/domain/effectiveView'
@@ -31,9 +36,9 @@ function appendCompactionIndicatorToTape(
   record: ChatMessageRecord,
   source: TapeFactSource,
   compactionStatus: string,
-  correction?: { reason: string }
+  correction?: TapeMessageReplacementOptions
 ): void {
-  const orderRevision = correction ? `:order_seq:${record.orderSeq}` : ''
+  const orderRevision = correction?.revisionKind === 'order' ? `:order_seq:${record.orderSeq}` : ''
   table.appendEvent({
     sessionId: record.sessionId,
     name: 'message/compaction_indicator',
@@ -80,8 +85,11 @@ function buildMessageProvenanceKey(
   return `message:${record.id}:revision:${record.status}:${record.updatedAt}`
 }
 
-function buildMessageReplacementProvenanceKey(record: ChatMessageRecord, reason: string): string {
-  const orderRevision = reason === 'compaction_order_shifted' ? `:order_seq:${record.orderSeq}` : ''
+function buildMessageReplacementProvenanceKey(
+  record: ChatMessageRecord,
+  options: TapeMessageReplacementOptions
+): string {
+  const orderRevision = options.revisionKind === 'order' ? `:order_seq:${record.orderSeq}` : ''
   return `message:${record.id}:revision:${record.updatedAt}${orderRevision}`
 }
 
@@ -295,12 +303,12 @@ export function appendMessageRecordToTape(
 export function appendMessageReplacementToTape(
   table: TapeFactStore,
   record: ChatMessageRecord,
-  reason: string
+  options: TapeMessageReplacementOptions
 ): number {
   table.ensureBootstrapAnchor(record.sessionId)
   const compactionStatus = readCompactionStatus(record)
   if (compactionStatus) {
-    appendCompactionIndicatorToTape(table, record, 'live', compactionStatus, { reason })
+    appendCompactionIndicatorToTape(table, record, 'live', compactionStatus, options)
     return 1
   }
 
@@ -313,7 +321,7 @@ export function appendMessageReplacementToTape(
       id: record.id,
       seq: record.updatedAt
     },
-    provenanceKey: buildMessageReplacementProvenanceKey(record, reason),
+    provenanceKey: buildMessageReplacementProvenanceKey(record, options),
     payload: {
       record: {
         id: record.id,
@@ -332,7 +340,7 @@ export function appendMessageReplacementToTape(
     meta: {
       source: 'live',
       correction: true,
-      reason,
+      reason: options.reason,
       orderSeq: record.orderSeq,
       role: record.role,
       status: record.status

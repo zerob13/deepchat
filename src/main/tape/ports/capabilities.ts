@@ -4,7 +4,11 @@ import type {
   DeepChatTapeViewManifestRecord
 } from '@shared/types/tape-view-manifest'
 import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '../domain/entry'
-import type { TapeEntryRef, TapeToolFactInput } from '../domain/facts'
+import type {
+  TapeEntryRef,
+  TapeMessageReplacementOptions,
+  TapeToolFactInput
+} from '../domain/facts'
 import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
 import type {
   CommitExecutionDispatchInput,
@@ -90,7 +94,10 @@ export interface DeepChatLoopTapePort
 
 export interface TapeMessageFactWriter {
   appendMessageRecord(record: ChatMessageRecord): number
-  appendMessageReplacement(record: ChatMessageRecord, reason: string): number
+  appendMessageReplacement(
+    record: ChatMessageRecord,
+    options: TapeMessageReplacementOptions
+  ): number
   appendMessageRetraction(record: ChatMessageRecord, reason: string): number
 }
 

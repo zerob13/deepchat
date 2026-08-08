@@ -33,6 +33,7 @@ import {
 
 const MAX_SEARCHABLE_ATTACHMENT_CHARACTERS = 32_000
 const SEARCH_ATTACHMENT_TRUNCATION_MARKER = '[Attachment search text truncated]'
+const COMPACTION_SHIFT_MATERIALIZATION_BATCH_SIZE = 500
 
 function shouldConvertPendingBlockToError(
   status: AssistantMessageBlock['status']
@@ -269,15 +270,27 @@ export class SessionTranscript {
   private appendCompactionOrderShiftFacts(sessionId: string, messageIds: string[]): void {
     if (messageIds.length === 0) return
 
-    const shiftedMessageIds = new Set(messageIds)
-    const shiftedRecords = this.getMessages(sessionId).filter((record) =>
-      shiftedMessageIds.has(record.id)
-    )
-    if (shiftedRecords.length !== shiftedMessageIds.size) {
+    const shiftedRecords: ChatMessageRecord[] = []
+    for (
+      let offset = 0;
+      offset < messageIds.length;
+      offset += COMPACTION_SHIFT_MATERIALIZATION_BATCH_SIZE
+    ) {
+      const batchIds = messageIds.slice(
+        offset,
+        offset + COMPACTION_SHIFT_MATERIALIZATION_BATCH_SIZE
+      )
+      const rows = this.database.deepchatMessagesTable.getBySessionAndIds(sessionId, batchIds)
+      shiftedRecords.push(...this.toRecords(rows))
+    }
+    if (shiftedRecords.length !== messageIds.length) {
       throw new Error('Failed to materialize every message shifted by compaction.')
     }
     for (const record of shiftedRecords) {
-      this.tapeFacts.appendMessageReplacement(record, 'compaction_order_shifted')
+      this.tapeFacts.appendMessageReplacement(record, {
+        reason: 'compaction_order_shifted',
+        revisionKind: 'order'
+      })
     }
   }
 
@@ -326,7 +339,10 @@ export class SessionTranscript {
       if (!updated) {
         throw new Error(`Failed to mark steer message read: ${messageId}`)
       }
-      this.tapeFacts.appendMessageReplacement(updated, 'steer_message_read')
+      this.tapeFacts.appendMessageReplacement(updated, {
+        reason: 'steer_message_read',
+        revisionKind: 'record'
+      })
     }
     return messageIds.map((messageId) => this.requireMessage(messageId))
   }
@@ -339,7 +355,10 @@ export class SessionTranscript {
       }
       this.database.deepchatMessagesTable.updateStatus(messageId, 'sent')
       const updated = this.requireMessage(messageId)
-      this.tapeFacts.appendMessageReplacement(updated, 'steer_message_settled')
+      this.tapeFacts.appendMessageReplacement(updated, {
+        reason: 'steer_message_settled',
+        revisionKind: 'record'
+      })
     }
     return messageIds.map((messageId) => this.requireMessage(messageId))
   }
@@ -490,7 +509,10 @@ export class SessionTranscript {
       }
       const updated = this.getMessage(messageId)
       if (updated) {
-        this.tapeFacts.appendMessageReplacement(updated, 'message_content_updated')
+        this.tapeFacts.appendMessageReplacement(updated, {
+          reason: 'message_content_updated',
+          revisionKind: 'record'
+        })
       }
       return
     }
@@ -508,7 +530,10 @@ export class SessionTranscript {
     }
     const updated = this.getMessage(messageId)
     if (updated) {
-      this.tapeFacts.appendMessageReplacement(updated, 'message_content_updated')
+      this.tapeFacts.appendMessageReplacement(updated, {
+        reason: 'message_content_updated',
+        revisionKind: 'record'
+      })
     }
   }
 

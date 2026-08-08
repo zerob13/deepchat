@@ -92,9 +92,12 @@
 
 ## 9. Follow-up Hardening
 
-- [ ] Define an order-correction projection for tool facts that avoids rewriting full payloads while
-  keeping effective `orderSeq` values current.
-- [ ] Replace full-Session message materialization during compaction shifts with bounded ID lookup.
-- [ ] Replace reason-string inference for order-sensitive replacement provenance with an explicit
-  typed contract.
+- [x] Replace reason/correction inference with an explicit record-vs-order replacement contract.
+- [x] Materialize only shifted messages in batches of at most 500 inside the compaction transaction.
+- [ ] Stop order-only live replacements from rewriting tool facts.
+- [ ] Derive effective tool order from the effective message with a legacy payload fallback.
+- [ ] Skip backfill tool facts only when their non-order content matches the current effective
+  revision.
+- [ ] Cover repeated shift, shift-then-backfill, recall ordering, legacy fallback, and content
+  revision behavior with focused regressions.
 - [ ] Preserve any future non-corruption Journal failure subtype through terminal error wrapping.

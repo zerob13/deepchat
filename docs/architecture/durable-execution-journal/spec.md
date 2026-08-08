@@ -126,6 +126,17 @@ from default Context views, search, and recovery diagnostics.
   replacement facts in the same database transaction. Effective Tape ordering must not retain the
   pre-shift `orderSeq` values. A shifted compaction placeholder remains an excluded
   `message/compaction_indicator` event and never becomes a normal message fact.
+- Message replacement callers explicitly declare whether the revision changes the record or only
+  its order. Provenance and child-fact behavior must not be inferred from a reason string or from
+  the mere presence of correction metadata.
+- Compaction order correction materializes only affected messages in bounded batches while the
+  outer SQLite transaction remains active.
+- Tool fact order is derived from the corresponding effective message. The persisted tool payload
+  `orderSeq` remains a legacy fallback when no effective message is available, but an order-only
+  message replacement does not append new tool facts.
+- Backfill compares a candidate tool fact with the current effective revision using content that
+  excludes `orderSeq`. It skips only an order-only difference; a changed response, arguments, or
+  other tool payload content remains a new immutable revision.
 - A synthetic summary checkpoint cites the reconstruction anchor entry that supplied its summary.
   An unrelated anchor must not be recorded as summary provenance.
 
@@ -198,6 +209,9 @@ recovery until they execute through a journal-aware harness boundary.
 - The existing `deepchat_tape_entries` schema and row format remain compatible. Journal records use
   existing event rows and add only a query index for global event-name recovery reads.
 - Existing Context Tape event names and payloads are unchanged.
+- Existing tool facts keep their persisted `orderSeq` and provenance keys. The field remains
+  readable for orphan or legacy facts but is no longer authoritative when an effective message is
+  available. No payload migration or historical backfill rewrite is introduced.
 - Existing transcript backfill remains available for legacy context facts and remains fail-open.
 - No renderer or IPC contract changes are required in v1.
 - Existing run IDs in historical transcript metadata remain readable. Only new physical Runs use the
@@ -236,6 +250,10 @@ recovery until they execute through a journal-aware harness boundary.
     classification.
 18. Compaction order correction preserves indicator fact semantics for shifted placeholders, and
     summary checkpoint manifests cite only the anchor that supplied the summary.
+19. Repeated compaction and a subsequent backfill do not append duplicate tool facts, while a real
+    tool content revision still supersedes the previous effective fact.
+20. Compaction shift reads only affected message IDs in bounded batches and recall derives tool
+    order from an effective message with a legacy payload fallback.
 
 ## Constraints
 

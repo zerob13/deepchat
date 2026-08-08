@@ -1887,7 +1887,10 @@ describe('SessionTape recall', () => {
           updatedAt: 200
         }
         appendMessageRecordToTape(table, original, 'live')
-        appendMessageReplacementToTape(table, replacement, 'native_edit')
+        appendMessageReplacementToTape(table, replacement, {
+          reason: 'native_edit',
+          revisionKind: 'record'
+        })
         const replacementHead = table.getMaxEntryId('child-message')
         expect(
           table.searchEffectiveSourcesAtHeads(

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 const sqliteModule = await import('better-sqlite3-multiple-ciphers').catch(() => null)
 const sqlitePresenterModule = sqliteModule
@@ -408,6 +408,50 @@ describeIfSqlite('SessionSettingsStore tape summary state', () => {
 })
 
 describeIfSqlite('Session transcript and Tape order consistency', () => {
+  it('materializes only shifted messages in bounded batches', () => {
+    const connection = new MainDatabaseCtor(':memory:')
+    try {
+      const database = new SessionDatabaseCtor(connection)
+      const messagesTable = database.deepchatMessagesTable
+      Object.defineProperty(database, 'deepchatMessagesTable', { value: messagesTable })
+      const tapeFacts = {
+        appendMessageRecord: vi.fn().mockReturnValue(1),
+        appendMessageReplacement: vi.fn().mockReturnValue(1),
+        appendMessageRetraction: vi.fn().mockReturnValue(1)
+      }
+      const transcript = new SessionTranscriptCtor(database, tapeFacts)
+      database.getDatabase().transaction(() => {
+        for (let orderSeq = 1; orderSeq <= 501; orderSeq += 1) {
+          messagesTable.insert({
+            id: `message-${orderSeq}`,
+            sessionId: 's1',
+            orderSeq,
+            role: 'user',
+            content: JSON.stringify({ text: `${orderSeq}`, files: [], links: [] }),
+            status: 'sent'
+          })
+        }
+      })()
+      const getBySessionAndIds = vi.spyOn(messagesTable, 'getBySessionAndIds')
+
+      transcript.createCompactionMessageAtOrderSeq('s1', 1, 'compacting', null, {
+        shiftExistingMessages: true
+      })
+
+      expect(getBySessionAndIds).toHaveBeenCalledTimes(2)
+      expect(getBySessionAndIds.mock.calls.map(([, ids]) => ids.length)).toEqual([500, 1])
+      expect(tapeFacts.appendMessageReplacement).toHaveBeenCalledTimes(501)
+      expect(
+        tapeFacts.appendMessageReplacement.mock.calls.every(
+          ([, options]) =>
+            options.reason === 'compaction_order_shifted' && options.revisionKind === 'order'
+        )
+      ).toBe(true)
+    } finally {
+      connection.close()
+    }
+  })
+
   it('records replacements for messages shifted by compaction insertion', () => {
     const connection = new MainDatabaseCtor(':memory:')
     try {
@@ -479,6 +523,7 @@ describeIfSqlite('Session transcript and Tape order consistency', () => {
         reason: 'compaction_order_shifted',
         orderSeq: 3
       })
+      expect(shiftedCompactionFacts[1].provenance_key).toContain(':order_seq:3')
       expect(
         tapeRows.some(
           (row) =>

@@ -578,7 +578,10 @@ function appendObservationIsolationFacts(table: unknown) {
   })
 
   appendMessageRecordToTape(table as any, original, 'live')
-  appendMessageReplacementToTape(table as any, edited, 'test_edit')
+  appendMessageReplacementToTape(table as any, edited, {
+    reason: 'test_edit',
+    revisionKind: 'record'
+  })
   appendMessageRecordToTape(table as any, retracted, 'live')
   appendMessageRetractionToTape(table as any, retracted, 'test_delete')
   appendMessageRecordToTape(table as any, pending, 'live')
