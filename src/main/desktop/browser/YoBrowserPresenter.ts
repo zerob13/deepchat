@@ -72,6 +72,7 @@ type SessionBrowserState = {
   previewClaimSequence: number
   previewSequence: number
   previewBurstUntil: number
+  targetDispatchObserved: boolean
   createdEventPublished: boolean
 }
 
@@ -153,15 +154,20 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
         await this.releasePreviewHost(state)
       }
       const projectDispatch = () => {
-        const project = () => {
+        state.targetDispatchObserved = true
+        const publishCreated = () => {
           if (!state.createdEventPublished) {
             this.emitWindowCreated(normalizedSessionId)
             state.createdEventPublished = true
           }
+        }
+        const projectOwner = () => {
           this.updateOwner(state, activitySource, agentRunId)
           if (activitySource === 'agent' && !state.visible) {
             this.ensurePreviewHost(state)
           }
+        }
+        const publishOpenRequest = () => {
           this.logLifecycle('open requested', {
             sessionId: normalizedSessionId,
             windowId: resolvedHostWindowId,
@@ -176,9 +182,17 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
           )
         }
         if (activitySource === 'agent') {
-          this.runPostDispatchProjection(normalizedSessionId, 'navigation', project)
+          this.runPostDispatchProjection(normalizedSessionId, 'navigation creation', publishCreated)
+          this.runPostDispatchProjection(normalizedSessionId, 'navigation ownership', projectOwner)
+          this.runPostDispatchProjection(
+            normalizedSessionId,
+            'navigation open request',
+            publishOpenRequest
+          )
         } else {
-          project()
+          publishCreated()
+          projectOwner()
+          publishOpenRequest()
         }
       }
 
@@ -513,6 +527,7 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
     const projectDispatch = () => {
       if (activitySource !== 'agent') return
       this.runPostDispatchProjection(sessionId, `CDP ${method}`, () => {
+        state.targetDispatchObserved = true
         this.updateOwner(state, activitySource, agentRunId)
         if (!state.visible) {
           this.ensurePreviewHost(state)
@@ -622,6 +637,7 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
       previewClaimSequence: 0,
       previewSequence: 0,
       previewBurstUntil: 0,
+      targetDispatchObserved: false,
       createdEventPublished: false
     }
 
@@ -1081,8 +1097,12 @@ export class YoBrowserPresenter implements IYoBrowserPresenter {
 
   private emitWindowUpdated(sessionId: string): void {
     const state = this.sessionBrowsers.get(sessionId)
-    if (!state?.createdEventPublished) {
+    if (!state?.targetDispatchObserved) {
       return
+    }
+    if (!state.createdEventPublished) {
+      this.emitWindowCreated(sessionId)
+      state.createdEventPublished = true
     }
     const status = this.toStatus(state)
     this.publishEvent('browser.status.changed', {

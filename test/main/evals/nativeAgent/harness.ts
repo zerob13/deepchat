@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { jsonrepair } from 'jsonrepair'
 import { vi } from 'vitest'
 import { ModelType } from '@shared/model'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
@@ -236,6 +237,21 @@ function makeToolDefinition(name: string): MCPToolDefinition {
   }
 }
 
+function parseToolArguments(argumentsText: string): Record<string, unknown> {
+  const raw = argumentsText.trim()
+  if (!raw) return {}
+
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    try {
+      return JSON.parse(jsonrepair(raw)) as Record<string, unknown>
+    } catch {
+      return {}
+    }
+  }
+}
+
 function createToolService(behaviors: Record<string, ScriptedToolBehavior>): ToolServiceHarness {
   const calls: NativeAgentEvalToolCall[] = []
 
@@ -258,7 +274,7 @@ function createToolService(behaviors: Record<string, ScriptedToolBehavior>): Too
       options?.commitDispatch?.({
         toolName: request.function.name,
         toolSource: 'agent',
-        normalizedArguments: JSON.parse(request.function.arguments) as Record<string, unknown>,
+        normalizedArguments: parseToolArguments(request.function.arguments),
         target: {
           serverName: 'native-agent-eval',
           originalName: request.function.name

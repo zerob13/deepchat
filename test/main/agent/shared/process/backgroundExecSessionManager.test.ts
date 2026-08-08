@@ -573,6 +573,71 @@ describe('backgroundExecSessionManager utility proxy', () => {
     expect(mockUtilityProcessFork).not.toHaveBeenCalled()
   })
 
+  it('refreshes completed-session fallback metadata after clearing output', async () => {
+    const proxy = backgroundExecSessionManager as any
+    proxy.completedSessions.set('bg_completed', {
+      conversationId: 'conv-1',
+      sessionId: 'bg_completed',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1,
+      status: 'done',
+      exitCode: 0,
+      outputLength: 4096,
+      offloaded: true,
+      timedOut: false
+    })
+    const request = vi.spyOn(proxy, 'request').mockResolvedValue(undefined)
+
+    await backgroundExecSessionManager.clear('conv-1', 'bg_completed')
+
+    await expect(backgroundExecSessionManager.list('conv-1')).resolves.toEqual([
+      {
+        sessionId: 'bg_completed',
+        command: 'pnpm test',
+        status: 'done',
+        exitCode: 0,
+        outputLength: 0,
+        offloaded: false,
+        timedOut: false,
+        createdAt: 1,
+        lastAccessedAt: expect.any(Number)
+      }
+    ])
+    expect(request).toHaveBeenCalledOnce()
+    expect(request).toHaveBeenCalledWith('clear', ['conv-1', 'bg_completed'])
+  })
+
+  it('does not restore completed metadata removed while clear is in flight', async () => {
+    const proxy = backgroundExecSessionManager as any
+    proxy.completedSessions.set('bg_completed', {
+      conversationId: 'conv-1',
+      sessionId: 'bg_completed',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1,
+      status: 'done',
+      outputLength: 4096,
+      offloaded: true,
+      timedOut: false
+    })
+    let finishClear: (() => void) | undefined
+    vi.spyOn(proxy, 'request').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClear = resolve
+        })
+    )
+
+    const clearPromise = backgroundExecSessionManager.clear('conv-1', 'bg_completed')
+    await vi.waitFor(() => expect(finishClear).toBeTypeOf('function'))
+    proxy.completedSessions.delete('bg_completed')
+    finishClear?.()
+    await clearPromise
+
+    expect(proxy.completedSessions.has('bg_completed')).toBe(false)
+  })
+
   it('removes crashed sessions locally without RPC', async () => {
     const proxy = backgroundExecSessionManager as any
     proxy.crashedSessions.set('bg_crashed', {

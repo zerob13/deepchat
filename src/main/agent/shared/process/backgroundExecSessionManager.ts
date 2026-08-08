@@ -1189,6 +1189,14 @@ class BackgroundExecUtilityProxy {
     beforeMutation?.()
     try {
       await this.request('clear', [conversationId, sessionId])
+      if (completed && this.completedSessions.get(sessionId) === completed) {
+        this.completedSessions.set(sessionId, {
+          ...completed,
+          outputLength: 0,
+          offloaded: false,
+          lastAccessedAt: Date.now()
+        })
+      }
     } catch (error) {
       if (!completed || !isMissingUtilitySessionError(error, conversationId, sessionId)) throw error
       this.completedSessions.delete(sessionId)

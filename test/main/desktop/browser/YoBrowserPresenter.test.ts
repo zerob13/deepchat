@@ -170,6 +170,7 @@ describe('YoBrowserPresenter', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
+    sendToAllWindowsMock.mockReset()
     overlayUpdateBoundsMock.mockClear()
     overlaySendActivityMock.mockClear()
     overlayHideMock.mockClear()
@@ -409,6 +410,50 @@ describe('YoBrowserPresenter', () => {
     await loadPromise
   })
 
+  it('retries creation after an agent projection failure without dropping later state', async () => {
+    const { presenter, windows, getSessionWebContents } = await setupPresenter()
+    windows.set(1, new MockBrowserWindow(1))
+    const successfulEvents: string[] = []
+    let rejectCreated = true
+    sendToAllWindowsMock.mockImplementation((_channel, envelope) => {
+      const event = `${envelope.name}:${envelope.payload.reason ?? ''}`
+      if (
+        rejectCreated &&
+        envelope.name === 'browser.status.changed' &&
+        envelope.payload.reason === 'created'
+      ) {
+        rejectCreated = false
+        throw new Error('renderer unavailable')
+      }
+      successfulEvents.push(event)
+    })
+
+    const loadPromise = presenter.loadUrl(
+      'session-a',
+      'https://example.com',
+      undefined,
+      undefined,
+      'agent',
+      'run-a',
+      vi.fn()
+    )
+    await Promise.resolve()
+    getSessionWebContents('session-a')?.emitDomReady()
+    await loadPromise
+
+    expect(successfulEvents).toContain('browser.status.changed:created')
+    expect(successfulEvents).toContain('browser.status.changed:updated')
+    expect(successfulEvents).toContain('browser.open.requested:')
+    expect(successfulEvents.indexOf('browser.status.changed:created')).toBeLessThan(
+      successfulEvents.indexOf('browser.status.changed:updated')
+    )
+    await expect(presenter.getBrowserStatus('session-a')).resolves.toMatchObject({
+      initialized: true,
+      owner: 'agent',
+      agentRunId: 'run-a'
+    })
+  })
+
   it('does not publish agent navigation state when the dispatch commit fails', async () => {
     const { presenter, windows, getSessionWebContents } = await setupPresenter()
     windows.set(1, new MockBrowserWindow(1))
@@ -457,7 +502,10 @@ describe('YoBrowserPresenter', () => {
     ).rejects.toBe(journalError)
 
     expect(sendToAllWindowsMock).not.toHaveBeenCalled()
-    expect(webContents?.debugger.sendCommand).not.toHaveBeenCalledWith('Page.reload', {})
+    expect(webContents).not.toBeNull()
+    expect(webContents!.debugger.sendCommand.mock.calls.map(([method]) => method)).not.toContain(
+      'Page.reload'
+    )
   })
 
   it('publishes agent CDP state only after the dispatch reaches the target', async () => {
