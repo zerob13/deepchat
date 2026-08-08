@@ -87,12 +87,16 @@ facade or raw store.
 
 ## Storage Query
 
-Add a `TapeEntryStore` query for journal event names and a partial index on event `name` plus
-`entry_id`. The query returns only the four v1 journal names and orders rows deterministically.
-Recovery parsing treats malformed rows as corruption instead of skipping them.
+Add a dedicated Journal-store query and covering event index. SQLite first identifies native
+`run_started` rows that have no matching `run_terminal`, then returns only the four v1 fact names for
+those Runs in deterministic order. Historical terminal Runs, Context Tape rows, and their payloads
+never cross the storage port during synchronous startup. Recovery parsing treats malformed facts in
+the selected Runs as corruption instead of skipping them.
 
-No operations table is introduced. If future scale measurements show that startup classification
-needs mutable lookup state, that state must be a rebuildable projection of Tape facts.
+The anti-join still examines the compact Run-identity index, but startup payload parsing and memory
+are proportional only to unterminated Runs. No mutable operations or open-Run table is introduced.
+If measurements later require constant-time enumeration, that state must be a rebuildable projection
+of Tape facts rather than a second authority.
 
 ## Run Identity And Lifecycle
 
@@ -135,7 +139,8 @@ Session is deleted.
 
 ## Tool Dispatch And Outcome Flow
 
-Extend the internal `ToolCallOptions` with a per-call `commitDispatch` callback carrying:
+Define the harness-internal execution options as `ToolCallOptions` with a required per-call
+`commitDispatch` callback carrying:
 
 - source (`agent` or `mcp`);
 - normalized arguments;
@@ -145,6 +150,11 @@ Extend the internal `ToolCallOptions` with a per-call `commitDispatch` callback 
 The loop creates the callback from the current operation identity. It marks the operation as
 dispatched only after a newly created T1 receipt. An identical existing claim throws before target
 invocation so an in-process retry cannot repeat the effect.
+
+Only the internal `ToolExecutionPort.execute` contract requires this capability. Lower-level tool
+services retain an optional callback because host-initiated reads and other non-Journal execution
+paths remain valid. The adapter therefore forwards the typed options without a redundant runtime
+presence gate.
 
 MCP invokes the callback after argument preparation and the final policy, server, binding, client,
 target, and abort checks, immediately before `targetClient.callTool`.
@@ -169,6 +179,9 @@ before the harness applies the finalized result to conversation messages, assist
 transcript, or UI. Live progress, runtime activation, and other events emitted inside an Agent tool
 belong to the target invocation itself and can occur between T1 and T2; a crash in that interval is
 classified from the resulting T1-without-T2 evidence.
+The caller hashes the prepared response and gives the strict writer only that hash and the error bit.
+Response text and temporary offload paths remain with the projection consumer and are never persisted
+as Journal facts.
 Harness-owned skill activation occurs after T2. Activation failure is a projection/context failure
 and cannot rewrite a successful target response as an error outcome. It still stops the current Run
 so the next provider request cannot proceed with an outcome that claims activation while runtime
@@ -225,17 +238,16 @@ messages even when they still contain an actionable interaction, closing the res
 after a deferred parking projection could not be persisted. `not_dispatched` messages retain their
 resumable interaction because no T1 exists.
 
-The v1 recovery query is an indexed, once-per-harness O(Journal history) read. It intentionally
-performs a complete scan because a row limit could hide old unresolved or corrupt evidence, but uses
-SQLite iteration rather than materializing all rows. Classification retains only identities,
-entry IDs, terminal outcomes, and reason sets, so memory is proportional to Runs and operations,
-not persisted outcome text. Production startup measurements must precede any later rebuildable
-projection or compaction policy.
+The v1 recovery query uses an indexed anti-join over Run identities and loads fact payloads only for
+Runs with a start and no terminal. Classification memory is proportional to those Runs and their
+operations, not total Journal history or persisted response size. V1 has no durable acknowledgement
+or retention state, so an unterminated Run can produce the same bounded startup diagnostic on later
+launches.
 
-V1 has no durable acknowledgement or retention state. An incomplete terminal can therefore produce
-the same bounded startup diagnostic on later launches. A later acknowledgement, archive, or
-compaction design must preserve detection of older corruption and remain derivable from immutable
-facts; a scan limit alone is not an acceptable fix.
+Synchronous startup is not a permanent global corruption audit. Malformed facts belonging to a
+selected unterminated Run remain fail-closed, while corruption hidden behind a terminal Run requires
+an explicit offline/background audit. A later audit, acknowledgement, archive, or compaction design
+must remain derivable from immutable facts; an arbitrary row limit is not an acceptable substitute.
 
 Recovery normalizes inherited non-interaction `pending` or `loading` blocks to errors before a new
 Run begins. Pending permission and question blocks remain resumable. A current Run still fails loudly
@@ -299,7 +311,8 @@ errors continue to propagate.
 - identical strict commit is idempotent;
 - conflicting strict commit throws and preserves the original row;
 - dispatch commit failure propagates and prevents the supplied target callback from running;
-- journal name query uses the intended index and ignores Context Tape events;
+- unterminated-Run query uses the intended index and excludes terminal Runs and Context Tape events;
+- outcome facts retain a response hash without persisting response text or an offload path;
 - restart-style reconstruction from persisted rows.
 - reserved namespace guards, fork exclusion, and rejection of commits inside host transactions.
 - bounded compaction-shift message materialization under the portable SQLite parameter limit.
@@ -320,7 +333,9 @@ errors continue to propagate.
 - terminal commit precedes every terminal projection and failure prevents projection;
 - terminal fallback failure preserves the Run error, commit cause, and Journal corruption subtype;
 - deferred approval uses a new Run and obeys the same ordering;
-- startup classification runs before interrupted transcript recovery and never executes tools.
+- startup classification runs before interrupted transcript recovery, loads only unterminated Runs,
+  and never executes tools;
+- internal tool execution requires its dispatch capability at compile time and forwards it unchanged;
 - Run-start and terminal persistence failures release claims and clear transient status without
   fabricating terminal projections;
 - deferred terminal-commit failure after T1 consumes and guards the approval without writing Run

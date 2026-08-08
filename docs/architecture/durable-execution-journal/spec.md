@@ -75,11 +75,11 @@ provider response, never across Runs or providers.
 
 Dispatch payloads contain the operation identity, message identity, resolved tool/source/target
 metadata, and a canonical argument hash. Raw arguments are not duplicated into the journal.
-Outcome payloads contain the operation identity, success/error state, the prepared bounded response
-text, its hash, and an optional offload path. Raw structured MCP envelopes, image base64 data, and
-unbounded results are excluded. Prepared response text can still contain sensitive user or tool
-data; it inherits the Session database's confidentiality and retention requirements and is excluded
-from default Context views, search, and recovery diagnostics.
+Outcome payloads contain only the operation identity, success/error state, and a canonical response
+hash. Tool response text, structured MCP envelopes, image base64 data, and temporary offload paths
+remain in the runtime/transcript projection that consumes them; they are not duplicated into the
+Journal. T2 proves that a particular outcome was received without creating a second durable copy of
+potentially sensitive output or promising recovery from an offload file with a shorter lifecycle.
 
 ## Required Invariants
 
@@ -209,7 +209,7 @@ recovery until they execute through a journal-aware harness boundary.
 ## Compatibility
 
 - The existing `deepchat_tape_entries` schema and row format remain compatible. Journal records use
-  existing event rows and add only a query index for global event-name recovery reads.
+  existing event rows and add only a query index for unterminated-Run recovery reads.
 - Existing Context Tape event names and payloads are unchanged.
 - Existing tool facts keep their persisted `orderSeq` and provenance keys. The field remains
   readable for orphan or legacy facts but is no longer authoritative when an effective message is
@@ -257,6 +257,12 @@ recovery until they execute through a journal-aware harness boundary.
     tool content revision still supersedes the previous effective fact.
 20. Compaction shift reads only affected message IDs in bounded batches and recall derives tool
     order from an effective message with a legacy payload fallback.
+21. Synchronous startup recovery loads payload rows only for native Runs that have `run_started` and
+    no `run_terminal`; terminal Runs and unrelated Context Tape rows are excluded by SQLite.
+22. A durable tool outcome contains a response hash and error bit but no response text or temporary
+    offload path.
+23. The harness-internal tool execution port requires `commitDispatch` in its type contract, while
+    lower-level tool APIs retain optional callbacks for non-Journal callers.
 
 ## Constraints
 
@@ -266,13 +272,14 @@ recovery until they execute through a journal-aware harness boundary.
   and before opening its mutation transaction; the writer rejects an already-active host transaction.
 - The tool subsystem receives a per-call commit callback, not a global Tape dependency.
 - Fact payloads are canonical, versioned, and bounded. Raw invocation arguments, terminal error
-  strings, structured MCP envelopes, and binary data are not duplicated. Prepared outcome text is
-  durable recovery data and must be protected as Session transcript data.
-- Recovery reads are restricted to journal event names and use a dedicated index.
-- V1 recovery intentionally scans complete Journal history and has no durable acknowledgement or
-  retention policy. Unresolved incomplete terminals can therefore be reported again at each startup;
-  bounded retention or acknowledgement requires a separate durable design that cannot hide older
-  corruption.
+  strings, tool response text, structured MCP envelopes, temporary file paths, and binary data are
+  not duplicated.
+- Synchronous recovery reads are restricted to native Runs without a terminal fact and use a
+  dedicated index. It can repeatedly report an unterminated Run because v1 has no durable
+  acknowledgement or retention state.
+- Complete historical corruption auditing is not part of synchronous startup. If required, it must
+  run outside launch or use a separately designed durable checkpoint that cannot hide unaudited
+  history.
 - Every commit requires an unstaged and staged diff review, severity-ordered findings, relevant
   validation, and correction of identified issues before commit.
 
