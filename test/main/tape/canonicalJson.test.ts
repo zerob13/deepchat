@@ -12,6 +12,19 @@ describe('strict canonical JSON', () => {
     expect(hashJsonData(prototypeShaped)).not.toBe(hashJsonData({ value: 1 }))
   })
 
+  it('can omit undefined object properties without weakening strict array checks', () => {
+    expect(
+      canonicalJsonStringifyData(
+        { nested: { retained: true, omitted: undefined } },
+        { omitUndefinedProperties: true }
+      )
+    ).toBe('{"nested":{"retained":true}}')
+    expect(() =>
+      canonicalJsonStringifyData([undefined], { omitUndefinedProperties: true })
+    ).toThrow(TypeError)
+    expect(() => canonicalJsonStringifyData({ omitted: undefined })).toThrow(TypeError)
+  })
+
   it('rejects values that cannot be represented as stable JSON data', () => {
     const circular: Record<string, unknown> = {}
     circular.self = circular

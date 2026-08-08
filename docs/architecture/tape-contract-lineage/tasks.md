@@ -14,7 +14,7 @@
 - [x] Record AGENTS.md freshness/degradation and pinned-skill/tooling omissions.
 - [x] Thread prompt provenance through turn and loop assembly.
 - [x] Review and commit the prompt-provenance slice.
-- [ ] Review and commit the canonical contract-domain slice.
+- [x] Review and commit the canonical ExecutionContract domain slice.
 
 ## P0: ViewManifest V5 And Enforcement
 
