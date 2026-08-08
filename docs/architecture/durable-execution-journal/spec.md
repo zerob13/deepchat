@@ -124,7 +124,10 @@ from default Context views, search, and recovery diagnostics.
   fail-open behavior where already specified.
 - A transcript operation that shifts persisted message order appends matching Context Tape
   replacement facts in the same database transaction. Effective Tape ordering must not retain the
-  pre-shift `orderSeq` values.
+  pre-shift `orderSeq` values. A shifted compaction placeholder remains an excluded
+  `message/compaction_indicator` event and never becomes a normal message fact.
+- A synthetic summary checkpoint cites the reconstruction anchor entry that supplied its summary.
+  An unrelated anchor must not be recorded as summary provenance.
 
 ## Failure Semantics
 
@@ -231,6 +234,8 @@ recovery until they execute through a journal-aware harness boundary.
     access.
 17. A fallback terminal-commit failure retains both failure causes and its concrete Journal error
     classification.
+18. Compaction order correction preserves indicator fact semantics for shifted placeholders, and
+    summary checkpoint manifests cite only the anchor that supplied the summary.
 
 ## Constraints
 

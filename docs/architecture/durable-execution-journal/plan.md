@@ -248,7 +248,12 @@ one. The shift and a Context Tape replacement for every affected message run in 
 transaction before the compaction indicator is inserted. Shift replacements use provenance that
 includes the resulting order so multiple shifts within one clock tick cannot collapse into one
 idempotent row. Effective Tape and transcript ordering therefore remain identical after compaction,
-resume, or steer insertion.
+resume, or steer insertion. A replacement for a compaction placeholder preserves its excluded
+`message/compaction_indicator` event shape rather than creating a normal assistant message fact.
+
+Synthetic summary checkpoint contributions cite the reconstruction anchor entry only when that
+anchor carries the same normalized summary. This keeps ViewManifest lineage auditable without
+attributing a legacy or otherwise unrelated summary to the latest anchor.
 
 ## Completed Process Session Reconciliation
 

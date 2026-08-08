@@ -87,3 +87,14 @@
 - [x] Preserve both Run and terminal-commit failures without erasing Journal corruption identity.
 - [x] Add focused connection-reopen, TTL-race, and effective-order regression tests.
 - [x] Run required validation, review unstaged and staged diffs, commit, and do not push.
+- [x] Preserve compaction-indicator semantics when order correction shifts a placeholder.
+- [x] Cite the owning reconstruction anchor from synthetic summary checkpoint manifests.
+
+## 9. Follow-up Hardening
+
+- [ ] Define an order-correction projection for tool facts that avoids rewriting full payloads while
+  keeping effective `orderSeq` values current.
+- [ ] Replace full-Session message materialization during compaction shifts with bounded ID lookup.
+- [ ] Replace reason-string inference for order-sensitive replacement provenance with an explicit
+  typed contract.
+- [ ] Preserve any future non-corruption Journal failure subtype through terminal error wrapping.

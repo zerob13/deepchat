@@ -429,7 +429,14 @@ describeIfSqlite('Session transcript and Tape order consistency', () => {
         think: false
       })
 
-      const compactionMessageId = transcript.createCompactionMessageAtOrderSeq(
+      const shiftedCompactionMessageId = transcript.createCompactionMessageAtOrderSeq(
+        's1',
+        2,
+        'compacting',
+        null,
+        { shiftExistingMessages: true }
+      )
+      const latestCompactionMessageId = transcript.createCompactionMessageAtOrderSeq(
         's1',
         2,
         'compacting',
@@ -441,17 +448,45 @@ describeIfSqlite('Session transcript and Tape order consistency', () => {
         transcript.getMessages('s1').map((record) => ({ id: record.id, orderSeq: record.orderSeq }))
       ).toEqual([
         { id: firstMessageId, orderSeq: 1 },
-        { id: compactionMessageId, orderSeq: 2 },
-        { id: shiftedMessageId, orderSeq: 3 }
+        { id: latestCompactionMessageId, orderSeq: 2 },
+        { id: shiftedCompactionMessageId, orderSeq: 3 },
+        { id: shiftedMessageId, orderSeq: 4 }
       ])
+      const tapeRows = database.deepchatTapeEntriesTable.getBySession('s1')
       expect(
-        buildEffectiveTapeViewFn(database.deepchatTapeEntriesTable.getBySession('s1'), {
+        buildEffectiveTapeViewFn(tapeRows, {
           includePending: true
         }).messageRecords.map((record) => ({ id: record.id, orderSeq: record.orderSeq }))
       ).toEqual([
         { id: firstMessageId, orderSeq: 1 },
-        { id: shiftedMessageId, orderSeq: 3 }
+        { id: shiftedMessageId, orderSeq: 4 }
       ])
+
+      const shiftedCompactionFacts = tapeRows.filter(
+        (row) => row.source_id === shiftedCompactionMessageId
+      )
+      expect(shiftedCompactionFacts.map((row) => row.name)).toEqual([
+        'message/compaction_indicator',
+        'message/compaction_indicator'
+      ])
+      expect(
+        shiftedCompactionFacts.map(
+          (row) => (JSON.parse(row.payload_json) as { data: { orderSeq: number } }).data.orderSeq
+        )
+      ).toEqual([2, 3])
+      expect(JSON.parse(shiftedCompactionFacts[1].meta_json)).toMatchObject({
+        correction: true,
+        reason: 'compaction_order_shifted',
+        orderSeq: 3
+      })
+      expect(
+        tapeRows.some(
+          (row) =>
+            row.source_id === shiftedCompactionMessageId &&
+            row.kind === 'message' &&
+            row.name === 'message/assistant'
+        )
+      ).toBe(false)
     } finally {
       connection.close()
     }

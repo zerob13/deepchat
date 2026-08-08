@@ -26,6 +26,46 @@ function readCompactionStatus(record: ChatMessageRecord): string | null {
   }
 }
 
+function appendCompactionIndicatorToTape(
+  table: TapeFactStore,
+  record: ChatMessageRecord,
+  source: TapeFactSource,
+  compactionStatus: string,
+  correction?: { reason: string }
+): void {
+  const orderRevision = correction ? `:order_seq:${record.orderSeq}` : ''
+  table.appendEvent({
+    sessionId: record.sessionId,
+    name: 'message/compaction_indicator',
+    source: {
+      type: 'message',
+      id: record.id,
+      seq: record.updatedAt
+    },
+    provenanceKey: `message:${record.id}:compaction_indicator:${compactionStatus}:${record.updatedAt}${orderRevision}`,
+    data: {
+      messageId: record.id,
+      orderSeq: record.orderSeq,
+      status: compactionStatus,
+      metadata: record.metadata
+    },
+    meta: correction
+      ? {
+          source,
+          status: compactionStatus,
+          correction: true,
+          reason: correction.reason,
+          orderSeq: record.orderSeq
+        }
+      : {
+          source,
+          status: compactionStatus
+        },
+    createdAt: record.updatedAt,
+    idempotent: true
+  })
+}
+
 function shouldUseRevisionProvenance(record: ChatMessageRecord, source: TapeFactSource): boolean {
   return source === 'repair' || record.status !== 'sent'
 }
@@ -210,28 +250,7 @@ export function appendMessageRecordToTape(
 
   const compactionStatus = readCompactionStatus(record)
   if (compactionStatus) {
-    table.appendEvent({
-      sessionId: record.sessionId,
-      name: 'message/compaction_indicator',
-      source: {
-        type: 'message',
-        id: record.id,
-        seq: record.updatedAt
-      },
-      provenanceKey: `message:${record.id}:compaction_indicator:${compactionStatus}:${record.updatedAt}`,
-      data: {
-        messageId: record.id,
-        orderSeq: record.orderSeq,
-        status: compactionStatus,
-        metadata: record.metadata
-      },
-      meta: {
-        source,
-        status: compactionStatus
-      },
-      createdAt: record.updatedAt,
-      idempotent: true
-    })
+    appendCompactionIndicatorToTape(table, record, source, compactionStatus)
     return 1
   }
 
@@ -279,6 +298,12 @@ export function appendMessageReplacementToTape(
   reason: string
 ): number {
   table.ensureBootstrapAnchor(record.sessionId)
+  const compactionStatus = readCompactionStatus(record)
+  if (compactionStatus) {
+    appendCompactionIndicatorToTape(table, record, 'live', compactionStatus, { reason })
+    return 1
+  }
+
   table.append({
     sessionId: record.sessionId,
     kind: 'message',
