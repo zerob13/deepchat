@@ -348,6 +348,19 @@ function buildTaskContractDraft(
   if (creationReason !== 'delegation_created' && creationReason !== 'legacy_recovery') {
     throw new TaskContractError('creationReason is invalid.', 'invalid_input')
   }
+  const parentSessionId = requireString(
+    input.parentSessionId,
+    'parentSessionId',
+    MAX_IDENTITY_BYTES,
+    256
+  )
+  const predecessorEvaluationRef = normalizeEvaluationRef(input.predecessorEvaluationRef ?? null)
+  if (predecessorEvaluationRef && predecessorEvaluationRef.sessionId !== parentSessionId) {
+    throw new TaskContractError(
+      'predecessorEvaluationRef must belong to the parent Session.',
+      'invalid_input'
+    )
+  }
 
   return {
     schemaVersion: DEEPCHAT_TASK_CONTRACT_SCHEMA_VERSION,
@@ -360,19 +373,14 @@ function buildTaskContractDraft(
       completionMode: 'single_response',
       retryMode: 'parent_follow_up',
       creationReason,
-      predecessorEvaluationRef: normalizeEvaluationRef(input.predecessorEvaluationRef ?? null)
+      predecessorEvaluationRef
     },
     taskDescription: {
       delegationId: requireString(input.delegationId, 'delegationId', MAX_IDENTITY_BYTES, 256),
       turnId: requireString(input.turnId, 'turnId', MAX_IDENTITY_BYTES, 256),
       turnSeq: requirePositiveSafeInteger(input.turnSeq, 'turnSeq'),
       turnKind: input.turnKind,
-      parentSessionId: requireString(
-        input.parentSessionId,
-        'parentSessionId',
-        MAX_IDENTITY_BYTES,
-        256
-      ),
+      parentSessionId,
       slotId: requireString(input.slotId, 'slotId', MAX_IDENTITY_BYTES, 256),
       targetAgentId: requireString(input.targetAgentId, 'targetAgentId', MAX_IDENTITY_BYTES, 256),
       title: requireString(input.title, 'title', MAX_TITLE_BYTES, 160),

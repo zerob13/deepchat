@@ -111,6 +111,31 @@ describe('TaskContract domain', () => {
     ).toThrow(/creationReason is invalid/u)
   })
 
+  it('rejects predecessor evaluations from another parent Session', () => {
+    const predecessorEvaluationRef = {
+      schemaVersion: 1 as const,
+      sessionId: 'parent-1',
+      tapeIdentity: 'a'.repeat(64),
+      entryId: 3,
+      evaluationHash: 'b'.repeat(64)
+    }
+
+    expect(
+      buildTaskContract(buildInput({ turnKind: 'follow_up', turnSeq: 2, predecessorEvaluationRef }))
+        .taskConfig.predecessorEvaluationRef
+    ).toEqual(predecessorEvaluationRef)
+    expect(() =>
+      buildTaskContract(
+        buildInput({
+          turnKind: 'follow_up',
+          turnSeq: 2,
+          parentSessionId: 'different-parent',
+          predecessorEvaluationRef
+        })
+      )
+    ).toThrow(/must belong to the parent Session/u)
+  })
+
   it('rejects duplicate sections, remote references, and bounded-input overflow', () => {
     expect(() =>
       buildTaskContract(
