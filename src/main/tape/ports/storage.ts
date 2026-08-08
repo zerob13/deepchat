@@ -8,6 +8,7 @@ import type {
   TapeEventAppendInput
 } from '../domain/entry'
 import type { ExecutionJournalEventName } from '../domain/executionJournal'
+import type { ContractTapeEventName } from '../domain/contractFacts'
 
 export interface TapeMutationProjection {
   applyAppendedEntry(row: DeepChatTapeEntryRow, previousSessionMaxEntryId: number): boolean
@@ -79,6 +80,15 @@ export interface ExecutionJournalPersistenceStore
   ): DeepChatTapeEntryRow
   listUnterminatedRunEvents(): Iterable<DeepChatTapeEntryRow>
   getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
+}
+
+/** Strict contract facts share the caller's host transaction and have their own namespace gate. */
+export interface ContractPersistenceStore extends TapeTransactionRunner, TapeBootstrapStore {
+  appendContractEvent(
+    input: TapeEventAppendInput & { name: ContractTapeEventName }
+  ): DeepChatTapeEntryRow
+  getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
+  getFirstEntriesBySessions(sessionIds: string[]): DeepChatTapeEntryRow[]
 }
 
 export interface TapeEntryLifecycleStore {

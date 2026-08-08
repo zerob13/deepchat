@@ -10,6 +10,7 @@ import type { SessionRuntimeUpdate } from '@/session/runtimeEvents'
 import { SessionDeletionGate } from '@/session/deletionGate'
 import { LiveDelegationConsentAuthority } from '@/orchestration/liveDelegationConsent'
 import { Database, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
+import { createLiveDelegationTaskContractInput } from '@/orchestration/liveDelegationTaskContract'
 
 const databaseModule = Database
   ? await import('@/orchestration/data/database').catch(() => null)
@@ -29,6 +30,12 @@ const repositoryModule = Database
 const serviceModule = Database
   ? await import('@/orchestration/liveDelegationService').catch(() => null)
   : null
+const tapeStoreModule = Database
+  ? await import('@/tape/infrastructure/sqlite/tapeEntryStore').catch(() => null)
+  : null
+const taskContractServiceModule = Database
+  ? await import('@/tape/application/taskContractService').catch(() => null)
+  : null
 
 const DatabaseCtor = Database!
 const LiveDelegationDatabaseCtor = databaseModule?.LiveDelegationDatabase!
@@ -37,6 +44,8 @@ const LiveDelegationTurnsTableCtor = turnsModule?.LiveDelegationTurnsTable!
 const LiveDelegationEventsTableCtor = eventsModule?.LiveDelegationEventsTable!
 const LiveDelegationRepositoryCtor = repositoryModule?.LiveDelegationRepository!
 const LiveDelegationServiceCtor = serviceModule?.LiveDelegationService!
+const DeepChatContractStoreCtor = tapeStoreModule?.DeepChatContractStore!
+const TaskContractServiceCtor = taskContractServiceModule?.TaskContractService!
 const describeIfSqlite = nativeSqliteDescribeIf(
   Boolean(
     LiveDelegationDatabaseCtor &&
@@ -44,7 +53,9 @@ const describeIfSqlite = nativeSqliteDescribeIf(
     LiveDelegationTurnsTableCtor &&
     LiveDelegationEventsTableCtor &&
     LiveDelegationRepositoryCtor &&
-    LiveDelegationServiceCtor
+    LiveDelegationServiceCtor &&
+    DeepChatContractStoreCtor &&
+    TaskContractServiceCtor
   ),
   'Live delegation lifecycle modules are unavailable'
 )
@@ -72,8 +83,11 @@ describeIfSqlite('LiveDelegationService', () => {
     new LiveDelegationsTableCtor(db).createTable()
     new LiveDelegationTurnsTableCtor(db).createTable()
     new LiveDelegationEventsTableCtor(db).createTable()
+    const contractStore = new DeepChatContractStoreCtor(db)
+    contractStore.createTable()
     repository = new LiveDelegationRepositoryCtor(
-      new LiveDelegationDatabaseCtor({ getDatabase: () => db! })
+      new LiveDelegationDatabaseCtor({ getDatabase: () => db! }),
+      new TaskContractServiceCtor(() => contractStore)
     )
     harness = createSessionHarness(db)
     deletionGate = new SessionDeletionGate()
@@ -235,7 +249,8 @@ describeIfSqlite('LiveDelegationService', () => {
         slotId: 'reviewer',
         targetAgentId: 'deepchat',
         title: `Occupied slot ${index}`,
-        prompt: 'Keep this capacity slot occupied.'
+        prompt: 'Keep this capacity slot occupied.',
+        taskContract: createLiveDelegationTaskContractInput(null)
       })
     }
     const receipt = consentAuthority.issue({
@@ -1134,6 +1149,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Recovered wait',
       prompt: 'Wait while admission is occupied.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
     harness.addChild('child-recovered-wait', created.delegation.id, 'generating')
@@ -1608,6 +1624,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Close waiter race',
       prompt: 'Complete between the first read and waiter registration.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
     const listEvents = repository.listEvents.bind(repository)
@@ -1685,6 +1702,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Recover review',
       prompt: 'Complete before restart.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
     harness.addChild('child-recovery', created.delegation.id, 'idle')
@@ -1724,6 +1742,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Recover without answer',
       prompt: 'Complete after an older child answer.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
     harness.addChild('child-stale-result', created.delegation.id, 'idle')
@@ -1764,6 +1783,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Recover effect boundary',
       prompt: 'Continue after restart.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
     harness.addChild('child-effect-recovery', created.delegation.id, 'generating')
@@ -1800,6 +1820,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Interrupt recovery',
       prompt: 'Remain stopped after interruption.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
     harness.addChild('child-interrupt-recovery', created.delegation.id, 'generating')
@@ -1858,6 +1879,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Crash window',
       prompt: 'May not have been sent.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
     harness.addChild('child-crash-window', created.delegation.id, 'idle')
@@ -1888,6 +1910,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Failed lookup',
       prompt: 'This child lookup fails.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
     const healthy = repository.create({
@@ -1898,6 +1921,7 @@ describeIfSqlite('LiveDelegationService', () => {
       targetAgentId: 'agent-1',
       title: 'Healthy lookup',
       prompt: 'This child should still recover.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 110
     })
     harness.addChild('child-recovery-failed', failed.delegation.id, 'idle')

@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed for implementation. This architecture extends DeepChat's existing Tape, provider View,
-and live-delegation execution planes with explicit task and execution contracts. It does not add a
-second scheduler or make Tape an online permission service.
+In implementation. P0 is complete and P1 is in progress. This architecture extends DeepChat's
+existing Tape, provider View, and live-delegation execution planes with explicit task and execution
+contracts. It does not add a second scheduler or make Tape an online permission service.
 
-Last reviewed: 2026-08-08.
+Last reviewed: 2026-08-09.
 
 ## Decision
 

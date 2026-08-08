@@ -32,6 +32,15 @@ import type { LiveDelegationDatabase } from './data/database'
 import type { LiveDelegationEventRow } from './data/tables/liveDelegationEvents'
 import type { LiveDelegationRow } from './data/tables/liveDelegations'
 import type { LiveDelegationTurnRow } from './data/tables/liveDelegationTurns'
+import type { ParentTaskContractWriter } from '@/tape/application/taskContractService'
+import {
+  buildTaskContract,
+  restoreTaskContract,
+  restoreTaskContractRef,
+  serializeTaskContract,
+  serializeTaskContractRef
+} from '@/tape/domain/taskContract'
+import type { LiveDelegationTaskContractInput } from './liveDelegationTaskContract'
 
 const MAX_RETAINED_CONSUMED_MESSAGES_PER_PARENT = 500
 const MAX_LIST_LIMIT = 100
@@ -62,6 +71,7 @@ export interface CreateLiveDelegationInput {
   targetAgentId: string
   title: string
   prompt: string
+  taskContract: LiveDelegationTaskContractInput
   now?: number
 }
 
@@ -73,7 +83,10 @@ export interface LiveDelegationWithTurn {
 export interface ActiveLiveDelegationTurn extends LiveDelegationWithTurn {}
 
 export class LiveDelegationRepository {
-  constructor(private readonly database: LiveDelegationDatabase) {}
+  constructor(
+    private readonly database: LiveDelegationDatabase,
+    private readonly taskContracts: ParentTaskContractWriter
+  ) {}
 
   create(input: CreateLiveDelegationInput, beforeMutation?: () => void): LiveDelegationWithTurn {
     const id = StoredIdSchema.parse(input.id)
@@ -84,6 +97,19 @@ export class LiveDelegationRepository {
     const title = validateText(input.title, 160, 'Live delegation title')
     const prompt = validateBytes(input.prompt, LIVE_DELEGATION_MAX_PROMPT_BYTES, 'Delegated task')
     const now = validateTimestamp(input.now ?? Date.now())
+    const taskContract = buildTaskContract({
+      ...input.taskContract,
+      delegationId: id,
+      turnId: initialTurnId,
+      turnSeq: 1,
+      turnKind: 'initial',
+      parentSessionId,
+      slotId,
+      targetAgentId,
+      title,
+      prompt
+    })
+    const taskContractJson = serializeTaskContract(taskContract)
     const db = this.database.getDatabase()
     const parentExists = db.prepare('SELECT 1 FROM new_sessions WHERE id = ?').get(parentSessionId)
     if (!parentExists) throw new Error('live delegation parent session does not exist')
@@ -97,12 +123,19 @@ export class LiveDelegationRepository {
            status, last_turn_seq, last_summary, last_error, created_at, updated_at, revision
          ) VALUES (?, ?, NULL, ?, ?, ?, 'queued', 1, NULL, NULL, ?, ?, 0)`
       ).run(id, parentSessionId, slotId, targetAgentId, title, now, now)
+      const frozen = this.taskContracts.freezeParentTaskContract({
+        parentSessionId,
+        contract: taskContract,
+        createdAt: now
+      })
+      const taskContractRefJson = serializeTaskContractRef(frozen.ref)
       db.prepare(
         `INSERT INTO live_delegation_turns (
            turn_id, delegation_id, seq, kind, prompt, status, result_summary, error,
-           tape_receipt_json, created_at, started_at, updated_at, completed_at
-         ) VALUES (?, ?, 1, 'initial', ?, 'queued', NULL, NULL, NULL, ?, NULL, ?, NULL)`
-      ).run(initialTurnId, id, prompt, now, now)
+           tape_receipt_json, task_contract_json, task_contract_ref_json,
+           created_at, started_at, updated_at, completed_at
+         ) VALUES (?, ?, 1, 'initial', ?, 'queued', NULL, NULL, NULL, ?, ?, ?, NULL, ?, NULL)`
+      ).run(initialTurnId, id, prompt, taskContractJson, taskContractRefJson, now, now)
       return {
         delegation: this.require(id),
         turn: this.requireTurn(initialTurnId)
@@ -297,6 +330,7 @@ export class LiveDelegationRepository {
     delegationId: string,
     turnId: string,
     task: string,
+    taskContractInput: LiveDelegationTaskContractInput,
     now = Date.now(),
     beforeMutation?: () => void
   ): LiveDelegationWithTurn {
@@ -332,14 +366,43 @@ export class LiveDelegationRepository {
     )
     validateBytes(prompt, LIVE_DELEGATION_MAX_PROMPT_BYTES, 'Follow-up task with messages')
     const nextSeq = delegation.lastTurnSeq + 1
+    const taskContract = buildTaskContract({
+      ...taskContractInput,
+      delegationId: delegation.id,
+      turnId: normalizedTurnId,
+      turnSeq: nextSeq,
+      turnKind: 'follow_up',
+      parentSessionId: delegation.parentSessionId,
+      slotId: delegation.slotId,
+      targetAgentId: delegation.targetAgentId,
+      title: delegation.title,
+      prompt
+    })
+    const taskContractJson = serializeTaskContract(taskContract)
     beforeMutation?.()
     return db.transaction(() => {
+      const frozen = this.taskContracts.freezeParentTaskContract({
+        parentSessionId: delegation.parentSessionId,
+        contract: taskContract,
+        createdAt: timestamp
+      })
+      const taskContractRefJson = serializeTaskContractRef(frozen.ref)
       db.prepare(
         `INSERT INTO live_delegation_turns (
            turn_id, delegation_id, seq, kind, prompt, status, result_summary, error,
-           tape_receipt_json, created_at, started_at, updated_at, completed_at
-         ) VALUES (?, ?, ?, 'follow_up', ?, 'queued', NULL, NULL, NULL, ?, NULL, ?, NULL)`
-      ).run(normalizedTurnId, delegation.id, nextSeq, prompt, timestamp, timestamp)
+           tape_receipt_json, task_contract_json, task_contract_ref_json,
+           created_at, started_at, updated_at, completed_at
+         ) VALUES (?, ?, ?, 'follow_up', ?, 'queued', NULL, NULL, NULL, ?, ?, ?, NULL, ?, NULL)`
+      ).run(
+        normalizedTurnId,
+        delegation.id,
+        nextSeq,
+        prompt,
+        taskContractJson,
+        taskContractRefJson,
+        timestamp,
+        timestamp
+      )
       if (messageRows.length > 0) {
         const placeholders = messageRows.map(() => '?').join(', ')
         db.prepare(
@@ -692,7 +755,33 @@ function toDelegation(row: LiveDelegationRow): LiveDelegation {
 }
 
 function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
-  return LiveDelegationTurnSchema.parse({
+  const taskContract = parseTaskContract(row.task_contract_json)
+  const taskContractRef = parseTaskContractRef(row.task_contract_ref_json)
+  const inheritedTaskContractRef = parseTaskContractRef(row.inherited_task_contract_ref_json)
+  if ((taskContract === null) !== (taskContractRef === null)) {
+    throw new Error(
+      `Live delegation turn ${row.turn_id} has an incomplete TaskContract projection.`
+    )
+  }
+  if (taskContract && taskContractRef?.contractHash !== taskContract.contractHash) {
+    throw new Error(`Live delegation turn ${row.turn_id} has a conflicting TaskContract reference.`)
+  }
+  if (taskContract) {
+    const description = taskContract.taskDescription
+    if (
+      description.delegationId !== row.delegation_id ||
+      description.turnId !== row.turn_id ||
+      description.turnSeq !== row.seq ||
+      description.turnKind !== row.kind ||
+      description.prompt !== row.prompt ||
+      taskContractRef?.sessionId !== description.parentSessionId ||
+      (inheritedTaskContractRef !== null &&
+        inheritedTaskContractRef.contractHash !== taskContract.contractHash)
+    ) {
+      throw new Error(`Live delegation turn ${row.turn_id} has a misbound TaskContract projection.`)
+    }
+  }
+  const parsed = LiveDelegationTurnSchema.parse({
     id: row.turn_id,
     delegationId: row.delegation_id,
     seq: row.seq,
@@ -703,6 +792,9 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
     error: row.error,
     resultRef: parseResultRef(row.result_ref_json),
     tapeReceipt: parseTapeReceipt(row.tape_receipt_json),
+    taskContract,
+    taskContractRef,
+    inheritedTaskContractRef,
     effectState: row.effect_state,
     effectEvidence: parseEffectEvidence(row.effect_evidence_json),
     createdAt: row.created_at,
@@ -710,6 +802,12 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
     updatedAt: row.updated_at,
     completedAt: row.completed_at
   })
+  return {
+    ...parsed,
+    taskContract,
+    taskContractRef,
+    inheritedTaskContractRef
+  }
 }
 
 function toEvent(row: LiveDelegationEventRow): LiveDelegationEvent {
@@ -835,6 +933,20 @@ function parseResultRef(value: string | null): LiveDelegationResultRef | null {
 
 function parseEffectEvidence(value: string | null): OrchestrationEffectEvidence | null {
   return value ? OrchestrationEffectEvidenceSchema.parse(JSON.parse(value)) : null
+}
+
+function parseTaskContract(value: string | null) {
+  if (!value) return null
+  const contract = restoreTaskContract(JSON.parse(value))
+  if (!contract) throw new Error('Stored live delegation TaskContract is malformed.')
+  return contract
+}
+
+function parseTaskContractRef(value: string | null) {
+  if (!value) return null
+  const ref = restoreTaskContractRef(JSON.parse(value))
+  if (!ref) throw new Error('Stored live delegation TaskContract reference is malformed.')
+  return ref
 }
 
 function isActiveTurnStatus(status: LiveDelegationTurnStatus): boolean {

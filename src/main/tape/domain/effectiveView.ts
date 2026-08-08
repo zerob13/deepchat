@@ -1,6 +1,7 @@
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import type { DeepChatTapeEntryKind, DeepChatTapeEntryRow, DeepChatTapeSearchInput } from './entry'
 import { EXECUTION_JOURNAL_EVENT_NAMES } from './executionJournal'
+import { CONTRACT_TAPE_EVENT_NAMES, isContractTapeReservedName } from './contractFacts'
 import {
   parseNestedTapeJsonObject,
   parseTapeJsonObject,
@@ -42,6 +43,7 @@ export const DEFAULT_EXCLUDED_TAPE_EVENT_NAMES = [
   'message/retracted',
   'message/compaction_indicator',
   'migration/backfill',
+  ...CONTRACT_TAPE_EVENT_NAMES,
   ...EXECUTION_JOURNAL_EVENT_NAMES
 ] as const
 
@@ -117,7 +119,10 @@ function shouldReplaceMessage(
 }
 
 function isAuditEvent(row: DeepChatTapeEntryRow): boolean {
-  return row.name !== null && DEFAULT_EXCLUDED_TAPE_EVENT_NAME_SET.has(row.name)
+  return (
+    row.name !== null &&
+    (DEFAULT_EXCLUDED_TAPE_EVENT_NAME_SET.has(row.name) || isContractTapeReservedName(row.name))
+  )
 }
 
 function shouldReplaceToolRow(

@@ -168,6 +168,7 @@ import { LiveDelegationRepository } from '@/orchestration/liveDelegationReposito
 import { LiveDelegationService } from '@/orchestration/liveDelegationService'
 import { LiveDelegationSafetyCoordinator } from '@/orchestration/liveDelegationSafety'
 import { LiveDelegationConsentAuthority } from '@/orchestration/liveDelegationConsent'
+import { TaskContractService } from '@/tape/application/taskContractService'
 import { createProjectRoutes } from '../project/routes'
 import { RemoteService } from '../remote'
 import type { RemoteServiceLike } from '../remote/ports'
@@ -303,9 +304,6 @@ export async function createMainProcessControl(dependencies: {
   const databaseSecurityService = dependencies.databaseSecurityService
   const startupWorkloadCoordinator = dependencies.startupWorkloadCoordinator
   const mainDatabase = dependencies.database
-  const liveDelegationRepository = new LiveDelegationRepository(
-    new LiveDelegationDatabase(mainDatabase)
-  )
   const fileWatcherService = new FileWatcherService()
   let windowPresenter: IWindowPresenter
   let providerSettings: ProviderSettings
@@ -562,6 +560,13 @@ export async function createMainProcessControl(dependencies: {
           version: Date.now()
         })
     }
+  )
+  const taskContractService = new TaskContractService(
+    () => sessionData.database.deepchatContractStore
+  )
+  const liveDelegationRepository = new LiveDelegationRepository(
+    new LiveDelegationDatabase(mainDatabase),
+    taskContractService
   )
   const sessionRuntimeEvents = new SessionRuntimeEvents()
   const projectDatabase = new ProjectDatabase(mainDatabase)

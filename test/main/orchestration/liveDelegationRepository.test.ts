@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Database, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
+import { createLiveDelegationTaskContractInput } from '@/orchestration/liveDelegationTaskContract'
 
 const databaseModule = Database
   ? await import('@/orchestration/data/database').catch(() => null)
@@ -17,6 +18,12 @@ const eventsModule = Database
 const repositoryModule = Database
   ? await import('@/orchestration/liveDelegationRepository').catch(() => null)
   : null
+const tapeStoreModule = Database
+  ? await import('@/tape/infrastructure/sqlite/tapeEntryStore').catch(() => null)
+  : null
+const taskContractServiceModule = Database
+  ? await import('@/tape/application/taskContractService').catch(() => null)
+  : null
 
 const DatabaseCtor = Database!
 const LiveDelegationDatabaseCtor = databaseModule?.LiveDelegationDatabase!
@@ -24,13 +31,18 @@ const LiveDelegationsTableCtor = delegationsModule?.LiveDelegationsTable!
 const LiveDelegationTurnsTableCtor = turnsModule?.LiveDelegationTurnsTable!
 const LiveDelegationEventsTableCtor = eventsModule?.LiveDelegationEventsTable!
 const LiveDelegationRepositoryCtor = repositoryModule?.LiveDelegationRepository!
+const DeepChatContractStoreCtor = tapeStoreModule?.DeepChatContractStore!
+const TaskContractServiceCtor = taskContractServiceModule?.TaskContractService!
+const CONTRACT_SCHEMA_VERSION = delegationsModule?.LIVE_DELEGATION_CONTRACT_DATABASE_SCHEMA_VERSION!
 const describeIfSqlite = nativeSqliteDescribeIf(
   Boolean(
     LiveDelegationDatabaseCtor &&
     LiveDelegationsTableCtor &&
     LiveDelegationTurnsTableCtor &&
     LiveDelegationEventsTableCtor &&
-    LiveDelegationRepositoryCtor
+    LiveDelegationRepositoryCtor &&
+    DeepChatContractStoreCtor &&
+    TaskContractServiceCtor
   ),
   'Live delegation persistence modules are unavailable'
 )
@@ -38,6 +50,7 @@ const describeIfSqlite = nativeSqliteDescribeIf(
 describeIfSqlite('LiveDelegationRepository', () => {
   let db: InstanceType<typeof DatabaseCtor> | null
   let repository: InstanceType<typeof LiveDelegationRepositoryCtor>
+  let contractStore: InstanceType<typeof DeepChatContractStoreCtor>
 
   beforeEach(() => {
     db = new DatabaseCtor(':memory:')
@@ -52,8 +65,11 @@ describeIfSqlite('LiveDelegationRepository', () => {
     new LiveDelegationsTableCtor(db).createTable()
     new LiveDelegationTurnsTableCtor(db).createTable()
     new LiveDelegationEventsTableCtor(db).createTable()
+    contractStore = new DeepChatContractStoreCtor(db)
+    contractStore.createTable()
     repository = new LiveDelegationRepositoryCtor(
-      new LiveDelegationDatabaseCtor({ getDatabase: () => db! })
+      new LiveDelegationDatabaseCtor({ getDatabase: () => db! }),
+      new TaskContractServiceCtor(() => contractStore)
     )
     addSession('parent')
   })
@@ -81,6 +97,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
       targetAgentId: 'agent-1',
       title: 'Review architecture',
       prompt: 'Review module boundaries.',
+      taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
   }
@@ -105,6 +122,30 @@ describeIfSqlite('LiveDelegationRepository', () => {
       }
     })
     expect(repository.listActiveTurns()).toHaveLength(1)
+    expect(created.turn).toMatchObject({
+      taskContract: {
+        taskDescription: {
+          delegationId: 'delegation-1',
+          turnId: 'turn-1',
+          prompt: 'Review module boundaries.'
+        }
+      },
+      taskContractRef: {
+        sessionId: 'parent',
+        contractHash: created.turn.taskContract?.contractHash
+      },
+      inheritedTaskContractRef: null
+    })
+    const frozenFacts = contractStore
+      .getBySession('parent')
+      .filter((row) => row.name === 'contract/task_frozen')
+    expect(frozenFacts).toHaveLength(1)
+    expect(JSON.parse(frozenFacts[0]!.payload_json).data.contract).toEqual(
+      created.turn.taskContract
+    )
+    expect(created.turn.taskContractRef?.entryId).toBe(frozenFacts[0]!.entry_id)
+    expect(Object.isFrozen(created.turn.taskContract)).toBe(true)
+    expect(Object.isFrozen(created.turn.taskContract?.taskHarness.acceptance)).toBe(true)
     expect(() =>
       repository.create({
         id: 'orphan',
@@ -113,7 +154,8 @@ describeIfSqlite('LiveDelegationRepository', () => {
         slotId: 'reviewer',
         targetAgentId: 'agent-1',
         title: 'Orphan',
-        prompt: 'Do work.'
+        prompt: 'Do work.',
+        taskContract: createLiveDelegationTaskContractInput(null)
       })
     ).toThrow('parent session does not exist')
   })
@@ -135,6 +177,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
         targetAgentId: 'agent-1',
         title: 'Commit before mutation',
         prompt: 'Verify transaction ownership.',
+        taskContract: createLiveDelegationTaskContractInput(null),
         now: 101
       },
       commitReceipt('receipt-success')
@@ -150,6 +193,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
           targetAgentId: 'agent-1',
           title: 'Duplicate mutation',
           prompt: 'Fail after the receipt commits.',
+          taskContract: createLiveDelegationTaskContractInput(null),
           now: 102
         },
         commitReceipt('receipt-before-failure')
@@ -174,12 +218,139 @@ describeIfSqlite('LiveDelegationRepository', () => {
           slotId: 'reviewer',
           targetAgentId: 'agent-1',
           title: 'Orphan',
-          prompt: 'Do work.'
+          prompt: 'Do work.',
+          taskContract: createLiveDelegationTaskContractInput(null)
         },
         beforeMutation
       )
     ).toThrow('parent session does not exist')
     expect(beforeMutation).not.toHaveBeenCalled()
+  })
+
+  it('rolls back the parent fact and runtime rows when contract freeze cannot complete', () => {
+    const strictWriter = new TaskContractServiceCtor(() => contractStore)
+    const failingRepository = new LiveDelegationRepositoryCtor(
+      new LiveDelegationDatabaseCtor({ getDatabase: () => db! }),
+      {
+        freezeParentTaskContract: (
+          input: Parameters<typeof strictWriter.freezeParentTaskContract>[0]
+        ) => {
+          strictWriter.freezeParentTaskContract(input)
+          throw new Error('projection write failed')
+        }
+      }
+    )
+
+    expect(() =>
+      failingRepository.create({
+        id: 'delegation-rollback',
+        initialTurnId: 'turn-rollback',
+        parentSessionId: 'parent',
+        slotId: 'reviewer',
+        targetAgentId: 'agent-1',
+        title: 'Rollback contract',
+        prompt: 'Do not leave a partial fact.',
+        taskContract: createLiveDelegationTaskContractInput(null),
+        now: 100
+      })
+    ).toThrow('projection write failed')
+    expect(failingRepository.get('delegation-rollback')).toBeNull()
+    expect(contractStore.getBySession('parent')).toEqual([])
+  })
+
+  it('rejects a canonical TaskContract projection bound to different turn content', () => {
+    createDelegation()
+    db!
+      .prepare(
+        "UPDATE live_delegation_turns SET prompt = 'Corrupted prompt' WHERE turn_id = 'turn-1'"
+      )
+      .run()
+
+    expect(() => repository.requireTurn('turn-1')).toThrow(/misbound TaskContract projection/u)
+  })
+
+  it('migrates nullable contract projections from the orchestration v64 schema', () => {
+    const legacyDb = new DatabaseCtor(':memory:')
+    try {
+      legacyDb.exec(`
+        PRAGMA foreign_keys = ON;
+        CREATE TABLE schema_versions (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+        INSERT INTO schema_versions (version, applied_at) VALUES (64, 1);
+        CREATE TABLE new_sessions (
+          id TEXT PRIMARY KEY,
+          session_kind TEXT NOT NULL DEFAULT 'regular',
+          parent_session_id TEXT
+        );
+      `)
+      const delegations = new LiveDelegationsTableCtor(legacyDb)
+      const turns = new LiveDelegationTurnsTableCtor(legacyDb)
+      delegations.createTable()
+      turns.createTable()
+      legacyDb.prepare("INSERT INTO new_sessions (id) VALUES ('parent')").run()
+      legacyDb
+        .prepare(
+          `INSERT INTO live_delegations (
+             delegation_id, parent_session_id, child_session_id, slot_id, target_agent_id, title,
+             status, last_turn_seq, last_summary, last_error, created_at, updated_at, revision
+           ) VALUES ('legacy', 'parent', NULL, 'reviewer', 'agent-1', 'Legacy',
+             'queued', 1, NULL, NULL, 1, 1, 0)`
+        )
+        .run()
+      legacyDb
+        .prepare(
+          `INSERT INTO live_delegation_turns (
+             turn_id, delegation_id, seq, kind, prompt, status, created_at, updated_at
+           ) VALUES ('legacy-turn', 'legacy', 1, 'initial', 'Legacy task', 'queued', 1, 1)`
+        )
+        .run()
+
+      const beforeColumns = new Set(
+        (
+          legacyDb.prepare('PRAGMA table_info(live_delegation_turns)').all() as Array<{
+            name: string
+          }>
+        ).map((column) => column.name)
+      )
+      expect(beforeColumns.has('task_contract_json')).toBe(false)
+      const migration = turns.getMigrationSQL(CONTRACT_SCHEMA_VERSION)
+      expect(migration).toBeTruthy()
+      legacyDb.exec(migration!)
+
+      const afterColumns = new Set(
+        (
+          legacyDb.prepare('PRAGMA table_info(live_delegation_turns)').all() as Array<{
+            name: string
+          }>
+        ).map((column) => column.name)
+      )
+      expect(
+        [
+          'task_contract_json',
+          'task_contract_ref_json',
+          'inherited_task_contract_ref_json',
+          'evaluation_json',
+          'evaluation_ref_json'
+        ].every((column) => afterColumns.has(column))
+      ).toBe(true)
+      expect(
+        legacyDb
+          .prepare(
+            `SELECT task_contract_json, task_contract_ref_json,
+                    inherited_task_contract_ref_json, evaluation_json, evaluation_ref_json
+             FROM live_delegation_turns WHERE turn_id = 'legacy-turn'`
+          )
+          .get()
+      ).toEqual({
+        task_contract_json: null,
+        task_contract_ref_json: null,
+        inherited_task_contract_ref_json: null,
+        evaluation_json: null,
+        evaluation_ref_json: null
+      })
+      expect(turns.getMigrationSQL(CONTRACT_SCHEMA_VERSION)).toContain('already present')
+    } finally {
+      legacyDb.close()
+    }
   })
 
   it('enforces parent active capacity atomically for initial and follow-up turns', () => {
@@ -192,6 +363,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
         targetAgentId: 'agent-1',
         title: `Review ${index}`,
         prompt: `Inspect boundary ${index}.`,
+        taskContract: createLiveDelegationTaskContractInput(null),
         now: 100 + index
       })
 
@@ -214,6 +386,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
         replacement.delegation.id,
         'turn-follow-up',
         'Continue the review.',
+        createLiveDelegationTaskContractInput(null),
         140
       )
     ).toThrow('at most 5 active live delegations')
@@ -267,13 +440,21 @@ describeIfSqlite('LiveDelegationRepository', () => {
       'delegation-1',
       'turn-2',
       'Re-evaluate the conclusion.',
+      createLiveDelegationTaskContractInput(null),
       130
     )
     expect(followUp.turn).toMatchObject({ seq: 2, kind: 'follow_up', status: 'queued' })
     expect(followUp.turn.prompt).toContain('Check the cache boundary.')
     expect(followUp.turn.prompt).toContain('Re-evaluate the conclusion.')
     expect(() =>
-      repository.createFollowUp('parent', 'delegation-1', 'turn-3', 'Overlap', 140)
+      repository.createFollowUp(
+        'parent',
+        'delegation-1',
+        'turn-3',
+        'Overlap',
+        createLiveDelegationTaskContractInput(null),
+        140
+      )
     ).toThrow('already has an active turn')
   })
 
@@ -351,6 +532,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
       'delegation-1',
       'turn-2',
       'Continue with the bounded evidence.',
+      createLiveDelegationTaskContractInput(null),
       130
     )
 
@@ -372,7 +554,14 @@ describeIfSqlite('LiveDelegationRepository', () => {
     repository.createMessage('parent', 'delegation-1', 'Keep this evidence.')
 
     expect(() =>
-      repository.createFollowUp('parent', 'delegation-1', 'turn-2', 'x'.repeat(64 * 1024), 120)
+      repository.createFollowUp(
+        'parent',
+        'delegation-1',
+        'turn-2',
+        'x'.repeat(64 * 1024),
+        createLiveDelegationTaskContractInput(null),
+        120
+      )
     ).toThrow('leaves no room for queued messages or their recovery notice')
     expect(repository.listTurns('delegation-1')).toHaveLength(1)
     expect(

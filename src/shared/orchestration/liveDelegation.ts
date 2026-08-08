@@ -1,5 +1,9 @@
 import { z } from 'zod'
 import { OrchestrationEffectEvidenceSchema, OrchestrationEffectStateSchema } from './toolEffect'
+import {
+  DeepChatTaskContractProjectionSchema,
+  DeepChatTaskContractRefSchema
+} from '../types/task-contract'
 
 export const LIVE_DELEGATION_SCHEMA_VERSION = 1
 export const LIVE_DELEGATION_MAX_TITLE_LENGTH = 160
@@ -133,6 +137,9 @@ const LiveDelegationTurnBaseSchema = z
     error: z.string().nullable(),
     resultRef: LiveDelegationResultRefSchema.nullable().default(null),
     tapeReceipt: LiveDelegationTapeReceiptSchema.nullable(),
+    taskContract: DeepChatTaskContractProjectionSchema.nullable().default(null),
+    taskContractRef: DeepChatTaskContractRefSchema.nullable().default(null),
+    inheritedTaskContractRef: DeepChatTaskContractRefSchema.nullable().default(null),
     effectState: OrchestrationEffectStateSchema,
     effectEvidence: OrchestrationEffectEvidenceSchema.nullable(),
     createdAt: z.number().int().nonnegative(),
@@ -185,7 +192,10 @@ export const LiveDelegationSummarySchema = LiveDelegationSchema.omit({
 export const LiveDelegationTurnSummarySchema = LiveDelegationTurnBaseSchema.omit({
   prompt: true,
   resultSummary: true,
-  error: true
+  error: true,
+  taskContract: true,
+  taskContractRef: true,
+  inheritedTaskContractRef: true
 })
   .extend({
     promptPreview: z.string().max(LIVE_DELEGATION_MAX_PREVIEW_CHARACTERS),

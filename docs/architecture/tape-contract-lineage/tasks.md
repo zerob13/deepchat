@@ -23,16 +23,16 @@
 - [x] Carry the exact View contract to tool dispatch without Session-global mutable state.
 - [x] Enforce stable tool target, effect, workspace, and nesting ceilings with current authority.
 - [x] Cover retries, tool rounds, revocation, expansion, and contract mismatch.
-- [ ] Review and commit the View/enforcement slice.
+- [x] Review and commit the View/enforcement slice.
 
 ## P1: Strict Contract Persistence
 
-- [ ] Reserve `contract/*` and add a transaction-aware strict Tape capability.
-- [ ] Add complete Tape identity and canonical conflict validation.
-- [ ] Add nullable live-delegation contract/evaluation projection columns and migration coverage.
-- [ ] Atomically freeze parent TaskContract with initial and follow-up turn creation.
+- [x] Reserve `contract/*` and add a transaction-aware strict Tape capability.
+- [x] Add complete Tape identity and canonical conflict validation.
+- [x] Add nullable live-delegation contract/evaluation projection columns and migration coverage.
+- [x] Atomically freeze parent TaskContract with initial and follow-up turn creation.
 - [ ] Re-anchor hash-verified runtime projections after parent Tape reset.
-- [ ] Review and commit the parent-freeze/storage slice.
+- [x] Review and commit the parent-freeze/storage foundation slice.
 
 ## P1: Child Inheritance
 

@@ -53,6 +53,10 @@ import type {
   LiveDelegationConsentReceipt,
   LiveDelegationConsentVerifier
 } from './liveDelegationConsent'
+import {
+  createLiveDelegationTaskContractInput,
+  LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS
+} from './liveDelegationTaskContract'
 
 const MAX_WAITERS = 32
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000
@@ -256,6 +260,7 @@ export class LiveDelegationService {
     const delegationId = nanoid()
     const turnId = nanoid()
     const executionSnapshot = createTurnExecutionSnapshot(parent)
+    const projectDir = await this.resolveParentProjectDir(parent)
     const created = this.runAuthorizedStartMutation(parent, 'spawn', authorization, () =>
       this.options.repository.create(
         {
@@ -265,7 +270,8 @@ export class LiveDelegationService {
           slotId: slot.id,
           targetAgentId,
           title: input.title,
-          prompt: input.prompt
+          prompt: input.prompt,
+          taskContract: createLiveDelegationTaskContractInput(projectDir)
         },
         beforeMutation
       )
@@ -335,7 +341,7 @@ export class LiveDelegationService {
     return await this.options.deletionGate.runWithSessionOperation(
       discoveredChild.sessionId,
       async () => {
-        await this.resolveCurrentSafety(delegation)
+        const currentSafety = await this.resolveCurrentSafety(delegation)
         const child = await this.options.sessions.resolveConversationSessionInfo(
           discoveredChild.sessionId
         )
@@ -350,17 +356,17 @@ export class LiveDelegationService {
             `Cannot continue delegation ${delegation.id} while child session is ${child.status}.`
           )
         }
-        const currentParent = await this.requireCapableParent(parent.sessionId)
         const created = this.runAuthorizedStartMutation(
-          currentParent,
+          currentSafety.parent,
           'follow_up',
           authorization,
           () =>
             this.options.repository.createFollowUp(
-              currentParent.sessionId,
+              currentSafety.parent.sessionId,
               delegation.id,
               nanoid(),
               task,
+              createLiveDelegationTaskContractInput(currentSafety.projectDir),
               undefined,
               beforeMutation
             )
@@ -1398,8 +1404,8 @@ export class LiveDelegationService {
       throw new Error(`Subagent slot target changed for delegation ${delegation.id}.`)
     }
     const projectDir =
-      (await this.options.sessions.resolveConversationWorkdir(parent.sessionId))?.trim() ||
-      parent.projectDir?.trim() ||
+      (await this.options.sessions.resolveConversationWorkdir(parent.sessionId)) ||
+      parent.projectDir ||
       null
     return { parent, projectDir }
   }
@@ -1477,6 +1483,11 @@ export class LiveDelegationService {
     return parent as CapableParent
   }
 
+  private async resolveParentProjectDir(parent: CapableParent): Promise<string | null> {
+    const runtimeWorkdir = await this.options.sessions.resolveConversationWorkdir(parent.sessionId)
+    return runtimeWorkdir || parent.projectDir || null
+  }
+
   private publishChanged(delegation: LiveDelegation): void {
     try {
       this.options.onChanged?.(delegation.parentSessionId, delegation.id)
@@ -1502,6 +1513,7 @@ export class LiveDelegationService {
 }
 
 function buildTurnHandoff(delegation: LiveDelegation, turn: LiveDelegationTurn): string {
+  const [handoffSection, ...remainingSections] = LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS
   return [
     '# DeepChat Live Delegation',
     '',
@@ -1512,14 +1524,10 @@ function buildTurnHandoff(delegation: LiveDelegation, turn: LiveDelegationTurn):
     turn.prompt,
     '',
     'Return markdown with these sections in this order:',
-    '## Handoff',
+    `## ${handoffSection}`,
     'A self-contained conclusion for the parent Agent, limited to about 2,000 tokens. Include the',
     'decision, critical evidence, changed files, validation, and unresolved risks needed next.',
-    '## Result',
-    '## Evidence',
-    '## Changed Files',
-    '## Validation',
-    '## Unresolved',
+    ...remainingSections.map((section) => `## ${section}`),
     'Use `None` when a section has no entries.',
     '',
     'Rules:',

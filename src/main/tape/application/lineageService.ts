@@ -11,6 +11,7 @@ import {
 } from '../domain/entry'
 import type { TapeApplicationProviders } from '../ports/application'
 import { parseJsonObject, parseJsonValue } from './common'
+import { computeTapeIdentity, TAPE_IDENTITY_PATTERN } from '../domain/tapeIdentity'
 
 type TapeLineageProviders = Pick<
   TapeApplicationProviders,
@@ -26,8 +27,6 @@ function compactText(value: string, maxLength = 1000): string {
 const SUBAGENT_TAPE_LINK_EVENT_NAME = 'subagent/tape_linked'
 
 const SUBAGENT_TAPE_LINK_VERSION = 2
-
-const TAPE_IDENTITY_PATTERN = /^[a-f0-9]{64}$/
 
 const SUBAGENT_TAPE_LINK_OUTCOMES = new Set<SubagentTapeLinkOutcome>([
   'completed',
@@ -108,26 +107,6 @@ function isUnmarkedLegacyTape(row: DeepChatTapeEntryRow): boolean {
     !Array.isArray(meta) &&
     !Object.prototype.hasOwnProperty.call(meta, TAPE_INCARNATION_META_KEY)
   )
-}
-
-function computeTapeIdentity(row: DeepChatTapeEntryRow): string {
-  return createHash('sha256')
-    .update(
-      JSON.stringify([
-        row.session_id,
-        row.entry_id,
-        row.kind,
-        row.name,
-        row.source_type,
-        row.source_id,
-        row.source_seq,
-        row.provenance_key,
-        row.payload_json,
-        row.meta_json,
-        row.created_at
-      ])
-    )
-    .digest('hex')
 }
 
 function subagentTapeLinkProvenanceKey(input: SubagentTapeLinkInput): string {

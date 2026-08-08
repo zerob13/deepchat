@@ -7,6 +7,12 @@ import {
 } from '@shared/orchestration/liveDelegation'
 import type { OrchestrationEffectState } from '@shared/orchestration/toolEffect'
 import {
+  MAX_TASK_CONTRACT_BYTES,
+  MAX_TASK_CONTRACT_REF_BYTES,
+  MAX_TASK_EVALUATION_BYTES
+} from '@shared/types/task-contract'
+import {
+  LIVE_DELEGATION_CONTRACT_DATABASE_SCHEMA_VERSION,
   LIVE_DELEGATION_DATABASE_SCHEMA_VERSION,
   LIVE_DELEGATION_EFFECT_DATABASE_SCHEMA_VERSION,
   LIVE_DELEGATION_INITIAL_DATABASE_SCHEMA_VERSION
@@ -23,6 +29,11 @@ export interface LiveDelegationTurnRow {
   error: string | null
   tape_receipt_json: string | null
   result_ref_json: string | null
+  task_contract_json: string | null
+  task_contract_ref_json: string | null
+  inherited_task_contract_ref_json: string | null
+  evaluation_json: string | null
+  evaluation_ref_json: string | null
   effect_state: OrchestrationEffectState
   effect_evidence_json: string | null
   created_at: number
@@ -57,9 +68,61 @@ const LIVE_DELEGATION_TURN_RESULT_REF_COLUMN_SQL = `
     ),
 `
 
+const LIVE_DELEGATION_TURN_CONTRACT_COLUMNS_SQL = `
+    task_contract_json TEXT CHECK (
+      task_contract_json IS NULL
+      OR (
+        json_valid(task_contract_json)
+        AND json_type(task_contract_json) = 'object'
+        AND length(CAST(task_contract_json AS BLOB)) <= ${MAX_TASK_CONTRACT_BYTES}
+      )
+    ),
+    task_contract_ref_json TEXT CHECK (
+      (task_contract_json IS NULL) = (task_contract_ref_json IS NULL)
+      AND (
+        task_contract_ref_json IS NULL
+        OR (
+          json_valid(task_contract_ref_json)
+          AND json_type(task_contract_ref_json) = 'object'
+          AND length(CAST(task_contract_ref_json AS BLOB)) <= ${MAX_TASK_CONTRACT_REF_BYTES}
+        )
+      )
+    ),
+    inherited_task_contract_ref_json TEXT CHECK (
+      inherited_task_contract_ref_json IS NULL
+      OR (
+        task_contract_json IS NOT NULL
+        AND json_valid(inherited_task_contract_ref_json)
+        AND json_type(inherited_task_contract_ref_json) = 'object'
+        AND length(CAST(inherited_task_contract_ref_json AS BLOB)) <= ${MAX_TASK_CONTRACT_REF_BYTES}
+      )
+    ),
+    evaluation_json TEXT CHECK (
+      evaluation_json IS NULL
+      OR (
+        task_contract_json IS NOT NULL
+        AND json_valid(evaluation_json)
+        AND json_type(evaluation_json) = 'object'
+        AND length(CAST(evaluation_json AS BLOB)) <= ${MAX_TASK_EVALUATION_BYTES}
+      )
+    ),
+    evaluation_ref_json TEXT CHECK (
+      (evaluation_json IS NULL) = (evaluation_ref_json IS NULL)
+      AND (
+        evaluation_ref_json IS NULL
+        OR (
+          json_valid(evaluation_ref_json)
+          AND json_type(evaluation_ref_json) = 'object'
+          AND length(CAST(evaluation_ref_json AS BLOB)) <= ${MAX_TASK_CONTRACT_REF_BYTES}
+        )
+      )
+    ),
+`
+
 const createLiveDelegationTurnsSchemaSql = (
   includeEffectEvidence: boolean,
-  includeResultRef: boolean
+  includeResultRef: boolean,
+  includeContractProjection: boolean
 ): string => `
   CREATE TABLE IF NOT EXISTS live_delegation_turns (
     turn_id TEXT PRIMARY KEY CHECK (length(turn_id) BETWEEN 1 AND 256),
@@ -86,6 +149,7 @@ const createLiveDelegationTurnsSchemaSql = (
     ),
 ${includeResultRef ? LIVE_DELEGATION_TURN_RESULT_REF_COLUMN_SQL : ''}
 ${includeEffectEvidence ? LIVE_DELEGATION_TURN_EFFECT_COLUMNS_SQL : ''}
+${includeContractProjection ? LIVE_DELEGATION_TURN_CONTRACT_COLUMNS_SQL : ''}
     created_at INTEGER NOT NULL CHECK (created_at >= 0),
     started_at INTEGER CHECK (started_at IS NULL OR started_at >= 0),
     updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
@@ -100,9 +164,10 @@ ${includeEffectEvidence ? LIVE_DELEGATION_TURN_EFFECT_COLUMNS_SQL : ''}
     WHERE status IN ('queued', 'running', 'waiting_permission', 'waiting_question');
 `
 
-const LIVE_DELEGATION_TURNS_SCHEMA_SQL = createLiveDelegationTurnsSchemaSql(true, true)
-const LIVE_DELEGATION_TURNS_V61_SCHEMA_SQL = createLiveDelegationTurnsSchemaSql(true, false)
-const LIVE_DELEGATION_TURNS_V60_SCHEMA_SQL = createLiveDelegationTurnsSchemaSql(false, false)
+const LIVE_DELEGATION_TURNS_SCHEMA_SQL = createLiveDelegationTurnsSchemaSql(true, true, true)
+const LIVE_DELEGATION_TURNS_V62_SCHEMA_SQL = createLiveDelegationTurnsSchemaSql(true, true, false)
+const LIVE_DELEGATION_TURNS_V61_SCHEMA_SQL = createLiveDelegationTurnsSchemaSql(true, false, false)
+const LIVE_DELEGATION_TURNS_V60_SCHEMA_SQL = createLiveDelegationTurnsSchemaSql(false, false, false)
 
 const LIVE_DELEGATION_TURN_EFFECT_STATE_ADD_COLUMN_SQL = `
   ALTER TABLE live_delegation_turns
@@ -135,6 +200,74 @@ export const LIVE_DELEGATION_TURN_RESULT_REF_ADD_COLUMN_SQL = `
     )
 `
 
+export const LIVE_DELEGATION_TURN_CONTRACT_ADD_COLUMN_SQL = `
+  ALTER TABLE live_delegation_turns
+    ADD COLUMN task_contract_json TEXT CHECK (
+      task_contract_json IS NULL
+      OR (
+        json_valid(task_contract_json)
+        AND json_type(task_contract_json) = 'object'
+        AND length(CAST(task_contract_json AS BLOB)) <= ${MAX_TASK_CONTRACT_BYTES}
+      )
+    )
+`
+
+export const LIVE_DELEGATION_TURN_CONTRACT_REF_ADD_COLUMN_SQL = `
+  ALTER TABLE live_delegation_turns
+    ADD COLUMN task_contract_ref_json TEXT CHECK (
+      (task_contract_json IS NULL) = (task_contract_ref_json IS NULL)
+      AND (
+        task_contract_ref_json IS NULL
+        OR (
+          json_valid(task_contract_ref_json)
+          AND json_type(task_contract_ref_json) = 'object'
+          AND length(CAST(task_contract_ref_json AS BLOB)) <= ${MAX_TASK_CONTRACT_REF_BYTES}
+        )
+      )
+    )
+`
+
+export const LIVE_DELEGATION_TURN_INHERITED_CONTRACT_REF_ADD_COLUMN_SQL = `
+  ALTER TABLE live_delegation_turns
+    ADD COLUMN inherited_task_contract_ref_json TEXT CHECK (
+      inherited_task_contract_ref_json IS NULL
+      OR (
+        task_contract_json IS NOT NULL
+        AND json_valid(inherited_task_contract_ref_json)
+        AND json_type(inherited_task_contract_ref_json) = 'object'
+        AND length(CAST(inherited_task_contract_ref_json AS BLOB)) <= ${MAX_TASK_CONTRACT_REF_BYTES}
+      )
+    )
+`
+
+export const LIVE_DELEGATION_TURN_EVALUATION_ADD_COLUMN_SQL = `
+  ALTER TABLE live_delegation_turns
+    ADD COLUMN evaluation_json TEXT CHECK (
+      evaluation_json IS NULL
+      OR (
+        task_contract_json IS NOT NULL
+        AND json_valid(evaluation_json)
+        AND json_type(evaluation_json) = 'object'
+        AND length(CAST(evaluation_json AS BLOB)) <= ${MAX_TASK_EVALUATION_BYTES}
+      )
+    )
+`
+
+export const LIVE_DELEGATION_TURN_EVALUATION_REF_ADD_COLUMN_SQL = `
+  ALTER TABLE live_delegation_turns
+    ADD COLUMN evaluation_ref_json TEXT CHECK (
+      (evaluation_json IS NULL) = (evaluation_ref_json IS NULL)
+      AND (
+        evaluation_ref_json IS NULL
+        OR (
+          json_valid(evaluation_ref_json)
+          AND json_type(evaluation_ref_json) = 'object'
+          AND length(CAST(evaluation_ref_json AS BLOB)) <= ${MAX_TASK_CONTRACT_REF_BYTES}
+        )
+      )
+    )
+`
+
 const LIVE_DELEGATION_TURNS_TRIGGER_SQL = `
   CREATE TRIGGER IF NOT EXISTS trg_live_delegation_turns_parent_insert
   BEFORE INSERT ON live_delegation_turns
@@ -163,7 +296,10 @@ export class LiveDelegationTurnsTable extends BaseTable {
           ? LIVE_DELEGATION_TURNS_V60_SCHEMA_SQL
           : recordedVersion > 0 && recordedVersion < LIVE_DELEGATION_DATABASE_SCHEMA_VERSION
             ? LIVE_DELEGATION_TURNS_V61_SCHEMA_SQL
-            : LIVE_DELEGATION_TURNS_SCHEMA_SQL
+            : recordedVersion > 0 &&
+                recordedVersion < LIVE_DELEGATION_CONTRACT_DATABASE_SCHEMA_VERSION
+              ? LIVE_DELEGATION_TURNS_V62_SCHEMA_SQL
+              : LIVE_DELEGATION_TURNS_SCHEMA_SQL
       this.db.exec(schemaSql)
     }
     this.db.exec(LIVE_DELEGATION_TURNS_TRIGGER_SQL)
@@ -191,11 +327,33 @@ export class LiveDelegationTurnsTable extends BaseTable {
         ? 'SELECT 1 /* live delegation result reference already present */;'
         : `${LIVE_DELEGATION_TURN_RESULT_REF_ADD_COLUMN_SQL};`
     }
+    if (version === LIVE_DELEGATION_CONTRACT_DATABASE_SCHEMA_VERSION) {
+      const statements = [
+        ...(this.hasColumn('task_contract_json')
+          ? []
+          : [LIVE_DELEGATION_TURN_CONTRACT_ADD_COLUMN_SQL]),
+        ...(this.hasColumn('task_contract_ref_json')
+          ? []
+          : [LIVE_DELEGATION_TURN_CONTRACT_REF_ADD_COLUMN_SQL]),
+        ...(this.hasColumn('inherited_task_contract_ref_json')
+          ? []
+          : [LIVE_DELEGATION_TURN_INHERITED_CONTRACT_REF_ADD_COLUMN_SQL]),
+        ...(this.hasColumn('evaluation_json')
+          ? []
+          : [LIVE_DELEGATION_TURN_EVALUATION_ADD_COLUMN_SQL]),
+        ...(this.hasColumn('evaluation_ref_json')
+          ? []
+          : [LIVE_DELEGATION_TURN_EVALUATION_REF_ADD_COLUMN_SQL])
+      ]
+      return statements.length > 0
+        ? statements.map((statement) => `${statement.trimEnd()};`).join('\n')
+        : 'SELECT 1 /* live delegation contract schema already present */;'
+    }
     return null
   }
 
   getLatestVersion(): number {
-    return LIVE_DELEGATION_DATABASE_SCHEMA_VERSION
+    return LIVE_DELEGATION_CONTRACT_DATABASE_SCHEMA_VERSION
   }
 
   finalizeMigration(version: number): void {
