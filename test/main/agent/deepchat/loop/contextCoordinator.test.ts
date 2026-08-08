@@ -74,12 +74,17 @@ function createAttemptInput(options?: {
   providerEvents?: LLMCoreStreamEvent[][]
   providerAttempts?: Array<{ events?: LLMCoreStreamEvent[]; error?: unknown }>
   appendManifest?: (manifest: any) => void
+  buildExecutionContract?: (input: any) => any
   viewContext?: false
 }) {
   const run = createRun()
   const order: string[] = []
   const manifests: any[] = []
   const providerRequests: any[] = []
+  const manifestContractRefs: any[] = []
+  const providerContractRefs: any[] = []
+  const contractBuildInputs: any[] = []
+  const executionContractErrors: unknown[] = []
   const manifestErrors: unknown[] = []
   const outcomes: any[] = []
   const outcomeErrors: unknown[] = []
@@ -102,6 +107,10 @@ function createAttemptInput(options?: {
     order,
     manifests,
     providerRequests,
+    manifestContractRefs,
+    providerContractRefs,
+    contractBuildInputs,
+    executionContractErrors,
     manifestErrors,
     outcomes,
     outcomeErrors,
@@ -157,6 +166,22 @@ function createAttemptInput(options?: {
           messages: requestMessages
         }))
       },
+      executionContract: {
+        build: (input: any) => {
+          contractBuildInputs.push(structuredClone(input))
+          return (
+            options?.buildExecutionContract?.(input) ?? {
+              request: {
+                sessionId: run.sessionId,
+                messageId: run.messageId,
+                runId: run.runId,
+                requestSeq: input.requestSeq
+              }
+            }
+          )
+        },
+        onBuildError: (error: unknown) => executionContractErrors.push(error)
+      },
       manifest: {
         resolvePolicy: ({ recoveredFromContextPressure, viewPolicy, viewPolicyVersion }: any) => ({
           policy: recoveredFromContextPressure
@@ -166,6 +191,7 @@ function createAttemptInput(options?: {
         }),
         append: (manifest: any) => {
           order.push(`manifest:${manifest.requestSeq}`)
+          manifestContractRefs.push(manifest.executionContract)
           manifests.push(structuredClone(manifest))
           options?.appendManifest?.(manifest)
         },
@@ -187,6 +213,7 @@ function createAttemptInput(options?: {
       provider: {
         stream: async function* (request: any) {
           order.push('provider')
+          providerContractRefs.push(request.executionContract)
           const { signal, ...serializableRequest } = request
           providerRequests.push({ ...structuredClone(serializableRequest), signal })
           const attempt = providerAttempts[providerAttempt++] ?? { events: [] }
@@ -348,6 +375,11 @@ describe('DeepChatContextCoordinator', () => {
       'outcome:1'
     ])
     expect(fixture.manifests[0].messages).toEqual(fixture.providerRequests[0].messages)
+    expect(fixture.manifestContractRefs[0]).toBe(fixture.providerContractRefs[0])
+    expect(fixture.run.activeRequestContract).toEqual({
+      requestSeq: 1,
+      executionContract: fixture.providerContractRefs[0]
+    })
     expect(fixture.providerRequests[0]).toMatchObject({
       identity: { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
       requestOrigin: 'chat',
@@ -439,6 +471,10 @@ describe('DeepChatContextCoordinator', () => {
         throw new Error('manifest unavailable')
       }
     })
+    fixture.input.manifest.onAppendError = (error: unknown) => {
+      fixture.manifestErrors.push(error)
+      throw new Error('manifest error reporting unavailable')
+    }
 
     await expect(
       collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
@@ -517,6 +553,11 @@ describe('DeepChatContextCoordinator', () => {
       { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
       { logicalRound: 1, requestSeq: 2, physicalAttempt: 1 }
     ])
+    expect(fixture.contractBuildInputs.map((input) => input.requestSeq)).toEqual([1, 2])
+    expect(fixture.providerContractRefs[0]).not.toBe(fixture.providerContractRefs[1])
+    expect(fixture.run.activeRequestContract?.executionContract).toBe(
+      fixture.providerContractRefs[1]
+    )
     expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
   })
 
@@ -675,6 +716,8 @@ describe('DeepChatContextCoordinator', () => {
       { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
       { logicalRound: 1, requestSeq: 1, physicalAttempt: 2 }
     ])
+    expect(fixture.contractBuildInputs).toHaveLength(1)
+    expect(fixture.providerContractRefs[0]).toBe(fixture.providerContractRefs[1])
     expect(fixture.outcomes).toEqual([
       expectedAttemptOutcome({
         status: 'error',
@@ -686,6 +729,29 @@ describe('DeepChatContextCoordinator', () => {
       }),
       expectedAttemptOutcome({ physicalAttempt: 2, attemptOrigin: 'transient_retry' })
     ])
+  })
+
+  it('keeps interactive requests fail-open when contract construction fails', async () => {
+    const contractError = new Error('contract unavailable')
+    const fixture = createAttemptInput({
+      buildExecutionContract: () => {
+        throw contractError
+      }
+    })
+    fixture.input.executionContract.onBuildError = (error: unknown) => {
+      fixture.executionContractErrors.push(error)
+      throw new Error('contract error reporting unavailable')
+    }
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(fixture.executionContractErrors).toEqual([contractError])
+    expect(fixture.manifests[0].executionContract).toBeUndefined()
+    expect(fixture.providerContractRefs).toEqual([null])
+    expect(fixture.run.activeRequestContract).toEqual({
+      requestSeq: 1,
+      executionContract: null
+    })
   })
 
   it('buffers retryable error controls until the retry decision is final', async () => {

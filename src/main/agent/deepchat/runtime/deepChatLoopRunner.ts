@@ -8,6 +8,7 @@ import type {
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import type {
   ProviderExecutionPort,
   ModelConfig,
@@ -20,6 +21,7 @@ import type {
   DeepChatTapeViewTokenBudget
 } from '@shared/types/tape-view-manifest'
 import { randomUUID } from 'node:crypto'
+import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { getReasoningEffectiveEnabledForProvider } from '@shared/types/model-db'
 import { isTtsModelConfig, isTtsModelId } from '@shared/ttsSettings'
 import { nanoid } from 'nanoid'
@@ -66,6 +68,7 @@ import {
   type TapeViewContextSelection
 } from '@/tape/domain/viewManifest'
 import type { DeepChatLoopTapePort } from '@/tape/ports/capabilities'
+import { buildExecutionContract } from '@/tape/domain/executionContract'
 import {
   ExecutionJournalCorruptionError,
   ExecutionJournalError,
@@ -224,6 +227,7 @@ export interface AppendTapeViewManifestInput {
   traceDebugEnabled: boolean
   contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
+  executionContract?: DeepChatExecutionContract
 }
 
 export interface DeepChatLoopRunnerPorts {
@@ -297,6 +301,15 @@ function buildProviderContextOverflowAfterRecoveryErrorMessage(
     `DeepChat local estimate: usable context ${formatTokenCount(diagnostics.usableContextLength)} tokens, estimated input ${formatTokenCount(diagnostics.inputTokens)} tokens, tool schemas ${formatTokenCount(diagnostics.toolReserveTokens)} tokens, requested output ${formatTokenCount(diagnostics.requestedMaxTokens)} tokens, effective output ${formatTokenCount(diagnostics.effectiveMaxTokens)} tokens, remaining output room ${formatTokenCount(diagnostics.remainingOutputTokens)} tokens.`,
     'The provider may count tokens, system prompts, or tool schemas differently. Try shortening the latest input or attachments, reducing active tools, skills, or system prompt content, lowering max output tokens, or increasing context length.'
   ].join(' ')
+}
+
+function resolveExecutionContractSubagentDepth(tools: readonly MCPToolDefinition[]): number {
+  return tools.some(
+    (tool) =>
+      tool.source === 'agent' && tool.function.name === LIVE_DELEGATION_AGENT_TOOL_NAME
+  )
+    ? 1
+    : 0
 }
 
 function selectProcessTerminal(result: ProcessResult): ProcessTerminalSelection {
@@ -704,6 +717,62 @@ export class DeepChatLoopRunner {
                   expectedInstance: resourceInstance
                 })
             },
+            executionContract: {
+              build: ({
+                requestSeq,
+                messages: providerMessages,
+                modelId: contractModelId,
+                modelConfig: contractModelConfig,
+                temperature: contractTemperature,
+                maxTokens: contractMaxTokens,
+                tools: contractTools,
+                contextBuilderVersion
+              }) => {
+                const effectiveSystemPrompt =
+                  providerMessages[0]?.role === 'system' &&
+                  typeof providerMessages[0].content === 'string'
+                    ? providerMessages[0].content
+                    : ''
+                const promptAssembly = reconcilePromptAssembly(
+                  loopRun.resources.promptAssembly ??
+                    createOpaquePromptAssembly(effectiveSystemPrompt),
+                  effectiveSystemPrompt
+                )
+                const cancellationRequested = abortSignal.aborted
+                return buildExecutionContract({
+                  request: {
+                    sessionId,
+                    messageId,
+                    runId: loopRun.runId,
+                    requestSeq
+                  },
+                  promptAssembly,
+                  providerMessages,
+                  tools: contractTools,
+                  providerId: state.providerId,
+                  modelId: contractModelId,
+                  modelConfig: contractModelConfig,
+                  temperature: contractTemperature,
+                  maxTokens: contractMaxTokens,
+                  workspace: projectDir
+                    ? { kind: 'path', path: projectDir }
+                    : { kind: 'runtime_default' },
+                  maxSubagentDepth: resolveExecutionContractSubagentDepth(contractTools),
+                  dynamicControlSnapshot: {
+                    permissionMode: state.permissionMode,
+                    requestAdmitted: !cancellationRequested,
+                    cancellationRequested
+                  },
+                  assemblerVersion: contextBuilderVersion
+                })
+              },
+              onBuildError: (error) =>
+                logger.warn(
+                  `[DeepChatAgent] Failed to construct execution contract: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`
+                )
+            },
             manifest: {
               resolvePolicy: resolveTapeViewManifestPolicy,
               append: (manifest) =>
@@ -757,8 +826,17 @@ export class DeepChatLoopRunner {
                 temperature,
                 maxTokens,
                 tools,
+                executionContract,
                 signal
               }) => {
+                const activeRequestContract = loopRun.activeRequestContract
+                if (
+                  !activeRequestContract ||
+                  activeRequestContract.requestSeq !== identity.requestSeq ||
+                  activeRequestContract.executionContract !== executionContract
+                ) {
+                  throw new Error('Provider request lost its active ExecutionContract binding.')
+                }
                 const attemptModelConfig = traceEnabled
                   ? (Object.assign({}, modelConfig, {
                       requestTraceContext: {
@@ -995,7 +1073,8 @@ export class DeepChatLoopRunner {
       summaryCursorOrderSeq: params.summaryCursorOrderSeq,
       supportsVision: params.supportsVision,
       supportsAudioInput: params.supportsAudioInput,
-      traceDebugEnabled: params.traceDebugEnabled
+      traceDebugEnabled: params.traceDebugEnabled,
+      ...(params.executionContract ? { executionContract: params.executionContract } : {})
     })
     this.ports.tape.appendViewManifest(manifest)
   }

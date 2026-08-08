@@ -16,7 +16,10 @@ import {
   createToolExecutionPort,
   createToolResultPort
 } from '@/agent/deepchat/runtime/toolAdapters'
-import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
+import {
+  bindActiveRequestContract,
+  createLoopRun
+} from '@/agent/deepchat/loop/loopRun'
 import type { DeepChatLoopNotification } from '@/agent/deepchat/loop/ports'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { resolveToolOffloadPath } from '@/agent/shared/storage/sessionPaths'
@@ -911,6 +914,49 @@ describe('processStream', () => {
         runOutcome: 'paused',
         runStopReason: 'interaction'
       })
+    })
+
+    it('carries the active request contract to tool dispatch by exact reference', async () => {
+      const tools = [makeTool('action')]
+      const run = createLoopRun({
+        runId: RUN_ID,
+        sessionId: toAppSessionId('s1'),
+        messageId: 'm1',
+        abortController: new AbortController(),
+        messages: [{ role: 'user', content: 'Hello' }],
+        streamState: createState(),
+        resources: { toolDefinitions: tools, activeSkillNames: [] },
+        initialRequestSeq: 1
+      })
+      const executionContract = {
+        request: {
+          sessionId: run.sessionId,
+          messageId: run.messageId,
+          runId: run.runId,
+          requestSeq: 1
+        }
+      } as any
+      bindActiveRequestContract(run, 1, executionContract)
+      const toolService = createMockToolService({ action: 'ok' })
+
+      await processStream(
+        createParams({
+          run,
+          coreStream: createToolThenCompleteStream('action'),
+          toolExecution: createToolExecutionPort(toolService),
+          tools
+        })
+      )
+
+      expect(toolService.callTool).toHaveBeenCalled()
+      expect((toolService.callTool as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({
+        runId: RUN_ID,
+        requestSeq: 1,
+        executionContract
+      })
+      expect(
+        (toolService.callTool as ReturnType<typeof vi.fn>).mock.calls[0][1].executionContract
+      ).toBe(executionContract)
     })
 
     it('counts a post-call permission tool before persisting pause', async () => {

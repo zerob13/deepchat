@@ -4034,6 +4034,8 @@ describe('DeepChatAgentHarness', () => {
       expect(manifestRows.map((row: any) => row.source_seq)).toEqual([1, 2])
       expect(manifests.map((manifest: any) => manifest.requestSeq)).toEqual([1, 2])
       expect(manifests[0]).toMatchObject({
+        schemaVersion: 5,
+        hashVersion: 3,
         taskType: 'chat',
         policy: 'cache_aware_context_v1',
         policyVersion: 1,
@@ -4043,12 +4045,34 @@ describe('DeepChatAgentHarness', () => {
         }
       })
       expect(manifests[1]).toMatchObject({
+        schemaVersion: 5,
+        hashVersion: 3,
         taskType: 'tool_loop',
         policy: 'tool_loop_shadow',
         policyVersion: null
       })
       expect(manifests[0].hashes.promptHash).toHaveLength(64)
       expect(manifests[1].hashes.toolDefinitionsHash).toHaveLength(64)
+      expect(manifests.map((manifest: any) => manifest.executionContract.request)).toEqual([
+        expect.objectContaining({
+          sessionId: 's1',
+          messageId: callArgs.run.messageId,
+          runId: callArgs.run.runId,
+          requestSeq: 1
+        }),
+        expect.objectContaining({
+          sessionId: 's1',
+          messageId: callArgs.run.messageId,
+          runId: callArgs.run.runId,
+          requestSeq: 2
+        })
+      ])
+      expect(manifests[0].executionContract.provenance.promptHash).toBe(
+        manifests[0].hashes.promptHash
+      )
+      expect(manifests[1].executionContract.provenance.providerVisibleToolDefinitionsHash).toBe(
+        manifests[1].hashes.toolDefinitionsHash
+      )
     })
 
     it('continues provider requests when view manifest persistence fails', async () => {

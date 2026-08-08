@@ -9,7 +9,7 @@
 
 ## P0: Contract Domains And Prompt Provenance
 
-- [ ] Add canonical contract schemas, builders, hash versions, and domain tests.
+- [x] Add canonical contract schemas, builders, hash versions, and domain tests.
 - [x] Return structured prompt sections without changing provider-visible prompt text.
 - [x] Record AGENTS.md freshness/degradation and pinned-skill/tooling omissions.
 - [x] Thread prompt provenance through turn and loop assembly.
@@ -20,7 +20,7 @@
 
 - [x] Embed ExecutionContract in ViewManifest schema 5 and preserve v1-v4 reads.
 - [ ] Keep interactive manifest persistence fail-open and require contract-bearing child manifests.
-- [ ] Carry the exact View contract to tool dispatch without Session-global mutable state.
+- [x] Carry the exact View contract to tool dispatch without Session-global mutable state.
 - [ ] Enforce stable tool target, effect, workspace, and nesting ceilings with current authority.
 - [ ] Cover retries, tool rounds, revocation, expansion, and contract mismatch.
 - [ ] Review and commit the View/enforcement slice.

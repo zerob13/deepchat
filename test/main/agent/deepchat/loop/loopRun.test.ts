@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import {
   advanceRequestSequence,
+  bindActiveRequestContract,
   createLoopRun,
   enterLogicalRound,
   enterPhysicalAttempt
@@ -65,6 +66,49 @@ describe('LoopRun', () => {
     expect(run.initialRequestSeq).toBe(4)
     expect(run.requestSeq).toBe(6)
     expect(run.physicalAttempt).toBe(1)
+  })
+
+  it('binds one request-scoped contract and clears it before the next request', () => {
+    const run = createRun('session')
+    const requestSeq = advanceRequestSequence(run)
+    const executionContract = {
+      request: {
+        sessionId: run.sessionId,
+        messageId: run.messageId,
+        runId: run.runId,
+        requestSeq
+      }
+    } as any
+
+    const binding = bindActiveRequestContract(run, requestSeq, executionContract)
+
+    expect(binding.executionContract).toBe(executionContract)
+    expect(run.activeRequestContract).toBe(binding)
+    expect(Object.isFrozen(binding)).toBe(true)
+    enterPhysicalAttempt(run)
+    expect(run.activeRequestContract).toBe(binding)
+    advanceRequestSequence(run)
+    expect(run.activeRequestContract).toBeNull()
+  })
+
+  it('rejects stale or cross-run execution contract bindings', () => {
+    const run = createRun('session')
+    const requestSeq = advanceRequestSequence(run)
+    const contract = (overrides: Record<string, unknown> = {}) =>
+      ({
+        request: {
+          sessionId: run.sessionId,
+          messageId: run.messageId,
+          runId: run.runId,
+          requestSeq,
+          ...overrides
+        }
+      }) as any
+
+    expect(() => bindActiveRequestContract(run, requestSeq + 1, null)).toThrow(/request sequence/)
+    expect(() => bindActiveRequestContract(run, requestSeq, contract({ runId: 'other' }))).toThrow(
+      /Loop Run/
+    )
   })
 
   it('restores only valid persisted logical rounds', () => {

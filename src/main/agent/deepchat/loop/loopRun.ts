@@ -2,6 +2,7 @@ import type { AppSessionId } from '@/agent/shared/agentSessionIds'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 
 export interface LoopRunResources {
   toolDefinitions: MCPToolDefinition[]
@@ -12,6 +13,11 @@ export interface LoopRunResources {
 export interface LoopRunProviderRecovery {
   contextOverflowHandoffAttempted: boolean
   strictProviderOverflowRetryUsed: boolean
+}
+
+export interface LoopRunRequestContractBinding {
+  readonly requestSeq: number
+  readonly executionContract: DeepChatExecutionContract | null
 }
 
 export interface LoopRun<TStreamState> {
@@ -28,6 +34,7 @@ export interface LoopRun<TStreamState> {
   readonly streamState: TStreamState
   resources: LoopRunResources
   providerRecovery: LoopRunProviderRecovery
+  activeRequestContract: LoopRunRequestContractBinding | null
 }
 
 export interface CreateLoopRunInput<TStreamState> {
@@ -75,7 +82,8 @@ export function createLoopRun<TStreamState>(
     providerRecovery: {
       contextOverflowHandoffAttempted: false,
       strictProviderOverflowRetryUsed: false
-    }
+    },
+    activeRequestContract: null
   }
 }
 
@@ -95,7 +103,30 @@ export function advanceRequestSequence(run: LoopRun<unknown>): number {
   }
   run.requestSeq = nextRequestSeq
   run.physicalAttempt = 0
+  run.activeRequestContract = null
   return nextRequestSeq
+}
+
+export function bindActiveRequestContract(
+  run: LoopRun<unknown>,
+  requestSeq: number,
+  executionContract: DeepChatExecutionContract | null
+): LoopRunRequestContractBinding {
+  if (requestSeq !== run.requestSeq) {
+    throw new Error('Execution contract request sequence does not match the active request.')
+  }
+  if (
+    executionContract &&
+    (executionContract.request.sessionId !== run.sessionId ||
+      executionContract.request.messageId !== run.messageId ||
+      executionContract.request.runId !== run.runId ||
+      executionContract.request.requestSeq !== requestSeq)
+  ) {
+    throw new Error('Execution contract identity does not match the active Loop Run.')
+  }
+  const binding = Object.freeze({ requestSeq, executionContract })
+  run.activeRequestContract = binding
+  return binding
 }
 
 export function enterPhysicalAttempt(run: LoopRun<unknown>): number {

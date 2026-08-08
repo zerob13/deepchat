@@ -12,6 +12,7 @@ import type { SearchResult } from '@shared/types/core/search'
 import type { AgentToolProgressUpdate } from '@shared/types/tool'
 import type { AssistantMessageBlock, PermissionMode } from '@shared/types/agent-interface'
 import type { AgentPlanSnapshot, AgentPlanTerminalReason } from '@shared/types/agent-plan'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import {
   parseQuestionToolArgs,
   QUESTION_TOOL_NAME
@@ -1580,6 +1581,7 @@ async function runToolCall(params: {
   onToolCallStarted?: (toolCallId: string) => void
   executionJournal: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
+  executionContract?: DeepChatExecutionContract | null
 }): Promise<ToolRunOutcome> {
   const {
     execution,
@@ -1595,7 +1597,8 @@ async function runToolCall(params: {
     allowProgressUpdates,
     onToolCallStarted,
     executionJournal,
-    operationScope
+    operationScope,
+    executionContract
   } = params
   const { completedToolCall, toolCall, toolContext } = execution
   let returnedToolResult: MCPToolResponse | null = null
@@ -1720,6 +1723,8 @@ async function runToolCall(params: {
       const enabledMcpServerIds = controls?.getEnabledMcpServerIds?.()
       const result = await toolExecution.execute(toolCall, {
         runId: io.requestId,
+        requestSeq: operationScope.requestSeq,
+        ...(executionContract ? { executionContract } : {}),
         onProgress: applyProgressUpdate,
         signal: io.abortSignal,
         permissionMode: toolPermissionMode,
@@ -1962,6 +1967,7 @@ export interface SettleToolBatchParams {
   providerId?: string
   executionJournal: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
+  executionContract?: DeepChatExecutionContract | null
 }
 
 export async function settleToolBatch(
@@ -1987,7 +1993,8 @@ export async function settleToolBatch(
     collaborators,
     providerId,
     executionJournal,
-    operationScope
+    operationScope,
+    executionContract
   } = params
   const { notificationObserver, controls, diagnostics, onToolCallStarted } = collaborators ?? {}
   if (disposition.kind === 'execute') {
@@ -2166,7 +2173,8 @@ export async function settleToolBatch(
             allowProgressUpdates: false,
             onToolCallStarted,
             executionJournal,
-            operationScope
+            operationScope,
+            executionContract
           })
         } catch (error) {
           if (isExecutionJournalError(error)) throw error
@@ -2439,7 +2447,8 @@ export async function settleToolBatch(
         allowProgressUpdates: true,
         onToolCallStarted,
         executionJournal,
-        operationScope
+        operationScope,
+        executionContract
       })
       batchState.invokedCallIds.add(tc.id)
 

@@ -11,6 +11,7 @@ import type {
 } from '../core/mcp'
 import type { DeepChatSubagentCapability, PermissionMode, SessionKind } from '../agent-interface'
 import type { AgentPlanSnapshot } from '../agent-plan'
+import type { DeepChatExecutionContract } from './execution-contract'
 
 export type AgentToolProgressUpdate =
   | {
@@ -41,6 +42,8 @@ export interface ToolDefinitionContext {
 
 export interface ToolCallOptions {
   runId?: string
+  requestSeq?: number
+  executionContract?: DeepChatExecutionContract
   onProgress?: (update: AgentToolProgressUpdate) => void
   signal?: AbortSignal
   permissionMode?: PermissionMode
