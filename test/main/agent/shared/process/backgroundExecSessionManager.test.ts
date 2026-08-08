@@ -689,8 +689,7 @@ describe('backgroundExecSessionManager utility proxy', () => {
 
   it.each([
     ['poll', 'remove'],
-    ['log', 'clear'],
-    ['poll', 'kill']
+    ['log', 'clear']
   ] as const)(
     'allows the owning conversation to %s a completed session before %s',
     async (observation, mutation) => {
@@ -737,6 +736,99 @@ describe('backgroundExecSessionManager utility proxy', () => {
     }
   )
 
+  it('treats killing a completed session as an authorized local no-op', async () => {
+    const proxy = backgroundExecSessionManager as any
+    proxy.completedSessions.set('bg_completed', {
+      conversationId: 'conv-1',
+      sessionId: 'bg_completed',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1,
+      status: 'done'
+    })
+    const beforeMutation = vi.fn()
+    const request = vi.spyOn(proxy, 'request')
+
+    await expect(
+      backgroundExecSessionManager.kill('conv-other', 'bg_completed', beforeMutation)
+    ).rejects.toThrow('Session bg_completed not found')
+    await expect(
+      backgroundExecSessionManager.kill('conv-1', 'bg_completed', beforeMutation)
+    ).resolves.toBeUndefined()
+
+    expect(beforeMutation).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
+    expect(proxy.completedSessions.has('bg_completed')).toBe(true)
+  })
+
+  it('preserves a completion replaced while host list reconciliation is in flight', async () => {
+    const proxy = backgroundExecSessionManager as any
+    proxy.host = new MockUtilityProcess()
+    const staleCompletion = {
+      conversationId: 'conv-1',
+      sessionId: 'bg_completed',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1,
+      status: 'done'
+    }
+    const concurrentCompletion = {
+      ...staleCompletion,
+      lastAccessedAt: 2,
+      outputLength: 4
+    }
+    proxy.completedSessions.set('bg_completed', staleCompletion)
+    let finishList: ((sessions: unknown[]) => void) | undefined
+    vi.spyOn(proxy, 'request').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishList = resolve
+        })
+    )
+
+    const listPromise = backgroundExecSessionManager.list('conv-1')
+    await vi.waitFor(() => expect(finishList).toBeTypeOf('function'))
+    proxy.completedSessions.set('bg_completed', concurrentCompletion)
+    finishList?.([])
+    await listPromise
+
+    expect(proxy.completedSessions.get('bg_completed')).toBe(concurrentCompletion)
+  })
+
+  it('preserves completed metadata across host exit and resumes reconciliation after restart', async () => {
+    vi.useFakeTimers()
+    const proxy = backgroundExecSessionManager as any
+    proxy.completedSessions.set('bg_completed', {
+      conversationId: 'conv-1',
+      sessionId: 'bg_completed',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1,
+      status: 'done'
+    })
+    const firstHost = new MockUtilityProcess()
+    const secondHost = new MockUtilityProcess()
+    mockUtilityProcessFork.mockReturnValueOnce(firstHost).mockReturnValueOnce(secondHost)
+
+    const firstStart = proxy.startHost()
+    await vi.waitFor(() => expect(mockUtilityProcessFork).toHaveBeenCalledTimes(1))
+    firstHost.emit('spawn')
+    await firstStart
+    expect(proxy.completedSessionReconciliationTimer).not.toBeNull()
+
+    firstHost.emit('exit', 1)
+    expect(proxy.completedSessions.has('bg_completed')).toBe(true)
+    expect(proxy.completedSessionReconciliationTimer).toBeNull()
+
+    const secondStart = proxy.startHost()
+    await vi.waitFor(() => expect(mockUtilityProcessFork).toHaveBeenCalledTimes(2))
+    secondHost.emit('spawn')
+    await secondStart
+
+    expect(proxy.completedSessions.has('bg_completed')).toBe(true)
+    expect(proxy.completedSessionReconciliationTimer).not.toBeNull()
+  })
+
   it('reconciles completed ownership after the utility-host cleanup interval', async () => {
     vi.useFakeTimers()
     const proxy = backgroundExecSessionManager as any
@@ -772,7 +864,7 @@ describe('backgroundExecSessionManager utility proxy', () => {
     expect(proxy.completedSessionReconciliationTimer).toBeNull()
   })
 
-  it.each(['kill', 'clear', 'remove'] as const)(
+  it.each(['clear', 'remove'] as const)(
     'treats %s as idempotent when host TTL cleanup already removed a completed session',
     async (mutation) => {
       const proxy = backgroundExecSessionManager as any
@@ -795,7 +887,7 @@ describe('backgroundExecSessionManager utility proxy', () => {
     }
   )
 
-  it.each(['kill', 'clear', 'remove'] as const)(
+  it.each(['clear', 'remove'] as const)(
     'does not hide unrelated utility-host errors during completed-session %s',
     async (mutation) => {
       const proxy = backgroundExecSessionManager as any

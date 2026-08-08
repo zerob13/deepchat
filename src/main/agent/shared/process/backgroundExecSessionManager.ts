@@ -1032,10 +1032,11 @@ class BackgroundExecUtilityProxy {
   }
 
   async list(conversationId: string): Promise<SessionMeta[]> {
+    const completedAtListStart = new Map(this.completedSessions)
     const active = Array.from(this.activeSessions.values())
       .filter((session) => session.conversationId === conversationId)
       .map((session) => this.toActiveSessionMeta(session))
-    const completed = Array.from(this.completedSessions.values())
+    const completed = Array.from(completedAtListStart.values())
       .filter((session) => session.conversationId === conversationId)
       .map((session) => this.toCompletedSessionMeta(session))
     let hostListSucceeded = false
@@ -1050,8 +1051,12 @@ class BackgroundExecUtilityProxy {
     }
     if (hostListSucceeded) {
       const hostSessionIds = new Set(hostSessions.map((session) => session.sessionId))
-      for (const [sessionId, session] of this.completedSessions) {
-        if (session.conversationId === conversationId && !hostSessionIds.has(sessionId)) {
+      for (const [sessionId, session] of completedAtListStart) {
+        if (
+          session.conversationId === conversationId &&
+          !hostSessionIds.has(sessionId) &&
+          this.completedSessions.get(sessionId) === session
+        ) {
           this.completedSessions.delete(sessionId)
         }
       }
@@ -1167,15 +1172,9 @@ class BackgroundExecUtilityProxy {
   ): Promise<void> {
     this.assertTrackedSessionOwner(conversationId, sessionId)
     if (this.getCrashedSession(conversationId, sessionId)) return
-    const completed = this.getCompletedSession(conversationId, sessionId)
+    if (this.getCompletedSession(conversationId, sessionId)) return
     beforeMutation?.()
-    try {
-      await this.request('kill', [conversationId, sessionId])
-    } catch (error) {
-      if (!completed || !isMissingUtilitySessionError(error, conversationId, sessionId)) throw error
-      this.completedSessions.delete(sessionId)
-      this.stopCompletedSessionReconciliationIfIdle()
-    }
+    await this.request('kill', [conversationId, sessionId])
   }
 
   async clear(
@@ -1340,6 +1339,7 @@ class BackgroundExecUtilityProxy {
       const onSpawn = () => {
         settle(() => {
           this.host = host
+          this.scheduleCompletedSessionReconciliation()
           resolve(host)
         })
       }
@@ -1407,7 +1407,6 @@ class BackgroundExecUtilityProxy {
     this.host = null
     this.hostReady = null
     this.activeSessions.clear()
-    this.completedSessions.clear()
     this.stopCompletedSessionReconciliation()
     this.rejectPendingRequests(error)
   }

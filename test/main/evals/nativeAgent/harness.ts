@@ -237,15 +237,21 @@ function makeToolDefinition(name: string): MCPToolDefinition {
   }
 }
 
+function normalizeToolArguments(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
 function parseToolArguments(argumentsText: string): Record<string, unknown> {
   const raw = argumentsText.trim()
   if (!raw) return {}
 
   try {
-    return JSON.parse(raw) as Record<string, unknown>
+    return normalizeToolArguments(JSON.parse(raw))
   } catch {
     try {
-      return JSON.parse(jsonrepair(raw)) as Record<string, unknown>
+      return normalizeToolArguments(JSON.parse(jsonrepair(raw)))
     } catch {
       return {}
     }
