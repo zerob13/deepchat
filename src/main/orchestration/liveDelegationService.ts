@@ -39,6 +39,7 @@ import type {
   SubagentTapeLinkReceipt
 } from '@shared/types/agent-interface'
 import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
+import { projectTaskEvaluationSummary } from '@/tape/domain/taskEvaluation'
 import type { SessionRuntimeUpdate } from '@/session/runtimeEvents'
 import type { SessionDeletionGatePort } from '@/session/deletionGate'
 import { classifyToolEffect } from '@/tool/effectClassification'
@@ -63,13 +64,17 @@ import {
   createLiveDelegationTaskContractInput,
   LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS
 } from './liveDelegationTaskContract'
+import { extractMarkdownLevelTwoSection } from '@shared/orchestration/liveDelegationMarkdown'
 
 const MAX_WAITERS = 32
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000
 const MAX_WAIT_TIMEOUT_MS = 60_000
 const MAX_MODEL_PREVIEW_BYTES = 2 * 1024
 const MAX_MODEL_EVENT_BYTES = 16 * 1024
-const MAX_MODEL_WAIT_BYTES = 32 * 1024
+const MAX_MODEL_WAIT_CONTENT_BYTES = 32 * 1024
+const MAX_MODEL_WAIT_RESPONSE_BYTES = 64 * 1024
+const MAX_MODEL_EVENT_EVALUATION_EVIDENCE = 2
+const MAX_MODEL_TURN_EVALUATION_EVIDENCE = 4
 const LIVE_DELEGATION_OWNER_LIMIT = 5
 const HANDOFF_TRUNCATION_NOTICE =
   '[Handoff truncated. Use deepchat_subagents read_result for the complete child answer.]'
@@ -509,6 +514,10 @@ export class LiveDelegationService {
       answerSha256,
       answerBytes,
       answerEstimatedTokens: resultRef.answerEstimatedTokens,
+      evaluation:
+        turn.evaluation && turn.evaluationRef
+          ? projectTaskEvaluationSummary(turn.evaluation, turn.evaluationRef)
+          : null,
       text: page.text,
       nextCursor:
         page.nextOffset === null
@@ -1213,7 +1222,8 @@ export class LiveDelegationService {
         summary: summary || null,
         error,
         resultRef,
-        tapeReceipt
+        tapeReceipt,
+        candidateResult: persistedResult?.answerMarkdown.trim() || null
       })
       this.publishChanged(settled.delegation)
       this.notifyMailbox(settled.delegation.parentSessionId, settled.delegation.id)
@@ -1225,6 +1235,17 @@ export class LiveDelegationService {
       })
       try {
         const turn = this.options.repository.getTurn(active.turnId)
+        if (turn?.taskContract) {
+          console.error(
+            '[LiveDelegationService] Contract-bearing settlement remains recoverable:',
+            {
+              delegationId: active.delegationId,
+              turnId: active.turnId,
+              error
+            }
+          )
+          return
+        }
         if (turn && isActiveTurnStatus(turn.status)) {
           const settled = this.options.repository.finishTurn({
             turnId: active.turnId,
@@ -1654,8 +1675,10 @@ function buildResultHandoff(
   truncated: boolean
 } {
   const normalized = sanitizeDelegationText(answer.trim())
-  const handoffSection = extractMarkdownSection(normalized, 'Handoff')
-  const resultSection = handoffSection ? null : extractMarkdownSection(normalized, 'Result')
+  const handoff = extractMarkdownLevelTwoSection(normalized, 'Handoff')
+  const handoffSection = handoff?.body ? handoff.markdown : null
+  const result = handoffSection ? null : extractMarkdownLevelTwoSection(normalized, 'Result')
+  const resultSection = handoffSection ? null : result?.body ? result.markdown : null
   const source: LiveDelegationResultRef['handoffSource'] = handoffSection
     ? 'handoff_section'
     : resultSection
@@ -1669,52 +1692,6 @@ function buildResultHandoff(
     resultIsReferenced ? HANDOFF_TRUNCATION_NOTICE : UNREFERENCED_HANDOFF_TRUNCATION_NOTICE
   )
   return { text: bounded.text, source, truncated: bounded.truncated }
-}
-
-function extractMarkdownSection(markdown: string, title: string): string | null {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
-  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-  const target = new RegExp(`^ {0,3}##\\s+${escapedTitle}\\s*#*\\s*$`, 'iu')
-  const nextSection = /^ {0,3}#{1,2}\s+\S/u
-  const fencePattern = /^ {0,3}(`{3,}|~{3,})/u
-  let fence: { marker: '`' | '~'; length: number } | null = null
-  let start = -1
-  let end = lines.length
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? ''
-    if (fence) {
-      if (isClosingFence(line, fence)) fence = null
-      continue
-    }
-    const fenceMatch = line.match(fencePattern)?.[1]
-    if (fenceMatch) {
-      const marker = fenceMatch[0] as '`' | '~'
-      fence = { marker, length: fenceMatch.length }
-      continue
-    }
-    if (start < 0) {
-      if (target.test(line)) start = index
-      continue
-    }
-    if (nextSection.test(line)) {
-      end = index
-      break
-    }
-  }
-  if (start < 0) return null
-  const body = lines
-    .slice(start + 1, end)
-    .join('\n')
-    .trim()
-  return body ? lines.slice(start, end).join('\n').trim() : null
-}
-
-function isClosingFence(line: string, fence: { marker: '`' | '~'; length: number }): boolean {
-  const candidate = line.replace(/^ {0,3}/u, '').trimEnd()
-  return (
-    candidate.length >= fence.length &&
-    [...candidate].every((character) => character === fence.marker)
-  )
 }
 
 function truncateToBudgets(
@@ -1883,11 +1860,24 @@ function createWaitResult(
 ): LiveDelegationWaitResult {
   const maxBytesPerEvent = Math.min(
     MAX_MODEL_EVENT_BYTES,
-    Math.max(1, Math.floor(MAX_MODEL_WAIT_BYTES / Math.max(1, events.length)))
+    Math.max(1, Math.floor(MAX_MODEL_WAIT_CONTENT_BYTES / Math.max(1, events.length)))
   )
+  const projected: LiveDelegationEventSummary[] = []
+  for (const event of events) {
+    const candidate = projectEventSummary(event, maxBytesPerEvent)
+    const next = [...projected, candidate]
+    if (
+      projected.length > 0 &&
+      Buffer.byteLength(JSON.stringify({ events: next, cursor: candidate.id, timedOut }), 'utf8') >
+        MAX_MODEL_WAIT_RESPONSE_BYTES
+    ) {
+      break
+    }
+    projected.push(candidate)
+  }
   return {
-    events: events.map((event) => projectEventSummary(event, maxBytesPerEvent)),
-    cursor: events.at(-1)?.id ?? priorCursor,
+    events: projected,
+    cursor: projected.at(-1)?.id ?? priorCursor,
     timedOut
   }
 }
@@ -1896,11 +1886,19 @@ function projectEventSummary(
   event: LiveDelegationEvent,
   maxBytes: number
 ): LiveDelegationEventSummary {
-  const { content, ...identity } = event
+  const { content, evaluation, evaluationRef, ...identity } = event
   return {
     ...identity,
     contentPreview: truncateUtf8(content, maxBytes),
-    contentTruncated: Buffer.byteLength(content, 'utf8') > maxBytes
+    contentTruncated: Buffer.byteLength(content, 'utf8') > maxBytes,
+    evaluation:
+      evaluation && evaluationRef
+        ? projectTaskEvaluationSummary(
+            evaluation,
+            evaluationRef,
+            MAX_MODEL_EVENT_EVALUATION_EVIDENCE
+          )
+        : null
   }
 }
 
@@ -1914,12 +1912,20 @@ function projectDelegationSummary(delegation: LiveDelegation): LiveDelegationSum
 }
 
 function projectTurnSummary(turn: LiveDelegationTurn): LiveDelegationTurnSummary {
-  const { prompt, resultSummary, error, ...identity } = turn
+  const { prompt, resultSummary, error, evaluation, evaluationRef, ...identity } = turn
   return {
     ...identity,
     promptPreview: truncateUtf8(prompt, MAX_MODEL_PREVIEW_BYTES),
     resultPreview: resultSummary ? truncateUtf8(resultSummary, MAX_MODEL_PREVIEW_BYTES) : null,
-    errorPreview: error ? truncateUtf8(error, MAX_MODEL_PREVIEW_BYTES) : null
+    errorPreview: error ? truncateUtf8(error, MAX_MODEL_PREVIEW_BYTES) : null,
+    evaluation:
+      evaluation && evaluationRef
+        ? projectTaskEvaluationSummary(
+            evaluation,
+            evaluationRef,
+            MAX_MODEL_TURN_EVALUATION_EVIDENCE
+          )
+        : null
   }
 }
 

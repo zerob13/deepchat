@@ -45,14 +45,14 @@
 
 ## P1: Evaluation And Parent Visibility
 
-- [ ] Implement bounded required-section and result-schema evaluation.
-- [ ] Commit evaluation fact, projection, terminal state, and mailbox event atomically.
-- [ ] Ensure every contract-bearing terminal path produces evaluation or remains recoverable.
-- [ ] Surface evaluation through inspect, wait, read_result, and the untrusted result envelope.
-- [ ] Preserve orthogonal execution status, verdict, and disposition semantics.
-- [ ] Cover no answer, malformed result, cancellation, interruption, evaluator failure, and
+- [x] Implement bounded required-section and result-schema evaluation.
+- [x] Commit evaluation fact, projection, terminal state, and mailbox event atomically.
+- [x] Ensure every contract-bearing terminal path produces evaluation or remains recoverable.
+- [x] Surface evaluation through inspect, wait, read_result, and the untrusted result envelope.
+- [x] Preserve orthogonal execution status, verdict, and disposition semantics.
+- [x] Cover no answer, malformed result, cancellation, interruption, evaluator failure, and
       settlement retry/recovery.
-- [ ] Review and commit the evaluation/settlement slice.
+- [x] Review and commit the evaluation/settlement slice.
 
 ## Documentation And Final Validation
 

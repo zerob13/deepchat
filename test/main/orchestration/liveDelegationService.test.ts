@@ -36,6 +36,9 @@ const tapeStoreModule = Database
 const taskContractServiceModule = Database
   ? await import('@/tape/application/taskContractService').catch(() => null)
   : null
+const taskEvaluationServiceModule = Database
+  ? await import('@/tape/application/taskEvaluationService').catch(() => null)
+  : null
 
 const DatabaseCtor = Database!
 const LiveDelegationDatabaseCtor = databaseModule?.LiveDelegationDatabase!
@@ -47,6 +50,7 @@ const LiveDelegationTaskContractErrorCtor = repositoryModule?.LiveDelegationTask
 const LiveDelegationServiceCtor = serviceModule?.LiveDelegationService!
 const DeepChatContractStoreCtor = tapeStoreModule?.DeepChatContractStore!
 const TaskContractServiceCtor = taskContractServiceModule?.TaskContractService!
+const TaskEvaluationServiceCtor = taskEvaluationServiceModule?.TaskEvaluationService!
 const describeIfSqlite = nativeSqliteDescribeIf(
   Boolean(
     LiveDelegationDatabaseCtor &&
@@ -57,7 +61,8 @@ const describeIfSqlite = nativeSqliteDescribeIf(
     LiveDelegationTaskContractErrorCtor &&
     LiveDelegationServiceCtor &&
     DeepChatContractStoreCtor &&
-    TaskContractServiceCtor
+    TaskContractServiceCtor &&
+    TaskEvaluationServiceCtor
   ),
   'Live delegation lifecycle modules are unavailable'
 )
@@ -90,7 +95,8 @@ describeIfSqlite('LiveDelegationService', () => {
     contractStore.createTable()
     repository = new LiveDelegationRepositoryCtor(
       new LiveDelegationDatabaseCtor({ getDatabase: () => db! }),
-      new TaskContractServiceCtor(() => contractStore)
+      new TaskContractServiceCtor(() => contractStore),
+      new TaskEvaluationServiceCtor(() => contractStore)
     )
     harness = createSessionHarness(db)
     deletionGate = new SessionDeletionGate()
@@ -129,18 +135,28 @@ describeIfSqlite('LiveDelegationService', () => {
     harness.publishAnswer(childId, '## Handoff\nThe boundary is sound.\0', 200)
     harness.publish({ sessionId: childId, kind: 'status', updatedAt: 201, status: 'idle' })
 
-    await expect(waiting).resolves.toMatchObject({
+    const waitResult = await waiting
+    expect(waitResult).toMatchObject({
       timedOut: false,
       events: [
         expect.objectContaining({
           delegationId,
           kind: 'turn_completed',
           contentPreview: '## Handoff\nThe boundary is sound.�',
-          contentTruncated: false
+          contentTruncated: false,
+          evaluation: expect.objectContaining({
+            verdict: 'failed',
+            disposition: 'parked',
+            reasonCodes: ['required_sections_missing']
+          })
         })
       ]
     })
     expect(repository.require(delegationId).status).toBe('idle')
+    expect(repository.requireTurn(detail.turns[0]!.id)).toMatchObject({
+      status: 'completed',
+      evaluation: { verdict: 'failed', disposition: 'parked' }
+    })
     expect(harness.sessions.linkSubagentTape).toHaveBeenCalledWith(
       expect.objectContaining({
         parentSessionId: 'parent',
@@ -149,6 +165,38 @@ describeIfSqlite('LiveDelegationService', () => {
         outcome: 'completed'
       })
     )
+  })
+
+  it('surfaces one accepted evaluation through wait, inspect, and read_result', async () => {
+    const detail = await service.spawn('parent', {
+      slotId: 'reviewer',
+      title: 'Review accepted result',
+      prompt: 'Return every required result section.'
+    })
+    await vi.waitFor(() => expect(harness.sessions.sendConversationMessage).toHaveBeenCalledOnce())
+    const childId = repository.require(detail.delegation.id).childSessionId!
+    const answer = completeAcceptedAnswer()
+    harness.publishAnswer(childId, answer, 200)
+    harness.publish({ sessionId: childId, kind: 'status', updatedAt: 201, status: 'idle' })
+
+    const waited = await service.wait('parent', { after: 0, timeoutMs: 1_000 })
+    const waitedEvaluation = waited.events[0]!.evaluation!
+    expect(waitedEvaluation).toMatchObject({
+      verdict: 'passed',
+      disposition: 'accepted',
+      reasonCodes: [],
+      evidence: []
+    })
+
+    const inspected = service.inspect('parent', detail.delegation.id)
+    expect(inspected.turns[0]!.evaluation).toEqual(waitedEvaluation)
+
+    const page = await service.readResult('parent', detail.delegation.id, {
+      turnId: inspected.turns[0]!.id
+    })
+    expect(page.evaluation).toEqual(waitedEvaluation)
+    expect(page.text).toBe(answer)
+    expect(page.done).toBe(true)
   })
 
   it('makes the inherited TaskContract durable before crossing the child Handoff boundary', async () => {
@@ -478,10 +526,10 @@ describeIfSqlite('LiveDelegationService', () => {
     expect(page.done).toBe(true)
   })
 
-  it('settles as failed when durable result persistence rejects the reference', async () => {
+  it('keeps contract settlement recoverable when result persistence rejects the reference', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const finishTurn = repository.finishTurn.bind(repository)
-    vi.spyOn(repository, 'finishTurn').mockImplementation((input) => {
+    const finishTurnSpy = vi.spyOn(repository, 'finishTurn').mockImplementation((input) => {
       if (input.resultRef) throw new Error('result reference storage failed')
       return finishTurn(input)
     })
@@ -492,22 +540,59 @@ describeIfSqlite('LiveDelegationService', () => {
     })
     await vi.waitFor(() => expect(harness.sessions.sendConversationMessage).toHaveBeenCalledOnce())
     const childId = repository.require(detail.delegation.id).childSessionId!
-    harness.publishAnswer(childId, '## Handoff\nKeep this bounded conclusion.', 200)
-    harness.publish({ sessionId: childId, kind: 'status', updatedAt: 201, status: 'idle' })
+    const startedAt = repository.listTurns(detail.delegation.id, 1)[0]!.startedAt!
+    harness.publishAnswer(childId, '## Handoff\nKeep this bounded conclusion.', startedAt + 1)
+    harness.publish({
+      sessionId: childId,
+      kind: 'status',
+      updatedAt: startedAt + 2,
+      status: 'idle'
+    })
 
-    await vi.waitFor(() => expect(repository.require(detail.delegation.id).status).toBe('failed'))
+    await vi.waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith(
+        '[LiveDelegationService] Contract-bearing settlement remains recoverable:',
+        expect.objectContaining({ turnId: detail.turns[0]!.id })
+      )
+    )
     const turn = repository.listTurns(detail.delegation.id, 1)[0]!
     expect(turn).toMatchObject({
-      status: 'failed',
-      resultSummary: '## Handoff\nKeep this bounded conclusion.',
+      status: 'running',
+      resultSummary: null,
       resultRef: null,
-      error: expect.stringContaining('Failed to persist child result')
+      error: null,
+      tapeReceipt: null,
+      evaluation: null,
+      evaluationRef: null
     })
-    expect(turn.tapeReceipt).not.toBeNull()
+    expect(repository.listEvents('parent')).toEqual([])
+    expect(
+      contractStore.getBySession('parent').filter((entry) => entry.name === 'contract/evaluated')
+    ).toEqual([])
     expect(errorSpy).toHaveBeenCalledWith(
       '[LiveDelegationService] Failed to settle child turn:',
       expect.objectContaining({ turnId: turn.id })
     )
+
+    finishTurnSpy.mockRestore()
+    await service.stop()
+    service = new LiveDelegationServiceCtor({
+      repository,
+      sessions: harness.sessions,
+      safety: harness.safety,
+      consent: consentAuthority,
+      admission: new AgentInvocationAdmission(2, 10),
+      deletionGate
+    })
+    service.start()
+
+    const recovered = await service.wait('parent', { after: 0, timeoutMs: 1_000 })
+    expect(recovered.events[0]).toMatchObject({
+      relatedTurnId: turn.id,
+      kind: 'turn_completed',
+      evaluation: { verdict: 'failed', disposition: 'parked' }
+    })
+    expect(repository.require(detail.delegation.id).status).toBe('idle')
   })
 
   it('pages the complete verified answer without exposing process output', async () => {
@@ -594,6 +679,25 @@ describeIfSqlite('LiveDelegationService', () => {
     await expect(
       service.readResult('parent', detail.delegation.id, { turnId: turn.id })
     ).rejects.toThrow('failed integrity verification')
+  })
+
+  it('falls back from an empty Handoff section to a populated Result section', async () => {
+    const detail = await service.spawn('parent', {
+      slotId: 'reviewer',
+      title: 'Review empty Handoff fallback',
+      prompt: 'Return the useful conclusion in Result.'
+    })
+    await vi.waitFor(() => expect(harness.sessions.sendConversationMessage).toHaveBeenCalledOnce())
+    const childId = repository.require(detail.delegation.id).childSessionId!
+    harness.publishAnswer(childId, '## Handoff\n\n## Result\nUse this conclusion.', 200)
+    harness.publish({ sessionId: childId, kind: 'status', updatedAt: 201, status: 'idle' })
+
+    await vi.waitFor(() => expect(repository.require(detail.delegation.id).status).toBe('idle'))
+    expect(repository.listTurns(detail.delegation.id, 1)[0]).toMatchObject({
+      status: 'completed',
+      resultSummary: '## Result\nUse this conclusion.',
+      evaluation: { verdict: 'failed', disposition: 'parked' }
+    })
   })
 
   it('bounds the combined mailbox payload when several children finish together', async () => {
@@ -1761,7 +1865,12 @@ describeIfSqlite('LiveDelegationService', () => {
       status: 'failed',
       resultSummary: null,
       resultRef: null,
-      error: 'Child session completed without a final answer.'
+      error: 'Child session completed without a final answer.',
+      evaluation: {
+        verdict: 'indeterminate',
+        disposition: 'parked',
+        reasonCodes: ['candidate_missing']
+      }
     })
     expect(harness.sessions.linkSubagentTape).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'error', resultSummary: null })
@@ -1770,7 +1879,12 @@ describeIfSqlite('LiveDelegationService', () => {
       events: [
         expect.objectContaining({
           kind: 'turn_failed',
-          contentPreview: 'Child session completed without a final answer.'
+          contentPreview: 'Child session completed without a final answer.',
+          evaluation: expect.objectContaining({
+            verdict: 'indeterminate',
+            disposition: 'parked',
+            reasonCodes: ['candidate_missing']
+          })
         })
       ]
     })
@@ -1805,6 +1919,7 @@ describeIfSqlite('LiveDelegationService', () => {
     service.start()
     const result = await service.wait('parent', { after: 0, timeoutMs: 1_000 })
 
+    expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(64 * 1024)
     expect(result.events).toEqual([
       expect.objectContaining({
         kind: 'turn_completed',
@@ -2117,6 +2232,23 @@ describeIfSqlite('LiveDelegationService', () => {
     )
   })
 })
+
+function completeAcceptedAnswer(): string {
+  return [
+    '## Handoff',
+    'Use the reviewed conclusion.',
+    '## Result',
+    'The boundary is sound.',
+    '## Evidence',
+    'Repository and Tape facts agree.',
+    '## Changed Files',
+    'None.',
+    '## Validation',
+    'Focused tests passed.',
+    '## Unresolved',
+    'None.'
+  ].join('\n')
+}
 
 function createSessionHarness(db: InstanceType<typeof DatabaseCtor>) {
   const listeners = new Set<(update: SessionRuntimeUpdate) => void>()

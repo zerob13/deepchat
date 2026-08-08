@@ -27,6 +27,9 @@ const tapeStoreModule = Database
 const taskContractServiceModule = Database
   ? await import('@/tape/application/taskContractService').catch(() => null)
   : null
+const taskEvaluationServiceModule = Database
+  ? await import('@/tape/application/taskEvaluationService').catch(() => null)
+  : null
 
 const DatabaseCtor = Database!
 const LiveDelegationDatabaseCtor = databaseModule?.LiveDelegationDatabase!
@@ -36,6 +39,7 @@ const LiveDelegationEventsTableCtor = eventsModule?.LiveDelegationEventsTable!
 const LiveDelegationRepositoryCtor = repositoryModule?.LiveDelegationRepository!
 const DeepChatContractStoreCtor = tapeStoreModule?.DeepChatContractStore!
 const TaskContractServiceCtor = taskContractServiceModule?.TaskContractService!
+const TaskEvaluationServiceCtor = taskEvaluationServiceModule?.TaskEvaluationService!
 const CONTRACT_SCHEMA_VERSION = delegationsModule?.LIVE_DELEGATION_CONTRACT_DATABASE_SCHEMA_VERSION!
 const describeIfSqlite = nativeSqliteDescribeIf(
   Boolean(
@@ -45,7 +49,8 @@ const describeIfSqlite = nativeSqliteDescribeIf(
     LiveDelegationEventsTableCtor &&
     LiveDelegationRepositoryCtor &&
     DeepChatContractStoreCtor &&
-    TaskContractServiceCtor
+    TaskContractServiceCtor &&
+    TaskEvaluationServiceCtor
   ),
   'Live delegation persistence modules are unavailable'
 )
@@ -72,7 +77,8 @@ describeIfSqlite('LiveDelegationRepository', () => {
     contractStore.createTable()
     repository = new LiveDelegationRepositoryCtor(
       new LiveDelegationDatabaseCtor({ getDatabase: () => db! }),
-      new TaskContractServiceCtor(() => contractStore)
+      new TaskContractServiceCtor(() => contractStore),
+      new TaskEvaluationServiceCtor(() => contractStore)
     )
     addSession('parent')
   })
@@ -103,6 +109,23 @@ describeIfSqlite('LiveDelegationRepository', () => {
       taskContract: createLiveDelegationTaskContractInput(null),
       now: 100
     })
+  }
+
+  function completeAcceptedAnswer(): string {
+    return [
+      '## Handoff',
+      'Use the reviewed conclusion.',
+      '## Result',
+      'The boundary is sound.',
+      '## Evidence',
+      'Repository and Tape facts agree.',
+      '## Changed Files',
+      'None.',
+      '## Validation',
+      'Focused tests passed.',
+      '## Unresolved',
+      'None.'
+    ].join('\n')
   }
 
   it('persists the thread and initial turn before child binding', () => {
@@ -243,7 +266,8 @@ describeIfSqlite('LiveDelegationRepository', () => {
         },
         ensureParentTaskContract: (input) => strictWriter.ensureParentTaskContract(input),
         ensureChildTaskContract: (input) => strictWriter.ensureChildTaskContract(input)
-      }
+      },
+      new TaskEvaluationServiceCtor(() => contractStore)
     )
 
     expect(() =>
@@ -500,7 +524,8 @@ describeIfSqlite('LiveDelegationRepository', () => {
           strictWriter.ensureChildTaskContract(input)
           throw new Error('projection write failed')
         }
-      }
+      },
+      new TaskEvaluationServiceCtor(() => contractStore)
     )
 
     expect(() =>
@@ -857,14 +882,24 @@ describeIfSqlite('LiveDelegationRepository', () => {
         handoffTruncated: false
       },
       tapeReceipt: receipt,
+      candidateResult: 'Architecture is sound.',
       now: 120
     })
     const retry = repository.finishTurn({
       turnId: 'turn-1',
-      status: 'failed',
-      error: 'late error',
+      status: 'completed',
+      candidateResult: 'Architecture is sound.',
       now: 130
     })
+
+    expect(() =>
+      repository.finishTurn({
+        turnId: 'turn-1',
+        status: 'failed',
+        error: 'late error',
+        now: 140
+      })
+    ).toThrow('Terminal evaluation retry conflicts')
 
     expect(first.delegation.status).toBe('idle')
     expect(first.turn.resultRef).toMatchObject({
@@ -881,5 +916,129 @@ describeIfSqlite('LiveDelegationRepository', () => {
       })
     ])
     expect(repository.listEvents('parent', { after: 1 })).toEqual([])
+  })
+
+  it('atomically projects one canonical evaluation after re-anchoring a reset parent Tape', () => {
+    const created = createDelegation()
+    repository.markTurnStarted(created.turn.id, 110)
+    const originalContractRef = created.turn.taskContractRef!
+    contractStore.runInTransaction(() => {
+      db!.prepare('DELETE FROM deepchat_tape_entries WHERE session_id = ?').run('parent')
+      contractStore.ensureBootstrapAnchor('parent')
+    })
+
+    const settled = repository.finishTurn({
+      turnId: created.turn.id,
+      status: 'completed',
+      summary: 'Use the reviewed conclusion.',
+      candidateResult: completeAcceptedAnswer(),
+      now: 120
+    })
+    const event = repository.listEvents('parent')[0]!
+    const facts = contractStore.getBySession('parent')
+    const frozenFact = facts.find((entry) => entry.name === 'contract/task_frozen')!
+    const evaluatedFact = facts.find((entry) => entry.name === 'contract/evaluated')!
+    const evaluatedPayload = JSON.parse(evaluatedFact.payload_json).data
+
+    expect(settled.delegation.status).toBe('idle')
+    expect(settled.turn).toMatchObject({
+      status: 'completed',
+      evaluation: { verdict: 'passed', disposition: 'accepted', executionStatus: 'completed' }
+    })
+    expect(settled.turn.taskContractRef?.tapeIdentity).not.toBe(originalContractRef.tapeIdentity)
+    expect(settled.turn.taskContractRef?.entryId).toBe(frozenFact.entry_id)
+    expect(settled.turn.evaluationRef).toMatchObject({
+      sessionId: 'parent',
+      tapeIdentity: settled.turn.taskContractRef?.tapeIdentity,
+      entryId: evaluatedFact.entry_id,
+      evaluationHash: settled.turn.evaluation?.evaluationHash
+    })
+    expect(evaluatedPayload).toEqual({
+      schemaVersion: 1,
+      evaluation: settled.turn.evaluation,
+      taskContractRef: settled.turn.taskContractRef
+    })
+    expect(event.evaluation).toEqual(settled.turn.evaluation)
+    expect(event.evaluationRef).toEqual(settled.turn.evaluationRef)
+  })
+
+  it('rolls back evaluation fact, terminal projection, and mailbox event together', () => {
+    const created = createDelegation()
+    repository.markTurnStarted(created.turn.id, 110)
+    const strictEvaluationWriter = new TaskEvaluationServiceCtor(() => contractStore)
+    const failingRepository = new LiveDelegationRepositoryCtor(
+      new LiveDelegationDatabaseCtor({ getDatabase: () => db! }),
+      new TaskContractServiceCtor(() => contractStore),
+      {
+        commitTaskEvaluation: (input) => {
+          strictEvaluationWriter.commitTaskEvaluation(input)
+          throw new Error('terminal projection failed')
+        }
+      }
+    )
+
+    expect(() =>
+      failingRepository.finishTurn({
+        turnId: created.turn.id,
+        status: 'completed',
+        candidateResult: completeAcceptedAnswer(),
+        now: 120
+      })
+    ).toThrow('terminal projection failed')
+
+    expect(repository.require(created.delegation.id).status).toBe('running')
+    expect(repository.requireTurn(created.turn.id)).toMatchObject({
+      status: 'running',
+      evaluation: null,
+      evaluationRef: null
+    })
+    expect(repository.listEvents('parent')).toEqual([])
+    expect(
+      contractStore.getBySession('parent').filter((entry) => entry.name === 'contract/evaluated')
+    ).toEqual([])
+  })
+
+  it('rejects a terminal contract projection that has no evaluation', () => {
+    const created = createDelegation()
+    db!
+      .prepare(
+        `UPDATE live_delegation_turns
+       SET status = 'completed', completed_at = 120, updated_at = 120
+       WHERE turn_id = ?`
+      )
+      .run(created.turn.id)
+
+    expect(() =>
+      repository.finishTurn({
+        turnId: created.turn.id,
+        status: 'completed',
+        candidateResult: completeAcceptedAnswer(),
+        now: 130
+      })
+    ).toThrow('has no Task evaluation')
+  })
+
+  it('binds a follow-up contract to the immediately preceding evaluation', () => {
+    const created = createDelegation()
+    repository.markTurnStarted(created.turn.id, 110)
+    const settled = repository.finishTurn({
+      turnId: created.turn.id,
+      status: 'completed',
+      candidateResult: completeAcceptedAnswer(),
+      now: 120
+    })
+
+    const followUp = repository.createFollowUp(
+      'parent',
+      created.delegation.id,
+      'turn-2',
+      'Check the remaining edge case.',
+      createLiveDelegationTaskContractInput(null),
+      130
+    )
+
+    expect(followUp.turn.taskContract?.taskConfig.predecessorEvaluationRef).toEqual(
+      settled.turn.evaluationRef
+    )
   })
 })

@@ -9,7 +9,8 @@ import type { OrchestrationEffectState } from '@shared/orchestration/toolEffect'
 import {
   MAX_TASK_CONTRACT_BYTES,
   MAX_TASK_CONTRACT_REF_BYTES,
-  MAX_TASK_EVALUATION_BYTES
+  MAX_TASK_EVALUATION_BYTES,
+  MAX_TASK_EVALUATION_REF_BYTES
 } from '@shared/types/task-contract'
 import {
   LIVE_DELEGATION_CONTRACT_DATABASE_SCHEMA_VERSION,
@@ -113,7 +114,7 @@ const LIVE_DELEGATION_TURN_CONTRACT_COLUMNS_SQL = `
         OR (
           json_valid(evaluation_ref_json)
           AND json_type(evaluation_ref_json) = 'object'
-          AND length(CAST(evaluation_ref_json AS BLOB)) <= ${MAX_TASK_CONTRACT_REF_BYTES}
+          AND length(CAST(evaluation_ref_json AS BLOB)) <= ${MAX_TASK_EVALUATION_REF_BYTES}
         )
       )
     ),
@@ -262,7 +263,7 @@ export const LIVE_DELEGATION_TURN_EVALUATION_REF_ADD_COLUMN_SQL = `
         OR (
           json_valid(evaluation_ref_json)
           AND json_type(evaluation_ref_json) = 'object'
-          AND length(CAST(evaluation_ref_json AS BLOB)) <= ${MAX_TASK_CONTRACT_REF_BYTES}
+          AND length(CAST(evaluation_ref_json AS BLOB)) <= ${MAX_TASK_EVALUATION_REF_BYTES}
         )
       )
     )

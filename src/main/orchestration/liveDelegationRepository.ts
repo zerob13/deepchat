@@ -1,7 +1,11 @@
 import { Buffer } from 'node:buffer'
 import { z } from 'zod'
 import type { SubagentTapeLinkReceipt } from '@shared/types/agent-interface'
-import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
+import type {
+  DeepChatEvaluationRef,
+  DeepChatTaskContractContext,
+  DeepChatTaskEvaluation
+} from '@shared/types/task-contract'
 import {
   LIVE_DELEGATION_MAX_EFFECT_EVIDENCE_BYTES,
   LIVE_DELEGATION_MAX_ACTIVE_PER_PARENT,
@@ -34,6 +38,7 @@ import type { LiveDelegationEventRow } from './data/tables/liveDelegationEvents'
 import type { LiveDelegationRow } from './data/tables/liveDelegations'
 import type { LiveDelegationTurnRow } from './data/tables/liveDelegationTurns'
 import type { TaskContractWriter } from '@/tape/application/taskContractService'
+import type { TaskEvaluationWriter } from '@/tape/application/taskEvaluationService'
 import {
   buildTaskContract,
   restoreTaskContract,
@@ -41,6 +46,13 @@ import {
   serializeTaskContract,
   serializeTaskContractRef
 } from '@/tape/domain/taskContract'
+import {
+  buildTaskEvaluation,
+  restoreEvaluationRef,
+  restoreTaskEvaluation,
+  serializeEvaluationRef,
+  serializeTaskEvaluation
+} from '@/tape/domain/taskEvaluation'
 import type {
   LegacyLiveDelegationTaskContractInput,
   LiveDelegationTaskContractInput
@@ -96,7 +108,8 @@ export class LiveDelegationTaskContractError extends Error {
 export class LiveDelegationRepository {
   constructor(
     private readonly database: LiveDelegationDatabase,
-    private readonly taskContracts: TaskContractWriter
+    private readonly taskContracts: TaskContractWriter,
+    private readonly taskEvaluations: TaskEvaluationWriter
   ) {}
 
   create(input: CreateLiveDelegationInput, beforeMutation?: () => void): LiveDelegationWithTurn {
@@ -555,6 +568,7 @@ export class LiveDelegationRepository {
     )
     validateBytes(prompt, LIVE_DELEGATION_MAX_PROMPT_BYTES, 'Follow-up task with messages')
     const nextSeq = delegation.lastTurnSeq + 1
+    const predecessorEvaluationRef = this.listTurns(delegation.id, 1)[0]?.evaluationRef ?? null
     const taskContract = buildTaskContract({
       ...taskContractInput,
       delegationId: delegation.id,
@@ -565,7 +579,8 @@ export class LiveDelegationRepository {
       slotId: delegation.slotId,
       targetAgentId: delegation.targetAgentId,
       title: delegation.title,
-      prompt
+      prompt,
+      predecessorEvaluationRef
     })
     const taskContractJson = serializeTaskContract(taskContract)
     beforeMutation?.()
@@ -707,11 +722,34 @@ export class LiveDelegationRepository {
     error?: string | null
     resultRef?: LiveDelegationResultRef | null
     tapeReceipt?: SubagentTapeLinkReceipt | null
+    candidateResult?: string | null
     now?: number
     beforeMutation?: () => void
   }): LiveDelegationWithTurn {
     const turn = this.requireTurn(input.turnId)
+    const candidateResult = input.candidateResult?.trim() || null
+    const evaluation = turn.taskContract
+      ? buildTaskEvaluation({
+          contract: turn.taskContract,
+          executionStatus: input.status,
+          candidateResult
+        })
+      : null
     if (!ACTIVE_TURN_STATUSES.includes(turn.status as (typeof ACTIVE_TURN_STATUSES)[number])) {
+      if (turn.taskContract && !turn.evaluation) {
+        throw new LiveDelegationTaskContractError(
+          `Terminal contract-bearing turn ${turn.id} has no Task evaluation.`
+        )
+      }
+      if (
+        evaluation &&
+        turn.evaluation &&
+        evaluation.evaluationHash !== turn.evaluation.evaluationHash
+      ) {
+        throw new LiveDelegationTaskContractError(
+          `Terminal evaluation retry conflicts with turn ${turn.id}.`
+        )
+      }
       return { delegation: this.require(turn.delegationId), turn }
     }
     const summary = normalizeOptionalBytes(
@@ -755,21 +793,74 @@ export class LiveDelegationRepository {
     ) {
       throw new Error('Live delegation result reference exceeds its storage limit.')
     }
+    if (
+      resultRef &&
+      evaluation &&
+      (evaluation.candidate.kind !== 'answer' ||
+        evaluation.candidate.sha256 !== resultRef.answerSha256 ||
+        evaluation.candidate.utf8Bytes !== resultRef.answerBytes)
+    ) {
+      throw new LiveDelegationTaskContractError(
+        'Live delegation result reference does not match its Task evaluation candidate.'
+      )
+    }
     const db = this.database.getDatabase()
     input.beforeMutation?.()
 
     db.transaction(() => {
+      let taskContractRef = turn.taskContractRef
+      let evaluationRef: DeepChatEvaluationRef | null = null
+      if (turn.taskContract) {
+        if (!taskContractRef || !evaluation) {
+          throw new LiveDelegationTaskContractError(
+            `Live delegation turn ${turn.id} has no complete TaskContract evaluation input.`
+          )
+        }
+        const parent = this.taskContracts.ensureParentTaskContract({
+          parentSessionId: delegation.parentSessionId,
+          contract: turn.taskContract,
+          currentRef: taskContractRef,
+          createdAt: now
+        })
+        taskContractRef = parent.ref
+        evaluationRef = this.taskEvaluations.commitTaskEvaluation({
+          parentSessionId: delegation.parentSessionId,
+          turnSeq: turn.seq,
+          evaluation,
+          taskContractRef,
+          createdAt: now
+        }).ref
+      }
+      const evaluationJson = evaluation ? serializeTaskEvaluation(evaluation) : null
+      const evaluationRefJson = evaluationRef ? serializeEvaluationRef(evaluationRef) : null
       const result = db
         .prepare(
           `UPDATE live_delegation_turns
            SET status = ?, result_summary = ?, error = ?, tape_receipt_json = ?,
-               result_ref_json = ?,
+               result_ref_json = ?, task_contract_ref_json = ?, evaluation_json = ?,
+               evaluation_ref_json = ?,
                updated_at = ?, completed_at = ?
            WHERE turn_id = ?
              AND status IN ('queued', 'running', 'waiting_permission', 'waiting_question')`
         )
-        .run(input.status, summary, error, tapeReceiptJson, resultRefJson, now, now, turn.id)
-      if (result.changes === 0) return
+        .run(
+          input.status,
+          summary,
+          error,
+          tapeReceiptJson,
+          resultRefJson,
+          taskContractRef ? serializeTaskContractRef(taskContractRef) : null,
+          evaluationJson,
+          evaluationRefJson,
+          now,
+          now,
+          turn.id
+        )
+      if (result.changes !== 1) {
+        throw new LiveDelegationTaskContractError(
+          `Live delegation turn ${turn.id} changed during terminal settlement.`
+        )
+      }
       db.prepare(
         `UPDATE live_delegations
          SET status = ?, last_summary = ?, last_error = ?, updated_at = ?, revision = revision + 1
@@ -782,11 +873,13 @@ export class LiveDelegationRepository {
         kind: eventKind,
         content: eventContent,
         relatedTurnId: turn.id,
+        evaluation,
+        evaluationRef,
         now
       })
+      this.pruneEvents(delegation.parentSessionId)
     })()
     const settledDelegation = this.require(turn.delegationId)
-    this.pruneEvents(settledDelegation.parentSessionId)
     return { delegation: settledDelegation, turn: this.requireTurn(turn.id) }
   }
 
@@ -881,15 +974,26 @@ export class LiveDelegationRepository {
     kind: LiveDelegationEventKind
     content: string
     relatedTurnId: string | null
+    evaluation?: DeepChatTaskEvaluation | null
+    evaluationRef?: DeepChatEvaluationRef | null
     now: number
   }): number {
+    const evaluationJson = input.evaluation ? serializeTaskEvaluation(input.evaluation) : null
+    const evaluationRefJson = input.evaluationRef
+      ? serializeEvaluationRef(input.evaluationRef)
+      : null
+    if ((evaluationJson === null) !== (evaluationRefJson === null)) {
+      throw new LiveDelegationTaskContractError(
+        'Live delegation mailbox evaluation projection is incomplete.'
+      )
+    }
     const result = this.database
       .getDatabase()
       .prepare(
         `INSERT INTO live_delegation_events (
            delegation_id, parent_session_id, direction, kind, content, related_turn_id,
-           consumed_by_turn_id, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`
+           consumed_by_turn_id, evaluation_json, evaluation_ref_json, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`
       )
       .run(
         input.delegationId,
@@ -898,6 +1002,8 @@ export class LiveDelegationRepository {
         input.kind,
         input.content,
         input.relatedTurnId,
+        evaluationJson,
+        evaluationRefJson,
         input.now
       )
     return Number(result.lastInsertRowid)
@@ -947,6 +1053,8 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
   const taskContract = parseTaskContract(row.task_contract_json)
   const taskContractRef = parseTaskContractRef(row.task_contract_ref_json)
   const inheritedTaskContractRef = parseTaskContractRef(row.inherited_task_contract_ref_json)
+  const evaluation = parseTaskEvaluation(row.evaluation_json)
+  const evaluationRef = parseEvaluationRef(row.evaluation_ref_json)
   if ((taskContract === null) !== (taskContractRef === null)) {
     throw new Error(
       `Live delegation turn ${row.turn_id} has an incomplete TaskContract projection.`
@@ -970,6 +1078,20 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
       throw new Error(`Live delegation turn ${row.turn_id} has a misbound TaskContract projection.`)
     }
   }
+  if ((evaluation === null) !== (evaluationRef === null)) {
+    throw new Error(`Live delegation turn ${row.turn_id} has an incomplete evaluation projection.`)
+  }
+  if (
+    evaluation &&
+    (!taskContract ||
+      evaluation.turnId !== row.turn_id ||
+      evaluation.taskContractHash !== taskContract.contractHash ||
+      evaluation.executionStatus !== row.status ||
+      evaluationRef?.sessionId !== taskContract.taskDescription.parentSessionId ||
+      evaluationRef.evaluationHash !== evaluation.evaluationHash)
+  ) {
+    throw new Error(`Live delegation turn ${row.turn_id} has a misbound evaluation projection.`)
+  }
   const parsed = LiveDelegationTurnSchema.parse({
     id: row.turn_id,
     delegationId: row.delegation_id,
@@ -984,6 +1106,8 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
     taskContract,
     taskContractRef,
     inheritedTaskContractRef,
+    evaluation,
+    evaluationRef,
     effectState: row.effect_state,
     effectEvidence: parseEffectEvidence(row.effect_evidence_json),
     createdAt: row.created_at,
@@ -995,11 +1119,15 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
     ...parsed,
     taskContract,
     taskContractRef,
-    inheritedTaskContractRef
+    inheritedTaskContractRef,
+    evaluation,
+    evaluationRef
   }
 }
 
 function toEvent(row: LiveDelegationEventRow): LiveDelegationEvent {
+  const evaluation = parseTaskEvaluation(row.evaluation_json)
+  const evaluationRef = parseEvaluationRef(row.evaluation_ref_json)
   return LiveDelegationEventSchema.parse({
     id: row.event_id,
     delegationId: row.delegation_id,
@@ -1009,6 +1137,8 @@ function toEvent(row: LiveDelegationEventRow): LiveDelegationEvent {
     content: row.content,
     relatedTurnId: row.related_turn_id,
     consumedByTurnId: row.consumed_by_turn_id,
+    evaluation,
+    evaluationRef,
     createdAt: row.created_at
   })
 }
@@ -1135,6 +1265,20 @@ function parseTaskContractRef(value: string | null) {
   if (!value) return null
   const ref = restoreTaskContractRef(JSON.parse(value))
   if (!ref) throw new Error('Stored live delegation TaskContract reference is malformed.')
+  return ref
+}
+
+function parseTaskEvaluation(value: string | null) {
+  if (!value) return null
+  const evaluation = restoreTaskEvaluation(JSON.parse(value))
+  if (!evaluation) throw new Error('Stored live delegation Task evaluation is malformed.')
+  return evaluation
+}
+
+function parseEvaluationRef(value: string | null) {
+  if (!value) return null
+  const ref = restoreEvaluationRef(JSON.parse(value))
+  if (!ref) throw new Error('Stored live delegation Task evaluation reference is malformed.')
   return ref
 }
 

@@ -86,6 +86,8 @@ V1 supports two acceptance requirement kinds:
 `result_schema` accepts one JSON value after removing at most one enclosing Markdown code fence.
 It uses Ajv strict validation with remote loading disabled, rejects every `$ref`, and stops after a
 bounded error set. It does not execute custom formats or schema-provided code.
+Ajv and regex-safety dependencies are pinned. Any semantic change to those validators, Markdown
+section extraction, evidence normalization, or verdict reduction must bump `evaluatorVersion`.
 
 Requirements compose conjunctively. A missing required section or schema mismatch is `failed`.
 Missing candidate data, cancellation, interruption, unavailable evidence, or evaluator failure is
