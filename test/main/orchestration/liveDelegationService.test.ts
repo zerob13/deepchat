@@ -2066,6 +2066,113 @@ describeIfSqlite('LiveDelegationService', () => {
     expect(repository.requireTurn(created.turn.id).effectState).toBe('read')
   })
 
+  it('quarantines a generating child when TaskContract reconciliation fails', async () => {
+    await service.stop()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const created = repository.create({
+      id: 'delegation-contract-quarantine',
+      initialTurnId: 'turn-contract-quarantine',
+      parentSessionId: 'parent',
+      slotId: 'reviewer',
+      targetAgentId: 'agent-1',
+      title: 'Quarantine invalid contract',
+      prompt: 'Do not continue with invalid lineage.',
+      taskContract: createLiveDelegationTaskContractInput(null),
+      now: 100
+    })
+    harness.addChild('child-contract-quarantine', created.delegation.id, 'generating')
+    repository.bindChild(created.delegation.id, 'child-contract-quarantine', 110)
+    repository.markTurnStarted(created.turn.id, 120)
+    const ensureInheritedTaskContract = vi
+      .spyOn(repository, 'ensureInheritedTaskContract')
+      .mockImplementationOnce(() => {
+        throw new LiveDelegationTaskContractErrorCtor('contract lineage is unavailable')
+      })
+    let rejectCancellation!: (error: Error) => void
+    harness.sessions.cancelConversation.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectCancellation = reject
+      })
+    )
+
+    service = new LiveDelegationServiceCtor({
+      repository,
+      sessions: harness.sessions,
+      safety: harness.safety,
+      consent: consentAuthority,
+      admission: new AgentInvocationAdmission(2, 10),
+      deletionGate
+    })
+    service.start()
+    await vi.waitFor(() =>
+      expect(harness.sessions.cancelConversation).toHaveBeenCalledWith('child-contract-quarantine')
+    )
+
+    expect(repository.requireTurn(created.turn.id).status).toBe('running')
+    expect(repository.listEvents('parent')).toEqual([])
+    expect(() => service.prepareTaskContractContext('child-contract-quarantine')).toThrow(
+      /is quarantined after TaskContract reconciliation failed/u
+    )
+    await expect(
+      service.beforeToolExecution({
+        conversationId: 'child-contract-quarantine',
+        toolCallId: 'call-after-contract-failure',
+        toolName: 'read',
+        source: 'agent',
+        reviewedExecution: TOOL_EXECUTION.read.parallel
+      })
+    ).rejects.toThrow(/is quarantined after TaskContract reconciliation failed/u)
+    expect(ensureInheritedTaskContract).toHaveBeenCalledOnce()
+    expect(repository.requireTurn(created.turn.id).effectState).toBe('none')
+    rejectCancellation(new Error('cancel failed'))
+    await vi.waitFor(() =>
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[LiveDelegationService] Failed to cancel quarantined child session:',
+        expect.objectContaining({ turnId: created.turn.id })
+      )
+    )
+
+    for (const [index, status] of (['idle', 'error'] as const).entries()) {
+      harness.publish({
+        sessionId: 'child-contract-quarantine',
+        kind: 'status',
+        updatedAt: 130 + index,
+        status
+      })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(repository.requireTurn(created.turn.id).status).toBe('running')
+      expect(repository.listEvents('parent')).toEqual([])
+    }
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[LiveDelegationService] Failed to reconcile child turn:',
+      expect.objectContaining({ turnId: created.turn.id })
+    )
+
+    await service.stop()
+    expect(() => service.prepareTaskContractContext('child-contract-quarantine')).toThrow(
+      /is quarantined after TaskContract reconciliation failed/u
+    )
+    await expect(
+      service.beforeToolExecution({
+        conversationId: 'child-contract-quarantine',
+        toolCallId: 'call-after-service-stop',
+        toolName: 'read',
+        source: 'agent',
+        reviewedExecution: TOOL_EXECUTION.read.parallel
+      })
+    ).rejects.toThrow(/is quarantined after TaskContract reconciliation failed/u)
+    expect(repository.requireTurn(created.turn.id).status).toBe('running')
+    expect(repository.listEvents('parent')).toEqual([])
+
+    service.start()
+    await vi.waitFor(() => expect(ensureInheritedTaskContract).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(repository.requireTurn(created.turn.id).status).toBe('failed'))
+    expect(repository.listEvents('parent')).toEqual([
+      expect.objectContaining({ relatedTurnId: created.turn.id, kind: 'turn_failed' })
+    ])
+  })
+
   it('does not revive a turn interrupted while restart reconciliation is awaiting the child', async () => {
     await service.stop()
     const created = repository.create({

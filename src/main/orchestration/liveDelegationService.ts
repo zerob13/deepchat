@@ -175,6 +175,8 @@ type CapableParent = ConversationSessionInfo & {
 export class LiveDelegationService {
   private readonly activeTurns = new Map<string, ActiveTurn>()
   private readonly childToTurn = new Map<string, string>()
+  private readonly quarantinedTurns = new Set<string>()
+  private readonly quarantineCancellations = new Set<Promise<void>>()
   private readonly childSafetyTails = new Map<string, Promise<void>>()
   private readonly waiters = new Set<MailboxWaiter>()
   private unsubscribeRuntime: (() => void) | null = null
@@ -186,6 +188,8 @@ export class LiveDelegationService {
   start(): void {
     if (this.started) return
     const activeRecords = this.options.repository.listActiveTurns()
+    this.childToTurn.clear()
+    this.quarantinedTurns.clear()
     for (const record of activeRecords) {
       if (record.delegation.childSessionId) {
         this.childToTurn.set(record.delegation.childSessionId, record.turn.id)
@@ -205,8 +209,13 @@ export class LiveDelegationService {
   }
 
   prepareTaskContractContext(childSessionId: string): DeepChatTaskContractContext | null {
-    const context = this.options.repository.prepareActiveTaskContractContext(childSessionId)
     const admittedTurnId = this.childToTurn.get(childSessionId)
+    if (admittedTurnId && this.quarantinedTurns.has(admittedTurnId)) {
+      throw new LiveDelegationTaskContractError(
+        `Child Session ${childSessionId} is quarantined after TaskContract reconciliation failed.`
+      )
+    }
+    const context = this.options.repository.prepareActiveTaskContractContext(childSessionId)
     if (context === null) {
       if (admittedTurnId === undefined) return null
     } else if (admittedTurnId === context.contract.taskDescription.turnId) {
@@ -237,7 +246,11 @@ export class LiveDelegationService {
     const cancellationWork = active
       .filter((turn) => turn.childSessionId)
       .map((turn) => this.cancelActiveChild(turn, 'service stop'))
-    await Promise.allSettled([...cancellationWork, ...pendingChildWork])
+    await Promise.allSettled([
+      ...cancellationWork,
+      ...pendingChildWork,
+      ...this.quarantineCancellations
+    ])
     await Promise.allSettled(
       active.map((turn) =>
         this.settle(turn, {
@@ -247,7 +260,9 @@ export class LiveDelegationService {
       )
     )
     this.activeTurns.clear()
-    this.childToTurn.clear()
+    for (const [childSessionId, turnId] of this.childToTurn) {
+      if (!this.quarantinedTurns.has(turnId)) this.childToTurn.delete(childSessionId)
+    }
     this.childSafetyTails.clear()
     for (const waiter of this.waiters) waiter.resolve()
     this.waiters.clear()
@@ -771,6 +786,7 @@ export class LiveDelegationService {
           })
           this.childToTurn.delete(childSessionId)
         }
+        this.quarantinedTurns.delete(turn.id)
       }
       return this.inspect(delegation.parentSessionId, delegation.id)
     }
@@ -1150,11 +1166,21 @@ export class LiveDelegationService {
   ): Promise<ActiveTurn | null> {
     let turnId = this.childToTurn.get(childSessionId)
     if (!turnId) return null
+    if (this.quarantinedTurns.has(turnId)) {
+      throw new LiveDelegationTaskContractError(
+        `Child Session ${childSessionId} is quarantined after TaskContract reconciliation failed.`
+      )
+    }
     let active = this.activeTurns.get(turnId)
     if (!active && this.reconcilePromise) {
       await awaitWithAbort(this.reconcilePromise, signal)
       turnId = this.childToTurn.get(childSessionId)
       active = turnId ? this.activeTurns.get(turnId) : undefined
+    }
+    if (turnId && this.quarantinedTurns.has(turnId)) {
+      throw new LiveDelegationTaskContractError(
+        `Child Session ${childSessionId} is quarantined after TaskContract reconciliation failed.`
+      )
     }
     if (!active || active.settling) return null
     signal?.throwIfAborted()
@@ -1437,8 +1463,38 @@ export class LiveDelegationService {
     })
     if (!this.started) return
     if (error instanceof LiveDelegationTaskContractError) {
-      if (record.delegation.childSessionId) {
-        this.childToTurn.delete(record.delegation.childSessionId)
+      let turnId = record.turn.id
+      let childSessionId = record.delegation.childSessionId
+      try {
+        const current = this.options.repository.getTurn(record.turn.id)
+        if (!current || !isActiveTurnStatus(current.status)) {
+          if (childSessionId) this.childToTurn.delete(childSessionId)
+          return
+        }
+        turnId = current.id
+        childSessionId =
+          this.options.repository.get(record.delegation.id)?.childSessionId ?? childSessionId
+      } catch (lookupError) {
+        console.error('[LiveDelegationService] Failed to resolve reconciliation quarantine:', {
+          delegationId: record.delegation.id,
+          turnId,
+          error: lookupError
+        })
+      }
+      this.quarantinedTurns.add(turnId)
+      if (childSessionId) {
+        this.childToTurn.set(childSessionId, turnId)
+        const cancellation = this.options.sessions
+          .cancelConversation(childSessionId)
+          .catch((cancelError) => {
+            console.warn('[LiveDelegationService] Failed to cancel quarantined child session:', {
+              childSessionId,
+              turnId,
+              error: cancelError
+            })
+          })
+          .finally(() => this.quarantineCancellations.delete(cancellation))
+        this.quarantineCancellations.add(cancellation)
       }
       return
     }
