@@ -23,8 +23,7 @@ describe('DeepChat system prompt builder', () => {
     } as unknown as DeepChatAgentInstance
     const assertCurrent = vi.fn()
     const dependencies = {
-      providerSettings: {
-      } as unknown as ProviderSettingsPort,
+      providerSettings: {} as unknown as ProviderSettingsPort,
       skillSettings: {
         isEnabled: () => false,
         isDraftSuggestionsEnabled: () => false
@@ -160,7 +159,7 @@ describe('DeepChat system prompt builder', () => {
     expect(assembly.sections.find((section) => section.kind === 'configured_prompt')).toMatchObject(
       {
         inclusion: 'included',
-        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        contentHash: '2f438783cf88972d8d9fd3394aac256edde99cd6d9a8e9166aff93ec5bcfc2c4'
       }
     )
     expect(explicit).toContain('## Multi-Agent Orchestration Policy')

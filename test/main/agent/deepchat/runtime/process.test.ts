@@ -1022,9 +1022,11 @@ describe('processStream', () => {
       const finalPauseCall = messageStore.updateAssistantContent.mock.calls.findLast(
         (call) => typeof call[2] === 'string'
       )
+      expect(finalPauseCall).toBeDefined()
       const permissionBlock = finalPauseCall?.[1].find(
         (block) => block.action_type === 'tool_call_permission'
       )
+      expect(permissionBlock).toBeDefined()
       expect(JSON.parse(permissionBlock?.extra?.executionContractBinding as string)).toEqual(
         buildExecutionContractBinding(executionContract)
       )
