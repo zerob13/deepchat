@@ -640,7 +640,12 @@ export class DeepChatContextCoordinator {
           if (input.strictViewContract) throw error
         }
       }
-      bindActiveRequestContract(input.run, requestSeq, executionContract)
+
+      const reportManifestError = (error: unknown): void => {
+        try {
+          input.manifest.onAppendError(error)
+        } catch {}
+      }
       try {
         input.manifest.append({
           requestSeq,
@@ -669,11 +674,24 @@ export class DeepChatContextCoordinator {
           ...(executionContract ? { executionContract } : {})
         })
       } catch (error) {
-        try {
-          input.manifest.onAppendError(error)
-        } catch {}
-        if (input.strictViewContract) throw error
+        if (executionContract) {
+          if (input.strictViewContract) {
+            reportManifestError(error)
+            throw error
+          }
+          executionContract = null
+          const reason = error instanceof Error ? error.message : String(error)
+          reportManifestError(
+            new Error(
+              `ExecutionContract disabled for request ${requestSeq} because durable ViewManifest persistence could not be confirmed: ${reason}`,
+              { cause: error }
+            )
+          )
+        } else {
+          reportManifestError(error)
+        }
       }
+      bindActiveRequestContract(input.run, requestSeq, executionContract)
 
       return { providerMessages, providerMaxTokens, requestSeq, executionContract }
     }

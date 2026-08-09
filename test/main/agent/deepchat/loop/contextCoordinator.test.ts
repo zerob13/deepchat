@@ -485,9 +485,53 @@ describe('DeepChatContextCoordinator', () => {
       { type: 'stop', stop_reason: 'complete' }
     ])
     expect(fixture.providerRequests).toHaveLength(1)
+    expect(fixture.providerRequests[0].executionContract).toBeNull()
+    expect(fixture.run.activeRequestContract).toEqual({
+      requestSeq: 1,
+      executionContract: null
+    })
     expect(fixture.manifestErrors).toEqual([
-      expect.objectContaining({ message: 'manifest unavailable' })
+      expect.objectContaining({
+        message: expect.stringContaining(
+          'ExecutionContract disabled for request 1 because durable ViewManifest persistence could not be confirmed'
+        )
+      })
     ])
+  })
+
+  it('reuses one null contract decision across transient retries after manifest failure', async () => {
+    const transientError = Object.assign(new Error('fetch failed'), {
+      code: 'ECONNRESET',
+      headers: { 'retry-after-ms': '0' }
+    })
+    const fixture = createAttemptInput({
+      appendManifest: () => {
+        throw new Error('manifest unavailable')
+      },
+      providerAttempts: [
+        { error: transientError },
+        {
+          events: [
+            { type: 'text', content: 'recovered' },
+            { type: 'stop', stop_reason: 'complete' }
+          ]
+        }
+      ]
+    })
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(fixture.manifests).toHaveLength(1)
+    expect(fixture.contractBuildInputs).toHaveLength(1)
+    expect(fixture.providerRequests.map((request) => request.identity)).toEqual([
+      { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
+      { logicalRound: 1, requestSeq: 1, physicalAttempt: 2 }
+    ])
+    expect(fixture.providerContractRefs).toEqual([null, null])
+    expect(fixture.run.activeRequestContract).toEqual({
+      requestSeq: 1,
+      executionContract: null
+    })
   })
 
   it.each([
@@ -500,7 +544,8 @@ describe('DeepChatContextCoordinator', () => {
             throw new Error('contract unavailable')
           }
         }),
-      message: 'contract unavailable'
+      message: 'contract unavailable',
+      manifestAttempts: 0
     },
     {
       name: 'manifest persistence',
@@ -511,7 +556,8 @@ describe('DeepChatContextCoordinator', () => {
             throw new Error('manifest unavailable')
           }
         }),
-      message: 'manifest unavailable'
+      message: 'manifest unavailable',
+      manifestAttempts: 1
     }
   ])('fails a strict child View before provider admission on $name failure', async (scenario) => {
     const fixture = scenario.create()
@@ -521,6 +567,8 @@ describe('DeepChatContextCoordinator', () => {
     ).rejects.toThrow(scenario.message)
     expect(fixture.providerRequests).toHaveLength(0)
     expect(fixture.order).not.toContain('rate')
+    expect(fixture.run.activeRequestContract).toBeNull()
+    expect(fixture.manifests).toHaveLength(scenario.manifestAttempts)
   })
 
   it('keeps generation fail-open when provider outcome persistence throws', async () => {

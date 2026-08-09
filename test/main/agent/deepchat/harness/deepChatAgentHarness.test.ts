@@ -4228,8 +4228,18 @@ describe('DeepChatAgentHarness', () => {
       }
 
       expect(providerCoreStream).toHaveBeenCalledTimes(1)
+      expect(callArgs.run.activeRequestContract).toEqual({
+        requestSeq: 1,
+        executionContract: null
+      })
+      const viewManifests = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
+      expect(viewManifests).toEqual([])
       expect(loggerWarnMock).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to persist tape view manifest')
+        expect.stringContaining(
+          'ExecutionContract disabled for request 1 because durable ViewManifest persistence could not be confirmed'
+        )
       )
     })
 

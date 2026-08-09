@@ -1046,11 +1046,16 @@ describe('processStream', () => {
         status: 'paused',
         pendingInteractions: [expect.objectContaining({ origin: 'post-call-permission' })]
       })
+      expect(result.toolBatchExecutionState?.executionContract).toBeUndefined()
       expect(toolService.callTool).toHaveBeenCalledOnce()
       const finalPauseCall = messageStore.updateAssistantContent.mock.calls.findLast(
         (call) => typeof call[2] === 'string'
       )
       expect(finalPauseCall).toBeDefined()
+      const permissionBlock = finalPauseCall?.[1].find(
+        (block) => block.action_type === 'tool_call_permission'
+      )
+      expect(permissionBlock?.extra?.executionContractBinding).toBeUndefined()
       expect(JSON.parse(finalPauseCall?.[2])).toMatchObject({
         providerRounds: 1,
         toolCalls: 1,
