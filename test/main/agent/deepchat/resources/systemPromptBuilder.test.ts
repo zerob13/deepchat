@@ -228,6 +228,68 @@ describe('DeepChat system prompt builder', () => {
     expect(loadSkillContent).toHaveBeenCalledWith('writer', 'skill-b')
   })
 
+  it('loads requested Skills when catalog metadata is temporarily unavailable', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    vi.mocked(fs.promises.readFile).mockRejectedValue(
+      Object.assign(new Error('missing'), { code: 'ENOENT' })
+    )
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const instance = {
+      getRuntimeState: () => ({ providerId: 'openai', modelId: 'gpt-4o' }),
+      hasProjectDir: () => false
+    } as unknown as DeepChatAgentInstance
+    const loadSkillContent = vi.fn().mockResolvedValue({
+      name: 'skill-a',
+      content: 'skill-a instructions'
+    })
+
+    try {
+      const assembly = await buildSystemPromptAssemblyWithSkills(
+        {
+          providerSettings: {} as unknown as ProviderSettingsPort,
+          skillSettings: {
+            isEnabled: () => true,
+            isDraftSuggestionsEnabled: () => false
+          },
+          providerCatalogPort: {
+            getProviderModels: () => [{ id: 'gpt-4o', name: 'GPT-4o' }],
+            getCustomModels: () => []
+          },
+          skillService: {
+            resolveSessionAgentId: vi.fn().mockResolvedValue('writer'),
+            getMetadataList: vi.fn().mockRejectedValue(new Error('catalog unavailable')),
+            getActiveSkills: vi.fn().mockResolvedValue([]),
+            loadSkillContent
+          },
+          toolService: { buildToolSystemPrompt: vi.fn().mockReturnValue('') },
+          assertCurrent: vi.fn(),
+          isAcpBackedSubagentSession: () => false,
+          resolveProjectDir: () => null,
+          logSlowStep: vi.fn()
+        },
+        {
+          sessionId: 'session-1',
+          basePrompt: '',
+          toolDefinitions: [],
+          activeSkillNamesOverride: ['skill-a'],
+          resourceInstance: instance
+        }
+      )
+
+      expect(loadSkillContent).toHaveBeenCalledWith('writer', 'skill-a')
+      expect(assembly.prompt).toContain('### skill-a\nskill-a instructions')
+      expect(assembly.sections.find((section) => section.kind === 'skills_metadata')).toMatchObject({
+        inclusion: 'omitted',
+        degradationCodes: ['skill_metadata_unavailable']
+      })
+      const pinnedSkills = assembly.sections.find((section) => section.kind === 'pinned_skills')
+      expect(pinnedSkills).toMatchObject({ inclusion: 'included' })
+      expect(pinnedSkills).not.toHaveProperty('degradationCodes')
+    } finally {
+      consoleWarn.mockRestore()
+    }
+  })
+
   it('observes model, tool prompt, and package script changes on the next assembly', async () => {
     let modelName = 'Model One'
     let toolPrompt = 'TOOL PROMPT ONE'

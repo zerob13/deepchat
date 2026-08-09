@@ -146,6 +146,7 @@ export async function buildSystemPromptAssemblyWithSkills(
     category?: string | null
     platforms?: string[]
   }> = []
+  let skillMetadataLookupFailed = false
   const activeSkillNames: string[] = activeSkillNamesOverride ? [...activeSkillNamesOverride] : []
   const skillDraftSuggestionsEnabled = dependencies.skillSettings.isDraftSuggestionsEnabled()
 
@@ -169,6 +170,7 @@ export async function buildSystemPromptAssemblyWithSkills(
         `[DeepChatAgent] Failed to load skills metadata for session ${sessionId}:`,
         error
       )
+      skillMetadataLookupFailed = true
       skillsMetadataDegradations.push('skill_metadata_unavailable')
     }
     dependencies.logSlowStep(sessionId, 'system-prompt.skills-metadata-load', metadataStartedAt)
@@ -198,10 +200,13 @@ export async function buildSystemPromptAssemblyWithSkills(
   const normalizedAvailableSkills = normalizeSkillMetadata(availableSkills)
   const availableSkillNames = new Set(normalizedAvailableSkills.map((skill) => skill.name))
   const requestedActiveSkills = normalizeStringList(activeSkillNames)
-  const normalizedActiveSkills = requestedActiveSkills.filter((skillName) =>
-    availableSkillNames.has(skillName)
-  )
-  if (normalizedActiveSkills.length !== requestedActiveSkills.length) {
+  const normalizedActiveSkills = skillMetadataLookupFailed
+    ? requestedActiveSkills
+    : requestedActiveSkills.filter((skillName) => availableSkillNames.has(skillName))
+  if (
+    !skillMetadataLookupFailed &&
+    normalizedActiveSkills.length !== requestedActiveSkills.length
+  ) {
     pinnedSkillsDegradations.push('pinned_skill_unavailable')
   }
   const agentToolNames = getAgentToolNames(toolDefinitions)
