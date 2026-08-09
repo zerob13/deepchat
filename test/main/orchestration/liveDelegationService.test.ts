@@ -2343,6 +2343,72 @@ describeIfSqlite('LiveDelegationService', () => {
       expect.objectContaining({ delegationId: failed.delegation.id })
     )
   })
+
+  it('isolates a corrupt active projection without blocking healthy restart recovery', async () => {
+    await service.stop()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const corrupted = repository.create({
+      id: 'delegation-corrupt-projection',
+      initialTurnId: 'turn-corrupt-projection',
+      parentSessionId: 'parent',
+      slotId: 'reviewer',
+      targetAgentId: 'agent-1',
+      title: 'Corrupt projection',
+      prompt: 'This projection must be quarantined.',
+      taskContract: createLiveDelegationTaskContractInput(null),
+      now: 100
+    })
+    const healthy = repository.create({
+      id: 'delegation-healthy-projection',
+      initialTurnId: 'turn-healthy-projection',
+      parentSessionId: 'parent',
+      slotId: 'reviewer',
+      targetAgentId: 'agent-1',
+      title: 'Healthy projection',
+      prompt: 'This projection must still recover.',
+      taskContract: createLiveDelegationTaskContractInput(null),
+      now: 200
+    })
+    harness.addChild('child-corrupt-projection', corrupted.delegation.id, 'generating')
+    harness.addChild('child-healthy-projection', healthy.delegation.id, 'idle')
+    repository.bindChild(corrupted.delegation.id, 'child-corrupt-projection', 110)
+    repository.bindChild(healthy.delegation.id, 'child-healthy-projection', 210)
+    repository.markTurnStarted(corrupted.turn.id, 120)
+    db!
+      .prepare(
+        "UPDATE live_delegation_turns SET task_contract_json = '{}' WHERE turn_id = 'turn-corrupt-projection'"
+      )
+      .run()
+
+    service = new LiveDelegationServiceCtor({
+      repository,
+      sessions: harness.sessions,
+      safety: harness.safety,
+      consent: consentAuthority,
+      admission: new AgentInvocationAdmission(2, 10),
+      deletionGate
+    })
+
+    expect(() => service.start()).not.toThrow()
+    await vi.waitFor(() =>
+      expect(harness.sessions.cancelConversation).toHaveBeenCalledWith('child-corrupt-projection')
+    )
+    await vi.waitFor(() =>
+      expect(harness.sessions.sendConversationMessage).toHaveBeenCalledWith(
+        'child-healthy-projection',
+        expect.stringContaining('Healthy projection')
+      )
+    )
+
+    expect(() => service.prepareTaskContractContext('child-corrupt-projection')).toThrow(
+      /is quarantined after TaskContract reconciliation failed/u
+    )
+    expect(repository.requireTurn(healthy.turn.id).status).toBe('running')
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[LiveDelegationService] Failed to reconcile child turn:',
+      expect.objectContaining({ turnId: corrupted.turn.id })
+    )
+  })
 })
 
 function completeAcceptedAnswer(): string {

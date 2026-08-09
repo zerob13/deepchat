@@ -98,6 +98,13 @@ export interface LiveDelegationWithTurn {
 
 export interface ActiveLiveDelegationTurn extends LiveDelegationWithTurn {}
 
+export interface ActiveLiveDelegationTurnIdentity {
+  delegationId: string
+  parentSessionId: string
+  childSessionId: string | null
+  turnId: string
+}
+
 export class LiveDelegationTaskContractError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options)
@@ -272,6 +279,31 @@ export class LiveDelegationRepository {
         revision: Number(row.d_revision)
       }),
       turn: toTurn(row)
+    }))
+  }
+
+  listActiveTurnIdentities(): ActiveLiveDelegationTurnIdentity[] {
+    const rows = this.database
+      .getDatabase()
+      .prepare(
+        `SELECT d.delegation_id, d.parent_session_id, d.child_session_id, t.turn_id
+         FROM live_delegation_turns AS t
+         INNER JOIN live_delegations AS d ON d.delegation_id = t.delegation_id
+         WHERE t.status IN ('queued', 'running', 'waiting_permission', 'waiting_question')
+         ORDER BY t.updated_at ASC, t.turn_id ASC`
+      )
+      .all() as Array<{
+      delegation_id: string
+      parent_session_id: string
+      child_session_id: string | null
+      turn_id: string
+    }>
+
+    return rows.map((row) => ({
+      delegationId: StoredIdSchema.parse(row.delegation_id),
+      parentSessionId: StoredIdSchema.parse(row.parent_session_id),
+      childSessionId: row.child_session_id ? StoredIdSchema.parse(row.child_session_id) : null,
+      turnId: StoredIdSchema.parse(row.turn_id)
     }))
   }
 
@@ -1056,12 +1088,14 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
   const evaluation = parseTaskEvaluation(row.evaluation_json)
   const evaluationRef = parseEvaluationRef(row.evaluation_ref_json)
   if ((taskContract === null) !== (taskContractRef === null)) {
-    throw new Error(
+    throw new LiveDelegationTaskContractError(
       `Live delegation turn ${row.turn_id} has an incomplete TaskContract projection.`
     )
   }
   if (taskContract && taskContractRef?.contractHash !== taskContract.contractHash) {
-    throw new Error(`Live delegation turn ${row.turn_id} has a conflicting TaskContract reference.`)
+    throw new LiveDelegationTaskContractError(
+      `Live delegation turn ${row.turn_id} has a conflicting TaskContract reference.`
+    )
   }
   if (taskContract) {
     const description = taskContract.taskDescription
@@ -1075,11 +1109,15 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
       (inheritedTaskContractRef !== null &&
         inheritedTaskContractRef.contractHash !== taskContract.contractHash)
     ) {
-      throw new Error(`Live delegation turn ${row.turn_id} has a misbound TaskContract projection.`)
+      throw new LiveDelegationTaskContractError(
+        `Live delegation turn ${row.turn_id} has a misbound TaskContract projection.`
+      )
     }
   }
   if ((evaluation === null) !== (evaluationRef === null)) {
-    throw new Error(`Live delegation turn ${row.turn_id} has an incomplete evaluation projection.`)
+    throw new LiveDelegationTaskContractError(
+      `Live delegation turn ${row.turn_id} has an incomplete evaluation projection.`
+    )
   }
   if (
     evaluation &&
@@ -1091,7 +1129,9 @@ function toTurn(row: LiveDelegationTurnRow): LiveDelegationTurn {
       evaluationRef.tapeIdentity !== taskContractRef?.tapeIdentity ||
       evaluationRef.evaluationHash !== evaluation.evaluationHash)
   ) {
-    throw new Error(`Live delegation turn ${row.turn_id} has a misbound evaluation projection.`)
+    throw new LiveDelegationTaskContractError(
+      `Live delegation turn ${row.turn_id} has a misbound evaluation projection.`
+    )
   }
   const parsed = LiveDelegationTurnSchema.parse({
     id: row.turn_id,
@@ -1255,31 +1295,61 @@ function parseEffectEvidence(value: string | null): OrchestrationEffectEvidence 
   return value ? OrchestrationEffectEvidenceSchema.parse(JSON.parse(value)) : null
 }
 
+function parseStoredContractProjectionJson(value: string, label: string): unknown {
+  try {
+    return JSON.parse(value)
+  } catch (error) {
+    throw new LiveDelegationTaskContractError(`Stored live delegation ${label} is malformed.`, {
+      cause: error
+    })
+  }
+}
+
 function parseTaskContract(value: string | null) {
   if (!value) return null
-  const contract = restoreTaskContract(JSON.parse(value))
-  if (!contract) throw new Error('Stored live delegation TaskContract is malformed.')
+  const contract = restoreTaskContract(parseStoredContractProjectionJson(value, 'TaskContract'))
+  if (!contract) {
+    throw new LiveDelegationTaskContractError('Stored live delegation TaskContract is malformed.')
+  }
   return contract
 }
 
 function parseTaskContractRef(value: string | null) {
   if (!value) return null
-  const ref = restoreTaskContractRef(JSON.parse(value))
-  if (!ref) throw new Error('Stored live delegation TaskContract reference is malformed.')
+  const ref = restoreTaskContractRef(
+    parseStoredContractProjectionJson(value, 'TaskContract reference')
+  )
+  if (!ref) {
+    throw new LiveDelegationTaskContractError(
+      'Stored live delegation TaskContract reference is malformed.'
+    )
+  }
   return ref
 }
 
 function parseTaskEvaluation(value: string | null) {
   if (!value) return null
-  const evaluation = restoreTaskEvaluation(JSON.parse(value))
-  if (!evaluation) throw new Error('Stored live delegation Task evaluation is malformed.')
+  const evaluation = restoreTaskEvaluation(
+    parseStoredContractProjectionJson(value, 'Task evaluation')
+  )
+  if (!evaluation) {
+    throw new LiveDelegationTaskContractError(
+      'Stored live delegation Task evaluation is malformed.'
+    )
+  }
   return evaluation
 }
 
 function parseEvaluationRef(value: string | null) {
   if (!value) return null
-  const ref = restoreEvaluationRef(JSON.parse(value))
-  if (!ref) throw new Error('Stored live delegation Task evaluation reference is malformed.')
+  const ref = restoreEvaluationRef(
+    parseStoredContractProjectionJson(value, 'Task evaluation reference')
+  )
+  if (!ref) {
+    throw new LiveDelegationTaskContractError(
+      'Stored live delegation Task evaluation reference is malformed.'
+    )
+  }
   return ref
 }
 

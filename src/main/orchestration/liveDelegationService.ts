@@ -48,6 +48,7 @@ import { resolveToolPermissionMode } from '@/tool/permission/permissionMode'
 import {
   LiveDelegationTaskContractError,
   type ActiveLiveDelegationTurn,
+  type ActiveLiveDelegationTurnIdentity,
   type LiveDelegationRepository
 } from './liveDelegationRepository'
 import type {
@@ -187,12 +188,12 @@ export class LiveDelegationService {
 
   start(): void {
     if (this.started) return
-    const activeRecords = this.options.repository.listActiveTurns()
+    const activeRecords = this.options.repository.listActiveTurnIdentities()
     this.childToTurn.clear()
     this.quarantinedTurns.clear()
     for (const record of activeRecords) {
-      if (record.delegation.childSessionId) {
-        this.childToTurn.set(record.delegation.childSessionId, record.turn.id)
+      if (record.childSessionId) {
+        this.childToTurn.set(record.childSessionId, record.turnId)
       }
     }
     this.started = true
@@ -559,12 +560,12 @@ export class LiveDelegationService {
     if (!this.started) return
 
     const delegationIds = new Set<string>()
-    for (const record of this.options.repository.listActiveTurns()) {
+    for (const record of this.options.repository.listActiveTurnIdentities()) {
       if (
-        record.delegation.parentSessionId === normalizedSessionId ||
-        record.delegation.childSessionId === normalizedSessionId
+        record.parentSessionId === normalizedSessionId ||
+        record.childSessionId === normalizedSessionId
       ) {
-        delegationIds.add(record.delegation.id)
+        delegationIds.add(record.delegationId)
       }
     }
     for (const active of this.activeTurns.values()) {
@@ -1362,11 +1363,14 @@ export class LiveDelegationService {
     }
   }
 
-  private async reconcileActiveTurns(records: ActiveLiveDelegationTurn[]): Promise<void> {
+  private async reconcileActiveTurns(records: ActiveLiveDelegationTurnIdentity[]): Promise<void> {
     for (const record of records) {
       if (!this.started) return
       try {
-        await this.reconcileActiveTurn(record)
+        await this.reconcileActiveTurn({
+          delegation: this.options.repository.require(record.delegationId),
+          turn: this.options.repository.requireTurn(record.turnId)
+        })
       } catch (error) {
         this.failReconciliation(record, error)
       }
@@ -1455,28 +1459,28 @@ export class LiveDelegationService {
     })
   }
 
-  private failReconciliation(record: ActiveLiveDelegationTurn, error: unknown): void {
+  private failReconciliation(record: ActiveLiveDelegationTurnIdentity, error: unknown): void {
     console.error('[LiveDelegationService] Failed to reconcile child turn:', {
-      delegationId: record.delegation.id,
-      turnId: record.turn.id,
+      delegationId: record.delegationId,
+      turnId: record.turnId,
       error
     })
     if (!this.started) return
     if (error instanceof LiveDelegationTaskContractError) {
-      let turnId = record.turn.id
-      let childSessionId = record.delegation.childSessionId
+      let turnId = record.turnId
+      let childSessionId = record.childSessionId
       try {
-        const current = this.options.repository.getTurn(record.turn.id)
+        const current = this.options.repository.getTurn(record.turnId)
         if (!current || !isActiveTurnStatus(current.status)) {
           if (childSessionId) this.childToTurn.delete(childSessionId)
           return
         }
         turnId = current.id
         childSessionId =
-          this.options.repository.get(record.delegation.id)?.childSessionId ?? childSessionId
+          this.options.repository.get(record.delegationId)?.childSessionId ?? childSessionId
       } catch (lookupError) {
         console.error('[LiveDelegationService] Failed to resolve reconciliation quarantine:', {
-          delegationId: record.delegation.id,
+          delegationId: record.delegationId,
           turnId,
           error: lookupError
         })
@@ -1499,10 +1503,10 @@ export class LiveDelegationService {
       return
     }
     try {
-      const current = this.options.repository.getTurn(record.turn.id)
+      const current = this.options.repository.getTurn(record.turnId)
       if (!current || !isActiveTurnStatus(current.status)) {
-        if (record.delegation.childSessionId) {
-          this.childToTurn.delete(record.delegation.childSessionId)
+        if (record.childSessionId) {
+          this.childToTurn.delete(record.childSessionId)
         }
         return
       }
@@ -1514,15 +1518,15 @@ export class LiveDelegationService {
           LIVE_DELEGATION_MAX_HANDOFF_BYTES
         )
       })
-      if (record.delegation.childSessionId) {
-        this.childToTurn.delete(record.delegation.childSessionId)
+      if (record.childSessionId) {
+        this.childToTurn.delete(record.childSessionId)
       }
       this.publishChanged(settled.delegation)
       this.notifyMailbox(settled.delegation.parentSessionId, settled.delegation.id)
     } catch (settleError) {
       console.error('[LiveDelegationService] Failed to persist reconciliation error:', {
-        delegationId: record.delegation.id,
-        turnId: record.turn.id,
+        delegationId: record.delegationId,
+        turnId: record.turnId,
         error: settleError
       })
     }

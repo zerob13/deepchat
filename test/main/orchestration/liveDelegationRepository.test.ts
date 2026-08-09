@@ -37,6 +37,7 @@ const LiveDelegationsTableCtor = delegationsModule?.LiveDelegationsTable!
 const LiveDelegationTurnsTableCtor = turnsModule?.LiveDelegationTurnsTable!
 const LiveDelegationEventsTableCtor = eventsModule?.LiveDelegationEventsTable!
 const LiveDelegationRepositoryCtor = repositoryModule?.LiveDelegationRepository!
+const LiveDelegationTaskContractErrorCtor = repositoryModule?.LiveDelegationTaskContractError!
 const DeepChatContractStoreCtor = tapeStoreModule?.DeepChatContractStore!
 const TaskContractServiceCtor = taskContractServiceModule?.TaskContractService!
 const TaskEvaluationServiceCtor = taskEvaluationServiceModule?.TaskEvaluationService!
@@ -48,6 +49,7 @@ const describeIfSqlite = nativeSqliteDescribeIf(
     LiveDelegationTurnsTableCtor &&
     LiveDelegationEventsTableCtor &&
     LiveDelegationRepositoryCtor &&
+    LiveDelegationTaskContractErrorCtor &&
     DeepChatContractStoreCtor &&
     TaskContractServiceCtor &&
     TaskEvaluationServiceCtor
@@ -295,7 +297,27 @@ describeIfSqlite('LiveDelegationRepository', () => {
       )
       .run()
 
+    expect(() => repository.requireTurn('turn-1')).toThrow(LiveDelegationTaskContractErrorCtor)
     expect(() => repository.requireTurn('turn-1')).toThrow(/misbound TaskContract projection/u)
+  })
+
+  it('classifies malformed stored TaskContract JSON as a recoverable contract error', () => {
+    createDelegation()
+    db!.pragma('ignore_check_constraints = ON')
+    try {
+      db!
+        .prepare(
+          "UPDATE live_delegation_turns SET task_contract_json = '{' WHERE turn_id = 'turn-1'"
+        )
+        .run()
+    } finally {
+      db!.pragma('ignore_check_constraints = OFF')
+    }
+
+    expect(() => repository.requireTurn('turn-1')).toThrow(LiveDelegationTaskContractErrorCtor)
+    expect(() => repository.requireTurn('turn-1')).toThrow(
+      /Stored live delegation TaskContract is malformed/u
+    )
   })
 
   it('migrates nullable contract projections from the orchestration v64 schema', () => {
