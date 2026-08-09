@@ -3,10 +3,8 @@
 ## 1. Establish Canonical Contract Domains
 
 - Add shared, bounded schemas for prompt-section provenance, TaskContract, TaskContract references,
-  ExecutionContract, evaluation, verdict, and disposition.
+  ExecutionContract, and Handoff format evaluation.
 - Add main-process canonical builders and versioned hashes using the existing canonical JSON helper.
-- Add Ajv as a direct runtime dependency for bounded local result-schema validation; disable remote
-  loading, `$ref`, `$async`, custom executable formats, and unbounded error collection.
 - Define stable tool target identity and typed ceiling comparison without importing runtime services
   into the domain layer.
 - Add focused domain tests for canonical ordering, hash exclusion rules, bounds, typed meet, and
@@ -29,12 +27,12 @@
 - Construct one immutable ExecutionContract after final provider messages, tools, model identity,
   token budget, runtime settings, and TaskContract context are known.
 - Store the value on the request/run path; do not add a per-Session latest-contract cache.
-- Upgrade normal DeepChat ViewManifest writes to schema 5 and the next hash version while preserving
-  v1-v4 readers plus ACP and explicit ordinary-interactive schema-v4 fallback writes.
+- Upgrade contract-bearing DeepChat child ViewManifest writes to schema 5 and the next hash version
+  while preserving v1-v4 readers and schema-v4 writes for ordinary interactive chat and ACP.
 - Include full ExecutionContract content in `view/assembled`; reference the TaskContract by durable
   local/origin identity where present.
-- Keep interactive writes fail-open with explicit degradation and make contract-bearing child View
-  writes fail closed before provider request admission.
+- Keep ordinary interactive writes fail-open and make contract-bearing DeepChat child View writes
+  fail closed before provider request admission.
 
 ## 4. Enforce The Frozen View Ceiling
 
@@ -66,7 +64,7 @@
   reference, and evaluation value/reference columns on `live_delegation_turns`.
 - Extend shared orchestration schemas with nullable projections for historical compatibility.
 - Build a TaskContract from the parent request, resolved slot, stable target, default or configured
-  acceptance, and optional predecessor evaluation.
+  Handoff format, and optional predecessor evaluation.
 - Coordinate parent contract append and initial/follow-up turn creation in one MainDatabase
   transaction.
 - Keep a canonical runtime projection on the turn so restart and parent Tape reset do not erase the
@@ -90,13 +88,13 @@
 
 - Parse the persisted complete child answer, not its bounded Handoff projection.
 - Implement required-section evaluation with the existing fence-aware Markdown rules.
-- Validate bounded local JSON Schema without remote references or code execution.
-- Create `passed`, `failed`, or `indeterminate` evaluation with bounded evidence and reason codes.
+- Create `valid`, `invalid`, or `indeterminate` Handoff format evaluation with bounded evidence and
+  reason codes; do not represent it as task success or parent acceptance.
 - Replace terminal fallback paths that can commit without evaluation.
 - Commit evaluation fact, evaluation projection, execution status, delegation projection, and
   mailbox event in one transaction.
-- Preserve `executionStatus=completed`, `verdict=failed`, `disposition=parked`, and
-  `delegationStatus=idle` for contract-invalid but successfully generated results.
+- Preserve `executionStatus=completed`, `formatStatus=invalid`, and `delegationStatus=idle` for
+  format-invalid but successfully generated results.
 
 ## 9. Surface Evaluation To The Parent
 
@@ -115,4 +113,3 @@
 - Before each commit, review the staged diff for hidden side effects, compatibility, edge cases,
   performance, security, naming, test gaps, and maintenance cost; fix findings before committing.
 - Before handoff, run format, i18n, lint, Node/web typecheck, and the relevant main-process suites.
-- Do not push the branch.

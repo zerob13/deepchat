@@ -28,18 +28,18 @@ persistence. Recovery may rebuild runtime projections from persisted facts.
 
 DeepChat can currently prove which messages and provider-visible tool definitions formed a View,
 but it cannot prove the section-level source of the system prompt, the internal execution policy
-that accompanied provider-visible tools, or the acceptance contract applied to a delegated result.
+that accompanied provider-visible tools, or the Handoff format contract applied to a delegated result.
 Live delegation asks child Sessions to return a structured Handoff, but terminal settlement only
 requires a non-empty answer and silently falls back when expected sections are absent.
 
-That gap prevents a parent Agent from distinguishing a valid child result from an execution that
-completed but failed its task contract. It also makes historical provider requests difficult to
-explain and compare.
+That gap prevents a parent Agent from distinguishing a structurally valid child Handoff from a
+malformed one. It does not let the host determine whether the child's claims are correct. The View
+gap also makes historical provider requests difficult to explain and compare.
 
 ## Goals
 
 1. Record the exact structured prompt, capability, dynamic-control, and provenance inputs used by
-   every DeepChat-owned provider View.
+   every contract-bearing DeepChat child View.
 2. Enforce the immutable capability ceiling associated with the exact View that produced a tool
    call while continuing to honor current runtime revocation.
 3. Freeze one durable TaskContract for every new live-delegation turn.
@@ -47,7 +47,7 @@ explain and compare.
    child Tape before provider dispatch.
 5. Produce one explicit evaluation for every terminal settlement of a contract-bearing turn.
 6. Atomically persist the evaluation fact, live-delegation projection, and terminal mailbox event.
-7. Surface verdict and disposition through existing parent-facing orchestration operations.
+7. Surface Handoff format status through existing parent-facing orchestration operations.
 8. Preserve old View manifests and live-delegation rows without retroactive evaluation.
 
 ## Non-Goals
@@ -70,38 +70,33 @@ tape.systems:
 - `taskSchema`: task/result structure and contract schema versions;
 - `taskConfig`: stable task-level configuration and consumer-driven retry mode;
 - `taskDescription`: title, prompt, scope, slot, and target identity;
-- `taskHarness`: acceptance requirements and host-enforced behavioral ceilings.
+- `taskHarness`: Handoff format requirements and host-enforced behavioral ceilings.
+
+The persisted V1 field remains named `taskHarness.acceptance` for feature-branch schema
+compatibility. Its only producer is the fixed Handoff format requirement below; the field name does
+not represent task success or parent acceptance.
 
 For a contract-bearing child, every per-View ExecutionContract ceiling must be less than or equal
 to the stable Task Harness ceiling. A later View may narrow that maximum but cannot expand it.
 
 TaskConfig v1 records `creationReason=delegation_created|legacy_recovery`. Compatibility recovery
-uses `legacy_recovery` with no retroactive acceptance requirements, so a recovered contract remains
+uses `legacy_recovery` with no retroactive Handoff format requirements, so a recovered contract remains
 distinguishable without adding a second runtime flag.
 
-V1 supports two acceptance requirement kinds:
-
-- `required_sections`: required level-two Markdown section names;
-- `result_schema`: a bounded JSON Schema applied to the body of a named Markdown section.
-
-`result_schema` accepts one JSON value after removing at most one enclosing Markdown code fence.
-It uses synchronous Ajv strict validation with remote loading disabled, rejects every `$ref` and
-nested `$async`, and stops after a bounded error set. It does not execute custom formats or
-schema-provided code.
-Ajv and regex-safety dependencies are pinned. Any semantic change to those validators, Markdown
-section extraction, evidence normalization, or verdict reduction must bump `evaluatorVersion`.
-
-Requirements compose conjunctively. A missing required section or schema mismatch is `failed`.
-Missing candidate data, cancellation, interruption, unavailable evidence, or evaluator failure is
-`indeterminate`.
+V1 supports one Handoff format requirement kind: `required_sections`, a list of required level-two
+Markdown section names. Requirements compose conjunctively. A named section is valid only when its
+heading is recognized outside a Markdown fence and its body is non-empty. This check proves Handoff
+shape only; it does not prove task completion, factual correctness, or parent acceptance. Missing
+candidate data, cancellation, or interruption makes format status `indeterminate`. Any semantic
+change to Markdown section extraction, evidence normalization, or format-status reduction must bump
+`evaluatorVersion`.
 
 The canonical contract excludes timestamps, entry IDs, and origin references from its content hash.
 Its identity is the canonical JSON value plus a versioned SHA-256 hash.
 
 V1 applies these UTF-8 persistence limits before mutation:
 
-- canonical TaskContract: 128 KiB, including at most 64 acceptance requirements;
-- one embedded result schema: 32 KiB;
+- canonical TaskContract: 128 KiB, including at most 64 Handoff format requirements;
 - canonical ExecutionContract: 64 KiB, including at most 256 tool identities and 64 prompt sections;
 - canonical evaluation projection: 32 KiB, including at most 64 bounded reason/evidence records.
 
@@ -187,18 +182,18 @@ to their existing host contracts.
 
 ### Evaluation And Settlement
 
-Execution status, contract verdict, and consumer disposition are independent axes:
+Execution status and Handoff format status are independent axes:
 
 ```text
 executionStatus = completed | failed | cancelled | interrupted
-verdict         = passed | failed | indeterminate
-disposition     = accepted | parked
+evaluationKind  = handoff_format
+formatStatus    = valid | invalid | indeterminate
 ```
 
-`accepted` is valid only with `passed`. `failed` and `indeterminate` are `parked`. Parked is an
-evaluation disposition, not a new persisted delegation or turn status. A successfully generated
-but contract-invalid answer remains `executionStatus=completed` and leaves the delegation `idle`,
-so the parent may explicitly start a new follow-up turn.
+A successfully generated but format-invalid answer remains `executionStatus=completed` and leaves
+the delegation `idle`, so the parent may inspect the untrusted evidence and explicitly start a new
+follow-up turn. `formatStatus=valid` never means that the delegated task succeeded or that the parent
+accepted the child's conclusion.
 
 For each contract-bearing terminal turn, the settlement transaction must:
 
@@ -220,8 +215,8 @@ content is corruption, not a successful retry.
 The Tape fact is historical evidence, not a model-facing delivery mechanism. Existing
 `wait`, `inspect`, and `read_result` projections expose:
 
-- `verdict`;
-- `disposition`;
+- `evaluationKind`;
+- `formatStatus`;
 - bounded reason codes and evidence references;
 - `evaluationRef`.
 
@@ -247,9 +242,9 @@ This table describes write disciplines, not a count of all Tape event families.
 ## Compatibility
 
 - ViewManifest schemas 1 through 4 and their historical hash versions remain readable.
-- Normal DeepChat contract-bearing writes use ViewManifest schema 5 and manifest hash version 3.
-  ACP compatibility and an explicitly degraded ordinary interactive request may still write schema
-  4; contract-bearing child requests never take that fallback.
+- Contract-bearing DeepChat child writes use ViewManifest schema 5 and manifest hash version 3.
+  Ordinary interactive chat and ACP compatibility use schema 4 and do not construct or enforce an
+  ExecutionContract. Contract-bearing DeepChat child requests never take that fallback.
 - New live-delegation contract/evaluation columns are nullable for historical rows.
 - Historical terminal turns remain readable with no evaluation; no facts are fabricated for them.
 - A legacy active turn without a TaskContract must freeze a compatibility contract before it may
@@ -272,16 +267,15 @@ This table describes write disciplines, not a count of all Tape event families.
 - Tool ceilings use stable tool target identity, not only a model-visible name.
 - Runtime revalidates current permission, workdir identity, Session lineage, and tool authority
   immediately before dispatch.
-- Child output remains untrusted even when its contract passes.
-- JSON Schema evaluation is bounded by accepted schema size, candidate size, and evaluator work;
-  remote references and executable formats are forbidden.
+- Child output remains untrusted even when its Handoff format is valid.
 - Error projections use bounded reason codes and sanitized messages.
 
 ## Acceptance Criteria
 
-1. Every successfully assembled normal DeepChat View has a schema-v5 manifest containing a
-   verifiable ExecutionContract built from the exact request inputs; ACP compatibility and bounded
-   ordinary-interactive degradation retain their documented schema-v4 behavior.
+1. Every successfully assembled contract-bearing DeepChat child View has a schema-v5 manifest
+   containing a verifiable ExecutionContract built from the exact request inputs; ordinary
+   interactive chat and ACP compatibility retain their documented schema-v4 behavior without an
+   ExecutionContract.
 2. Tool dispatch receives the exact View contract and rejects a tool outside its frozen ceiling even
    when current runtime authority would otherwise permit it.
 3. Current revocation still interrupts or rejects active child work before dispatch.
@@ -291,8 +285,8 @@ This table describes write disciplines, not a count of all Tape event families.
 6. Child execution cannot start until the same TaskContract is durably inherited into the child Tape.
 7. Every terminal contract-bearing turn atomically stores evaluation fact, turn projection, state
    transition, and mailbox event.
-8. Contract failure does not rewrite successful provider execution as an execution failure.
-9. Parent-facing orchestration results expose verdict, disposition, and evaluation identity.
+8. Handoff format failure does not rewrite successful provider execution as an execution failure.
+9. Parent-facing orchestration results expose evaluation kind, format status, and evaluation identity.
 10. Old manifests and historical delegation rows remain readable without fabricated evaluations.
 11. Contract namespace conflicts, idempotency conflicts, dangling origin identity, and malformed
     projections fail closed on automated-consumer paths.

@@ -18,8 +18,10 @@
 
 ## P0: ViewManifest V5 And Enforcement
 
-- [x] Embed ExecutionContract in ViewManifest schema 5 and preserve v1-v4 reads.
-- [x] Keep interactive manifest persistence fail-open and require contract-bearing child manifests.
+- [x] Embed ExecutionContract in contract-bearing child ViewManifest schema 5 and preserve v1-v4
+      reads plus ordinary-chat and ACP schema-v4 writes.
+- [x] Keep ordinary interactive manifest persistence fail-open and require contract-bearing DeepChat
+      child manifests.
 - [x] Carry the exact View contract to tool dispatch without Session-global mutable state.
 - [x] Enforce stable tool target, effect, exact View workdir binding, and nesting ceilings with
       current authority.
@@ -46,13 +48,13 @@
 
 ## P1: Evaluation And Parent Visibility
 
-- [x] Implement bounded required-section and result-schema evaluation.
+- [x] Implement bounded required-section Handoff format evaluation.
 - [x] Commit evaluation fact, projection, terminal state, and mailbox event atomically.
 - [x] Ensure every contract-bearing terminal path produces evaluation or remains recoverable.
 - [x] Surface evaluation through inspect, wait, read_result, and the untrusted result envelope.
-- [x] Preserve orthogonal execution status, verdict, and disposition semantics.
-- [x] Cover no answer, malformed result, cancellation, interruption, evaluator failure, and
-      settlement retry/recovery.
+- [x] Keep execution status independent from Handoff format status without asserting task success.
+- [x] Cover no answer, missing/empty sections, cancellation, interruption, and settlement
+      retry/recovery.
 - [x] Review and commit the evaluation/settlement slice.
 
 ## Documentation And Final Validation
@@ -61,7 +63,7 @@
 - [x] Run format, i18n, lint, Node/web typecheck, focused tests, and relevant main suites.
 - [x] Review the complete merge-base-to-HEAD diff and fix findings by severity.
 - [x] Confirm every task and acceptance criterion is represented in code or documented as deferred.
-- [x] Confirm the branch has not been pushed.
+- [x] Keep the PR branch free of unrelated baseline test repairs.
 
 ## Validation Record
 
@@ -69,13 +71,15 @@ Completed on 2026-08-09:
 
 | Gate | Result |
 | --- | --- |
-| `pnpm run format` and `pnpm run format:check` | Passed |
+| `pnpm run format:check` | Passed across 2,711 files |
 | `pnpm run i18n` | Passed with no missing or invalid translations |
-| `pnpm run lint` | Passed |
-| `pnpm run typecheck:node` and `pnpm run typecheck:web` | Passed |
-| Focused prompt, View, Tape, dispatch, orchestration, and integration suites | Passed |
-| `pnpm run test:main` | 570 files and 6,933 tests passed; 1 file and 5 tests skipped |
+| `pnpm run lint` | Passed with no warnings or errors |
+| `pnpm run typecheck` | Node and web typechecks passed |
+| Full DeepChat Agent harness | 297 tests passed |
+| Focused contract, View, ToolService, Tape, and orchestration suites | 226 tests passed |
+| `pnpm run test:main` | Three unrelated failures already present at the `dev` merge base |
 
-The three previously recorded baseline failures were repaired before the final validation run. The
-final severity-ordered review found no unresolved merge blockers. The branch has no upstream and
-was not pushed.
+The `test:main` baseline consists of one provider-config snapshot in `schedulerService.test.ts` and
+two missing-table fixtures in `sessionDataMigrations.sqlite.test.ts`. This branch does not change
+their owner paths; the unrelated repairs were removed from this PR. The final severity-ordered
+review found no unresolved merge blockers in the completed focused suites.

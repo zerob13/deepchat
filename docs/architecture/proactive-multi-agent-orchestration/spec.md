@@ -83,10 +83,10 @@ identity, content hash, byte/token size, and explicit truncation state. `read_re
 referenced answer without starting new model work.
 
 For contract-bearing turns, the parent also receives a bounded structured evaluation through
-`wait`, `inspect`, and `read_result`. Verdict, disposition, reason/evidence records, and the complete
-`evaluationRef` are projected outside child-authored text. Tape remains the historical source for
-the evaluation fact; live-delegation rows and mailbox events are the online projection consumed by
-the orchestration runtime.
+`wait`, `inspect`, and `read_result`. Evaluation kind, Handoff format status, reason/evidence records,
+and the complete `evaluationRef` are projected outside child-authored text. Tape remains the
+historical source for the evaluation fact; live-delegation rows and mailbox events are the online
+projection consumed by the orchestration runtime.
 
 Child answers are untrusted evidence, not instructions. Every model-facing child result uses one
 shared orchestration envelope that:
@@ -107,7 +107,7 @@ sanitize or reinterpret valid child payload text, which remains untrusted eviden
 ## Task And Execution Contracts
 
 Every new live-delegation turn freezes one immutable `TaskContract` containing task schema, stable
-task configuration, task description, and the harness acceptance/ceiling rules. The parent appends
+task configuration, task description, and the harness Handoff-format/ceiling rules. The parent appends
 `contract/task_frozen` in the same transaction that creates the turn and stores the same canonical
 value plus a full Session/Tape/entry/hash reference on the turn projection.
 
@@ -126,26 +126,27 @@ groups:
   provider-visible tool definitions, internal execution policy, assembler, and TaskContract ref.
 
 The same ExecutionContract value follows the provider request, loop run, tool batch, dispatch guard,
-and schema-v5 ViewManifest. Contract-bearing child Views fail closed before provider dispatch when
-the manifest or TaskContract binding cannot be persisted. Ordinary interactive chat preserves its
-existing fail-open manifest behavior.
+and schema-v5 ViewManifest. Contract-bearing DeepChat child Views fail closed before provider
+dispatch when the manifest or TaskContract binding cannot be persisted. Ordinary interactive chat
+and ACP compatibility continue to use schema-v4 manifests without ExecutionContract construction or
+dispatch enforcement.
 
-Terminal settlement evaluates the persisted complete child answer against required level-two
-Markdown sections and optional bounded local JSON Schema requirements. It keeps three independent
-axes:
+Terminal settlement validates the persisted complete child answer against the required level-two
+Markdown Handoff sections. It keeps execution and format status independent:
 
 ```text
 executionStatus = completed | failed | cancelled | interrupted
-verdict         = passed | failed | indeterminate
-disposition     = accepted | parked
+evaluationKind  = handoff_format
+formatStatus    = valid | invalid | indeterminate
 ```
 
-Only `passed` is accepted. A generated answer that fails acceptance remains `completed`, is parked,
-and returns the delegation to `idle`, allowing an explicit parent `follow_up`. Every
-contract-bearing terminal settlement atomically appends `contract/evaluated`, updates the turn and
-delegation projections, and emits the terminal mailbox event with the same canonical evaluation.
+A format-valid result only proves the required sections have non-empty bodies. It does not prove
+task completion, factual correctness, or parent acceptance. A generated answer with invalid format
+remains `completed` and returns the delegation to `idle`, allowing an explicit parent `follow_up`.
+Every contract-bearing terminal settlement atomically appends `contract/evaluated`, updates the turn
+and delegation projections, and emits the terminal mailbox event with the same canonical evaluation.
 If that transaction cannot complete, the turn remains recoverable rather than becoming terminal
-without a verdict.
+without an evaluation.
 
 ## Consent And Permissions
 
@@ -231,7 +232,7 @@ byte limit.
 
 A follow-up is a new turn with a newly frozen TaskContract. Its task configuration cites the prior
 `evaluationRef` from the same parent Session; it does not mutate the previous contract, replay the
-previous Run identity, or automatically reinterpret parked output as accepted. Cross-Session
+previous Run identity, or reinterpret a format-valid child claim as trusted. Cross-Session
 predecessor references fail canonical contract validation.
 
 Child-to-parent terminal events are a durable cursor stream and remain available until their parent
@@ -264,8 +265,8 @@ code must never lower the latest schema version below a version already observed
 
 Version 65 adds nullable, bounded TaskContract, parent/child reference, and evaluation projection
 columns to `live_delegation_turns`. Version 66 adds the bounded evaluation value/reference projection
-to `live_delegation_events`, so a parent mailbox consumer receives the same terminal verdict without
-querying Tape. Existing rows remain valid with null contract/evaluation fields; historical terminal
+to `live_delegation_events`, so a parent mailbox consumer receives the same Handoff format status
+without querying Tape. Existing rows remain valid with null contract/evaluation fields; historical terminal
 turns are not assigned fabricated evaluations.
 
 Schema version numbers are monotonic high-water marks. Upgrade paths record intentionally empty
@@ -296,9 +297,9 @@ Workflow panels, saved Workflow commands, launch approvals, and `/workflow` are 
 - Existing released Sessions default to `explicit`; intent is never inferred from disabled tools.
 - Existing feature-branch databases migrate forward through version 66; pre-contract rows remain
   readable with nullable projections.
-- ViewManifest schemas 1-4 remain readable. New schema-v5 manifests bind one ExecutionContract to
-  the exact request, and contract-bearing child dispatch fails closed on a missing or conflicting
-  binding.
+- ViewManifest schemas 1-4 remain readable. Contract-bearing DeepChat child schema-v5 manifests bind
+  one ExecutionContract to the exact request and fail closed on a missing or conflicting binding;
+  ordinary interactive chat and ACP continue to write schema 4 without an ExecutionContract.
 - Legacy active turns freeze an explicit `legacy_recovery` contract before continuation. Historical
   terminal turns remain unevaluated; a contract-bearing terminal turn without an evaluation is
   invalid and remains recoverable.
@@ -334,11 +335,11 @@ Workflow panels, saved Workflow commands, launch approvals, and `/workflow` are 
     of proactive-collaboration availability.
 13. Every new delegation turn freezes a parent TaskContract, and the child durably inherits the
     same value before provider dispatch without reading the parent Tape on its hot path.
-14. Every contract-bearing View carries one schema-v5 ExecutionContract and enforces the typed meet
-    of its frozen ceilings with current runtime authority.
+14. Every contract-bearing DeepChat child View carries one schema-v5 ExecutionContract and enforces
+    the typed meet of its frozen ceilings with current runtime authority.
 15. Every contract-bearing terminal settlement atomically persists one evaluation fact, turn and
-    delegation projections, and mailbox event; execution status, verdict, and disposition remain
-    independent.
+    delegation projections, and mailbox event; execution status remains independent from Handoff
+    format status.
 16. `wait`, `inspect`, and `read_result` expose bounded structured evaluation metadata outside
     untrusted child text.
 

@@ -167,17 +167,16 @@ Tape entries + anchors + linked child head
 ```
 
 `ViewManifest` 记录 policy、version、context builder、selection reason、included/excluded entry、
-synthetic contribution、anchor、token budget provenance 和该请求的 `ExecutionContract`。正常 chat、
-resume、tool loop 和 context pressure recovery 都必须记录自己的 view；不得依赖无法复现的隐式 context
-builder 状态。summary、reconstruction 和 Memory 生成的 synthetic user contribution 只记录 source
-entry ID 与 content hash，不在 manifest 中复制原文。
+synthetic contribution、anchor、token budget provenance；contract-bearing DeepChat child 的 manifest
+还记录该请求的 `ExecutionContract`。正常 chat、resume、tool loop 和 context pressure recovery 都必须
+记录自己的 view；不得依赖无法复现的隐式 context builder 状态。summary、reconstruction 和 Memory
+生成的 synthetic user contribution 只记录 source entry ID 与 content hash，不在 manifest 中复制原文。
 
-正常 DeepChat 新写入默认使用 `cache_aware_context_v1` / `cache-aware-v1`、schema version 5 和
-manifest hash version 3。schema version 1-4 与其历史 hash 语义继续兼容读取且不得原地重写；ACP
-compatibility 与 ExecutionContract 构造失败后显式降级的普通 interactive request 仍可写 schema version
-4，contract-bearing child 不得走该 fallback。`legacy_context_v1` 与 `legacy-v1` builder 同样保留兼容
-路径。tool loop 和 context pressure 必须继承初始 projection 的 synthetic provenance，不能退化为仅按
-message role 猜测来源。
+Contract-bearing DeepChat child 使用 `cache_aware_context_v1` / `cache-aware-v1`、schema version 5 和
+manifest hash version 3。普通 interactive chat 与 ACP compatibility 继续写 schema version 4，不构造或
+执行 ExecutionContract；schema version 1-4 与其历史 hash 语义继续兼容读取且不得原地重写。
+`legacy_context_v1` 与 `legacy-v1` builder 同样保留兼容路径。tool loop 和 context pressure 必须继承
+初始 projection 的 synthetic provenance，不能退化为仅按 message role 猜测来源。
 
 每个 schema-v5 manifest 内嵌一个与 provider payload 同时构造的 immutable `ExecutionContract`，包含：
 
@@ -219,11 +218,11 @@ physicalAttempt 最大的 trace，再按 createdAt 和 ID 稳定排序；attempt
 ## Contract lineage 与评价
 
 每个 live-delegation turn 在 parent Tape 冻结一个 `TaskContract`，内容由 `taskSchema`、`taskConfig`、
-`taskDescription` 和 `taskHarness` 四部分组成。v1 harness 支持 required Markdown level-two sections 与
-指定 section 的 bounded synchronous local JSON Schema；所有层级的 `$ref` 与 `$async` 均被拒绝，不支持
-自动 repair、retry 或 override。follow-up 创建新 turn 和新 TaskContract，并引用同一 parent Session 的
-前一次 `evaluationRef`，不是复用旧 turn 或重放旧 Run；跨 Session predecessor ref 不能通过 canonical
-contract 校验。
+`taskDescription` 和 `taskHarness` 四部分组成。v1 harness 只验证 required Markdown level-two Handoff
+sections 是否存在非空正文；它不判断任务是否完成、内容是否正确或 parent 是否接受，不支持自动 repair、
+retry 或 override。follow-up 创建新 turn 和新 TaskContract，并引用同一 parent Session 的前一次
+`evaluationRef`，不是复用旧 turn 或重放旧 Run；跨 Session predecessor ref 不能通过 canonical contract
+校验。
 
 parent 在创建 turn 的事务内 append `contract/task_frozen`，同时把同一 canonical contract 和完整 ref 写入
 turn projection。child 在首次 provider dispatch 前把该 value strict append 到自己的 Tape，并以
@@ -232,20 +231,20 @@ child 收到的最小任务状态，不复制 parent transcript，也不要求 c
 child Tape reset 后，runtime 可用 row 中 hash-verified canonical value 在新 incarnation append
 `projection_recovery` fact 并替换 projection ref；完成前不得跨下一个 strict boundary。
 
-每个 contract-bearing terminal settlement 必须生成一个 `contract/evaluated`。执行状态、合同裁决和消费
-决策是三个正交维度：
+每个 contract-bearing terminal settlement 必须生成一个 `contract/evaluated`。执行状态和 Handoff 格式
+状态相互独立：
 
 ```text
 executionStatus = completed | failed | cancelled | interrupted
-verdict         = passed | failed | indeterminate
-disposition     = accepted | parked
+evaluationKind  = handoff_format
+formatStatus    = valid | invalid | indeterminate
 ```
 
-只有 `passed` 可 `accepted`；`failed` 和 `indeterminate` 均 `parked`。`parked` 是 evaluation
-disposition，不是 delegation/turn status。一个生成成功但验收失败的 child 仍是 `completed`，delegation
-回到 `idle`，由 parent 显式 `follow_up` 决定是否继续。settlement 在同一 SQLite transaction 中提交 Tape
-fact、turn/delegation projection 与 terminal mailbox event，三者使用同一 canonical evaluation；Tape 是
-历史证据，row/event 是 parent 在线消费的 projection，不构成双重 authority。
+`formatStatus=valid` 只证明固定 Handoff 结构满足要求，child 内容仍是不可信 evidence。一个生成成功但格式
+无效的 child 仍是 `completed`，delegation 回到 `idle`，由 parent 显式 `follow_up` 决定是否继续。
+settlement 在同一 SQLite transaction 中提交 Tape fact、turn/delegation projection 与 terminal mailbox
+event，三者使用同一 canonical evaluation；Tape 是历史证据，row/event 是 parent 在线消费的 projection，
+不构成双重 authority。
 
 TaskContract、ExecutionContract 与 evaluation 都有独立 schema/hash/evaluator version 和 UTF-8 上限。
 unknown legacy turn 不补造评价；contract-bearing turn 若无法原子写入评价则保持 recoverable，不得静默
