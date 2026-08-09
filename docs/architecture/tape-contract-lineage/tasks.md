@@ -71,7 +71,7 @@ Completed on 2026-08-09:
 
 | Gate | Result |
 | --- | --- |
-| `pnpm run format:check` | Passed across 2,711 files |
+| `pnpm run format:check` | Passed across 2,713 files |
 | `pnpm run i18n` | Passed with no missing or invalid translations |
 | `pnpm run lint` | Passed with no warnings or errors |
 | `pnpm run typecheck` | Node and web typechecks passed |
