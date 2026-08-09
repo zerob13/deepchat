@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { SubagentTapeLinkReceipt } from '@shared/types/agent-interface'
 import type {
   DeepChatEvaluationRef,
+  DeepChatStoredTaskEvaluation,
   DeepChatTaskContractContext,
   DeepChatTaskEvaluation
 } from '@shared/types/task-contract'
@@ -49,7 +50,7 @@ import {
 import {
   buildTaskEvaluation,
   restoreEvaluationRef,
-  restoreTaskEvaluation,
+  restoreStoredTaskEvaluation,
   serializeEvaluationRef,
   serializeTaskEvaluation
 } from '@/tape/domain/taskEvaluation'
@@ -776,7 +777,7 @@ export class LiveDelegationRepository {
       if (
         evaluation &&
         turn.evaluation &&
-        evaluation.evaluationHash !== turn.evaluation.evaluationHash
+        !matchesTerminalEvaluationRetry(turn.evaluation, evaluation)
       ) {
         throw new LiveDelegationTaskContractError(
           `Terminal evaluation retry conflicts with turn ${turn.id}.`
@@ -1329,7 +1330,7 @@ function parseTaskContractRef(value: string | null) {
 
 function parseTaskEvaluation(value: string | null) {
   if (!value) return null
-  const evaluation = restoreTaskEvaluation(
+  const evaluation = restoreStoredTaskEvaluation(
     parseStoredContractProjectionJson(value, 'Task evaluation')
   )
   if (!evaluation) {
@@ -1338,6 +1339,34 @@ function parseTaskEvaluation(value: string | null) {
     )
   }
   return evaluation
+}
+
+function matchesTerminalEvaluationRetry(
+  stored: DeepChatStoredTaskEvaluation,
+  evaluation: DeepChatTaskEvaluation
+): boolean {
+  if (stored.schemaVersion === evaluation.schemaVersion) {
+    return stored.evaluationHash === evaluation.evaluationHash
+  }
+  // Legacy and current schemas hash different content. Preserve the immutable legacy fact only
+  // when the complete terminal run identity is unchanged.
+  return (
+    stored.turnId === evaluation.turnId &&
+    stored.taskContractHash === evaluation.taskContractHash &&
+    stored.executionStatus === evaluation.executionStatus &&
+    candidatesMatch(stored.candidate, evaluation.candidate)
+  )
+}
+
+function candidatesMatch(
+  left: DeepChatStoredTaskEvaluation['candidate'],
+  right: DeepChatTaskEvaluation['candidate']
+): boolean {
+  if (left.kind !== right.kind) return false
+  return (
+    left.kind === 'absent' ||
+    (right.kind === 'answer' && left.sha256 === right.sha256 && left.utf8Bytes === right.utf8Bytes)
+  )
 }
 
 function parseEvaluationRef(value: string | null) {

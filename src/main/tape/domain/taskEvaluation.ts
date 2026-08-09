@@ -2,15 +2,21 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import {
   DEEPCHAT_EVALUATION_REF_SCHEMA_VERSION,
+  DEEPCHAT_TASK_EVALUATION_REASON_CODES,
   DEEPCHAT_TASK_EVALUATION_HASH_VERSION,
   DEEPCHAT_TASK_EVALUATION_SCHEMA_VERSION,
   DEEPCHAT_TASK_EVALUATOR_VERSION,
+  DeepChatLegacyTaskEvaluationProjectionSchema,
   DeepChatTaskEvaluationProjectionSchema,
   MAX_TASK_EVALUATION_BYTES,
   MAX_TASK_EVALUATION_CANDIDATE_BYTES,
   MAX_TASK_EVALUATION_PARENT_EVIDENCE,
   MAX_TASK_EVALUATION_RECORDS,
   type DeepChatEvaluationRef,
+  type DeepChatLegacyTaskEvaluation,
+  type DeepChatLegacyTaskEvaluationReasonCode,
+  type DeepChatLegacyTaskEvaluationRecord,
+  type DeepChatStoredTaskEvaluation,
   type DeepChatTaskContract,
   type DeepChatTaskEvaluation,
   type DeepChatTaskEvaluationExecutionStatus,
@@ -26,6 +32,11 @@ const SHA_256_PATTERN = /^[0-9a-f]{64}$/u
 const SUCCESS_REASON_CODES = new Set<DeepChatTaskEvaluationReasonCode>([
   'required_sections_present'
 ])
+const LEGACY_SUCCESS_REASON_CODES = new Set<DeepChatLegacyTaskEvaluationReasonCode>([
+  'required_sections_present',
+  'result_schema_valid'
+])
+const CURRENT_REASON_CODES = new Set<string>(DEEPCHAT_TASK_EVALUATION_REASON_CODES)
 
 export interface BuildTaskEvaluationInput {
   contract: DeepChatTaskContract
@@ -127,6 +138,26 @@ export function restoreTaskEvaluation(value: unknown): DeepChatTaskEvaluation | 
   return deepFreeze(evaluation)
 }
 
+export function restoreStoredTaskEvaluation(value: unknown): DeepChatStoredTaskEvaluation | null {
+  const current = restoreTaskEvaluation(value)
+  if (current) return current
+
+  const parsed = DeepChatLegacyTaskEvaluationProjectionSchema.safeParse(value)
+  if (!parsed.success) return null
+  const evaluation = parsed.data
+  if (
+    Buffer.byteLength(canonicalJsonStringifyData(evaluation), 'utf8') > MAX_TASK_EVALUATION_BYTES
+  ) {
+    return null
+  }
+  const { evaluationHash, ...draft } = evaluation
+  if (hashJsonData(draft) !== evaluationHash) return null
+  if (!isCanonicalLegacyEvaluation(evaluation) || !isProjectableLegacyEvaluation(evaluation)) {
+    return null
+  }
+  return deepFreeze(evaluation)
+}
+
 export function isDeepChatTaskEvaluation(value: unknown): value is DeepChatTaskEvaluation {
   return restoreTaskEvaluation(value) !== null
 }
@@ -168,11 +199,11 @@ export function serializeEvaluationRef(ref: DeepChatEvaluationRef): string {
 }
 
 export function projectTaskEvaluationSummary(
-  evaluation: DeepChatTaskEvaluation,
+  evaluation: DeepChatStoredTaskEvaluation,
   evaluationRef: DeepChatEvaluationRef,
   maxEvidenceRecords = MAX_TASK_EVALUATION_PARENT_EVIDENCE
 ): DeepChatTaskEvaluationSummary {
-  const canonicalEvaluation = restoreTaskEvaluation(evaluation)
+  const canonicalEvaluation = restoreStoredTaskEvaluation(evaluation)
   const canonicalRef = restoreEvaluationRef(evaluationRef)
   if (
     !canonicalEvaluation ||
@@ -185,18 +216,58 @@ export function projectTaskEvaluationSummary(
     throw new TaskEvaluationError('Task evaluation evidence limit is invalid.', 'invalid_input')
   }
   const evidenceLimit = Math.min(maxEvidenceRecords, MAX_TASK_EVALUATION_PARENT_EVIDENCE)
-  const relevant = canonicalEvaluation.records.filter((record) => record.outcome !== 'valid')
+  const projected =
+    canonicalEvaluation.schemaVersion === DEEPCHAT_TASK_EVALUATION_SCHEMA_VERSION
+      ? {
+          formatStatus: canonicalEvaluation.formatStatus,
+          reasonCodes: canonicalEvaluation.reasonCodes,
+          records: canonicalEvaluation.records
+        }
+      : projectLegacyEvaluation(canonicalEvaluation)
+  const relevant = projected.records.filter((record) => record.outcome !== 'valid')
   const evidence = relevant.slice(0, evidenceLimit)
   return deepFreeze({
-    evaluationKind: canonicalEvaluation.evaluationKind,
-    formatStatus: canonicalEvaluation.formatStatus,
-    reasonCodes: [...canonicalEvaluation.reasonCodes],
+    evaluationKind: 'handoff_format',
+    formatStatus: projected.formatStatus,
+    reasonCodes: [...projected.reasonCodes],
     candidate: canonicalEvaluation.candidate,
     evidence,
     evaluationRef: canonicalRef,
     omittedEvidenceCount:
       canonicalEvaluation.omittedRecordCount + Math.max(0, relevant.length - evidence.length)
   })
+}
+
+function projectLegacyEvaluation(evaluation: DeepChatLegacyTaskEvaluation): {
+  formatStatus: DeepChatTaskEvaluation['formatStatus']
+  reasonCodes: readonly DeepChatTaskEvaluationReasonCode[]
+  records: readonly DeepChatTaskEvaluationRecord[]
+} {
+  const records = evaluation.records.map(
+    (record): DeepChatTaskEvaluationRecord => ({
+      requirementId: record.requirementId,
+      requirementKind: record.requirementKind as 'required_sections' | null,
+      outcome:
+        record.outcome === 'passed'
+          ? 'valid'
+          : record.outcome === 'failed'
+            ? 'invalid'
+            : 'indeterminate',
+      code: record.code as DeepChatTaskEvaluationReasonCode,
+      section: record.section,
+      additionalEvidenceCount: record.additionalEvidenceCount
+    })
+  )
+  const formatStatus = records.some((record) => record.outcome === 'invalid')
+    ? 'invalid'
+    : records.some((record) => record.outcome === 'indeterminate')
+      ? 'indeterminate'
+      : 'valid'
+  return {
+    formatStatus,
+    reasonCodes: evaluation.reasonCodes as readonly DeepChatTaskEvaluationReasonCode[],
+    records
+  }
 }
 
 function evaluateRequirements(
@@ -302,6 +373,147 @@ function isCanonicalEvaluation(evaluation: DeepChatTaskEvaluation): boolean {
       recordMatchesReasonCode(record) &&
       (record.outcome === 'valid' || evaluation.reasonCodes.includes(record.code))
   )
+}
+
+function isCanonicalLegacyEvaluation(evaluation: DeepChatLegacyTaskEvaluation): boolean {
+  if ((evaluation.verdict === 'passed') !== (evaluation.disposition === 'accepted')) return false
+  if (evaluation.reasonCodes.some((code) => LEGACY_SUCCESS_REASON_CODES.has(code))) return false
+  if (
+    canonicalJsonStringifyData(evaluation.reasonCodes) !==
+    canonicalJsonStringifyData([...new Set(evaluation.reasonCodes)].sort(compareCodePoints))
+  ) {
+    return false
+  }
+  const recordedReasonCodes = [
+    ...new Set(
+      evaluation.records
+        .filter((record) => record.outcome !== 'passed')
+        .map((record) => record.code)
+    )
+  ].sort(compareCodePoints)
+  if (
+    evaluation.omittedRecordCount === 0 &&
+    canonicalJsonStringifyData(evaluation.reasonCodes) !==
+      canonicalJsonStringifyData(recordedReasonCodes)
+  ) {
+    return false
+  }
+  const reasonOutcomes = evaluation.reasonCodes.map(legacyReasonCodeOutcome)
+  const expectedVerdict = reasonOutcomes.includes('failed')
+    ? 'failed'
+    : reasonOutcomes.includes('indeterminate')
+      ? 'indeterminate'
+      : 'passed'
+  if (evaluation.verdict !== expectedVerdict) return false
+  return evaluation.records.every(
+    (record) =>
+      legacyRecordMatchesReasonCode(record) &&
+      (record.outcome === 'passed' || evaluation.reasonCodes.includes(record.code))
+  )
+}
+
+function isProjectableLegacyEvaluation(evaluation: DeepChatLegacyTaskEvaluation): boolean {
+  return (
+    evaluation.omittedRecordCount === 0 &&
+    evaluation.reasonCodes.every((code) => CURRENT_REASON_CODES.has(code)) &&
+    evaluation.records.every(
+      (record) =>
+        record.requirementKind !== 'result_schema' &&
+        CURRENT_REASON_CODES.has(record.code) &&
+        record.instancePath === null &&
+        record.keyword === null
+    ) &&
+    legacyEvaluationMatchesWriterState(evaluation)
+  )
+}
+
+function legacyEvaluationMatchesWriterState(evaluation: DeepChatLegacyTaskEvaluation): boolean {
+  if (evaluation.candidate.kind === 'answer' && evaluation.candidate.utf8Bytes === 0) return false
+  if (evaluation.executionStatus === 'cancelled') {
+    return hasOnlyLegacyStateRecord(evaluation.records, 'execution_cancelled')
+  }
+  if (evaluation.executionStatus === 'interrupted') {
+    return hasOnlyLegacyStateRecord(evaluation.records, 'execution_interrupted')
+  }
+  if (evaluation.candidate.kind === 'absent') {
+    return hasOnlyLegacyStateRecord(evaluation.records, 'candidate_missing')
+  }
+  if (evaluation.candidate.utf8Bytes > MAX_TASK_EVALUATION_CANDIDATE_BYTES) {
+    return hasOnlyLegacyStateRecord(evaluation.records, 'candidate_too_large')
+  }
+
+  const requirementIds = new Set<string>()
+  let previousRequirementId: string | null = null
+  return evaluation.records.every((record) => {
+    if (
+      record.requirementId === null ||
+      record.requirementKind !== 'required_sections' ||
+      requirementIds.has(record.requirementId) ||
+      (previousRequirementId !== null &&
+        compareCodePoints(previousRequirementId, record.requirementId) >= 0)
+    ) {
+      return false
+    }
+    requirementIds.add(record.requirementId)
+    previousRequirementId = record.requirementId
+    return record.code === 'required_sections_present'
+      ? record.outcome === 'passed' &&
+          record.section === null &&
+          record.additionalEvidenceCount === 0
+      : record.code === 'required_sections_missing' &&
+          record.outcome === 'failed' &&
+          record.section !== null
+  })
+}
+
+function hasOnlyLegacyStateRecord(
+  records: readonly DeepChatLegacyTaskEvaluationRecord[],
+  code:
+    | 'candidate_missing'
+    | 'candidate_too_large'
+    | 'execution_cancelled'
+    | 'execution_interrupted'
+): boolean {
+  if (records.length !== 1) return false
+  const [record] = records
+  return (
+    record.requirementId === null &&
+    record.requirementKind === null &&
+    record.outcome === 'indeterminate' &&
+    record.code === code &&
+    record.section === null &&
+    record.instancePath === null &&
+    record.keyword === null &&
+    record.additionalEvidenceCount === 0
+  )
+}
+
+function legacyRecordMatchesReasonCode(record: DeepChatLegacyTaskEvaluationRecord): boolean {
+  const expectedOutcome = legacyReasonCodeOutcome(record.code)
+  if (record.outcome !== expectedOutcome) return false
+  const requirementCode =
+    record.code.startsWith('required_sections_') ||
+    record.code.startsWith('result_') ||
+    record.code === 'candidate_too_complex' ||
+    record.code === 'evaluator_error'
+  return requirementCode
+    ? record.requirementId !== null && record.requirementKind !== null
+    : record.requirementId === null && record.requirementKind === null
+}
+
+function legacyReasonCodeOutcome(
+  code: DeepChatLegacyTaskEvaluationReasonCode
+): DeepChatLegacyTaskEvaluationRecord['outcome'] {
+  if (LEGACY_SUCCESS_REASON_CODES.has(code)) return 'passed'
+  if (
+    code === 'required_sections_missing' ||
+    code === 'result_section_missing' ||
+    code === 'result_json_invalid' ||
+    code === 'result_schema_mismatch'
+  ) {
+    return 'failed'
+  }
+  return 'indeterminate'
 }
 
 function recordMatchesReasonCode(record: DeepChatTaskEvaluationRecord): boolean {

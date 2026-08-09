@@ -210,6 +210,17 @@ The evaluation idempotency identity includes the turn ID, TaskContract hash, can
 or explicit absence marker, and evaluator version. An existing identity with different canonical
 content is corruption, not a successful retry.
 
+Current writers emit evaluation content schema v2 with hash recipe v1 and evaluator
+`handoff-format-v1`. Feature-branch databases may contain the earlier schema-v1
+`task-contract-v1` value. That value remains read-only: DeepChat verifies its original canonical
+hash and keeps its evaluation ref and `contract/evaluated` Tape fact unchanged, then projects only
+the production-reachable required-section evidence into the current parent-facing Handoff format
+summary. A repeated terminal settlement may recognize the same legacy fact by turn, contract,
+execution status, and complete candidate identity, but it must not replace the fact or append a new
+mailbox event. Dormant legacy result-schema evaluations had no production producer and remain
+unsupported rather than being reinterpreted as Handoff evidence. Evaluation ref schema v1 and the
+`contract/evaluated` fact envelope/provenance version remain unchanged.
+
 ### Parent Visibility
 
 The Tape fact is historical evidence, not a model-facing delivery mechanism. Existing
@@ -247,6 +258,9 @@ This table describes write disciplines, not a count of all Tape event families.
   ExecutionContract. Contract-bearing DeepChat child requests never take that fallback.
 - New live-delegation contract/evaluation columns are nullable for historical rows.
 - Historical terminal turns remain readable with no evaluation; no facts are fabricated for them.
+- Hash-valid schema-v1 `task-contract-v1` evaluations written by earlier feature heads remain
+  readable without rewriting their projection, reference, mailbox copy, or Tape fact. New writes
+  use evaluation content schema v2.
 - A legacy active turn without a TaskContract must freeze a compatibility contract before it may
   resume. That contract records `legacy_recovery` provenance and does not retroactively impose new
   required sections on already-started work.

@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import type { DeepChatLegacyTaskEvaluation } from '@shared/types/task-contract'
 import { Database, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
 import {
   createLegacyLiveDelegationTaskContractInput,
   createLiveDelegationTaskContractInput
 } from '@/orchestration/liveDelegationTaskContract'
+import { canonicalJsonStringifyData, hashJsonData } from '@/tape/domain/canonicalJson'
 
 const databaseModule = Database
   ? await import('@/orchestration/data/database').catch(() => null)
@@ -128,6 +130,43 @@ describeIfSqlite('LiveDelegationRepository', () => {
       '## Unresolved',
       'None.'
     ].join('\n')
+  }
+
+  function buildPreviousHeadEvaluation(
+    taskContractHash: string,
+    candidateResult: string,
+    executionStatus: DeepChatLegacyTaskEvaluation['executionStatus'] = 'completed'
+  ): DeepChatLegacyTaskEvaluation {
+    const draft = {
+      schemaVersion: 1 as const,
+      hashVersion: 1 as const,
+      evaluatorVersion: 'task-contract-v1' as const,
+      turnId: 'turn-1',
+      taskContractHash,
+      candidate: {
+        kind: 'answer' as const,
+        sha256: createHash('sha256').update(candidateResult, 'utf8').digest('hex'),
+        utf8Bytes: Buffer.byteLength(candidateResult, 'utf8')
+      },
+      executionStatus,
+      verdict: 'passed' as const,
+      disposition: 'accepted' as const,
+      reasonCodes: [],
+      records: [
+        {
+          requirementId: 'live-delegation-required-sections',
+          requirementKind: 'required_sections' as const,
+          outcome: 'passed' as const,
+          code: 'required_sections_present' as const,
+          section: null,
+          instancePath: null,
+          keyword: null,
+          additionalEvidenceCount: 0
+        }
+      ],
+      omittedRecordCount: 0
+    }
+    return { ...draft, evaluationHash: hashJsonData(draft) }
   }
 
   it('persists the thread and initial turn before child binding', () => {
@@ -986,6 +1025,146 @@ describeIfSqlite('LiveDelegationRepository', () => {
     })
     expect(event.evaluation).toEqual(settled.turn.evaluation)
     expect(event.evaluationRef).toEqual(settled.turn.evaluationRef)
+  })
+
+  it('reads and retries previous-head evaluations without rewriting their Tape binding', () => {
+    const created = createDelegation()
+    const answer = completeFormattedAnswer()
+    const taskContract = created.turn.taskContract!
+    const taskContractRef = created.turn.taskContractRef!
+    const evaluation = buildPreviousHeadEvaluation(taskContract.contractHash, answer)
+    const evaluationRow = contractStore.runInTransaction(() =>
+      contractStore.appendContractEvent({
+        sessionId: 'parent',
+        name: 'contract/evaluated',
+        source: { type: 'subagent', id: created.turn.id, seq: created.turn.seq },
+        provenanceKey: `contract:evaluated:v1:${created.turn.id}`,
+        data: { schemaVersion: 1, evaluation, taskContractRef },
+        meta: { protocolVersion: 1 },
+        createdAt: 120,
+        idempotent: false
+      })
+    )
+    const evaluationRef = {
+      schemaVersion: 1 as const,
+      sessionId: 'parent',
+      tapeIdentity: taskContractRef.tapeIdentity,
+      entryId: evaluationRow.entry_id,
+      evaluationHash: evaluation.evaluationHash
+    }
+    const evaluationJson = canonicalJsonStringifyData(evaluation)
+    const evaluationRefJson = canonicalJsonStringifyData(evaluationRef)
+    db!.transaction(() => {
+      db!
+        .prepare(
+          `UPDATE live_delegation_turns
+           SET status = 'completed', result_summary = ?, evaluation_json = ?,
+               evaluation_ref_json = ?, updated_at = 120, completed_at = 120
+           WHERE turn_id = ?`
+        )
+        .run('Use the reviewed conclusion.', evaluationJson, evaluationRefJson, created.turn.id)
+      db!
+        .prepare(
+          `UPDATE live_delegations
+           SET status = 'idle', last_summary = ?, updated_at = 120, revision = revision + 1
+           WHERE delegation_id = ?`
+        )
+        .run('Use the reviewed conclusion.', created.delegation.id)
+      db!
+        .prepare(
+          `INSERT INTO live_delegation_events (
+             delegation_id, parent_session_id, direction, kind, content, related_turn_id,
+             evaluation_json, evaluation_ref_json, created_at
+           ) VALUES (?, 'parent', 'child_to_parent', 'turn_completed', ?, ?, ?, ?, 120)`
+        )
+        .run(
+          created.delegation.id,
+          'Use the reviewed conclusion.',
+          created.turn.id,
+          evaluationJson,
+          evaluationRefJson
+        )
+    })()
+
+    const before = {
+      turn: db!
+        .prepare(
+          `SELECT evaluation_json, evaluation_ref_json
+           FROM live_delegation_turns WHERE turn_id = ?`
+        )
+        .get(created.turn.id),
+      event: db!
+        .prepare(
+          `SELECT evaluation_json, evaluation_ref_json
+           FROM live_delegation_events WHERE related_turn_id = ?`
+        )
+        .get(created.turn.id),
+      fact: contractStore.getByProvenanceKey('parent', `contract:evaluated:v1:${created.turn.id}`)
+    }
+
+    expect(repository.requireTurn(created.turn.id)).toMatchObject({
+      status: 'completed',
+      evaluation,
+      evaluationRef
+    })
+    expect(repository.listEvents('parent')).toEqual([
+      expect.objectContaining({ evaluation, evaluationRef })
+    ])
+    expect(
+      repository.finishTurn({
+        turnId: created.turn.id,
+        status: 'completed',
+        candidateResult: answer,
+        now: 130
+      }).turn
+    ).toMatchObject({ evaluation, evaluationRef })
+    expect(() =>
+      repository.finishTurn({
+        turnId: created.turn.id,
+        status: 'failed',
+        candidateResult: answer,
+        now: 140
+      })
+    ).toThrow('Terminal evaluation retry conflicts')
+    expect(() =>
+      repository.finishTurn({
+        turnId: created.turn.id,
+        status: 'completed',
+        candidateResult: `${answer}\nchanged`,
+        now: 150
+      })
+    ).toThrow('Terminal evaluation retry conflicts')
+
+    const after = {
+      turn: db!
+        .prepare(
+          `SELECT evaluation_json, evaluation_ref_json
+           FROM live_delegation_turns WHERE turn_id = ?`
+        )
+        .get(created.turn.id),
+      event: db!
+        .prepare(
+          `SELECT evaluation_json, evaluation_ref_json
+           FROM live_delegation_events WHERE related_turn_id = ?`
+        )
+        .get(created.turn.id),
+      fact: contractStore.getByProvenanceKey('parent', `contract:evaluated:v1:${created.turn.id}`)
+    }
+    expect(after).toEqual(before)
+    expect(
+      contractStore.getBySession('parent').filter((row) => row.name === 'contract/evaluated')
+    ).toHaveLength(1)
+    expect(repository.listEvents('parent')).toHaveLength(1)
+
+    const followUp = repository.createFollowUp(
+      'parent',
+      created.delegation.id,
+      'turn-2',
+      'Check the remaining edge case.',
+      createLiveDelegationTaskContractInput(null),
+      160
+    )
+    expect(followUp.turn.taskContract?.taskConfig.predecessorEvaluationRef).toEqual(evaluationRef)
   })
 
   it('rolls back evaluation fact, terminal projection, and mailbox event together', () => {

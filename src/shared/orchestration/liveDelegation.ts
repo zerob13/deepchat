@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { OrchestrationEffectEvidenceSchema, OrchestrationEffectStateSchema } from './toolEffect'
 import {
   DeepChatEvaluationRefSchema,
-  DeepChatTaskEvaluationProjectionSchema,
+  DeepChatStoredTaskEvaluationProjectionSchema,
   DeepChatTaskEvaluationSummarySchema,
   DeepChatTaskContractProjectionSchema,
   DeepChatTaskContractRefSchema
@@ -143,7 +143,7 @@ const LiveDelegationTurnBaseSchema = z
     taskContract: DeepChatTaskContractProjectionSchema.nullable().default(null),
     taskContractRef: DeepChatTaskContractRefSchema.nullable().default(null),
     inheritedTaskContractRef: DeepChatTaskContractRefSchema.nullable().default(null),
-    evaluation: DeepChatTaskEvaluationProjectionSchema.nullable().default(null),
+    evaluation: DeepChatStoredTaskEvaluationProjectionSchema.nullable().default(null),
     evaluationRef: DeepChatEvaluationRefSchema.nullable().default(null),
     effectState: OrchestrationEffectStateSchema,
     effectEvidence: OrchestrationEffectEvidenceSchema.nullable(),
@@ -168,7 +168,7 @@ const LiveDelegationEventBaseSchema = z
     content: z.string(),
     relatedTurnId: LiveDelegationIdSchema.nullable(),
     consumedByTurnId: LiveDelegationIdSchema.nullable(),
-    evaluation: DeepChatTaskEvaluationProjectionSchema.nullable().default(null),
+    evaluation: DeepChatStoredTaskEvaluationProjectionSchema.nullable().default(null),
     evaluationRef: DeepChatEvaluationRefSchema.nullable().default(null),
     createdAt: z.number().int().nonnegative()
   })

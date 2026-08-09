@@ -3,7 +3,9 @@ import { z } from 'zod'
 export const DEEPCHAT_TASK_CONTRACT_SCHEMA_VERSION = 1 as const
 export const DEEPCHAT_TASK_CONTRACT_HASH_VERSION = 1 as const
 export const DEEPCHAT_TASK_CONTRACT_REF_SCHEMA_VERSION = 1 as const
-export const DEEPCHAT_TASK_EVALUATION_SCHEMA_VERSION = 1 as const
+export const DEEPCHAT_LEGACY_TASK_EVALUATION_SCHEMA_VERSION = 1 as const
+export const DEEPCHAT_LEGACY_TASK_EVALUATOR_VERSION = 'task-contract-v1' as const
+export const DEEPCHAT_TASK_EVALUATION_SCHEMA_VERSION = 2 as const
 export const DEEPCHAT_TASK_EVALUATION_HASH_VERSION = 1 as const
 export const DEEPCHAT_TASK_EVALUATOR_VERSION = 'handoff-format-v1' as const
 export const DEEPCHAT_EVALUATION_REF_SCHEMA_VERSION = 1 as const
@@ -26,6 +28,21 @@ export const DEEPCHAT_TASK_EVALUATION_REASON_CODES = [
   'required_sections_missing'
 ] as const
 
+export const DEEPCHAT_LEGACY_TASK_EVALUATION_REASON_CODES = [
+  'candidate_missing',
+  'candidate_too_large',
+  'candidate_too_complex',
+  'execution_cancelled',
+  'execution_interrupted',
+  'required_sections_present',
+  'required_sections_missing',
+  'result_schema_valid',
+  'result_section_missing',
+  'result_json_invalid',
+  'result_schema_mismatch',
+  'evaluator_error'
+] as const
+
 export type DeepChatTaskEvaluationReasonCode =
   (typeof DEEPCHAT_TASK_EVALUATION_REASON_CODES)[number]
 export type DeepChatTaskEvaluationFormatStatus = 'valid' | 'invalid' | 'indeterminate'
@@ -35,6 +52,9 @@ export type DeepChatTaskEvaluationExecutionStatus =
   | 'cancelled'
   | 'interrupted'
 export type DeepChatTaskEvaluationOutcome = 'valid' | 'invalid' | 'indeterminate'
+export type DeepChatLegacyTaskEvaluationReasonCode =
+  (typeof DEEPCHAT_LEGACY_TASK_EVALUATION_REASON_CODES)[number]
+export type DeepChatLegacyTaskEvaluationOutcome = 'passed' | 'failed' | 'indeterminate'
 
 export interface DeepChatTaskContractRef {
   readonly schemaVersion: typeof DEEPCHAT_TASK_CONTRACT_REF_SCHEMA_VERSION
@@ -86,6 +106,36 @@ export interface DeepChatTaskEvaluation {
   readonly omittedRecordCount: number
   readonly evaluationHash: string
 }
+
+export interface DeepChatLegacyTaskEvaluationRecord {
+  readonly requirementId: string | null
+  readonly requirementKind: 'required_sections' | 'result_schema' | null
+  readonly outcome: DeepChatLegacyTaskEvaluationOutcome
+  readonly code: DeepChatLegacyTaskEvaluationReasonCode
+  readonly section: string | null
+  readonly instancePath: string | null
+  readonly keyword: string | null
+  readonly additionalEvidenceCount: number
+}
+
+export interface DeepChatLegacyTaskEvaluation {
+  readonly schemaVersion: typeof DEEPCHAT_LEGACY_TASK_EVALUATION_SCHEMA_VERSION
+  readonly hashVersion: typeof DEEPCHAT_TASK_EVALUATION_HASH_VERSION
+  readonly evaluatorVersion: typeof DEEPCHAT_LEGACY_TASK_EVALUATOR_VERSION
+  readonly turnId: string
+  readonly taskContractHash: string
+  readonly candidate: DeepChatTaskEvaluationCandidate
+  readonly executionStatus: DeepChatTaskEvaluationExecutionStatus
+  readonly verdict: DeepChatLegacyTaskEvaluationOutcome
+  readonly disposition: 'accepted' | 'parked'
+  readonly reasonCodes: readonly DeepChatLegacyTaskEvaluationReasonCode[]
+  readonly records: readonly DeepChatLegacyTaskEvaluationRecord[]
+  readonly omittedRecordCount: number
+  readonly evaluationHash: string
+}
+
+// Persistence readers accept the legacy arm; current writers use DeepChatTaskEvaluation only.
+export type DeepChatStoredTaskEvaluation = DeepChatTaskEvaluation | DeepChatLegacyTaskEvaluation
 
 export interface DeepChatTaskEvaluationSummary {
   readonly evaluationKind: 'handoff_format'
@@ -199,6 +249,10 @@ export const DeepChatTaskEvaluationCandidateSchema = z.discriminatedUnion('kind'
 
 export const DeepChatTaskEvaluationReasonCodeSchema = z.enum(DEEPCHAT_TASK_EVALUATION_REASON_CODES)
 
+const DeepChatLegacyTaskEvaluationReasonCodeSchema = z.enum(
+  DEEPCHAT_LEGACY_TASK_EVALUATION_REASON_CODES
+)
+
 export const DeepChatTaskEvaluationRecordSchema = z
   .object({
     requirementId: StoredIdSchema.nullable(),
@@ -229,6 +283,52 @@ export const DeepChatTaskEvaluationProjectionSchema: z.ZodType<DeepChatTaskEvalu
     evaluationHash: Sha256Schema
   })
   .strict()
+
+const DeepChatLegacyTaskEvaluationRecordSchema: z.ZodType<DeepChatLegacyTaskEvaluationRecord> = z
+  .object({
+    requirementId: StoredIdSchema.nullable(),
+    requirementKind: z.enum(['required_sections', 'result_schema']).nullable(),
+    outcome: z.enum(['passed', 'failed', 'indeterminate']),
+    code: DeepChatLegacyTaskEvaluationReasonCodeSchema,
+    section: z.string().trim().min(1).max(256).nullable(),
+    instancePath: z.string().max(1024).nullable(),
+    keyword: z.string().trim().min(1).max(128).nullable(),
+    additionalEvidenceCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+  })
+  .strict()
+
+export const DeepChatLegacyTaskEvaluationProjectionSchema: z.ZodType<DeepChatLegacyTaskEvaluation> =
+  z
+    .object({
+      schemaVersion: z.literal(DEEPCHAT_LEGACY_TASK_EVALUATION_SCHEMA_VERSION),
+      hashVersion: z.literal(DEEPCHAT_TASK_EVALUATION_HASH_VERSION),
+      evaluatorVersion: z.literal(DEEPCHAT_LEGACY_TASK_EVALUATOR_VERSION),
+      turnId: StoredIdSchema,
+      taskContractHash: Sha256Schema,
+      candidate: DeepChatTaskEvaluationCandidateSchema,
+      executionStatus: z.enum(['completed', 'failed', 'cancelled', 'interrupted']),
+      verdict: z.enum(['passed', 'failed', 'indeterminate']),
+      disposition: z.enum(['accepted', 'parked']),
+      reasonCodes: z
+        .array(DeepChatLegacyTaskEvaluationReasonCodeSchema)
+        .max(DEEPCHAT_LEGACY_TASK_EVALUATION_REASON_CODES.length),
+      records: z.array(DeepChatLegacyTaskEvaluationRecordSchema).max(MAX_TASK_EVALUATION_RECORDS),
+      omittedRecordCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      evaluationHash: Sha256Schema
+    })
+    .strict()
+    .superRefine((evaluation, context) => {
+      if ((evaluation.verdict === 'passed') !== (evaluation.disposition === 'accepted')) {
+        context.addIssue({
+          code: 'custom',
+          path: ['disposition'],
+          message: 'Only a passed legacy evaluation may be accepted'
+        })
+      }
+    })
+
+export const DeepChatStoredTaskEvaluationProjectionSchema: z.ZodType<DeepChatStoredTaskEvaluation> =
+  z.union([DeepChatTaskEvaluationProjectionSchema, DeepChatLegacyTaskEvaluationProjectionSchema])
 
 export const DeepChatTaskEvaluationSummarySchema: z.ZodType<DeepChatTaskEvaluationSummary> = z
   .object({
