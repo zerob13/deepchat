@@ -1,22 +1,22 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
-import fs from "fs";
-import path from "path";
+import fs from 'fs'
+import path from 'path'
 import type {
   DeepChatPromptAssembly,
   DeepChatPromptAssemblySection,
   DeepChatPromptDegradationCode
 } from '@shared/types/prompt-assembly'
-import type { SkillServicePort } from '@shared/types/skill';
-import type { MCPToolDefinition } from "@shared/types/core/mcp";
-import type { ToolServicePort } from "@shared/types/tool";
-import type { DeepChatAgentInstance } from "@/agent/deepchat/instance/deepChatAgentInstance";
+import type { SkillServicePort } from '@shared/types/skill'
+import type { MCPToolDefinition } from '@shared/types/core/mcp'
+import type { ToolServicePort } from '@shared/types/tool'
+import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import type { ProviderCatalogPort } from '@/provider/ports'
 import {
   buildRuntimeCapabilitiesPrompt,
   buildSystemEnvPromptAssembly
-} from "./systemEnvPromptBuilder";
+} from './systemEnvPromptBuilder'
 import { assemblePromptSections, createPromptAssemblySection } from './promptAssembly'
-import type { SkillSettingsPort } from "@/skill/settings";
+import type { SkillSettingsPort } from '@/skill/settings'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { UNTRUSTED_CHILD_OUTPUT_POLICY } from '@shared/orchestration/resultSafety'
 import {
@@ -25,87 +25,87 @@ import {
 } from '@shared/orchestration/policy'
 
 export type AgentExtensionPolicy = {
-  enabledMcpServerIds?: string[] | null;
-};
+  enabledMcpServerIds?: string[] | null
+}
 
 type SystemPromptSkillPort = Pick<
   SkillServicePort,
-  "getMetadataList" | "getActiveSkills" | "loadSkillContent" | "resolveSessionAgentId"
->;
-type ToolPromptPort = Pick<ToolServicePort, "buildToolSystemPrompt">;
+  'getMetadataList' | 'getActiveSkills' | 'loadSkillContent' | 'resolveSessionAgentId'
+>
+type ToolPromptPort = Pick<ToolServicePort, 'buildToolSystemPrompt'>
 
 export interface SystemPromptBuilderDependencies {
-  providerSettings: ProviderModelResolutionPort;
-  skillSettings: SkillSettingsPort;
-  skillService: SystemPromptSkillPort;
-  providerCatalogPort: Pick<ProviderCatalogPort, "getProviderModels" | "getCustomModels">;
-  toolService: ToolPromptPort;
-  assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void;
-  isAcpBackedSubagentSession(sessionId: string, providerId?: string): boolean;
+  providerSettings: ProviderModelResolutionPort
+  skillSettings: SkillSettingsPort
+  skillService: SystemPromptSkillPort
+  providerCatalogPort: Pick<ProviderCatalogPort, 'getProviderModels' | 'getCustomModels'>
+  toolService: ToolPromptPort
+  assertCurrent(sessionId: string, instance: DeepChatAgentInstance): void
+  isAcpBackedSubagentSession(sessionId: string, providerId?: string): boolean
   resolveProjectDir(
     sessionId: string,
     projectDir: string | null | undefined,
-    instance: DeepChatAgentInstance,
-  ): string | null;
-  logSlowStep(sessionId: string, step: string, startedAt: number): void;
+    instance: DeepChatAgentInstance
+  ): string | null
+  logSlowStep(sessionId: string, step: string, startedAt: number): void
 }
 
 export interface SystemPromptBuildInput {
-  sessionId: string;
-  basePrompt: string;
-  toolDefinitions: MCPToolDefinition[];
-  activeSkillNamesOverride?: string[];
+  sessionId: string
+  basePrompt: string
+  toolDefinitions: MCPToolDefinition[]
+  activeSkillNamesOverride?: string[]
   orchestrationPolicy?: OrchestrationPolicy
-  resourceInstance: DeepChatAgentInstance;
+  resourceInstance: DeepChatAgentInstance
 }
 
 type PackageJsonManifest = {
-  name?: unknown;
-  scripts?: Record<string, unknown>;
-};
+  name?: unknown
+  scripts?: Record<string, unknown>
+}
 
 function readPackageJsonManifest(workdir: string): PackageJsonManifest | null {
   try {
-    const packageJsonPath = path.join(workdir, "package.json");
+    const packageJsonPath = path.join(workdir, 'package.json')
     if (!fs.existsSync(packageJsonPath)) {
-      return null;
+      return null
     }
 
-    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
     }
 
-    return parsed as PackageJsonManifest;
+    return parsed as PackageJsonManifest
   } catch {
-    return null;
+    return null
   }
 }
 
 function getVerificationScriptNames(manifest: PackageJsonManifest | null): string[] {
-  const scripts = manifest?.scripts;
-  if (!scripts || typeof scripts !== "object") {
-    return [];
+  const scripts = manifest?.scripts
+  if (!scripts || typeof scripts !== 'object') {
+    return []
   }
 
   return Object.entries(scripts)
     .filter(
-      ([name, value]) => typeof name === "string" && typeof value === "string" && value.trim(),
+      ([name, value]) => typeof name === 'string' && typeof value === 'string' && value.trim()
     )
-    .map(([name]) => name);
+    .map(([name]) => name)
 }
 
 export async function buildSystemPromptAssemblyWithSkills(
   dependencies: SystemPromptBuilderDependencies,
-  input: SystemPromptBuildInput,
+  input: SystemPromptBuildInput
 ): Promise<DeepChatPromptAssembly> {
   const { sessionId, basePrompt, toolDefinitions, activeSkillNamesOverride, resourceInstance } =
-    input;
-  dependencies.assertCurrent(sessionId, resourceInstance);
-  const normalizedBase = basePrompt?.trim() ?? "";
-  const state = resourceInstance.getRuntimeState();
-  const providerId = state?.providerId?.trim() || "unknown-provider";
-  const modelId = state?.modelId?.trim() || "unknown-model";
+    input
+  dependencies.assertCurrent(sessionId, resourceInstance)
+  const normalizedBase = basePrompt?.trim() ?? ''
+  const state = resourceInstance.getRuntimeState()
+  const providerId = state?.providerId?.trim() || 'unknown-provider'
+  const modelId = state?.modelId?.trim() || 'unknown-model'
   if (dependencies.isAcpBackedSubagentSession(sessionId, providerId)) {
     return assemblePromptSections([
       createPromptAssemblySection({
@@ -113,166 +113,160 @@ export async function buildSystemPromptAssemblyWithSkills(
         sourceRef: 'session:generation-settings.system-prompt',
         content: normalizedBase
       })
-    ]);
+    ])
   }
 
   const workdir = resourceInstance.hasProjectDir()
     ? resourceInstance.getProjectDir()
-    : dependencies.resolveProjectDir(sessionId, undefined, resourceInstance);
-  const now = new Date();
+    : dependencies.resolveProjectDir(sessionId, undefined, resourceInstance)
+  const now = new Date()
 
-  const skillsEnabled = dependencies.skillSettings.isEnabled();
-  const skillService = dependencies.skillService;
-  const skillsMetadataDegradations: DeepChatPromptDegradationCode[] = [];
-  const pinnedSkillsDegradations: DeepChatPromptDegradationCode[] = [];
-  let sessionAgentId: string | null = null;
+  const skillsEnabled = dependencies.skillSettings.isEnabled()
+  const skillService = dependencies.skillService
+  const skillsMetadataDegradations: DeepChatPromptDegradationCode[] = []
+  const pinnedSkillsDegradations: DeepChatPromptDegradationCode[] = []
+  let sessionAgentId: string | null = null
   if (skillsEnabled) {
     try {
-      sessionAgentId = await skillService.resolveSessionAgentId(sessionId);
+      sessionAgentId = await skillService.resolveSessionAgentId(sessionId)
     } catch (error) {
       console.warn(
         `[DeepChatAgent] Failed to resolve agent id for skills in session ${sessionId}:`,
-        error,
-      );
+        error
+      )
     }
     if (!sessionAgentId) {
-      skillsMetadataDegradations.push('skill_agent_unavailable');
-      pinnedSkillsDegradations.push('skill_agent_unavailable');
+      skillsMetadataDegradations.push('skill_agent_unavailable')
+      pinnedSkillsDegradations.push('skill_agent_unavailable')
     }
   }
   const availableSkills: Array<{
-    name: string;
-    description: string;
-    category?: string | null;
-    platforms?: string[];
-  }> = [];
-  const activeSkillNames: string[] = activeSkillNamesOverride ? [...activeSkillNamesOverride] : [];
-  const skillDraftSuggestionsEnabled = dependencies.skillSettings.isDraftSuggestionsEnabled();
+    name: string
+    description: string
+    category?: string | null
+    platforms?: string[]
+  }> = []
+  const activeSkillNames: string[] = activeSkillNamesOverride ? [...activeSkillNamesOverride] : []
+  const skillDraftSuggestionsEnabled = dependencies.skillSettings.isDraftSuggestionsEnabled()
 
   if (skillsEnabled) {
-    const metadataStartedAt = Date.now();
+    const metadataStartedAt = Date.now()
     try {
-      const metadataList = sessionAgentId
-        ? await skillService.getMetadataList(sessionAgentId)
-        : [];
+      const metadataList = sessionAgentId ? await skillService.getMetadataList(sessionAgentId) : []
       for (const metadata of metadataList) {
-        const skillName = metadata?.name?.trim();
+        const skillName = metadata?.name?.trim()
         if (skillName) {
           availableSkills.push({
             name: skillName,
-            description: metadata.description?.trim() || "",
+            description: metadata.description?.trim() || '',
             category: metadata.category ?? null,
-            platforms: metadata.platforms,
-          });
+            platforms: metadata.platforms
+          })
         }
       }
     } catch (error) {
       console.warn(
         `[DeepChatAgent] Failed to load skills metadata for session ${sessionId}:`,
-        error,
-      );
-      skillsMetadataDegradations.push('skill_metadata_unavailable');
+        error
+      )
+      skillsMetadataDegradations.push('skill_metadata_unavailable')
     }
-    dependencies.logSlowStep(sessionId, "system-prompt.skills-metadata-load", metadataStartedAt);
+    dependencies.logSlowStep(sessionId, 'system-prompt.skills-metadata-load', metadataStartedAt)
 
     if (!activeSkillNamesOverride) {
-      const activeSkillsStartedAt = Date.now();
+      const activeSkillsStartedAt = Date.now()
       try {
-        const activeSkills = await skillService.getActiveSkills(sessionId);
+        const activeSkills = await skillService.getActiveSkills(sessionId)
         for (const skillName of activeSkills) {
-          const normalizedName = skillName?.trim();
+          const normalizedName = skillName?.trim()
           if (normalizedName) {
-            activeSkillNames.push(normalizedName);
+            activeSkillNames.push(normalizedName)
           }
         }
       } catch (error) {
         console.warn(
           `[DeepChatAgent] Failed to load active skills for session ${sessionId}:`,
-          error,
-        );
-        pinnedSkillsDegradations.push('active_skills_unavailable');
+          error
+        )
+        pinnedSkillsDegradations.push('active_skills_unavailable')
       }
-      dependencies.logSlowStep(
-        sessionId,
-        "system-prompt.active-skills-load",
-        activeSkillsStartedAt,
-      );
+      dependencies.logSlowStep(sessionId, 'system-prompt.active-skills-load', activeSkillsStartedAt)
     }
   }
 
-  let stepStartedAt = Date.now();
-  const normalizedAvailableSkills = normalizeSkillMetadata(availableSkills);
-  const availableSkillNames = new Set(normalizedAvailableSkills.map((skill) => skill.name));
-  const requestedActiveSkills = normalizeStringList(activeSkillNames);
+  let stepStartedAt = Date.now()
+  const normalizedAvailableSkills = normalizeSkillMetadata(availableSkills)
+  const availableSkillNames = new Set(normalizedAvailableSkills.map((skill) => skill.name))
+  const requestedActiveSkills = normalizeStringList(activeSkillNames)
   const normalizedActiveSkills = requestedActiveSkills.filter((skillName) =>
-    availableSkillNames.has(skillName),
-  );
+    availableSkillNames.has(skillName)
+  )
   if (normalizedActiveSkills.length !== requestedActiveSkills.length) {
-    pinnedSkillsDegradations.push('pinned_skill_unavailable');
+    pinnedSkillsDegradations.push('pinned_skill_unavailable')
   }
-  const agentToolNames = getAgentToolNames(toolDefinitions);
+  const agentToolNames = getAgentToolNames(toolDefinitions)
   const runtimePrompt = buildRuntimeCapabilitiesPrompt({
     hasYoBrowser: toolDefinitions.some(
-      (tool) => tool.source === "agent" && tool.server.name === "yobrowser",
+      (tool) => tool.source === 'agent' && tool.server.name === 'yobrowser'
     ),
-    hasExec: agentToolNames.has("exec"),
-    hasProcess: agentToolNames.has("process"),
-  });
+    hasExec: agentToolNames.has('exec'),
+    hasProcess: agentToolNames.has('process')
+  })
   const skillsMetadataPrompt = skillsEnabled
     ? buildSkillsMetadataPrompt(
         normalizedAvailableSkills,
         {
-          canListSkills: agentToolNames.has("skill_list"),
-          canViewSkills: agentToolNames.has("skill_view"),
-          canManageDraftSkills: agentToolNames.has("skill_manage"),
-          canRunSkillScripts: agentToolNames.has("skill_run"),
+          canListSkills: agentToolNames.has('skill_list'),
+          canViewSkills: agentToolNames.has('skill_view'),
+          canManageDraftSkills: agentToolNames.has('skill_manage'),
+          canRunSkillScripts: agentToolNames.has('skill_run')
         },
-        skillDraftSuggestionsEnabled,
+        skillDraftSuggestionsEnabled
       )
-    : "";
+    : ''
 
-  let skillsPrompt = "";
+  let skillsPrompt = ''
   if (skillsEnabled && normalizedActiveSkills.length > 0) {
-    stepStartedAt = Date.now();
-    const skillSections: string[] = [];
+    stepStartedAt = Date.now()
+    const skillSections: string[] = []
     for (const skillName of normalizedActiveSkills) {
       try {
         const skill = sessionAgentId
           ? await skillService.loadSkillContent(sessionAgentId, skillName)
-          : null;
-        const content = skill?.content?.trim();
+          : null
+        const content = skill?.content?.trim()
         if (content) {
-          skillSections.push(`### ${skillName}\n${content}`);
+          skillSections.push(`### ${skillName}\n${content}`)
         } else {
-          pinnedSkillsDegradations.push('pinned_skill_unavailable');
+          pinnedSkillsDegradations.push('pinned_skill_unavailable')
         }
       } catch (error) {
         console.warn(
           `[DeepChatAgent] Failed to load skill content for "${skillName}" in session ${sessionId}:`,
-          error,
-        );
-        pinnedSkillsDegradations.push('pinned_skill_load_failed');
+          error
+        )
+        pinnedSkillsDegradations.push('pinned_skill_load_failed')
       }
     }
-    skillsPrompt = buildPinnedSkillsPrompt(skillSections);
-    dependencies.logSlowStep(sessionId, "system-prompt.pinned-skills-load", stepStartedAt);
+    skillsPrompt = buildPinnedSkillsPrompt(skillSections)
+    dependencies.logSlowStep(sessionId, 'system-prompt.pinned-skills-load', stepStartedAt)
   }
 
-  let envSections: readonly DeepChatPromptAssemblySection[] = [];
+  let envSections: readonly DeepChatPromptAssemblySection[] = []
   try {
-    stepStartedAt = Date.now();
+    stepStartedAt = Date.now()
     envSections = (
       await buildSystemEnvPromptAssembly({
-      providerId,
-      modelId,
-      workdir,
-      now,
-      modelLookup: dependencies.providerCatalogPort,
+        providerId,
+        modelId,
+        workdir,
+        now,
+        modelLookup: dependencies.providerCatalogPort
       })
-    ).sections;
-    dependencies.logSlowStep(sessionId, "system-prompt.env-prompt", stepStartedAt);
+    ).sections
+    dependencies.logSlowStep(sessionId, 'system-prompt.env-prompt', stepStartedAt)
   } catch (error) {
-    console.warn(`[DeepChatAgent] Failed to build env prompt for session ${sessionId}:`, error);
+    console.warn(`[DeepChatAgent] Failed to build env prompt for session ${sessionId}:`, error)
     envSections = [
       createPromptAssemblySection({
         kind: 'system_environment',
@@ -286,24 +280,24 @@ export async function buildSystemPromptAssemblyWithSkills(
         content: '',
         degradationCodes: ['environment_build_failed']
       })
-    ];
+    ]
   }
 
-  let toolingPrompt = "";
-  const toolingDegradations: DeepChatPromptDegradationCode[] = [];
+  let toolingPrompt = ''
+  const toolingDegradations: DeepChatPromptDegradationCode[] = []
   try {
-    stepStartedAt = Date.now();
+    stepStartedAt = Date.now()
     toolingPrompt = dependencies.toolService.buildToolSystemPrompt({
       conversationId: sessionId,
-      toolDefinitions,
-    });
-    dependencies.logSlowStep(sessionId, "system-prompt.tooling-prompt", stepStartedAt);
+      toolDefinitions
+    })
+    dependencies.logSlowStep(sessionId, 'system-prompt.tooling-prompt', stepStartedAt)
   } catch (error) {
-    console.warn(`[DeepChatAgent] Failed to build tooling prompt for session ${sessionId}:`, error);
-    toolingDegradations.push('tooling_build_failed');
+    console.warn(`[DeepChatAgent] Failed to build tooling prompt for session ${sessionId}:`, error)
+    toolingDegradations.push('tooling_build_failed')
   }
 
-  stepStartedAt = Date.now();
+  stepStartedAt = Date.now()
   const assembly = assemblePromptSections([
     createPromptAssemblySection({
       kind: 'configured_prompt',
@@ -349,18 +343,18 @@ export async function buildSystemPromptAssemblyWithSkills(
       sourceRef: 'runtime:workspace-verification-policy',
       content: buildVerificationPolicyPrompt(workdir)
     })
-  ]);
-  dependencies.logSlowStep(sessionId, "system-prompt.compose", stepStartedAt);
+  ])
+  dependencies.logSlowStep(sessionId, 'system-prompt.compose', stepStartedAt)
 
-  dependencies.assertCurrent(sessionId, resourceInstance);
-  return assembly;
+  dependencies.assertCurrent(sessionId, resourceInstance)
+  return assembly
 }
 
 export async function buildSystemPromptWithSkills(
   dependencies: SystemPromptBuilderDependencies,
-  input: SystemPromptBuildInput,
+  input: SystemPromptBuildInput
 ): Promise<string> {
-  return (await buildSystemPromptAssemblyWithSkills(dependencies, input)).prompt;
+  return (await buildSystemPromptAssemblyWithSkills(dependencies, input)).prompt
 }
 
 function buildOrchestrationPolicyPrompt(
@@ -400,83 +394,83 @@ function buildOrchestrationPolicyPrompt(
 }
 
 function buildPermissionRulesPrompt(agentToolNames: Set<string>): string {
-  const readOnlyTools = ["read"].filter((toolName) => agentToolNames.has(toolName));
-  const serializedTools = ["write", "edit", "exec", "process"].filter((toolName) =>
-    agentToolNames.has(toolName),
-  );
+  const readOnlyTools = ['read'].filter((toolName) => agentToolNames.has(toolName))
+  const serializedTools = ['write', 'edit', 'exec', 'process'].filter((toolName) =>
+    agentToolNames.has(toolName)
+  )
 
   if (readOnlyTools.length === 0 && serializedTools.length === 0) {
-    return "";
+    return ''
   }
 
-  const lines = ["## Permission Rules"];
+  const lines = ['## Permission Rules']
   if (readOnlyTools.length > 0) {
     lines.push(
       `Read-only Agent tools may be batched in parallel when useful: ${readOnlyTools
         .map((toolName) => `\`${toolName}\``)
-        .join(", ")}.`,
-    );
+        .join(', ')}.`
+    )
   }
   if (serializedTools.length > 0) {
     lines.push(
       `Mutating and runtime tools stay serialized or permission-gated: ${serializedTools
         .map((toolName) => `\`${toolName}\``)
-        .join(", ")}.`,
-    );
+        .join(', ')}.`
+    )
   }
-  lines.push("Do not assume approval for file writes or commands when the session asks for it.");
+  lines.push('Do not assume approval for file writes or commands when the session asks for it.')
 
-  return lines.join("\n");
+  return lines.join('\n')
 }
 
 function buildVerificationPolicyPrompt(workdir: string | null): string {
   const lines = [
-    "## Verification Policy",
-    "After changing code, configuration, tests, docs that affect behavior, or generated assets, check verification status before the final response.",
-    "If verification was not run, state the reason explicitly in the final response.",
-  ];
+    '## Verification Policy',
+    'After changing code, configuration, tests, docs that affect behavior, or generated assets, check verification status before the final response.',
+    'If verification was not run, state the reason explicitly in the final response.'
+  ]
 
-  const normalizedWorkdir = workdir?.trim();
+  const normalizedWorkdir = workdir?.trim()
   if (!normalizedWorkdir) {
-    return lines.join("\n");
+    return lines.join('\n')
   }
 
-  const manifest = readPackageJsonManifest(normalizedWorkdir);
-  const verificationScripts = getVerificationScriptNames(manifest);
+  const manifest = readPackageJsonManifest(normalizedWorkdir)
+  const verificationScripts = getVerificationScriptNames(manifest)
   const isDeepChatWorkspace =
-    String(manifest?.name ?? "").toLowerCase() === "deepchat" ||
-    ["format", "i18n", "lint"].every((scriptName) => verificationScripts.includes(scriptName));
+    String(manifest?.name ?? '').toLowerCase() === 'deepchat' ||
+    ['format', 'i18n', 'lint'].every((scriptName) => verificationScripts.includes(scriptName))
 
   if (isDeepChatWorkspace) {
     lines.push(
-      "In the DeepChat repository, prioritize `pnpm run format`, `pnpm run i18n`, and `pnpm run lint` after feature work.",
-    );
+      'In the DeepChat repository, prioritize `pnpm run format`, `pnpm run i18n`, and `pnpm run lint` after feature work.'
+    )
   } else if (verificationScripts.length > 0) {
     const suggestedScripts = verificationScripts
       .slice(0, 4)
-      .map((scriptName) => `\`${scriptName}\``);
+      .map((scriptName) => `\`${scriptName}\``)
     lines.push(
-      `When relevant, prefer project-local verification scripts such as ${suggestedScripts.join(", ")}.`,
-    );
+      `When relevant, prefer project-local verification scripts such as ${suggestedScripts.join(', ')}.`
+    )
   }
 
-  return lines.join("\n");
+  return lines.join('\n')
 }
 
 function buildSkillsMetadataPrompt(
   availableSkills: Array<{
-    name: string;
-    description: string;
-    category?: string | null;
-    platforms?: string[];
+    name: string
+    description: string
+    category?: string | null
+    platforms?: string[]
   }>,
   capabilities: {
-    canListSkills: boolean;
-    canViewSkills: boolean;
-    canManageDraftSkills: boolean;
-    canRunSkillScripts: boolean;
+    canListSkills: boolean
+    canViewSkills: boolean
+    canManageDraftSkills: boolean
+    canRunSkillScripts: boolean
   },
-  skillDraftSuggestionsEnabled: boolean,
+  skillDraftSuggestionsEnabled: boolean
 ): string {
   if (
     !capabilities.canListSkills &&
@@ -484,128 +478,128 @@ function buildSkillsMetadataPrompt(
     !capabilities.canManageDraftSkills &&
     !capabilities.canRunSkillScripts
   ) {
-    return "";
+    return ''
   }
 
-  const lines = ["## Skills"];
-  let hasContent = false;
+  const lines = ['## Skills']
+  let hasContent = false
 
   if (capabilities.canListSkills || capabilities.canViewSkills) {
     lines.push(
-      "Before replying, always scan available skills. If any skill plausibly matches the task, call `skill_view` first.",
-    );
+      'Before replying, always scan available skills. If any skill plausibly matches the task, call `skill_view` first.'
+    )
     lines.push(
-      "Viewing a skill root `SKILL.md` activates that skill for the current message/tool loop; it does not pin the skill to the conversation. Viewing linked skill files is read-only and does not activate the skill.",
-    );
-    hasContent = true;
+      'Viewing a skill root `SKILL.md` activates that skill for the current message/tool loop; it does not pin the skill to the conversation. Viewing linked skill files is read-only and does not activate the skill.'
+    )
+    hasContent = true
   }
   if (capabilities.canRunSkillScripts) {
     lines.push(
-      "Use `skill_run` only for skills that are active in the current message/tool loop, including manually pinned skills and skills activated by `skill_view`.",
-    );
-    hasContent = true;
+      'Use `skill_run` only for skills that are active in the current message/tool loop, including manually pinned skills and skills activated by `skill_view`.'
+    )
+    hasContent = true
   }
   if (capabilities.canManageDraftSkills && skillDraftSuggestionsEnabled) {
     lines.push(
-      "After completing a complex task, solving a tricky bug, or discovering a non-trivial workflow, you may draft a reusable skill with `skill_manage`.",
-    );
+      'After completing a complex task, solving a tricky bug, or discovering a non-trivial workflow, you may draft a reusable skill with `skill_manage`.'
+    )
     lines.push(
-      "Only propose one draft per task, do it after the main answer is complete, and use `deepchat_question` to ask whether the user wants to keep the draft.",
-    );
+      'Only propose one draft per task, do it after the main answer is complete, and use `deepchat_question` to ask whether the user wants to keep the draft.'
+    )
     lines.push(
-      "Do not modify installed skills with `skill_manage`; it is draft-only in this version.",
-    );
-    hasContent = true;
+      'Do not modify installed skills with `skill_manage`; it is draft-only in this version.'
+    )
+    hasContent = true
   }
 
   if (availableSkills.length > 0) {
-    lines.push("<available_skills>");
+    lines.push('<available_skills>')
     lines.push(
       ...availableSkills.map((skill) => {
-        const details: string[] = [];
+        const details: string[] = []
         if (skill.category) {
-          details.push(`category=${skill.category}`);
+          details.push(`category=${skill.category}`)
         }
         if (skill.platforms?.length) {
-          details.push(`platforms=${skill.platforms.join(",")}`);
+          details.push(`platforms=${skill.platforms.join(',')}`)
         }
-        const suffix = details.length > 0 ? ` [${details.join("; ")}]` : "";
-        return `- ${skill.name}: ${skill.description}${suffix}`;
-      }),
-    );
-    lines.push("</available_skills>");
-    hasContent = true;
+        const suffix = details.length > 0 ? ` [${details.join('; ')}]` : ''
+        return `- ${skill.name}: ${skill.description}${suffix}`
+      })
+    )
+    lines.push('</available_skills>')
+    hasContent = true
   } else if (hasContent) {
-    lines.push("<available_skills>");
-    lines.push("(none)");
-    lines.push("</available_skills>");
+    lines.push('<available_skills>')
+    lines.push('(none)')
+    lines.push('</available_skills>')
   }
 
-  return hasContent ? lines.join("\n") : "";
+  return hasContent ? lines.join('\n') : ''
 }
 
 function buildPinnedSkillsPrompt(skillSections: string[]): string {
   if (skillSections.length === 0) {
-    return "";
+    return ''
   }
   return [
-    "## Active Skills",
-    "These skills are active for the current message context. Some may be manually pinned for the conversation; others may have been activated by `skill_view` for this message/tool loop only. Follow them when relevant.",
-    "",
-    skillSections.join("\n\n"),
-  ].join("\n");
+    '## Active Skills',
+    'These skills are active for the current message context. Some may be manually pinned for the conversation; others may have been activated by `skill_view` for this message/tool loop only. Follow them when relevant.',
+    '',
+    skillSections.join('\n\n')
+  ].join('\n')
 }
 
 export function resolveEffectiveActiveSkillNames(
   sessionActiveSkillNames: string[],
-  instance: DeepChatAgentInstance,
+  instance: DeepChatAgentInstance
 ): string[] {
-  return normalizeStringList([...sessionActiveSkillNames, ...instance.getRuntimeActivatedSkills()]);
+  return normalizeStringList([...sessionActiveSkillNames, ...instance.getRuntimeActivatedSkills()])
 }
 
 export function normalizeStringList(values: string[]): string[] {
   return Array.from(
-    new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)),
-  ).sort((a, b) => a.localeCompare(b));
+    new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))
+  ).sort((a, b) => a.localeCompare(b))
 }
 
 function normalizeSkillMetadata(
   skills: Array<{
-    name: string;
-    description: string;
-    category?: string | null;
-    platforms?: string[];
-  }>,
+    name: string
+    description: string
+    category?: string | null
+    platforms?: string[]
+  }>
 ): Array<{
-  name: string;
-  description: string;
-  category?: string | null;
-  platforms?: string[];
+  name: string
+  description: string
+  category?: string | null
+  platforms?: string[]
 }> {
-  const deduped = new Map<string, (typeof skills)[number]>();
+  const deduped = new Map<string, (typeof skills)[number]>()
   for (const skill of skills) {
-    const name = skill.name.trim();
+    const name = skill.name.trim()
     if (!name || deduped.has(name)) {
-      continue;
+      continue
     }
     deduped.set(name, {
       ...skill,
       name,
       description: skill.description.trim(),
       category: skill.category?.trim() || null,
-      platforms: skill.platforms?.map((platform) => platform.trim()).filter(Boolean),
-    });
+      platforms: skill.platforms?.map((platform) => platform.trim()).filter(Boolean)
+    })
   }
   return Array.from(deduped.values()).sort((left, right) => {
     return (
-      (left.category ?? "").localeCompare(right.category ?? "") ||
+      (left.category ?? '').localeCompare(right.category ?? '') ||
       left.name.localeCompare(right.name)
-    );
-  });
+    )
+  })
 }
 
 function getAgentToolNames(toolDefinitions: MCPToolDefinition[]): Set<string> {
   return new Set(
-    toolDefinitions.filter((tool) => tool.source === "agent").map((tool) => tool.function.name),
-  );
+    toolDefinitions.filter((tool) => tool.source === 'agent').map((tool) => tool.function.name)
+  )
 }
