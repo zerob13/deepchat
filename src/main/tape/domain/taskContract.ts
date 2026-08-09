@@ -25,6 +25,30 @@ const MAX_SUBAGENT_DEPTH = 1
 const MAX_RESULT_SCHEMA_DEPTH = 64
 const MAX_RESULT_SCHEMA_NODES = 4_096
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/u
+const FORBIDDEN_RESULT_SCHEMA_KEYS = new Set(['$ref', '$dynamicRef', '$recursiveRef', '$async'])
+const SINGLE_RESULT_SCHEMA_KEYWORDS = new Set([
+  'additionalItems',
+  'additionalProperties',
+  'contains',
+  'contentSchema',
+  'else',
+  'if',
+  'not',
+  'propertyNames',
+  'then',
+  'unevaluatedItems',
+  'unevaluatedProperties'
+])
+const ARRAY_RESULT_SCHEMA_KEYWORDS = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems'])
+const MAP_RESULT_SCHEMA_KEYWORDS = new Set([
+  '$defs',
+  'definitions',
+  'dependentSchemas',
+  'patternProperties',
+  'properties'
+])
+
+type ResultSchemaPosition = 'schema' | 'schema_array' | 'schema_map' | 'dependency_map' | 'data'
 
 const TASK_CONTRACT_KEYS = [
   'schemaVersion',
@@ -185,7 +209,8 @@ function assertBoundedJsonSchema(
   value: unknown,
   label: string,
   depth: number,
-  state: { nodes: number; ancestors: Set<object> }
+  state: { nodes: number; ancestors: Set<object> },
+  position: ResultSchemaPosition = 'schema'
 ): void {
   state.nodes += 1
   if (depth > MAX_RESULT_SCHEMA_DEPTH || state.nodes > MAX_RESULT_SCHEMA_NODES) {
@@ -227,7 +252,13 @@ function assertBoundedJsonSchema(
             'invalid_input'
           )
         }
-        assertBoundedJsonSchema(descriptor.value, label, depth + 1, state)
+        assertBoundedJsonSchema(
+          descriptor.value,
+          label,
+          depth + 1,
+          state,
+          position === 'schema_array' ? 'schema' : 'data'
+        )
       }
       return
     }
@@ -241,14 +272,36 @@ function assertBoundedJsonSchema(
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TaskContractError(`${label} must contain only data properties.`, 'invalid_input')
       }
-      if (key === '$ref' || key === '$async') {
+      if (position === 'schema' && FORBIDDEN_RESULT_SCHEMA_KEYS.has(key)) {
         throw new TaskContractError(`${label} must not contain ${key}.`, 'invalid_input')
       }
-      assertBoundedJsonSchema(descriptor.value, label, depth + 1, state)
+      assertBoundedJsonSchema(
+        descriptor.value,
+        label,
+        depth + 1,
+        state,
+        nestedResultSchemaPosition(position, key, descriptor.value)
+      )
     }
   } finally {
     state.ancestors.delete(value)
   }
+}
+
+function nestedResultSchemaPosition(
+  position: ResultSchemaPosition,
+  key: string,
+  value: unknown
+): ResultSchemaPosition {
+  if (position === 'schema_map') return 'schema'
+  if (position === 'dependency_map') return Array.isArray(value) ? 'data' : 'schema'
+  if (position !== 'schema') return 'data'
+  if (key === 'items') return Array.isArray(value) ? 'schema_array' : 'schema'
+  if (key === 'dependencies') return 'dependency_map'
+  if (SINGLE_RESULT_SCHEMA_KEYWORDS.has(key)) return 'schema'
+  if (ARRAY_RESULT_SCHEMA_KEYWORDS.has(key)) return 'schema_array'
+  if (MAP_RESULT_SCHEMA_KEYWORDS.has(key)) return 'schema_map'
+  return 'data'
 }
 
 function normalizeAcceptance(

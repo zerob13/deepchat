@@ -191,6 +191,58 @@ describe('TaskContract domain', () => {
         })
       )
     ).toThrow(/must not contain \$async/u)
+    for (const key of ['$dynamicRef', '$recursiveRef'] as const) {
+      expect(() =>
+        buildTaskContract(
+          buildInput({
+            acceptance: [
+              {
+                id: 'dynamic-schema',
+                kind: 'result_schema',
+                section: 'Result',
+                schema: { [key]: '#result' }
+              }
+            ]
+          })
+        )
+      ).toThrow(`must not contain ${key}`)
+      expect(() =>
+        buildTaskContract(
+          buildInput({
+            acceptance: [
+              {
+                id: 'nested-dynamic-schema',
+                kind: 'result_schema',
+                section: 'Result',
+                schema: { properties: { result: { [key]: '#result' } } }
+              }
+            ]
+          })
+        )
+      ).toThrow(`must not contain ${key}`)
+    }
+    expect(() =>
+      buildTaskContract(
+        buildInput({
+          acceptance: [
+            {
+              id: 'schema-property-names',
+              kind: 'result_schema',
+              section: 'Result',
+              schema: {
+                $id: 'https://example.invalid/result.schema.json',
+                $schema: 'http://json-schema.org/draft-07/schema#',
+                properties: {
+                  $dynamicRef: { type: 'string' },
+                  $recursiveRef: { type: 'number' }
+                },
+                type: 'object'
+              }
+            }
+          ]
+        })
+      )
+    ).not.toThrow()
     expect(() =>
       buildTaskContract(
         buildInput({

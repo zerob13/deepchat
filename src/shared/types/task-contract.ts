@@ -243,7 +243,9 @@ export const DeepChatTaskEvaluationProjectionSchema: z.ZodType<DeepChatTaskEvalu
     executionStatus: z.enum(['completed', 'failed', 'cancelled', 'interrupted']),
     verdict: z.enum(['passed', 'failed', 'indeterminate']),
     disposition: z.enum(['accepted', 'parked']),
-    reasonCodes: z.array(DeepChatTaskEvaluationReasonCodeSchema),
+    reasonCodes: z
+      .array(DeepChatTaskEvaluationReasonCodeSchema)
+      .max(DEEPCHAT_TASK_EVALUATION_REASON_CODES.length),
     records: z.array(DeepChatTaskEvaluationRecordSchema).max(MAX_TASK_EVALUATION_RECORDS),
     omittedRecordCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     evaluationHash: Sha256Schema
@@ -263,7 +265,9 @@ export const DeepChatTaskEvaluationSummarySchema: z.ZodType<DeepChatTaskEvaluati
   .object({
     verdict: z.enum(['passed', 'failed', 'indeterminate']),
     disposition: z.enum(['accepted', 'parked']),
-    reasonCodes: z.array(DeepChatTaskEvaluationReasonCodeSchema),
+    reasonCodes: z
+      .array(DeepChatTaskEvaluationReasonCodeSchema)
+      .max(DEEPCHAT_TASK_EVALUATION_REASON_CODES.length),
     candidate: DeepChatTaskEvaluationCandidateSchema,
     evidence: z.array(DeepChatTaskEvaluationRecordSchema).max(MAX_TASK_EVALUATION_PARENT_EVIDENCE),
     evaluationRef: DeepChatEvaluationRefSchema,

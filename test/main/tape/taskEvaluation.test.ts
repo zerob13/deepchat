@@ -2,6 +2,9 @@ import path from 'node:path'
 import Ajv from 'ajv'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  DEEPCHAT_TASK_EVALUATION_REASON_CODES,
+  DeepChatTaskEvaluationProjectionSchema,
+  DeepChatTaskEvaluationSummarySchema,
   MAX_TASK_EVALUATION_CANDIDATE_BYTES,
   type DeepChatTaskAcceptanceRequirement,
   type DeepChatTaskEvaluationExecutionStatus
@@ -313,5 +316,28 @@ describe('Task evaluation domain', () => {
     const forged = { ...forgedDraft, evaluationHash: hashJsonData(forgedDraft) }
 
     expect(restoreTaskEvaluation(forged)).toBeNull()
+  })
+
+  it('bounds reason-code arrays in full and parent-facing projections', () => {
+    const evaluation = evaluate(null)
+    const evaluationRef = {
+      schemaVersion: 1 as const,
+      sessionId: 'parent-1',
+      tapeIdentity: 'a'.repeat(64),
+      entryId: 1,
+      evaluationHash: evaluation.evaluationHash
+    }
+    const summary = projectTaskEvaluationSummary(evaluation, evaluationRef)
+    const reasonCodes = Array.from(
+      { length: DEEPCHAT_TASK_EVALUATION_REASON_CODES.length + 1 },
+      () => 'candidate_missing' as const
+    )
+
+    expect(
+      DeepChatTaskEvaluationProjectionSchema.safeParse({ ...evaluation, reasonCodes }).success
+    ).toBe(false)
+    expect(DeepChatTaskEvaluationSummarySchema.safeParse({ ...summary, reasonCodes }).success).toBe(
+      false
+    )
   })
 })
