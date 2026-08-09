@@ -1146,7 +1146,7 @@ export async function createMainProcessControl(dependencies: {
         const subagentCapability = resolveDeepChatSubagentCapability({
           agentType,
           sessionKind: session.sessionKind,
-          agentPolicyEnabled: agentConfig.subagentEnabled !== false,
+          agentPolicyEnabled: agentConfig.subagentEnabled === true,
           slots: normalizeDeepChatSubagentSlots(agentConfig.subagents)
         })
 
