@@ -9,6 +9,7 @@ import type {
 
 const MAX_PROMPT_SECTIONS = 64
 const MAX_SECTION_DEGRADATION_CODES = 16
+const promptAssemblySectionSnapshots = new WeakSet<object>()
 
 function hashContent(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex')
@@ -19,6 +20,41 @@ function normalizeDegradationCodes(
 ): readonly DeepChatPromptDegradationCode[] | undefined {
   const normalized = [...new Set(codes ?? [])].sort().slice(0, MAX_SECTION_DEGRADATION_CODES)
   return normalized.length > 0 ? Object.freeze(normalized) : undefined
+}
+
+function snapshotPromptAssemblySection(
+  section: DeepChatPromptAssemblySection
+): DeepChatPromptAssemblySection {
+  if (promptAssemblySectionSnapshots.has(section)) return section
+  return createPromptAssemblySection({
+    kind: section.kind,
+    sourceRef: section.sourceRef,
+    content: section.content,
+    separatorBefore: section.separatorBefore,
+    freshness: section.freshness,
+    degradationCodes: section.degradationCodes,
+    normalize: 'none'
+  })
+}
+
+function snapshotPromptAssemblySections(
+  sections: readonly DeepChatPromptAssemblySection[]
+): readonly DeepChatPromptAssemblySection[] {
+  return Object.freeze(sections.map(snapshotPromptAssemblySection))
+}
+
+function snapshotPromptAssembly(assembly: DeepChatPromptAssembly): DeepChatPromptAssembly {
+  if (
+    Object.isFrozen(assembly) &&
+    Object.isFrozen(assembly.sections) &&
+    assembly.sections.every((section) => promptAssemblySectionSnapshots.has(section))
+  ) {
+    return assembly
+  }
+  return Object.freeze({
+    prompt: assembly.prompt,
+    sections: snapshotPromptAssemblySections(assembly.sections)
+  })
 }
 
 export function createPromptAssemblySection(input: {
@@ -38,13 +74,9 @@ export function createPromptAssemblySection(input: {
         : input.content.trim()
   const hasContent = content.trim().length > 0
   const degradationCodes = normalizeDegradationCodes(input.degradationCodes)
-  const inclusion = !hasContent
-    ? 'omitted'
-    : degradationCodes
-      ? 'degraded'
-      : 'included'
+  const inclusion = !hasContent ? 'omitted' : degradationCodes ? 'degraded' : 'included'
 
-  return Object.freeze({
+  const section = Object.freeze({
     kind: input.kind,
     sourceRef: input.sourceRef,
     inclusion,
@@ -54,6 +86,8 @@ export function createPromptAssemblySection(input: {
     content,
     ...(input.separatorBefore ? { separatorBefore: input.separatorBefore } : {})
   })
+  promptAssemblySectionSnapshots.add(section)
+  return section
 }
 
 export function assemblePromptSections(
@@ -63,8 +97,9 @@ export function assemblePromptSections(
     throw new RangeError(`System prompt has more than ${MAX_PROMPT_SECTIONS} provenance sections.`)
   }
 
+  const sectionSnapshots = snapshotPromptAssemblySections(sections)
   let prompt = ''
-  for (const section of sections) {
+  for (const section of sectionSnapshots) {
     if (!section.content.trim()) continue
     if (!prompt) {
       prompt = section.content
@@ -75,7 +110,7 @@ export function assemblePromptSections(
 
   return Object.freeze({
     prompt,
-    sections: Object.freeze([...sections])
+    sections: sectionSnapshots
   })
 }
 
@@ -83,27 +118,29 @@ export function appendPromptAssemblySection(
   assembly: DeepChatPromptAssembly,
   section: DeepChatPromptAssemblySection
 ): DeepChatPromptAssembly {
+  const assemblySnapshot = snapshotPromptAssembly(assembly)
+  const sectionSnapshot = snapshotPromptAssemblySection(section)
   if (
-    assembly.sections.some(
+    assemblySnapshot.sections.some(
       (candidate) =>
-        candidate.kind === section.kind &&
-        candidate.sourceRef === section.sourceRef &&
-        candidate.contentHash === section.contentHash
+        candidate.kind === sectionSnapshot.kind &&
+        candidate.sourceRef === sectionSnapshot.sourceRef &&
+        candidate.contentHash === sectionSnapshot.contentHash
     )
   ) {
-    return assembly
+    return assemblySnapshot
   }
-  if (assembly.sections.length >= MAX_PROMPT_SECTIONS) {
+  if (assemblySnapshot.sections.length >= MAX_PROMPT_SECTIONS) {
     throw new RangeError(`System prompt has more than ${MAX_PROMPT_SECTIONS} provenance sections.`)
   }
-  const prompt = !section.content.trim()
-    ? assembly.prompt
-    : assembly.prompt
-      ? `${assembly.prompt}${section.separatorBefore ?? '\n\n'}${section.content}`
-      : section.content
+  const prompt = !sectionSnapshot.content.trim()
+    ? assemblySnapshot.prompt
+    : assemblySnapshot.prompt
+      ? `${assemblySnapshot.prompt}${sectionSnapshot.separatorBefore ?? '\n\n'}${sectionSnapshot.content}`
+      : sectionSnapshot.content
   return Object.freeze({
     prompt,
-    sections: Object.freeze([...assembly.sections, section])
+    sections: Object.freeze([...assemblySnapshot.sections, sectionSnapshot])
   })
 }
 
@@ -111,12 +148,14 @@ export function recordPromptAssemblyObservation(
   assembly: DeepChatPromptAssembly,
   section: DeepChatPromptAssemblySection
 ): DeepChatPromptAssembly {
-  if (assembly.sections.length >= MAX_PROMPT_SECTIONS) {
+  const assemblySnapshot = snapshotPromptAssembly(assembly)
+  const sectionSnapshot = snapshotPromptAssemblySection(section)
+  if (assemblySnapshot.sections.length >= MAX_PROMPT_SECTIONS) {
     throw new RangeError(`System prompt has more than ${MAX_PROMPT_SECTIONS} provenance sections.`)
   }
   return Object.freeze({
-    prompt: assembly.prompt,
-    sections: Object.freeze([...assembly.sections, section])
+    prompt: assemblySnapshot.prompt,
+    sections: Object.freeze([...assemblySnapshot.sections, sectionSnapshot])
   })
 }
 

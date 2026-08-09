@@ -7,6 +7,7 @@ import {
   reconcilePromptAssembly,
   recordPromptAssemblyObservation
 } from '@/agent/deepchat/resources/promptAssembly'
+import type { DeepChatPromptDegradationCode } from '@shared/types/prompt-assembly'
 
 describe('promptAssembly', () => {
   it('preserves explicit section separators and omits empty content', () => {
@@ -45,17 +46,71 @@ describe('promptAssembly', () => {
       kind: 'tooling',
       sourceRef: 'tooling',
       content: 'Tools',
-      degradationCodes: [
-        'tooling_build_failed',
-        'environment_build_failed',
-        'tooling_build_failed'
-      ]
+      degradationCodes: ['tooling_build_failed', 'environment_build_failed', 'tooling_build_failed']
     })
 
-    expect(section.degradationCodes).toEqual([
-      'environment_build_failed',
-      'tooling_build_failed'
-    ])
+    expect(section.degradationCodes).toEqual(['environment_build_failed', 'tooling_build_failed'])
+  })
+
+  it('snapshots caller-owned sections at every assembly boundary', () => {
+    const degradationCodes: DeepChatPromptDegradationCode[] = ['tooling_build_failed']
+    const section = {
+      ...createPromptAssemblySection({
+        kind: 'tooling',
+        sourceRef: 'tooling',
+        content: 'Tools'
+      }),
+      degradationCodes
+    }
+    section.content = 'Snapshot'
+    const assembled = assemblePromptSections([section])
+    const appended = appendPromptAssemblySection(assemblePromptSections([]), section)
+    const observed = recordPromptAssemblyObservation(assemblePromptSections([]), section)
+    const expected = createPromptAssemblySection({
+      kind: 'tooling',
+      sourceRef: 'tooling',
+      content: 'Snapshot',
+      degradationCodes
+    })
+
+    section.content = 'Changed'
+    degradationCodes.push('environment_build_failed')
+
+    expect(assembled.prompt).toBe('Snapshot')
+    expect(appended.prompt).toBe('Snapshot')
+    for (const assembly of [assembled, appended, observed]) {
+      expect(assembly.sections[0]).toMatchObject({
+        content: 'Snapshot',
+        contentHash: expected.contentHash,
+        inclusion: 'degraded',
+        degradationCodes: ['tooling_build_failed']
+      })
+      expect(assembly.sections[0]).not.toBe(section)
+      expect(Object.isFrozen(assembly.sections[0])).toBe(true)
+      expect(Object.isFrozen(assembly.sections[0]?.degradationCodes)).toBe(true)
+    }
+
+    const duplicateSource = { ...expected }
+    const duplicateAssembly = appendPromptAssemblySection(
+      { prompt: 'Snapshot', sections: [duplicateSource] },
+      duplicateSource
+    )
+    duplicateSource.content = 'Changed duplicate'
+
+    expect(duplicateAssembly.sections[0]?.content).toBe('Snapshot')
+    expect(Object.isFrozen(duplicateAssembly)).toBe(true)
+    expect(Object.isFrozen(duplicateAssembly.sections[0])).toBe(true)
+
+    const frozenStaleSection = Object.freeze({ ...expected, content: 'Frozen snapshot' })
+    const frozenStaleAssembly = assemblePromptSections([frozenStaleSection])
+    const frozenExpected = createPromptAssemblySection({
+      kind: 'tooling',
+      sourceRef: 'tooling',
+      content: 'Frozen snapshot',
+      degradationCodes
+    })
+
+    expect(frozenStaleAssembly.sections[0]?.contentHash).toBe(frozenExpected.contentHash)
   })
 
   it('keeps matching provenance and degrades mismatched projections to the effective prompt', () => {
