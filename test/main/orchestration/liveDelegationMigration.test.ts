@@ -207,6 +207,123 @@ describeIfSqlite('live delegation schema migration', () => {
     verification.close()
   })
 
+  it('repairs missing contract projections at the current schema version without losing rows', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'deepchat-live-contract-repair-'))
+    tempDirectories.push(directory)
+    const databasePath = path.join(directory, 'agent.db')
+    const current = new MainDatabaseCtor(databasePath)
+    current.close()
+
+    const bootstrap = new DatabaseCtor(databasePath)
+    bootstrap.exec(`
+      INSERT INTO new_sessions (id, agent_id, title, created_at, updated_at)
+      VALUES ('parent', 'agent-1', 'Parent', 100, 100);
+      INSERT INTO live_delegations (
+        delegation_id, parent_session_id, slot_id, target_agent_id, title, status,
+        last_turn_seq, created_at, updated_at
+      ) VALUES (
+        'delegation-1', 'parent', 'reviewer', 'agent-1', 'Review', 'running', 1, 100, 110
+      );
+      INSERT INTO live_delegation_turns (
+        turn_id, delegation_id, seq, kind, prompt, status, effect_state,
+        created_at, started_at, updated_at
+      ) VALUES (
+        'turn-1', 'delegation-1', 1, 'initial', 'Review it.', 'running', 'none',
+        100, 110, 110
+      );
+      INSERT INTO live_delegation_events (
+        delegation_id, parent_session_id, direction, kind, content, created_at
+      ) VALUES (
+        'delegation-1', 'parent', 'parent_to_child', 'message', 'Continue.', 110
+      );
+      ALTER TABLE live_delegation_turns DROP COLUMN evaluation_ref_json;
+      ALTER TABLE live_delegation_turns DROP COLUMN evaluation_json;
+      ALTER TABLE live_delegation_turns DROP COLUMN inherited_task_contract_ref_json;
+      ALTER TABLE live_delegation_turns DROP COLUMN task_contract_ref_json;
+      ALTER TABLE live_delegation_turns DROP COLUMN task_contract_json;
+      ALTER TABLE live_delegation_events DROP COLUMN evaluation_ref_json;
+      ALTER TABLE live_delegation_events DROP COLUMN evaluation_json;
+    `)
+    bootstrap.close()
+
+    const repaired = new MainDatabaseCtor(databasePath)
+    const missingColumns = [
+      ['live_delegation_turns', 'task_contract_json'],
+      ['live_delegation_turns', 'task_contract_ref_json'],
+      ['live_delegation_turns', 'inherited_task_contract_ref_json'],
+      ['live_delegation_turns', 'evaluation_json'],
+      ['live_delegation_turns', 'evaluation_ref_json'],
+      ['live_delegation_events', 'evaluation_json'],
+      ['live_delegation_events', 'evaluation_ref_json']
+    ] as const
+    const diagnosis = await repaired.diagnoseSchema()
+
+    for (const [table, name] of missingColumns) {
+      expect(diagnosis.issues).toContainEqual(
+        expect.objectContaining({ kind: 'missing_column', table, name, repairable: true })
+      )
+    }
+
+    const repairReport = await repaired.repairSchema()
+    expect(repairReport.status).toBe('repaired')
+    expect(repairReport.remainingIssues).toEqual([])
+
+    const repeatedRepair = await repaired.repairSchema()
+    expect(repeatedRepair.status).toBe('healthy')
+    expect(repeatedRepair.repairedIssues).toEqual([])
+    repaired.close()
+
+    const verification = new DatabaseCtor(databasePath)
+    const turnColumns = new Set(
+      (
+        verification.prepare('PRAGMA table_info(live_delegation_turns)').all() as Array<{
+          name: string
+        }>
+      ).map((column) => column.name)
+    )
+    const eventColumns = new Set(
+      (
+        verification.prepare('PRAGMA table_info(live_delegation_events)').all() as Array<{
+          name: string
+        }>
+      ).map((column) => column.name)
+    )
+
+    for (const [table, name] of missingColumns) {
+      expect(table === 'live_delegation_turns' ? turnColumns : eventColumns).toContain(name)
+    }
+    expect(
+      verification
+        .prepare(
+          `SELECT prompt, task_contract_json, task_contract_ref_json,
+                  inherited_task_contract_ref_json, evaluation_json, evaluation_ref_json
+           FROM live_delegation_turns
+           WHERE turn_id = 'turn-1'`
+        )
+        .get()
+    ).toEqual({
+      prompt: 'Review it.',
+      task_contract_json: null,
+      task_contract_ref_json: null,
+      inherited_task_contract_ref_json: null,
+      evaluation_json: null,
+      evaluation_ref_json: null
+    })
+    expect(
+      verification
+        .prepare(
+          `SELECT content, evaluation_json, evaluation_ref_json
+           FROM live_delegation_events
+           WHERE delegation_id = 'delegation-1'`
+        )
+        .get()
+    ).toEqual({ content: 'Continue.', evaluation_json: null, evaluation_ref_json: null })
+    expect(
+      verification.prepare('SELECT MAX(version) AS version FROM schema_versions').get()
+    ).toEqual({ version: LATEST_DATABASE_SCHEMA_VERSION })
+    verification.close()
+  })
+
   it('retires Workflow tables and triggers from a v63 feature database', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'deepchat-workflow-retirement-'))
     tempDirectories.push(directory)

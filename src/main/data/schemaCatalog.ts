@@ -39,9 +39,18 @@ import { SettingsActivityTable } from '@/settings/data/tables/settingsActivity'
 import { CronJobsTable } from '@/scheduler/data/tables/cronJobs'
 import { CronJobRunsTable } from '@/scheduler/data/tables/cronJobRuns'
 import { CronJobDeliveriesTable } from '@/scheduler/data/tables/cronJobDeliveries'
-import { LiveDelegationEventsTable } from '@/orchestration/data/tables/liveDelegationEvents'
+import {
+  LIVE_DELEGATION_EVENT_EVALUATION_ADD_COLUMN_SQL,
+  LIVE_DELEGATION_EVENT_EVALUATION_REF_ADD_COLUMN_SQL,
+  LiveDelegationEventsTable
+} from '@/orchestration/data/tables/liveDelegationEvents'
 import { LiveDelegationsTable } from '@/orchestration/data/tables/liveDelegations'
 import {
+  LIVE_DELEGATION_TURN_CONTRACT_ADD_COLUMN_SQL,
+  LIVE_DELEGATION_TURN_CONTRACT_REF_ADD_COLUMN_SQL,
+  LIVE_DELEGATION_TURN_EVALUATION_ADD_COLUMN_SQL,
+  LIVE_DELEGATION_TURN_EVALUATION_REF_ADD_COLUMN_SQL,
+  LIVE_DELEGATION_TURN_INHERITED_CONTRACT_REF_ADD_COLUMN_SQL,
   LIVE_DELEGATION_TURN_RESULT_REF_ADD_COLUMN_SQL,
   LiveDelegationTurnsTable
 } from '@/orchestration/data/tables/liveDelegationTurns'
@@ -340,13 +349,22 @@ const CATALOG_DEFINITIONS: CatalogDefinition[] = [
     name: 'live_delegation_turns',
     createTable: (db) => new LiveDelegationTurnsTable(db),
     repairableColumns: {
-      result_ref_json: `${LIVE_DELEGATION_TURN_RESULT_REF_ADD_COLUMN_SQL};`
+      result_ref_json: `${LIVE_DELEGATION_TURN_RESULT_REF_ADD_COLUMN_SQL};`,
+      task_contract_json: `${LIVE_DELEGATION_TURN_CONTRACT_ADD_COLUMN_SQL};`,
+      task_contract_ref_json: `${LIVE_DELEGATION_TURN_CONTRACT_REF_ADD_COLUMN_SQL};`,
+      inherited_task_contract_ref_json: `${LIVE_DELEGATION_TURN_INHERITED_CONTRACT_REF_ADD_COLUMN_SQL};`,
+      evaluation_json: `${LIVE_DELEGATION_TURN_EVALUATION_ADD_COLUMN_SQL};`,
+      evaluation_ref_json: `${LIVE_DELEGATION_TURN_EVALUATION_REF_ADD_COLUMN_SQL};`
     },
     typeCheckedColumns: ['seq', 'created_at', 'updated_at']
   },
   {
     name: 'live_delegation_events',
     createTable: (db) => new LiveDelegationEventsTable(db),
+    repairableColumns: {
+      evaluation_json: `${LIVE_DELEGATION_EVENT_EVALUATION_ADD_COLUMN_SQL};`,
+      evaluation_ref_json: `${LIVE_DELEGATION_EVENT_EVALUATION_REF_ADD_COLUMN_SQL};`
+    },
     typeCheckedColumns: ['event_id', 'created_at']
   }
 ]
