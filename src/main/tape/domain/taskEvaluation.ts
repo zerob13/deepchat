@@ -325,7 +325,14 @@ function evaluateRequirements(
       try {
         assertSafeSchemaRegexes(requirement.schema)
         const validate = ajv.compile(requirement.schema as AnySchema)
-        schemaEvaluation = validate(parsedSection.value)
+        if ('$async' in validate && validate.$async) {
+          throw new Error('Asynchronous result schema validators are not supported.')
+        }
+        const validationResult = validate(parsedSection.value)
+        if (typeof validationResult !== 'boolean') {
+          throw new Error('Result schema validator returned a non-boolean value.')
+        }
+        schemaEvaluation = validationResult
           ? {
               outcome: 'passed',
               code: 'result_schema_valid',

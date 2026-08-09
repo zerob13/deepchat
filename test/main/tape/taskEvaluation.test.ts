@@ -1,5 +1,6 @@
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import Ajv from 'ajv'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_TASK_EVALUATION_CANDIDATE_BYTES,
   type DeepChatTaskAcceptanceRequirement,
@@ -68,6 +69,10 @@ function evaluate(
 }
 
 describe('Task evaluation domain', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('evaluates required sections and one fenced JSON result as a canonical pass', () => {
     const candidate = [
       '```markdown',
@@ -168,6 +173,38 @@ describe('Task evaluation domain', () => {
       evidence: [expect.objectContaining({ requirementId: 'schema' })],
       omittedEvidenceCount: 1
     })
+  })
+
+  it.each([
+    {
+      name: 'an asynchronous validator',
+      validate: Object.assign(
+        vi.fn(async () => {
+          throw new Error('must not run')
+        }),
+        { $async: true as const }
+      ),
+      expectedCalls: 0
+    },
+    {
+      name: 'a validator returning a non-boolean value',
+      validate: vi.fn(() => Promise.resolve(true)),
+      expectedCalls: 1
+    }
+  ])('records evaluator_error for $name', ({ validate, expectedCalls }) => {
+    vi.spyOn(Ajv.prototype, 'compile').mockReturnValue(validate as never)
+
+    const result = evaluate('## Result\n{}', 'completed', [
+      { id: 'result', kind: 'result_schema', section: 'Result', schema: {} }
+    ])
+
+    expect(result).toMatchObject({
+      verdict: 'indeterminate',
+      disposition: 'parked',
+      reasonCodes: ['evaluator_error'],
+      records: [{ code: 'evaluator_error', outcome: 'indeterminate' }]
+    })
+    expect(validate).toHaveBeenCalledTimes(expectedCalls)
   })
 
   it('keeps a valid contract verdict independent from execution failure', () => {
