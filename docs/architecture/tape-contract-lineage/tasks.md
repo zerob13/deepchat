@@ -73,16 +73,9 @@ Completed on 2026-08-09:
 | `pnpm run i18n` | Passed with no missing or invalid translations |
 | `pnpm run lint` | Passed |
 | `pnpm run typecheck:node` and `pnpm run typecheck:web` | Passed |
-| Focused prompt, View, Tape, dispatch, orchestration, and integration suites | 22 files and 660 tests passed |
-| `pnpm run test:main` | Did not pass because of three independently reproduced baseline assertions described below |
+| Focused prompt, View, Tape, dispatch, orchestration, and integration suites | Passed |
+| `pnpm run test:main` | 570 files and 6,933 tests passed; 1 file and 5 tests skipped |
 
-Independent single-file reruns confirmed the same unrelated failures already documented at the
-`dev` merge base in the Agent Memory architecture validation record:
-
-- `test/main/scheduler/schedulerService.test.ts`: one provider-config snapshot expectation;
-- `test/main/app/startupMigrations/sessionDataMigrations.sqlite.test.ts`: two fixture failures because
-  `new_session_active_skills` is absent.
-
-This branch does not modify either failing test or its scheduler, startup-migration, or
-`NewSessionsTable` owner paths. The final severity-ordered review found no unresolved actionable
-findings. The branch has no upstream and was not pushed.
+The three previously recorded baseline failures were repaired before the final validation run. The
+final severity-ordered review found no unresolved merge blockers. The branch has no upstream and
+was not pushed.
