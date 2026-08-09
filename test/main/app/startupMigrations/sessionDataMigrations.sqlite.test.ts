@@ -9,9 +9,6 @@ const sqliteModule = await import('better-sqlite3-multiple-ciphers').catch(() =>
 const sessionsModule = sqliteModule
   ? await import('@/session/data/tables/newSessions').catch(() => null)
   : null
-const activeSkillsModule = sqliteModule
-  ? await import('@/session/data/tables/newSessionActiveSkills').catch(() => null)
-  : null
 const disabledToolsModule = sqliteModule
   ? await import('@/session/data/tables/newSessionDisabledAgentTools').catch(() => null)
   : null
@@ -21,12 +18,10 @@ const environmentsModule = sqliteModule
 
 const Database = sqliteModule?.default
 const NewSessionsTable = sessionsModule?.NewSessionsTable
-const NewSessionActiveSkillsTable = activeSkillsModule?.NewSessionActiveSkillsTable
 const NewSessionDisabledAgentToolsTable = disabledToolsModule?.NewSessionDisabledAgentToolsTable
 const NewEnvironmentsTable = environmentsModule?.NewEnvironmentsTable
 const DatabaseCtor = Database!
 const NewSessionsTableCtor = NewSessionsTable!
-const NewSessionActiveSkillsTableCtor = NewSessionActiveSkillsTable!
 const NewSessionDisabledAgentToolsTableCtor = NewSessionDisabledAgentToolsTable!
 const NewEnvironmentsTableCtor = NewEnvironmentsTable!
 
@@ -42,11 +37,7 @@ if (Database) {
 }
 
 const describeIfSqlite =
-  sqliteAvailable &&
-  NewSessionsTable &&
-  NewSessionActiveSkillsTable &&
-  NewSessionDisabledAgentToolsTable &&
-  NewEnvironmentsTable
+  sqliteAvailable && NewSessionsTable && NewSessionDisabledAgentToolsTable && NewEnvironmentsTable
     ? describe
     : describe.skip
 
@@ -63,11 +54,9 @@ describeIfSqlite('disabled Agent tool capability cleanup SQLite integration', ()
       `)
 
       const sessions = new NewSessionsTableCtor(db)
-      const activeSkills = new NewSessionActiveSkillsTableCtor(db)
       const disabledTools = new NewSessionDisabledAgentToolsTableCtor(db)
       const environments = new NewEnvironmentsTableCtor(db)
       sessions.createTable()
-      activeSkills.createTable()
       disabledTools.createTable()
       environments.createTable()
 
@@ -83,7 +72,6 @@ describeIfSqlite('disabled Agent tool capability cleanup SQLite integration', ()
       })
       environments.rebuildFromSessions()
       const environmentBefore = environments.list()
-      const olderRevisionBefore = sessions.get('older')!.revision
 
       const settings = new Map<string, unknown>()
       const sqlitePresenter = {
@@ -112,8 +100,7 @@ describeIfSqlite('disabled Agent tool capability cleanup SQLite integration', ()
       expect(sessions.list().map((row) => row.id)).toEqual(['newer', 'older'])
       expect(sessions.get('older')).toMatchObject({
         disabled_agent_tools: JSON.stringify(['read']),
-        updated_at: 100,
-        revision: olderRevisionBefore + 1
+        updated_at: 100
       })
       expect(disabledTools.listBySession('older')).toEqual([
         { session_id: 'older', ordinal: 0, tool_name: 'read' }
@@ -131,10 +118,8 @@ describeIfSqlite('disabled Agent tool capability cleanup SQLite integration', ()
     const db = new DatabaseCtor(':memory:')
     try {
       const sessions = new NewSessionsTableCtor(db)
-      const activeSkills = new NewSessionActiveSkillsTableCtor(db)
       const disabledTools = new NewSessionDisabledAgentToolsTableCtor(db)
       sessions.createTable()
-      activeSkills.createTable()
       disabledTools.createTable()
 
       const originalDisabledTools = [TAPE_TOOL_NAMES.search, 'read']

@@ -77,9 +77,10 @@ Completed on 2026-08-09:
 | `pnpm run typecheck` | Node and web typechecks passed |
 | Full DeepChat Agent harness | 297 tests passed |
 | Focused contract, View, ToolService, Tape, and orchestration suites | 226 tests passed |
-| `pnpm run test:main` | Three unrelated failures already present at the `dev` merge base |
+| `pnpm run test:main` | Eleven unrelated failures reproduced from the `dev` baseline files |
 
-The `test:main` baseline consists of one provider-config snapshot in `schedulerService.test.ts` and
-two missing-table fixtures in `sessionDataMigrations.sqlite.test.ts`. This branch does not change
-their owner paths; the unrelated repairs were removed from this PR. The final severity-ordered
-review found no unresolved merge blockers in the completed focused suites.
+The reproduced baseline consists of eight stale MainDatabase API fixtures, one provider-config
+snapshot in `schedulerService.test.ts`, and two missing-table fixtures in
+`sessionDataMigrations.sqlite.test.ts`. This branch does not change their owner paths; the unrelated
+repairs were removed from this PR. The final severity-ordered review found no unresolved merge
+blockers in the completed focused suites.
