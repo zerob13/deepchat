@@ -3994,7 +3994,7 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
-    it('persists view manifests before each provider request with monotonic request sequences', async () => {
+    it('keeps ordinary chat on v4 manifests without ExecutionContract dispatch state', async () => {
       providerSettings.getSetting.mockImplementation((key: string) =>
         key === 'traceDebugEnabled' ? true : undefined
       )
@@ -4042,8 +4042,7 @@ describe('DeepChatAgentHarness', () => {
       expect(manifestRows.map((row: any) => row.source_seq)).toEqual([1, 2])
       expect(manifests.map((manifest: any) => manifest.requestSeq)).toEqual([1, 2])
       expect(manifests[0]).toMatchObject({
-        schemaVersion: 5,
-        hashVersion: 3,
+        schemaVersion: 4,
         taskType: 'chat',
         policy: 'cache_aware_context_v1',
         policyVersion: 1,
@@ -4053,34 +4052,43 @@ describe('DeepChatAgentHarness', () => {
         }
       })
       expect(manifests[1]).toMatchObject({
-        schemaVersion: 5,
-        hashVersion: 3,
+        schemaVersion: 4,
         taskType: 'tool_loop',
         policy: 'tool_loop_shadow',
         policyVersion: null
       })
       expect(manifests[0].hashes.promptHash).toHaveLength(64)
       expect(manifests[1].hashes.toolDefinitionsHash).toHaveLength(64)
-      expect(manifests.map((manifest: any) => manifest.executionContract.request)).toEqual([
-        expect.objectContaining({
-          sessionId: 's1',
-          messageId: callArgs.run.messageId,
-          runId: callArgs.run.runId,
-          requestSeq: 1
-        }),
-        expect.objectContaining({
-          sessionId: 's1',
-          messageId: callArgs.run.messageId,
-          runId: callArgs.run.runId,
-          requestSeq: 2
-        })
-      ])
-      expect(manifests[0].executionContract.provenance.promptHash).toBe(
-        manifests[0].hashes.promptHash
+      expect(manifests.every((manifest: any) => !('executionContract' in manifest))).toBe(true)
+      expect(callArgs.run.activeRequestContract).toEqual({
+        requestSeq: 2,
+        executionContract: null
+      })
+      expect(runtimeDependencies.taskContractContext.prepare).not.toHaveBeenCalled()
+    })
+
+    it('fails closed before provider execution when a DeepChat child has no TaskContract context', async () => {
+      sqlitePresenter.newSessionsTable.get.mockImplementation((sessionId: string) =>
+        sessionId === 's1'
+          ? {
+              id: 's1',
+              agent_id: 'deepchat',
+              session_kind: 'subagent',
+              parent_session_id: 'parent-1'
+            }
+          : sessionId === 'parent-1'
+            ? { id: 'parent-1', agent_id: 'deepchat', session_kind: 'regular' }
+            : undefined
       )
-      expect(manifests[1].executionContract.provenance.providerVisibleToolDefinitionsHash).toBe(
-        manifests[1].hashes.toolDefinitionsHash
-      )
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).resolves.toMatchObject({
+        messageId: 'mock-msg-id'
+      })
+      expect(runtimeDependencies.taskContractContext.prepare).toHaveBeenCalledOnce()
+      expect(processStream).not.toHaveBeenCalled()
+      expect((await agent.getSessionState('s1'))?.status).toBe('error')
     })
 
     it('reuses one child-local TaskContract context across provider Views in a run', async () => {
@@ -4095,7 +4103,7 @@ describe('DeepChatAgentHarness', () => {
         title: 'Review provider Views',
         prompt: 'Keep each View attached to the active task.',
         workspace: { kind: 'runtime_default' },
-        acceptance: [],
+        handoffFormat: [],
         maxToolEffect: 'read',
         maxSubagentDepth: 0
       })
@@ -4176,6 +4184,7 @@ describe('DeepChatAgentHarness', () => {
         .map((row: any) => JSON.parse(row.payload_json).data.manifest)
       expect(prepareTaskContract).toHaveBeenCalledTimes(1)
       expect(prepareTaskContract).toHaveBeenNthCalledWith(1, 's1')
+      expect(manifests.map((manifest: any) => manifest.schemaVersion)).toEqual([5, 5, 5])
       expect(
         manifests.map((manifest: any) => manifest.executionContract.provenance.taskContractRef)
       ).toEqual([
@@ -4240,9 +4249,7 @@ describe('DeepChatAgentHarness', () => {
         .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
       expect(viewManifests).toEqual([])
       expect(loggerWarnMock).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'ExecutionContract disabled for request 1 because durable ViewManifest persistence could not be confirmed'
-        )
+        expect.stringContaining('Failed to persist tape view manifest: manifest write failed')
       )
     })
 
@@ -5827,6 +5834,28 @@ describe('DeepChatAgentHarness', () => {
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
       expect(callArgs.run.resources.toolDefinitions).toEqual([])
       expect(callArgs.run.messages).toEqual([{ role: 'user', content: 'Delegated task' }])
+      for await (const _event of callArgs.coreStream(
+        callArgs.run.messages,
+        callArgs.modelId,
+        callArgs.modelConfig,
+        callArgs.temperature,
+        callArgs.maxTokens,
+        callArgs.run.resources.toolDefinitions
+      )) {
+      }
+
+      const manifest = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s-acp-subagent')
+        .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
+        .map((row: any) => JSON.parse(row.payload_json).data.manifest)
+        .at(-1)
+      expect(manifest.schemaVersion).toBe(4)
+      expect(manifest).not.toHaveProperty('executionContract')
+      expect(callArgs.run.activeRequestContract).toEqual({
+        requestSeq: 1,
+        executionContract: null
+      })
+      expect(runtimeDependencies.taskContractContext.prepare).not.toHaveBeenCalled()
     })
 
     it('keeps local tool injection for regular ACP sessions', async () => {

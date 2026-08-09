@@ -113,7 +113,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
     })
   }
 
-  function completeAcceptedAnswer(): string {
+  function completeFormattedAnswer(): string {
     return [
       '## Handoff',
       'Use the reviewed conclusion.',
@@ -953,7 +953,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
       turnId: created.turn.id,
       status: 'completed',
       summary: 'Use the reviewed conclusion.',
-      candidateResult: completeAcceptedAnswer(),
+      candidateResult: completeFormattedAnswer(),
       now: 120
     })
     const event = repository.listEvents('parent')[0]!
@@ -965,7 +965,11 @@ describeIfSqlite('LiveDelegationRepository', () => {
     expect(settled.delegation.status).toBe('idle')
     expect(settled.turn).toMatchObject({
       status: 'completed',
-      evaluation: { verdict: 'passed', disposition: 'accepted', executionStatus: 'completed' }
+      evaluation: {
+        evaluationKind: 'handoff_format',
+        formatStatus: 'valid',
+        executionStatus: 'completed'
+      }
     })
     expect(settled.turn.taskContractRef?.tapeIdentity).not.toBe(originalContractRef.tapeIdentity)
     expect(settled.turn.taskContractRef?.entryId).toBe(frozenFact.entry_id)
@@ -1003,7 +1007,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
       failingRepository.finishTurn({
         turnId: created.turn.id,
         status: 'completed',
-        candidateResult: completeAcceptedAnswer(),
+        candidateResult: completeFormattedAnswer(),
         now: 120
       })
     ).toThrow('terminal projection failed')
@@ -1026,7 +1030,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
     const settled = repository.finishTurn({
       turnId: created.turn.id,
       status: 'completed',
-      candidateResult: completeAcceptedAnswer(),
+      candidateResult: completeFormattedAnswer(),
       now: 120
     })
     const evaluationRef = settled.turn.evaluationRef!
@@ -1061,7 +1065,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
       repository.finishTurn({
         turnId: created.turn.id,
         status: 'completed',
-        candidateResult: completeAcceptedAnswer(),
+        candidateResult: completeFormattedAnswer(),
         now: 130
       })
     ).toThrow('has no Task evaluation')
@@ -1073,7 +1077,7 @@ describeIfSqlite('LiveDelegationRepository', () => {
     const settled = repository.finishTurn({
       turnId: created.turn.id,
       status: 'completed',
-      candidateResult: completeAcceptedAnswer(),
+      candidateResult: completeFormattedAnswer(),
       now: 120
     })
 

@@ -1,17 +1,15 @@
 import { z } from 'zod'
-import { JsonValueSchema, type JsonValue } from '../contracts/json'
 
 export const DEEPCHAT_TASK_CONTRACT_SCHEMA_VERSION = 1 as const
 export const DEEPCHAT_TASK_CONTRACT_HASH_VERSION = 1 as const
 export const DEEPCHAT_TASK_CONTRACT_REF_SCHEMA_VERSION = 1 as const
 export const DEEPCHAT_TASK_EVALUATION_SCHEMA_VERSION = 1 as const
 export const DEEPCHAT_TASK_EVALUATION_HASH_VERSION = 1 as const
-export const DEEPCHAT_TASK_EVALUATOR_VERSION = 'task-contract-v1' as const
+export const DEEPCHAT_TASK_EVALUATOR_VERSION = 'handoff-format-v1' as const
 export const DEEPCHAT_EVALUATION_REF_SCHEMA_VERSION = 1 as const
 
 export const MAX_TASK_CONTRACT_BYTES = 128 * 1024
 export const MAX_TASK_CONTRACT_REQUIREMENTS = 64
-export const MAX_TASK_CONTRACT_RESULT_SCHEMA_BYTES = 32 * 1024
 export const MAX_TASK_CONTRACT_REF_BYTES = 4 * 1024
 export const MAX_TASK_EVALUATION_BYTES = 32 * 1024
 export const MAX_TASK_EVALUATION_REF_BYTES = 4 * 1024
@@ -22,28 +20,21 @@ export const MAX_TASK_EVALUATION_CANDIDATE_BYTES = 1024 * 1024
 export const DEEPCHAT_TASK_EVALUATION_REASON_CODES = [
   'candidate_missing',
   'candidate_too_large',
-  'candidate_too_complex',
   'execution_cancelled',
   'execution_interrupted',
   'required_sections_present',
-  'required_sections_missing',
-  'result_schema_valid',
-  'result_section_missing',
-  'result_json_invalid',
-  'result_schema_mismatch',
-  'evaluator_error'
+  'required_sections_missing'
 ] as const
 
 export type DeepChatTaskEvaluationReasonCode =
   (typeof DEEPCHAT_TASK_EVALUATION_REASON_CODES)[number]
-export type DeepChatTaskEvaluationVerdict = 'passed' | 'failed' | 'indeterminate'
-export type DeepChatTaskEvaluationDisposition = 'accepted' | 'parked'
+export type DeepChatTaskEvaluationFormatStatus = 'valid' | 'invalid' | 'indeterminate'
 export type DeepChatTaskEvaluationExecutionStatus =
   | 'completed'
   | 'failed'
   | 'cancelled'
   | 'interrupted'
-export type DeepChatTaskEvaluationOutcome = 'passed' | 'failed' | 'indeterminate'
+export type DeepChatTaskEvaluationOutcome = 'valid' | 'invalid' | 'indeterminate'
 
 export interface DeepChatTaskContractRef {
   readonly schemaVersion: typeof DEEPCHAT_TASK_CONTRACT_REF_SCHEMA_VERSION
@@ -73,12 +64,10 @@ export type DeepChatTaskEvaluationCandidate =
 
 export interface DeepChatTaskEvaluationRecord {
   readonly requirementId: string | null
-  readonly requirementKind: 'required_sections' | 'result_schema' | null
+  readonly requirementKind: 'required_sections' | null
   readonly outcome: DeepChatTaskEvaluationOutcome
   readonly code: DeepChatTaskEvaluationReasonCode
   readonly section: string | null
-  readonly instancePath: string | null
-  readonly keyword: string | null
   readonly additionalEvidenceCount: number
 }
 
@@ -86,12 +75,12 @@ export interface DeepChatTaskEvaluation {
   readonly schemaVersion: typeof DEEPCHAT_TASK_EVALUATION_SCHEMA_VERSION
   readonly hashVersion: typeof DEEPCHAT_TASK_EVALUATION_HASH_VERSION
   readonly evaluatorVersion: typeof DEEPCHAT_TASK_EVALUATOR_VERSION
+  readonly evaluationKind: 'handoff_format'
   readonly turnId: string
   readonly taskContractHash: string
   readonly candidate: DeepChatTaskEvaluationCandidate
   readonly executionStatus: DeepChatTaskEvaluationExecutionStatus
-  readonly verdict: DeepChatTaskEvaluationVerdict
-  readonly disposition: DeepChatTaskEvaluationDisposition
+  readonly formatStatus: DeepChatTaskEvaluationFormatStatus
   readonly reasonCodes: readonly DeepChatTaskEvaluationReasonCode[]
   readonly records: readonly DeepChatTaskEvaluationRecord[]
   readonly omittedRecordCount: number
@@ -99,8 +88,8 @@ export interface DeepChatTaskEvaluation {
 }
 
 export interface DeepChatTaskEvaluationSummary {
-  readonly verdict: DeepChatTaskEvaluationVerdict
-  readonly disposition: DeepChatTaskEvaluationDisposition
+  readonly evaluationKind: 'handoff_format'
+  readonly formatStatus: DeepChatTaskEvaluationFormatStatus
   readonly reasonCodes: readonly DeepChatTaskEvaluationReasonCode[]
   readonly candidate: DeepChatTaskEvaluationCandidate
   readonly evidence: readonly DeepChatTaskEvaluationRecord[]
@@ -141,26 +130,17 @@ export type DeepChatTaskWorkspaceCeiling =
   | { readonly kind: 'path'; readonly path: string }
   | { readonly kind: 'runtime_default' }
 
-export interface DeepChatRequiredSectionsAcceptance {
+export interface DeepChatRequiredSectionsHandoffFormat {
   readonly id: string
   readonly kind: 'required_sections'
   readonly level: 2
   readonly sections: readonly string[]
 }
 
-export interface DeepChatResultSchemaAcceptance {
-  readonly id: string
-  readonly kind: 'result_schema'
-  readonly section: string
-  readonly schema: JsonValue
-}
-
-export type DeepChatTaskAcceptanceRequirement =
-  | DeepChatRequiredSectionsAcceptance
-  | DeepChatResultSchemaAcceptance
+export type DeepChatHandoffFormatRequirement = DeepChatRequiredSectionsHandoffFormat
 
 export interface DeepChatTaskHarness {
-  readonly acceptance: readonly DeepChatTaskAcceptanceRequirement[]
+  readonly acceptance: readonly DeepChatHandoffFormatRequirement[]
   readonly ceilings: {
     readonly maxToolEffect: 'read' | 'write'
     readonly workspace: DeepChatTaskWorkspaceCeiling
@@ -222,12 +202,10 @@ export const DeepChatTaskEvaluationReasonCodeSchema = z.enum(DEEPCHAT_TASK_EVALU
 export const DeepChatTaskEvaluationRecordSchema = z
   .object({
     requirementId: StoredIdSchema.nullable(),
-    requirementKind: z.enum(['required_sections', 'result_schema']).nullable(),
-    outcome: z.enum(['passed', 'failed', 'indeterminate']),
+    requirementKind: z.literal('required_sections').nullable(),
+    outcome: z.enum(['valid', 'invalid', 'indeterminate']),
     code: DeepChatTaskEvaluationReasonCodeSchema,
     section: z.string().trim().min(1).max(256).nullable(),
-    instancePath: z.string().max(1024).nullable(),
-    keyword: z.string().trim().min(1).max(128).nullable(),
     additionalEvidenceCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
   })
   .strict()
@@ -237,12 +215,12 @@ export const DeepChatTaskEvaluationProjectionSchema: z.ZodType<DeepChatTaskEvalu
     schemaVersion: z.literal(DEEPCHAT_TASK_EVALUATION_SCHEMA_VERSION),
     hashVersion: z.literal(DEEPCHAT_TASK_EVALUATION_HASH_VERSION),
     evaluatorVersion: z.literal(DEEPCHAT_TASK_EVALUATOR_VERSION),
+    evaluationKind: z.literal('handoff_format'),
     turnId: StoredIdSchema,
     taskContractHash: Sha256Schema,
     candidate: DeepChatTaskEvaluationCandidateSchema,
     executionStatus: z.enum(['completed', 'failed', 'cancelled', 'interrupted']),
-    verdict: z.enum(['passed', 'failed', 'indeterminate']),
-    disposition: z.enum(['accepted', 'parked']),
+    formatStatus: z.enum(['valid', 'invalid', 'indeterminate']),
     reasonCodes: z
       .array(DeepChatTaskEvaluationReasonCodeSchema)
       .max(DEEPCHAT_TASK_EVALUATION_REASON_CODES.length),
@@ -251,20 +229,11 @@ export const DeepChatTaskEvaluationProjectionSchema: z.ZodType<DeepChatTaskEvalu
     evaluationHash: Sha256Schema
   })
   .strict()
-  .superRefine((evaluation, context) => {
-    if ((evaluation.verdict === 'passed') !== (evaluation.disposition === 'accepted')) {
-      context.addIssue({
-        code: 'custom',
-        path: ['disposition'],
-        message: 'Only a passed evaluation may be accepted'
-      })
-    }
-  })
 
 export const DeepChatTaskEvaluationSummarySchema: z.ZodType<DeepChatTaskEvaluationSummary> = z
   .object({
-    verdict: z.enum(['passed', 'failed', 'indeterminate']),
-    disposition: z.enum(['accepted', 'parked']),
+    evaluationKind: z.literal('handoff_format'),
+    formatStatus: z.enum(['valid', 'invalid', 'indeterminate']),
     reasonCodes: z
       .array(DeepChatTaskEvaluationReasonCodeSchema)
       .max(DEEPCHAT_TASK_EVALUATION_REASON_CODES.length),
@@ -274,39 +243,20 @@ export const DeepChatTaskEvaluationSummarySchema: z.ZodType<DeepChatTaskEvaluati
     omittedEvidenceCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
   })
   .strict()
-  .superRefine((evaluation, context) => {
-    if ((evaluation.verdict === 'passed') !== (evaluation.disposition === 'accepted')) {
-      context.addIssue({
-        code: 'custom',
-        path: ['disposition'],
-        message: 'Only a passed evaluation may be accepted'
-      })
-    }
-  })
 
 const DeepChatTaskWorkspaceCeilingSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('path'), path: z.string().min(1) }).strict(),
   z.object({ kind: z.literal('runtime_default') }).strict()
 ])
 
-const DeepChatTaskAcceptanceRequirementSchema = z.discriminatedUnion('kind', [
-  z
-    .object({
-      id: StoredIdSchema,
-      kind: z.literal('required_sections'),
-      level: z.literal(2),
-      sections: z.array(z.string().trim().min(1).max(256)).min(1).max(64)
-    })
-    .strict(),
-  z
-    .object({
-      id: StoredIdSchema,
-      kind: z.literal('result_schema'),
-      section: z.string().trim().min(1).max(256),
-      schema: JsonValueSchema
-    })
-    .strict()
-])
+const DeepChatHandoffFormatRequirementSchema = z
+  .object({
+    id: StoredIdSchema,
+    kind: z.literal('required_sections'),
+    level: z.literal(2),
+    sections: z.array(z.string().trim().min(1).max(256)).min(1).max(64)
+  })
+  .strict()
 
 // This validates the persisted/transport shape only. The main-process TaskContract domain owns
 // canonical normalization and contractHash verification.
@@ -350,7 +300,7 @@ export const DeepChatTaskContractProjectionSchema: z.ZodType<DeepChatTaskContrac
     taskHarness: z
       .object({
         acceptance: z
-          .array(DeepChatTaskAcceptanceRequirementSchema)
+          .array(DeepChatHandoffFormatRequirementSchema)
           .max(MAX_TASK_CONTRACT_REQUIREMENTS),
         ceilings: z
           .object({

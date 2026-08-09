@@ -154,7 +154,7 @@ export interface TurnCoordinatorPorts {
     'resolveProjectDir' | 'getEffectiveGenerationSettings'
   >
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
-  identity: Pick<SessionIdentityService, 'getSessionKind'>
+  identity: Pick<SessionIdentityService, 'getSessionKind' | 'isAcpBackedSubagentSession'>
   taskContractContext: DeepChatTaskContractContextPort
   loopRunner: Pick<DeepChatLoopRunner, 'run'>
   messageProjection: Pick<MessageProjectionService, 'refresh'>
@@ -253,10 +253,12 @@ export class TurnCoordinator {
           signal
         )
     )
-    const taskContractContext =
-      this.ports.identity.getSessionKind(sessionId) === 'subagent'
-        ? this.ports.taskContractContext.prepare(sessionId)
-        : null
+    const strictDeepChatChild =
+      this.ports.identity.getSessionKind(sessionId) === 'subagent' &&
+      !this.ports.identity.isAcpBackedSubagentSession(sessionId, state.providerId)
+    const taskContractContext = strictDeepChatChild
+      ? this.ports.taskContractContext.prepare(sessionId)
+      : null
     const tools = meetTaskContractToolDefinitions(sessionId, resolvedTools, taskContractContext)
     const toolReserveTokens = estimateToolReserveTokens(tools)
     throwIfAbortRequested(signal)

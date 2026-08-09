@@ -63,7 +63,7 @@ import type {
 import {
   createLegacyLiveDelegationTaskContractInput,
   createLiveDelegationTaskContractInput,
-  LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS
+  LIVE_DELEGATION_REQUIRED_HANDOFF_SECTIONS
 } from './liveDelegationTaskContract'
 import { extractMarkdownLevelTwoSection } from '@shared/orchestration/liveDelegationMarkdown'
 
@@ -1655,7 +1655,7 @@ export class LiveDelegationService {
 }
 
 function buildTurnHandoff(delegation: LiveDelegation, turn: LiveDelegationTurn): string {
-  const [handoffSection, ...remainingSections] = LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS
+  const [handoffSection, ...remainingSections] = LIVE_DELEGATION_REQUIRED_HANDOFF_SECTIONS
   return [
     '# DeepChat Live Delegation',
     '',

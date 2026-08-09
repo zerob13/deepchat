@@ -4,14 +4,12 @@ import {
   DEEPCHAT_TASK_CONTRACT_SCHEMA_VERSION,
   MAX_TASK_CONTRACT_BYTES,
   MAX_TASK_CONTRACT_REQUIREMENTS,
-  MAX_TASK_CONTRACT_RESULT_SCHEMA_BYTES,
   type DeepChatEvaluationRef,
-  type DeepChatTaskAcceptanceRequirement,
   type DeepChatTaskContract,
   type DeepChatTaskContractRef,
+  type DeepChatHandoffFormatRequirement,
   type DeepChatTaskWorkspaceCeiling
 } from '@shared/types/task-contract'
-import type { JsonValue } from '@shared/contracts/json'
 import { canonicalJsonStringifyData, hashJsonData } from './canonicalJson'
 import { normalizeAbsoluteWorkspacePath } from './workspacePath'
 
@@ -22,33 +20,7 @@ const MAX_SECTION_NAME_BYTES = 256
 const MAX_WORKSPACE_PATH_BYTES = 32 * 1024
 const MAX_TASK_INPUT_BYTES = 64 * 1024
 const MAX_SUBAGENT_DEPTH = 1
-const MAX_RESULT_SCHEMA_DEPTH = 64
-const MAX_RESULT_SCHEMA_NODES = 4_096
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/u
-const FORBIDDEN_RESULT_SCHEMA_KEYS = new Set(['$ref', '$dynamicRef', '$recursiveRef', '$async'])
-const SINGLE_RESULT_SCHEMA_KEYWORDS = new Set([
-  'additionalItems',
-  'additionalProperties',
-  'contains',
-  'contentSchema',
-  'else',
-  'if',
-  'not',
-  'propertyNames',
-  'then',
-  'unevaluatedItems',
-  'unevaluatedProperties'
-])
-const ARRAY_RESULT_SCHEMA_KEYWORDS = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems'])
-const MAP_RESULT_SCHEMA_KEYWORDS = new Set([
-  '$defs',
-  'definitions',
-  'dependentSchemas',
-  'patternProperties',
-  'properties'
-])
-
-type ResultSchemaPosition = 'schema' | 'schema_array' | 'schema_map' | 'dependency_map' | 'data'
 
 const TASK_CONTRACT_KEYS = [
   'schemaVersion',
@@ -79,7 +51,7 @@ export interface BuildTaskContractInput {
   title: string
   prompt: string
   workspace: DeepChatTaskWorkspaceCeiling
-  acceptance: readonly DeepChatTaskAcceptanceRequirement[]
+  handoffFormat: readonly DeepChatHandoffFormatRequirement[]
   creationReason?: 'delegation_created' | 'legacy_recovery'
   predecessorEvaluationRef?: DeepChatEvaluationRef | null
   maxToolEffect?: 'read' | 'write'
@@ -185,186 +157,58 @@ function normalizeEvaluationRef(value: DeepChatEvaluationRef | null): DeepChatEv
   }
 }
 
-function normalizeJsonValue(value: JsonValue, label: string): JsonValue {
-  assertBoundedJsonSchema(value, label, 0, { nodes: 0, ancestors: new Set() })
-  let serialized: string
-  try {
-    serialized = canonicalJsonStringifyData(value)
-  } catch (error) {
-    throw new TaskContractError(`${label} must contain only JSON data.`, 'invalid_input', {
-      cause: error
-    })
-  }
-  if (utf8Length(serialized) > MAX_TASK_CONTRACT_RESULT_SCHEMA_BYTES) {
-    throw new TaskContractError(
-      `${label} exceeds ${MAX_TASK_CONTRACT_RESULT_SCHEMA_BYTES} UTF-8 bytes.`,
-      'limit_exceeded'
-    )
-  }
-  const normalized = JSON.parse(serialized) as JsonValue
-  return normalized
-}
-
-function assertBoundedJsonSchema(
-  value: unknown,
-  label: string,
-  depth: number,
-  state: { nodes: number; ancestors: Set<object> },
-  position: ResultSchemaPosition = 'schema'
-): void {
-  state.nodes += 1
-  if (depth > MAX_RESULT_SCHEMA_DEPTH || state.nodes > MAX_RESULT_SCHEMA_NODES) {
-    throw new TaskContractError(
-      `${label} exceeds the structural complexity limit.`,
-      'limit_exceeded'
-    )
-  }
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'number' && Number.isFinite(value))
-  ) {
-    return
-  }
-  if (!value || typeof value !== 'object') {
-    throw new TaskContractError(`${label} must contain only JSON data.`, 'invalid_input')
-  }
-  if (state.ancestors.has(value)) {
-    throw new TaskContractError(`${label} must not contain circular references.`, 'invalid_input')
-  }
-  if (Object.getOwnPropertySymbols(value).length > 0) {
-    throw new TaskContractError(`${label} must not contain symbol properties.`, 'invalid_input')
-  }
-
-  state.ancestors.add(value)
-  try {
-    if (Array.isArray(value)) {
-      const keys = Object.getOwnPropertyNames(value).filter((key) => key !== 'length')
-      if (keys.length !== value.length) {
-        throw new TaskContractError(`${label} must not contain sparse arrays.`, 'invalid_input')
-      }
-      for (let index = 0; index < value.length; index += 1) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
-        if (!descriptor?.enumerable || !('value' in descriptor)) {
-          throw new TaskContractError(
-            `${label} must contain only data properties.`,
-            'invalid_input'
-          )
-        }
-        assertBoundedJsonSchema(
-          descriptor.value,
-          label,
-          depth + 1,
-          state,
-          position === 'schema_array' ? 'schema' : 'data'
-        )
-      }
-      return
-    }
-
-    const prototype = Object.getPrototypeOf(value)
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TaskContractError(`${label} must contain only plain objects.`, 'invalid_input')
-    }
-    for (const key of Object.getOwnPropertyNames(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key)
-      if (!descriptor?.enumerable || !('value' in descriptor)) {
-        throw new TaskContractError(`${label} must contain only data properties.`, 'invalid_input')
-      }
-      if (position === 'schema' && FORBIDDEN_RESULT_SCHEMA_KEYS.has(key)) {
-        throw new TaskContractError(`${label} must not contain ${key}.`, 'invalid_input')
-      }
-      assertBoundedJsonSchema(
-        descriptor.value,
-        label,
-        depth + 1,
-        state,
-        nestedResultSchemaPosition(position, key, descriptor.value)
-      )
-    }
-  } finally {
-    state.ancestors.delete(value)
-  }
-}
-
-function nestedResultSchemaPosition(
-  position: ResultSchemaPosition,
-  key: string,
-  value: unknown
-): ResultSchemaPosition {
-  if (position === 'schema_map') return 'schema'
-  if (position === 'dependency_map') return Array.isArray(value) ? 'data' : 'schema'
-  if (position !== 'schema') return 'data'
-  if (key === 'items') return Array.isArray(value) ? 'schema_array' : 'schema'
-  if (key === 'dependencies') return 'dependency_map'
-  if (SINGLE_RESULT_SCHEMA_KEYWORDS.has(key)) return 'schema'
-  if (ARRAY_RESULT_SCHEMA_KEYWORDS.has(key)) return 'schema_array'
-  if (MAP_RESULT_SCHEMA_KEYWORDS.has(key)) return 'schema_map'
-  return 'data'
-}
-
-function normalizeAcceptance(
-  requirements: readonly DeepChatTaskAcceptanceRequirement[]
-): DeepChatTaskAcceptanceRequirement[] {
+function normalizeHandoffFormat(
+  requirements: readonly DeepChatHandoffFormatRequirement[]
+): DeepChatHandoffFormatRequirement[] {
   if (!Array.isArray(requirements)) {
-    throw new TaskContractError('acceptance must be an array.', 'invalid_input')
+    throw new TaskContractError('handoffFormat must be an array.', 'invalid_input')
   }
   if (requirements.length > MAX_TASK_CONTRACT_REQUIREMENTS) {
     throw new TaskContractError(
-      `acceptance exceeds ${MAX_TASK_CONTRACT_REQUIREMENTS} requirements.`,
+      `handoffFormat exceeds ${MAX_TASK_CONTRACT_REQUIREMENTS} requirements.`,
       'limit_exceeded'
     )
   }
   const ids = new Set<string>()
   const normalized = requirements.map((requirement, index) => {
-    const label = `acceptance[${index}]`
+    const label = `handoffFormat[${index}]`
     const id = requireString(requirement?.id, `${label}.id`, MAX_IDENTITY_BYTES)
     if (ids.has(id)) {
       throw new TaskContractError(
-        `acceptance requirement ID is duplicated: ${id}.`,
+        `Handoff format requirement ID is duplicated: ${id}.`,
         'invalid_input'
       )
     }
     ids.add(id)
 
-    if (requirement.kind === 'required_sections') {
-      if (requirement.level !== 2 || !Array.isArray(requirement.sections)) {
-        throw new TaskContractError(`${label} is invalid.`, 'invalid_input')
-      }
-      const seenSections = new Set<string>()
-      const sections = requirement.sections.map((section, sectionIndex) => {
-        const normalizedSection = requireString(
-          section,
-          `${label}.sections[${sectionIndex}]`,
-          MAX_SECTION_NAME_BYTES
+    if (requirement.kind !== 'required_sections' || requirement.level !== 2) {
+      throw new TaskContractError(`${label}.kind is invalid.`, 'invalid_input')
+    }
+    if (!Array.isArray(requirement.sections)) {
+      throw new TaskContractError(`${label} is invalid.`, 'invalid_input')
+    }
+    const seenSections = new Set<string>()
+    const sections = requirement.sections.map((section, sectionIndex) => {
+      const normalizedSection = requireString(
+        section,
+        `${label}.sections[${sectionIndex}]`,
+        MAX_SECTION_NAME_BYTES
+      )
+      const identity = normalizedSection.toLowerCase()
+      if (seenSections.has(identity)) {
+        throw new TaskContractError(
+          `${label} contains a duplicate section: ${normalizedSection}.`,
+          'invalid_input'
         )
-        const identity = normalizedSection.toLowerCase()
-        if (seenSections.has(identity)) {
-          throw new TaskContractError(
-            `${label} contains a duplicate section: ${normalizedSection}.`,
-            'invalid_input'
-          )
-        }
-        seenSections.add(identity)
-        return normalizedSection
-      })
-      if (sections.length === 0 || sections.length > MAX_TASK_CONTRACT_REQUIREMENTS) {
-        throw new TaskContractError(`${label}.sections has an invalid size.`, 'invalid_input')
       }
-      sections.sort(compareCodePoints)
-      return { id, kind: 'required_sections' as const, level: 2 as const, sections }
+      seenSections.add(identity)
+      return normalizedSection
+    })
+    if (sections.length === 0 || sections.length > MAX_TASK_CONTRACT_REQUIREMENTS) {
+      throw new TaskContractError(`${label}.sections has an invalid size.`, 'invalid_input')
     }
-
-    if (requirement.kind === 'result_schema') {
-      return {
-        id,
-        kind: 'result_schema' as const,
-        section: requireString(requirement.section, `${label}.section`, MAX_SECTION_NAME_BYTES),
-        schema: normalizeJsonValue(requirement.schema, `${label}.schema`)
-      }
-    }
-    throw new TaskContractError(`${label}.kind is invalid.`, 'invalid_input')
+    sections.sort(compareCodePoints)
+    return { id, kind: 'required_sections' as const, level: 2 as const, sections }
   })
   return normalized.sort((left, right) => compareCodePoints(left.id, right.id))
 }
@@ -441,7 +285,7 @@ function buildTaskContractDraft(
       prompt: requireString(input.prompt, 'prompt', MAX_PROMPT_BYTES)
     },
     taskHarness: {
-      acceptance: normalizeAcceptance(input.acceptance),
+      acceptance: normalizeHandoffFormat(input.handoffFormat),
       ceilings: {
         maxToolEffect,
         workspace: normalizeWorkspace(input.workspace),
@@ -484,7 +328,7 @@ export function isDeepChatTaskContract(value: unknown): value is DeepChatTaskCon
     const normalized = buildTaskContract({
       ...contract.taskDescription,
       workspace: contract.taskHarness.ceilings.workspace,
-      acceptance: contract.taskHarness.acceptance,
+      handoffFormat: contract.taskHarness.acceptance,
       creationReason: contract.taskConfig.creationReason,
       predecessorEvaluationRef: contract.taskConfig.predecessorEvaluationRef,
       maxToolEffect: contract.taskHarness.ceilings.maxToolEffect,

@@ -1,7 +1,5 @@
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
-import Ajv, { type AnySchema, type ErrorObject } from 'ajv'
-import safeRegex from 'safe-regex2'
 import {
   DEEPCHAT_EVALUATION_REF_SCHEMA_VERSION,
   DEEPCHAT_TASK_EVALUATION_HASH_VERSION,
@@ -20,56 +18,14 @@ import {
   type DeepChatTaskEvaluationRecord,
   type DeepChatTaskEvaluationSummary
 } from '@shared/types/task-contract'
-import type { JsonValue } from '@shared/contracts/json'
-import {
-  indexMarkdownLevelTwoSections,
-  removeEnclosingMarkdownFence
-} from '@shared/orchestration/liveDelegationMarkdown'
+import { indexMarkdownLevelTwoSections } from '@shared/orchestration/liveDelegationMarkdown'
 import { canonicalJsonStringifyData, hashJsonData } from './canonicalJson'
 import { isDeepChatTaskContract } from './taskContract'
 
-const MAX_CANDIDATE_JSON_DEPTH = 64
-const MAX_CANDIDATE_JSON_NODES = 4_096
-const MAX_EVIDENCE_PATH_CHARACTERS = 1_024
-const MAX_EVIDENCE_KEYWORD_CHARACTERS = 128
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/u
 const SUCCESS_REASON_CODES = new Set<DeepChatTaskEvaluationReasonCode>([
-  'required_sections_present',
-  'result_schema_valid'
+  'required_sections_present'
 ])
-const SINGLE_SCHEMA_KEYWORDS = [
-  'additionalItems',
-  'additionalProperties',
-  'contains',
-  'else',
-  'if',
-  'items',
-  'not',
-  'propertyNames',
-  'then',
-  'unevaluatedItems',
-  'unevaluatedProperties'
-] as const
-const ARRAY_SCHEMA_KEYWORDS = ['allOf', 'anyOf', 'oneOf', 'prefixItems'] as const
-const MAP_SCHEMA_KEYWORDS = [
-  '$defs',
-  'definitions',
-  'dependencies',
-  'dependentSchemas',
-  'patternProperties',
-  'properties'
-] as const
-
-type ParsedResultSection =
-  | { state: 'missing' }
-  | { state: 'invalid' }
-  | { state: 'too_complex' }
-  | { state: 'available'; value: unknown }
-
-type CachedSchemaEvaluation = Pick<
-  DeepChatTaskEvaluationRecord,
-  'outcome' | 'code' | 'instancePath' | 'keyword'
->
 
 export interface BuildTaskEvaluationInput {
   contract: DeepChatTaskContract
@@ -131,25 +87,25 @@ export function buildTaskEvaluation(input: BuildTaskEvaluationInput): DeepChatTa
     records = evaluateRequirements(input.contract, candidateResult)
   }
 
-  const verdict = records.some((record) => record.outcome === 'failed')
-    ? 'failed'
+  const formatStatus = records.some((record) => record.outcome === 'invalid')
+    ? 'invalid'
     : records.some((record) => record.outcome === 'indeterminate')
       ? 'indeterminate'
-      : 'passed'
+      : 'valid'
   const reasonCodes = [
-    ...new Set(records.filter((record) => record.outcome !== 'passed').map((record) => record.code))
+    ...new Set(records.filter((record) => record.outcome !== 'valid').map((record) => record.code))
   ].sort(compareCodePoints)
 
   return finalizeEvaluation({
     schemaVersion: DEEPCHAT_TASK_EVALUATION_SCHEMA_VERSION,
     hashVersion: DEEPCHAT_TASK_EVALUATION_HASH_VERSION,
     evaluatorVersion: DEEPCHAT_TASK_EVALUATOR_VERSION,
+    evaluationKind: 'handoff_format',
     turnId: input.contract.taskDescription.turnId,
     taskContractHash: input.contract.contractHash,
     candidate,
     executionStatus: input.executionStatus,
-    verdict,
-    disposition: verdict === 'passed' ? 'accepted' : 'parked',
+    formatStatus,
     reasonCodes,
     records,
     omittedRecordCount: 0
@@ -229,11 +185,11 @@ export function projectTaskEvaluationSummary(
     throw new TaskEvaluationError('Task evaluation evidence limit is invalid.', 'invalid_input')
   }
   const evidenceLimit = Math.min(maxEvidenceRecords, MAX_TASK_EVALUATION_PARENT_EVIDENCE)
-  const relevant = canonicalEvaluation.records.filter((record) => record.outcome !== 'passed')
+  const relevant = canonicalEvaluation.records.filter((record) => record.outcome !== 'valid')
   const evidence = relevant.slice(0, evidenceLimit)
   return deepFreeze({
-    verdict: canonicalEvaluation.verdict,
-    disposition: canonicalEvaluation.disposition,
+    evaluationKind: canonicalEvaluation.evaluationKind,
+    formatStatus: canonicalEvaluation.formatStatus,
     reasonCodes: [...canonicalEvaluation.reasonCodes],
     candidate: canonicalEvaluation.candidate,
     evidence,
@@ -248,124 +204,20 @@ function evaluateRequirements(
   candidateResult: string
 ): DeepChatTaskEvaluationRecord[] {
   const sections = indexMarkdownLevelTwoSections(candidateResult)
-  const parsedSections = new Map<string, ParsedResultSection>()
-  const schemaEvaluations = new Map<string, CachedSchemaEvaluation>()
-  const ajv = new Ajv({
-    allErrors: false,
-    strict: true,
-    validateFormats: false,
-    messages: false
-  })
 
   return contract.taskHarness.acceptance.map((requirement) => {
-    if (requirement.kind === 'required_sections') {
-      const missing = requirement.sections.filter(
-        (section) => !(sections.get(section.toLowerCase())?.body.trim() ?? '')
-      )
-      return evaluationRecord({
-        requirementId: requirement.id,
-        requirementKind: requirement.kind,
-        outcome: missing.length === 0 ? 'passed' : 'failed',
-        code: missing.length === 0 ? 'required_sections_present' : 'required_sections_missing',
-        section: missing[0] ?? null,
-        additionalEvidenceCount: Math.max(0, missing.length - 1)
-      })
-    }
-
-    const sectionIdentity = requirement.section.toLowerCase()
-    let parsedSection = parsedSections.get(sectionIdentity)
-    if (!parsedSection) {
-      const section = sections.get(sectionIdentity)
-      if (!section?.body.trim()) {
-        parsedSection = { state: 'missing' }
-      } else {
-        try {
-          const value = JSON.parse(removeEnclosingMarkdownFence(section.body)) as unknown
-          parsedSection = isBoundedCandidateJson(value)
-            ? { state: 'available', value }
-            : { state: 'too_complex' }
-        } catch {
-          parsedSection = { state: 'invalid' }
-        }
-      }
-      parsedSections.set(sectionIdentity, parsedSection)
-    }
-
-    if (parsedSection.state === 'missing') {
-      return evaluationRecord({
-        requirementId: requirement.id,
-        requirementKind: requirement.kind,
-        outcome: 'failed',
-        code: 'result_section_missing',
-        section: requirement.section
-      })
-    }
-    if (parsedSection.state === 'invalid') {
-      return evaluationRecord({
-        requirementId: requirement.id,
-        requirementKind: requirement.kind,
-        outcome: 'failed',
-        code: 'result_json_invalid',
-        section: requirement.section
-      })
-    }
-    if (parsedSection.state === 'too_complex') {
-      return evaluationRecord({
-        requirementId: requirement.id,
-        requirementKind: requirement.kind,
-        outcome: 'indeterminate',
-        code: 'candidate_too_complex',
-        section: requirement.section
-      })
-    }
-
-    const schemaCacheKey = `${sectionIdentity}\0${hashJsonData(requirement.schema)}`
-    let schemaEvaluation = schemaEvaluations.get(schemaCacheKey)
-    if (!schemaEvaluation) {
-      try {
-        assertSafeSchemaRegexes(requirement.schema)
-        const validate = ajv.compile(requirement.schema as AnySchema)
-        if ('$async' in validate && validate.$async) {
-          throw new Error('Asynchronous result schema validators are not supported.')
-        }
-        const validationResult = validate(parsedSection.value)
-        if (typeof validationResult !== 'boolean') {
-          throw new Error('Result schema validator returned a non-boolean value.')
-        }
-        schemaEvaluation = validationResult
-          ? {
-              outcome: 'passed',
-              code: 'result_schema_valid',
-              instancePath: null,
-              keyword: null
-            }
-          : schemaMismatchEvidence(validate.errors?.[0])
-      } catch {
-        schemaEvaluation = {
-          outcome: 'indeterminate',
-          code: 'evaluator_error',
-          instancePath: null,
-          keyword: null
-        }
-      }
-      schemaEvaluations.set(schemaCacheKey, schemaEvaluation)
-    }
+    const missing = requirement.sections.filter(
+      (section) => !(sections.get(section.toLowerCase())?.body.trim() ?? '')
+    )
     return evaluationRecord({
       requirementId: requirement.id,
       requirementKind: requirement.kind,
-      section: requirement.section,
-      ...schemaEvaluation
+      outcome: missing.length === 0 ? 'valid' : 'invalid',
+      code: missing.length === 0 ? 'required_sections_present' : 'required_sections_missing',
+      section: missing[0] ?? null,
+      additionalEvidenceCount: Math.max(0, missing.length - 1)
     })
   })
-}
-
-function schemaMismatchEvidence(error: ErrorObject | null | undefined): CachedSchemaEvaluation {
-  return {
-    outcome: 'failed',
-    code: 'result_schema_mismatch',
-    instancePath: normalizeEvidenceText(error?.instancePath, MAX_EVIDENCE_PATH_CHARACTERS),
-    keyword: normalizeEvidenceText(error?.keyword, MAX_EVIDENCE_KEYWORD_CHARACTERS)
-  }
 }
 
 function evaluationRecord(
@@ -378,8 +230,6 @@ function evaluationRecord(
     outcome: input.outcome,
     code: input.code,
     section: input.section ?? null,
-    instancePath: input.instancePath ?? null,
-    keyword: input.keyword ?? null,
     additionalEvidenceCount: input.additionalEvidenceCount ?? 0
   }
 }
@@ -421,7 +271,6 @@ function finalizeEvaluation(
 }
 
 function isCanonicalEvaluation(evaluation: DeepChatTaskEvaluation): boolean {
-  if ((evaluation.verdict === 'passed') !== (evaluation.disposition === 'accepted')) return false
   if (evaluation.reasonCodes.some((code) => SUCCESS_REASON_CODES.has(code))) return false
   if (
     canonicalJsonStringifyData(evaluation.reasonCodes) !==
@@ -431,9 +280,7 @@ function isCanonicalEvaluation(evaluation: DeepChatTaskEvaluation): boolean {
   }
   const recordedReasonCodes = [
     ...new Set(
-      evaluation.records
-        .filter((record) => record.outcome !== 'passed')
-        .map((record) => record.code)
+      evaluation.records.filter((record) => record.outcome !== 'valid').map((record) => record.code)
     )
   ].sort(compareCodePoints)
   if (
@@ -444,27 +291,23 @@ function isCanonicalEvaluation(evaluation: DeepChatTaskEvaluation): boolean {
     return false
   }
   const reasonOutcomes = evaluation.reasonCodes.map(reasonCodeOutcome)
-  const expectedVerdict = reasonOutcomes.includes('failed')
-    ? 'failed'
+  const expectedFormatStatus = reasonOutcomes.includes('invalid')
+    ? 'invalid'
     : reasonOutcomes.includes('indeterminate')
       ? 'indeterminate'
-      : 'passed'
-  if (evaluation.verdict !== expectedVerdict) return false
+      : 'valid'
+  if (evaluation.formatStatus !== expectedFormatStatus) return false
   return evaluation.records.every(
     (record) =>
       recordMatchesReasonCode(record) &&
-      (record.outcome === 'passed' || evaluation.reasonCodes.includes(record.code))
+      (record.outcome === 'valid' || evaluation.reasonCodes.includes(record.code))
   )
 }
 
 function recordMatchesReasonCode(record: DeepChatTaskEvaluationRecord): boolean {
   const expectedOutcome = reasonCodeOutcome(record.code)
   if (record.outcome !== expectedOutcome) return false
-  const requirementCode =
-    record.code.startsWith('required_sections_') ||
-    record.code.startsWith('result_') ||
-    record.code === 'candidate_too_complex' ||
-    record.code === 'evaluator_error'
+  const requirementCode = record.code.startsWith('required_sections_')
   return requirementCode
     ? record.requirementId !== null && record.requirementKind !== null
     : record.requirementId === null && record.requirementKind === null
@@ -473,85 +316,9 @@ function recordMatchesReasonCode(record: DeepChatTaskEvaluationRecord): boolean 
 function reasonCodeOutcome(
   code: DeepChatTaskEvaluationReasonCode
 ): DeepChatTaskEvaluationRecord['outcome'] {
-  if (SUCCESS_REASON_CODES.has(code)) return 'passed'
-  if (
-    code === 'required_sections_missing' ||
-    code === 'result_section_missing' ||
-    code === 'result_json_invalid' ||
-    code === 'result_schema_mismatch'
-  ) {
-    return 'failed'
-  }
+  if (SUCCESS_REASON_CODES.has(code)) return 'valid'
+  if (code === 'required_sections_missing') return 'invalid'
   return 'indeterminate'
-}
-
-function isBoundedCandidateJson(value: unknown): boolean {
-  const state = { nodes: 0 }
-  const visit = (candidate: unknown, depth: number): boolean => {
-    state.nodes += 1
-    if (depth > MAX_CANDIDATE_JSON_DEPTH || state.nodes > MAX_CANDIDATE_JSON_NODES) return false
-    if (candidate === null || typeof candidate !== 'object') return true
-    if (Array.isArray(candidate)) return candidate.every((entry) => visit(entry, depth + 1))
-    return Object.values(candidate as Record<string, unknown>).every((entry) =>
-      visit(entry, depth + 1)
-    )
-  }
-  return visit(value, 0)
-}
-
-function assertSafeSchemaRegexes(value: JsonValue): void {
-  if (typeof value === 'boolean' || !value || typeof value !== 'object' || Array.isArray(value)) {
-    return
-  }
-  const schema = value as Record<string, JsonValue>
-  if (typeof schema.pattern === 'string' && !safeRegex(schema.pattern)) {
-    throw new TaskEvaluationError('Result schema contains an unsafe pattern.', 'invalid_input')
-  }
-  if (
-    schema.patternProperties &&
-    typeof schema.patternProperties === 'object' &&
-    !Array.isArray(schema.patternProperties)
-  ) {
-    for (const pattern of Object.keys(schema.patternProperties)) {
-      if (!safeRegex(pattern)) {
-        throw new TaskEvaluationError(
-          'Result schema contains an unsafe pattern property.',
-          'invalid_input'
-        )
-      }
-    }
-  }
-
-  for (const keyword of SINGLE_SCHEMA_KEYWORDS) {
-    visitNestedSchema(schema[keyword])
-  }
-  for (const keyword of ARRAY_SCHEMA_KEYWORDS) {
-    const nested = schema[keyword]
-    if (Array.isArray(nested)) {
-      for (const child of nested) visitNestedSchema(child)
-    }
-  }
-  for (const keyword of MAP_SCHEMA_KEYWORDS) {
-    const nested = schema[keyword]
-    if (!nested || typeof nested !== 'object' || Array.isArray(nested)) continue
-    for (const child of Object.values(nested)) visitNestedSchema(child)
-  }
-}
-
-function visitNestedSchema(value: JsonValue | undefined): void {
-  if (Array.isArray(value)) {
-    for (const child of value) visitNestedSchema(child)
-    return
-  }
-  if (typeof value === 'boolean' || (value && typeof value === 'object')) {
-    assertSafeSchemaRegexes(value)
-  }
-}
-
-function normalizeEvidenceText(value: string | undefined, maxCharacters: number): string | null {
-  if (!value) return null
-  const sanitized = value.replaceAll('\0', '\uFFFD')
-  return sanitized.length <= maxCharacters ? sanitized : sanitized.slice(0, maxCharacters)
 }
 
 function compareCodePoints(left: string, right: string): number {

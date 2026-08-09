@@ -146,8 +146,8 @@ describeIfSqlite('LiveDelegationService', () => {
           contentPreview: '## Handoff\nThe boundary is sound.�',
           contentTruncated: false,
           evaluation: expect.objectContaining({
-            verdict: 'failed',
-            disposition: 'parked',
+            evaluationKind: 'handoff_format',
+            formatStatus: 'invalid',
             reasonCodes: ['required_sections_missing']
           })
         })
@@ -156,7 +156,7 @@ describeIfSqlite('LiveDelegationService', () => {
     expect(repository.require(delegationId).status).toBe('idle')
     expect(repository.requireTurn(detail.turns[0]!.id)).toMatchObject({
       status: 'completed',
-      evaluation: { verdict: 'failed', disposition: 'parked' }
+      evaluation: { evaluationKind: 'handoff_format', formatStatus: 'invalid' }
     })
     expect(harness.sessions.linkSubagentTape).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -168,23 +168,23 @@ describeIfSqlite('LiveDelegationService', () => {
     )
   })
 
-  it('surfaces one accepted evaluation through wait, inspect, and read_result', async () => {
+  it('surfaces one valid Handoff format evaluation through wait, inspect, and read_result', async () => {
     const detail = await service.spawn('parent', {
       slotId: 'reviewer',
-      title: 'Review accepted result',
+      title: 'Review formatted result',
       prompt: 'Return every required result section.'
     })
     await vi.waitFor(() => expect(harness.sessions.sendConversationMessage).toHaveBeenCalledOnce())
     const childId = repository.require(detail.delegation.id).childSessionId!
-    const answer = completeAcceptedAnswer()
+    const answer = completeFormattedAnswer()
     harness.publishAnswer(childId, answer, 200)
     harness.publish({ sessionId: childId, kind: 'status', updatedAt: 201, status: 'idle' })
 
     const waited = await service.wait('parent', { after: 0, timeoutMs: 1_000 })
     const waitedEvaluation = waited.events[0]!.evaluation!
     expect(waitedEvaluation).toMatchObject({
-      verdict: 'passed',
-      disposition: 'accepted',
+      evaluationKind: 'handoff_format',
+      formatStatus: 'valid',
       reasonCodes: [],
       evidence: []
     })
@@ -595,7 +595,7 @@ describeIfSqlite('LiveDelegationService', () => {
     expect(recovered.events[0]).toMatchObject({
       relatedTurnId: turn.id,
       kind: 'turn_completed',
-      evaluation: { verdict: 'failed', disposition: 'parked' }
+      evaluation: { evaluationKind: 'handoff_format', formatStatus: 'invalid' }
     })
     expect(repository.require(detail.delegation.id).status).toBe('idle')
   })
@@ -701,7 +701,7 @@ describeIfSqlite('LiveDelegationService', () => {
     expect(repository.listTurns(detail.delegation.id, 1)[0]).toMatchObject({
       status: 'completed',
       resultSummary: '## Result\nUse this conclusion.',
-      evaluation: { verdict: 'failed', disposition: 'parked' }
+      evaluation: { evaluationKind: 'handoff_format', formatStatus: 'invalid' }
     })
   })
 
@@ -1872,8 +1872,8 @@ describeIfSqlite('LiveDelegationService', () => {
       resultRef: null,
       error: 'Child session completed without a final answer.',
       evaluation: {
-        verdict: 'indeterminate',
-        disposition: 'parked',
+        evaluationKind: 'handoff_format',
+        formatStatus: 'indeterminate',
         reasonCodes: ['candidate_missing']
       }
     })
@@ -1886,8 +1886,8 @@ describeIfSqlite('LiveDelegationService', () => {
           kind: 'turn_failed',
           contentPreview: 'Child session completed without a final answer.',
           evaluation: expect.objectContaining({
-            verdict: 'indeterminate',
-            disposition: 'parked',
+            evaluationKind: 'handoff_format',
+            formatStatus: 'indeterminate',
             reasonCodes: ['candidate_missing']
           })
         })
@@ -1895,7 +1895,7 @@ describeIfSqlite('LiveDelegationService', () => {
     })
   })
 
-  it('reconciles an accepted idle child after restart', async () => {
+  it('reconciles an idle child after restart', async () => {
     await service.stop()
     const created = repository.create({
       id: 'delegation-recovery',
@@ -2411,7 +2411,7 @@ describeIfSqlite('LiveDelegationService', () => {
   })
 })
 
-function completeAcceptedAnswer(): string {
+function completeFormattedAnswer(): string {
   return [
     '## Handoff',
     'Use the reviewed conclusion.',

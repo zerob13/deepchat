@@ -84,9 +84,6 @@ importers:
       ai:
         specifier: ^7.0.54
         version: 7.0.54(zod@4.4.3)
-      ajv:
-        specifier: 8.20.0
-        version: 8.20.0
       axios:
         specifier: ^1.18.1
         version: 1.18.1
@@ -166,7 +163,7 @@ importers:
         specifier: ^7.1.0
         version: 7.1.0
       safe-regex2:
-        specifier: 5.1.1
+        specifier: ^5.1.1
         version: 5.1.1
       sharp:
         specifier: ^0.35.3

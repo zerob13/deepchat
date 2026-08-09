@@ -1,10 +1,10 @@
 import type {
   DeepChatEvaluationRef,
-  DeepChatTaskAcceptanceRequirement,
+  DeepChatHandoffFormatRequirement,
   DeepChatTaskWorkspaceCeiling
 } from '@shared/types/task-contract'
 
-export const LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS = [
+export const LIVE_DELEGATION_REQUIRED_HANDOFF_SECTIONS = [
   'Handoff',
   'Result',
   'Evidence',
@@ -15,7 +15,7 @@ export const LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS = [
 
 export interface LiveDelegationTaskContractInput {
   workspace: DeepChatTaskWorkspaceCeiling
-  acceptance: readonly DeepChatTaskAcceptanceRequirement[]
+  handoffFormat: readonly DeepChatHandoffFormatRequirement[]
   predecessorEvaluationRef: DeepChatEvaluationRef | null
   maxToolEffect: 'read' | 'write'
   maxSubagentDepth: number
@@ -31,12 +31,12 @@ export function createLiveDelegationTaskContractInput(
 ): LiveDelegationTaskContractInput {
   return {
     workspace: projectDir ? { kind: 'path', path: projectDir } : { kind: 'runtime_default' },
-    acceptance: [
+    handoffFormat: [
       {
         id: 'live-delegation-required-sections',
         kind: 'required_sections',
         level: 2,
-        sections: LIVE_DELEGATION_REQUIRED_RESULT_SECTIONS
+        sections: LIVE_DELEGATION_REQUIRED_HANDOFF_SECTIONS
       }
     ],
     predecessorEvaluationRef,
@@ -50,7 +50,7 @@ export function createLegacyLiveDelegationTaskContractInput(
 ): LegacyLiveDelegationTaskContractInput {
   return {
     ...createLiveDelegationTaskContractInput(projectDir),
-    acceptance: [],
+    handoffFormat: [],
     creationReason: 'legacy_recovery'
   }
 }

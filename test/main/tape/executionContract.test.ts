@@ -160,7 +160,7 @@ function buildTaskContext(
     title: 'Review boundaries',
     prompt: 'Inspect the contract boundary.',
     workspace: { kind: 'path', path: overrides.workspace ?? path.resolve('task-workspace') },
-    acceptance: [],
+    handoffFormat: [],
     maxToolEffect: overrides.maxToolEffect ?? 'write',
     maxSubagentDepth: overrides.maxSubagentDepth ?? 1
   })

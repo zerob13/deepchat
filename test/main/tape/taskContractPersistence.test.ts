@@ -41,7 +41,7 @@ function contract(title = 'Review boundaries') {
     title,
     prompt: 'Inspect the contract boundary.',
     workspace: { kind: 'runtime_default' },
-    acceptance: [
+    handoffFormat: [
       {
         id: 'sections',
         kind: 'required_sections',

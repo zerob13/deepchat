@@ -258,7 +258,10 @@ export interface DeepChatLoopRunnerPorts {
   sessionSettings: Pick<SessionSettingsCoordinator, 'getEffectiveGenerationSettings'>
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
   runLifecycle: LoopRunLifecyclePort
-  identity: Pick<SessionIdentityService, 'getAgentId' | 'getSessionKind'>
+  identity: Pick<
+    SessionIdentityService,
+    'getAgentId' | 'getSessionKind' | 'isAcpBackedSubagentSession'
+  >
   sessionPermissionPort: SessionPermissionPort
   reviewToolPermission: ToolPermissionReviewer
   hookSink: Pick<RuntimeHookSink, 'scope'>
@@ -403,7 +406,12 @@ export class DeepChatLoopRunner {
       throw new Error('Request was not sent because the prompt is empty.')
     }
     const sessionKind = this.ports.identity.getSessionKind(sessionId)
-    const strictViewContract = sessionKind === 'subagent'
+    const strictViewContract =
+      sessionKind === 'subagent' &&
+      !this.ports.identity.isAcpBackedSubagentSession(sessionId, state.providerId)
+    if (strictViewContract && !taskContractContext) {
+      throw new Error('Contract-bearing child run requires a TaskContract context.')
+    }
 
     const providerModelFacts =
       providedProviderModelFacts ??
@@ -722,63 +730,65 @@ export class DeepChatLoopRunner {
                   expectedInstance: resourceInstance
                 })
             },
-            executionContract: {
-              build: ({
-                requestSeq,
-                messages: providerMessages,
-                modelId: contractModelId,
-                modelConfig: contractModelConfig,
-                temperature: contractTemperature,
-                maxTokens: contractMaxTokens,
-                tools: contractTools,
-                contextBuilderVersion
-              }) => {
-                const effectiveSystemPrompt =
-                  providerMessages[0]?.role === 'system' &&
-                  typeof providerMessages[0].content === 'string'
-                    ? providerMessages[0].content
-                    : ''
-                const promptAssembly = reconcilePromptAssembly(
-                  loopRun.resources.promptAssembly ??
-                    createOpaquePromptAssembly(effectiveSystemPrompt),
-                  effectiveSystemPrompt
-                )
-                const cancellationRequested = abortSignal.aborted
-                return buildExecutionContract({
-                  request: {
-                    sessionId,
-                    messageId,
-                    runId: loopRun.runId,
-                    requestSeq
+            executionContract: strictViewContract
+              ? {
+                  build: ({
+                    requestSeq,
+                    messages: providerMessages,
+                    modelId: contractModelId,
+                    modelConfig: contractModelConfig,
+                    temperature: contractTemperature,
+                    maxTokens: contractMaxTokens,
+                    tools: contractTools,
+                    contextBuilderVersion
+                  }) => {
+                    const effectiveSystemPrompt =
+                      providerMessages[0]?.role === 'system' &&
+                      typeof providerMessages[0].content === 'string'
+                        ? providerMessages[0].content
+                        : ''
+                    const promptAssembly = reconcilePromptAssembly(
+                      loopRun.resources.promptAssembly ??
+                        createOpaquePromptAssembly(effectiveSystemPrompt),
+                      effectiveSystemPrompt
+                    )
+                    const cancellationRequested = abortSignal.aborted
+                    return buildExecutionContract({
+                      request: {
+                        sessionId,
+                        messageId,
+                        runId: loopRun.runId,
+                        requestSeq
+                      },
+                      promptAssembly,
+                      providerMessages,
+                      tools: contractTools,
+                      providerId: state.providerId,
+                      modelId: contractModelId,
+                      modelConfig: contractModelConfig,
+                      temperature: contractTemperature,
+                      maxTokens: contractMaxTokens,
+                      workspace: projectDir
+                        ? { kind: 'path', path: projectDir }
+                        : { kind: 'runtime_default' },
+                      maxSubagentDepth: resolveExecutionContractSubagentDepth(contractTools),
+                      dynamicControlSnapshot: {
+                        permissionMode: state.permissionMode,
+                        requestAdmitted: !cancellationRequested,
+                        cancellationRequested
+                      },
+                      assemblerVersion: contextBuilderVersion,
+                      taskContractContext
+                    })
                   },
-                  promptAssembly,
-                  providerMessages,
-                  tools: contractTools,
-                  providerId: state.providerId,
-                  modelId: contractModelId,
-                  modelConfig: contractModelConfig,
-                  temperature: contractTemperature,
-                  maxTokens: contractMaxTokens,
-                  workspace: projectDir
-                    ? { kind: 'path', path: projectDir }
-                    : { kind: 'runtime_default' },
-                  maxSubagentDepth: resolveExecutionContractSubagentDepth(contractTools),
-                  dynamicControlSnapshot: {
-                    permissionMode: state.permissionMode,
-                    requestAdmitted: !cancellationRequested,
-                    cancellationRequested
-                  },
-                  assemblerVersion: contextBuilderVersion,
-                  taskContractContext
-                })
-              },
-              onBuildError: (error) =>
-                logger.warn(
-                  `[DeepChatAgent] Failed to construct execution contract: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`
-                )
-            },
+                  onBuildError: (error) =>
+                    logger.warn(
+                      `[DeepChatAgent] Failed to construct execution contract: ${
+                        error instanceof Error ? error.message : String(error)
+                      }`
+                    )
+                }
+              : undefined,
             strictViewContract,
             manifest: {
               resolvePolicy: resolveTapeViewManifestPolicy,
