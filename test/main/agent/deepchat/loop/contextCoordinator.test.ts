@@ -647,6 +647,43 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.outcomes).toHaveLength(0)
   })
 
+  it('does not freeze a provider View when cancellation lands during context recovery', async () => {
+    const fixture = createAttemptInput()
+    fixture.input.budget.preflight = vi
+      .fn()
+      .mockReturnValueOnce(
+        createPreflight(fixture.run.messages, { requiresContextPressureRecovery: true })
+      )
+      .mockReturnValue(createPreflight(fixture.run.messages))
+    let markRecoveryStarted = () => {
+      throw new Error('Recovery started before initialization')
+    }
+    const recoveryStarted = new Promise<void>((resolve) => {
+      markRecoveryStarted = resolve
+    })
+    let releaseRecovery = () => {
+      throw new Error('Recovery released before initialization')
+    }
+    const recoveryBlocked = new Promise<void>((resolve) => {
+      releaseRecovery = resolve
+    })
+    fixture.input.recovery.recover = vi.fn(async () => {
+      markRecoveryStarted()
+      await recoveryBlocked
+      return { messages: fixture.run.messages }
+    })
+
+    const request = collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    await recoveryStarted
+    fixture.run.abortController.abort(new DOMException('stopped', 'AbortError'))
+    releaseRecovery()
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fixture.run.requestSeq).toBe(0)
+    expect(fixture.manifests).toEqual([])
+    expect(fixture.providerRequests).toEqual([])
+  })
+
   it('records abort and error attempts without inventing usage', async () => {
     const aborted = createAttemptInput()
     aborted.input.provider.stream = async function* () {

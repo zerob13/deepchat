@@ -604,6 +604,7 @@ export class DeepChatContextCoordinator {
         throw new Error('Request was not sent because the prompt became empty.')
       }
 
+      input.run.abortController.signal.throwIfAborted()
       const requestSeq = advanceRequestSequence(input.run)
       const isInitialViewRequest =
         (options.requestOrigin === 'chat' || options.requestOrigin === 'resume') &&

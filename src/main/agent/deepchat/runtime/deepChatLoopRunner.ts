@@ -9,6 +9,7 @@ import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import type {
   ProviderExecutionPort,
   ModelConfig,
@@ -92,11 +93,7 @@ import type {
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
 import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
-import type {
-  DeepChatTaskContractContextPort,
-  ToolExecutionPort,
-  ToolResultPort
-} from '@/agent/deepchat/loop/ports'
+import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import {
   buildContextCheckpoint,
   createEmptyContextRuntimeContributions,
@@ -194,6 +191,7 @@ export type DeepChatLoopRunInput = {
   projectDir: string | null
   resourceInstance?: DeepChatAgentInstance
   providerModelFacts?: ProviderModelRuntimeFacts
+  taskContractContext: DeepChatTaskContractContext | null
   tools?: MCPToolDefinition[]
   baseSystemPrompt?: string
   basePromptAssembly?: DeepChatPromptAssembly
@@ -263,7 +261,6 @@ export interface DeepChatLoopRunnerPorts {
   identity: Pick<SessionIdentityService, 'getAgentId' | 'getSessionKind'>
   sessionPermissionPort: SessionPermissionPort
   reviewToolPermission: ToolPermissionReviewer
-  taskContractContext: DeepChatTaskContractContextPort
   hookSink: Pick<RuntimeHookSink, 'scope'>
   compaction: Pick<CompactionRuntimeCoordinator, 'apply'>
 }
@@ -368,6 +365,7 @@ export class DeepChatLoopRunner {
       projectDir,
       resourceInstance: providedResourceInstance,
       providerModelFacts: providedProviderModelFacts,
+      taskContractContext,
       tools: providedTools,
       baseSystemPrompt,
       basePromptAssembly,
@@ -503,9 +501,6 @@ export class DeepChatLoopRunner {
     const toolCatalog = {
       resolve: async (request?: { activeSkillNames?: string[] }) => {
         const resolved = await unconstrainedToolCatalog.resolve(request)
-        const taskContractContext = strictViewContract
-          ? this.ports.taskContractContext.prepare(sessionId)
-          : null
         return meetTaskContractToolDefinitions(sessionId, resolved, taskContractContext)
       }
     }
@@ -749,9 +744,6 @@ export class DeepChatLoopRunner {
                   effectiveSystemPrompt
                 )
                 const cancellationRequested = abortSignal.aborted
-                const taskContractContext = strictViewContract
-                  ? ports.taskContractContext.prepare(sessionId)
-                  : null
                 return buildExecutionContract({
                   request: {
                     sessionId,

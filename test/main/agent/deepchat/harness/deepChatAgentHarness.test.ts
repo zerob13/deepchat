@@ -4080,7 +4080,7 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
-    it('resolves the child-local TaskContract independently for every provider View', async () => {
+    it('reuses one child-local TaskContract context across provider Views in a run', async () => {
       const taskContract = buildTaskContract({
         delegationId: 'delegation-1',
         turnId: 'turn-1',
@@ -4121,9 +4121,7 @@ describe('DeepChatAgentHarness', () => {
       const prepareTaskContract = vi.mocked(runtimeDependencies.taskContractContext.prepare)
       prepareTaskContract
         .mockReturnValueOnce(contextForTape('c'.repeat(64), 2))
-        .mockReturnValueOnce(contextForTape('c'.repeat(64), 2))
-        .mockReturnValueOnce(contextForTape('d'.repeat(64), 3))
-        .mockReturnValueOnce(null)
+        .mockReturnValue(contextForTape('d'.repeat(64), 3))
       const agentTool = (
         name: string,
         execution: MCPToolDefinition['execution']
@@ -4151,6 +4149,12 @@ describe('DeepChatAgentHarness', () => {
         callArgs.run.resources.toolDefinitions.map((tool: MCPToolDefinition) => tool.function.name)
       ).toEqual(['read_file'])
 
+      const refreshedTools = await callArgs.toolCatalog.resolve({
+        activeSkillNames: ['runtime-skill']
+      })
+      expect(refreshedTools.map((tool: MCPToolDefinition) => tool.function.name)).toEqual([
+        'read_file'
+      ])
       for (let index = 0; index < 3; index += 1) {
         for await (const _event of callArgs.coreStream(
           callArgs.run.messages,
@@ -4158,7 +4162,7 @@ describe('DeepChatAgentHarness', () => {
           callArgs.modelConfig,
           callArgs.temperature,
           callArgs.maxTokens,
-          callArgs.run.resources.toolDefinitions
+          index === 0 ? callArgs.run.resources.toolDefinitions : refreshedTools
         )) {
         }
       }
@@ -4167,15 +4171,38 @@ describe('DeepChatAgentHarness', () => {
         .getBySession('s1')
         .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
         .map((row: any) => JSON.parse(row.payload_json).data.manifest)
-      expect(prepareTaskContract).toHaveBeenCalledTimes(4)
+      expect(prepareTaskContract).toHaveBeenCalledTimes(1)
       expect(prepareTaskContract).toHaveBeenNthCalledWith(1, 's1')
       expect(
         manifests.map((manifest: any) => manifest.executionContract.provenance.taskContractRef)
       ).toEqual([
         contextForTape('c'.repeat(64), 2).localRef,
-        contextForTape('d'.repeat(64), 3).localRef,
-        null
+        contextForTape('c'.repeat(64), 2).localRef,
+        contextForTape('c'.repeat(64), 2).localRef
       ])
+
+      installPendingQuestion()
+      await expect(answerPendingQuestion()).resolves.toEqual({ resumed: true })
+      const nextCallArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[1][0]
+      for await (const _event of nextCallArgs.coreStream(
+        nextCallArgs.run.messages,
+        nextCallArgs.modelId,
+        nextCallArgs.modelConfig,
+        nextCallArgs.temperature,
+        nextCallArgs.maxTokens,
+        nextCallArgs.run.resources.toolDefinitions
+      )) {
+      }
+
+      const latestManifest = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
+        .map((row: any) => JSON.parse(row.payload_json).data.manifest)
+        .at(-1)
+      expect(prepareTaskContract).toHaveBeenCalledTimes(2)
+      expect(latestManifest.executionContract.provenance.taskContractRef).toEqual(
+        contextForTape('d'.repeat(64), 3).localRef
+      )
     })
 
     it('continues provider requests when view manifest persistence fails', async () => {

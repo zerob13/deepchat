@@ -359,7 +359,6 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     identity,
     sessionPermissionPort,
     reviewToolPermission: createToolPermissionReviewer(toolRuntimeBindings),
-    taskContractContext: deps.taskContractContext,
     hookSink,
     compaction
   })
