@@ -1034,6 +1034,65 @@ describe('ToolService', () => {
     warnSpy.mockRestore()
   })
 
+  it('stops a snapshot universe before Agent availability work when aborted', async () => {
+    const resolveConversationSessionInfo = vi.fn()
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: {
+        getAllToolDefinitions: vi.fn(),
+        snapshotCachedToolDefinitions: vi.fn(() => new Promise(() => undefined)),
+        callTool: vi.fn()
+      } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({ resolveConversationSessionInfo })
+    })
+    const controller = new AbortController()
+
+    const pending = toolService.getToolDefinitionUniverse(
+      { chatMode: 'agent', conversationId: 'conv-universe' },
+      { signal: controller.signal }
+    )
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(resolveConversationSessionInfo).not.toHaveBeenCalled()
+  })
+
+  it('stops a snapshot universe during Agent availability work when aborted', async () => {
+    const resolveConversationSessionInfo = vi.fn(() => new Promise(() => undefined))
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: {
+        getAllToolDefinitions: vi.fn(),
+        snapshotCachedToolDefinitions: vi.fn().mockResolvedValue({
+          state: 'ready',
+          complete: true,
+          failedSourceCount: 0,
+          tools: []
+        }),
+        callTool: vi.fn()
+      } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({ resolveConversationSessionInfo })
+    })
+    const controller = new AbortController()
+    const pending = toolService.getToolDefinitionUniverse(
+      { chatMode: 'agent', conversationId: 'conv-universe' },
+      { signal: controller.signal }
+    )
+    await vi.waitFor(() => expect(resolveConversationSessionInfo).toHaveBeenCalledOnce())
+
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
   it('uses one exposure policy for Tape tools and defaults existing tools to configurable', () => {
     expect(getAgentToolExposure(TAPE_TOOL_NAMES.search)).toBe('system-model')
     expect(getAgentToolExposure(TAPE_TOOL_NAMES.context)).toBe('system-model')

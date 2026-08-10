@@ -105,7 +105,10 @@ export interface ToolServicePort {
   /**
    * Resolve the owned definition universe without publishing runtime dispatch mappings.
    */
-  getToolDefinitionUniverse(context: ToolDefinitionContext): Promise<ToolDefinitionUniverseSnapshot>
+  getToolDefinitionUniverse(
+    context: ToolDefinitionContext,
+    options?: { readonly signal?: AbortSignal }
+  ): Promise<ToolDefinitionUniverseSnapshot>
 
   /**
    * Get only Agent tools that users may enable or disable.

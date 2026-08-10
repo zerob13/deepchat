@@ -9,6 +9,7 @@ import fs from 'fs'
 import path from 'path'
 import { app, nativeImage } from 'electron'
 import logger from '@shared/logger'
+import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { ToolCallImagePreview } from '@shared/types/core/mcp'
 import type { SkillManageResult } from '@shared/types/skill'
@@ -446,7 +447,9 @@ export class AgentToolManager {
     activeSkillNames?: string[]
     subagentCapability?: DeepChatSubagentCapability
     catalogPurpose?: 'runtime' | 'configurable' | 'universe'
+    signal?: AbortSignal
   }): Promise<MCPToolDefinition[]> {
+    context.signal?.throwIfAborted()
     const defs: MCPToolDefinition[] = []
     const isAgentMode = context.chatMode === 'agent'
     const isConfigurableCatalog = context.catalogPurpose === 'configurable'
@@ -491,10 +494,13 @@ export class AgentToolManager {
     // 2.15. Session tape tools (DeepChat sessions only)
     if (isAgentMode && acceptsExposure('system-model')) {
       try {
-        if (await this.tapeToolHandler.canUse(context.conversationId)) {
+        if (
+          await awaitWithAbort(this.tapeToolHandler.canUse(context.conversationId), context.signal)
+        ) {
           appendDefinitions(this.tapeToolHandler.getToolDefinitions(), 'system-model')
         }
       } catch (error) {
+        context.signal?.throwIfAborted()
         handleAvailabilityError(
           '[AgentToolManager] Failed to resolve tape tool availability',
           error
@@ -505,10 +511,16 @@ export class AgentToolManager {
     // 2.16. Long-term memory tools (only when the agent has memory enabled)
     if (isAgentMode) {
       try {
-        if (await this.memoryToolHandler.canUse(context.conversationId)) {
+        if (
+          await awaitWithAbort(
+            this.memoryToolHandler.canUse(context.conversationId),
+            context.signal
+          )
+        ) {
           appendDefinitions(this.memoryToolHandler.getToolDefinitions(), 'user-configurable')
         }
       } catch (error) {
+        context.signal?.throwIfAborted()
         handleAvailabilityError(
           '[AgentToolManager] Failed to resolve memory tool availability',
           error
@@ -520,14 +532,18 @@ export class AgentToolManager {
     if (isAgentMode) {
       try {
         if (
-          await this.imageGenerationTool.canUse(
-            context.conversationId,
-            isUniverseCatalog ? { strict: true, reportDiagnostics: false } : undefined
+          await awaitWithAbort(
+            this.imageGenerationTool.canUse(
+              context.conversationId,
+              isUniverseCatalog ? { strict: true, reportDiagnostics: false } : undefined
+            ),
+            context.signal
           )
         ) {
           appendDefinitions([this.imageGenerationTool.getToolDefinition()], 'user-configurable')
         }
       } catch (error) {
+        context.signal?.throwIfAborted()
         handleAvailabilityError(
           '[AgentToolManager] Failed to resolve image generation tool availability',
           error

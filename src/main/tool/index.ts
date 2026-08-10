@@ -212,13 +212,19 @@ export class ToolService implements ToolServicePort {
    * Resolve the full owned definition universe without changing runtime dispatch state.
    */
   async getToolDefinitionUniverse(
-    context: ToolDefinitionContext
+    context: ToolDefinitionContext,
+    options: { readonly signal?: AbortSignal } = {}
   ): Promise<ToolDefinitionUniverseSnapshot> {
+    options.signal?.throwIfAborted()
     const agentWorkspacePath = context.agentWorkspacePath || null
     const resolved = await this.collectToolDefinitions(
       context,
       this.createAgentToolManager(agentWorkspacePath),
-      { reportRuntimeDiagnostics: false, mcpDefinitionSource: 'snapshot' }
+      {
+        reportRuntimeDiagnostics: false,
+        mcpDefinitionSource: 'snapshot',
+        signal: options.signal
+      }
     )
     return {
       definitions: resolved.definitions,
@@ -234,6 +240,7 @@ export class ToolService implements ToolServicePort {
       reportRuntimeDiagnostics: boolean
       mcpDefinitionSource: 'refresh' | 'snapshot'
       onMcpDefinitions?: (definitions: MCPToolDefinition[]) => void
+      signal?: AbortSignal
     }
   ): Promise<{
     definitions: MCPToolDefinition[]
@@ -254,8 +261,14 @@ export class ToolService implements ToolServicePort {
     }
     const mcpSourceDefinitions =
       options.mcpDefinitionSource === 'refresh'
-        ? await this.options.mcpService.getAllToolDefinitions(mcpContext)
-        : await this.options.mcpService.snapshotCachedToolDefinitions(mcpContext)
+        ? await awaitWithAbort(
+            this.options.mcpService.getAllToolDefinitions(mcpContext),
+            options.signal
+          )
+        : await awaitWithAbort(
+            this.options.mcpService.snapshotCachedToolDefinitions(mcpContext),
+            options.signal
+          )
     const resolvedMcpDefinitions = Array.isArray(mcpSourceDefinitions)
       ? mcpSourceDefinitions
       : mcpSourceDefinitions.state === 'ready'
@@ -297,7 +310,8 @@ export class ToolService implements ToolServicePort {
           conversationId: context.conversationId,
           activeSkillNames: context.activeSkillNames,
           subagentCapability: context.subagentCapability,
-          catalogPurpose: options.mcpDefinitionSource === 'snapshot' ? 'universe' : 'runtime'
+          catalogPurpose: options.mcpDefinitionSource === 'snapshot' ? 'universe' : 'runtime',
+          signal: options.signal
         }),
         'agent'
       )
@@ -320,6 +334,7 @@ export class ToolService implements ToolServicePort {
       definitions.push(...filteredAgentDefinitions)
       mapper.registerTools(filteredAgentDefinitions, 'agent')
     } catch (error) {
+      options.signal?.throwIfAborted()
       if (options.reportRuntimeDiagnostics) {
         console.warn('[Tool] Failed to load Agent tool definitions', error)
       } else {
@@ -331,6 +346,7 @@ export class ToolService implements ToolServicePort {
       }
     }
 
+    options.signal?.throwIfAborted()
     return { definitions, mapper, complete, unavailableSourceCount }
   }
 
