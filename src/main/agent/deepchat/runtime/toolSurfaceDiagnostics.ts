@@ -22,7 +22,7 @@ import {
 
 export const TOOL_SURFACE_SHADOW_DIAGNOSTICS_SCHEMA_VERSION = 1
 export const TOOL_SURFACE_P0A_SHADOW_POLICY: ToolSurfaceShadowPolicy = Object.freeze({
-  policyVersion: 'p0a-shadow-v1',
+  policyVersion: 'p0a-shadow-v2',
   enterToolCount: 40,
   exitToolCount: 32,
   enterEstimatedInputTokens: 12_000,
@@ -31,6 +31,10 @@ export const TOOL_SURFACE_P0A_SHADOW_POLICY: ToolSurfaceShadowPolicy = Object.fr
   maxInitialDefinitionTokens: 10_000,
   activationReserveToolCount: 8,
   activationReserveDefinitionTokens: 2_000,
+  maxActivationCandidatesPerBatch: 16,
+  maxActivationCandidateDefinitionTokensPerBatch: 2_000,
+  maxActivationBatchesPerRun: 8,
+  maxAppendedTargetsPerRun: 8,
   toolSearchDefinitionTokens: 256,
   toolSearchPromptTokens: 128
 })
@@ -401,6 +405,11 @@ function cloneShadowPolicy(policy: ToolSurfaceShadowPolicy): ToolSurfaceShadowPo
     maxInitialDefinitionTokens: policy.maxInitialDefinitionTokens,
     activationReserveToolCount: policy.activationReserveToolCount,
     activationReserveDefinitionTokens: policy.activationReserveDefinitionTokens,
+    maxActivationCandidatesPerBatch: policy.maxActivationCandidatesPerBatch,
+    maxActivationCandidateDefinitionTokensPerBatch:
+      policy.maxActivationCandidateDefinitionTokensPerBatch,
+    maxActivationBatchesPerRun: policy.maxActivationBatchesPerRun,
+    maxAppendedTargetsPerRun: policy.maxAppendedTargetsPerRun,
     toolSearchDefinitionTokens: policy.toolSearchDefinitionTokens,
     toolSearchPromptTokens: policy.toolSearchPromptTokens
   })

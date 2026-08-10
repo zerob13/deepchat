@@ -112,6 +112,10 @@ const SHADOW_POLICY: ToolSurfaceShadowPolicy = {
   maxInitialDefinitionTokens: 10_000,
   activationReserveToolCount: 1,
   activationReserveDefinitionTokens: 100,
+  maxActivationCandidatesPerBatch: 4,
+  maxActivationCandidateDefinitionTokensPerBatch: 1_000,
+  maxActivationBatchesPerRun: 4,
+  maxAppendedTargetsPerRun: 4,
   toolSearchDefinitionTokens: 50,
   toolSearchPromptTokens: 25
 }
@@ -956,6 +960,147 @@ describe('Run Tool Ceiling and Tool Surface snapshots', () => {
         }),
       'invalid_definition'
     )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...baseInput,
+          request: { ...baseInput.request, requestSeq: 2 },
+          selectionReasons: [{ stableTargetKey: readEntry.stableTargetKey, reason: 'core' }],
+          activation: {
+            originRequestSeq: 1,
+            decisions: [
+              {
+                ...baseInput.request,
+                stableTargetKey: readEntry.stableTargetKey,
+                canonicalToolDefinitionHash: readEntry.canonicalToolDefinitionHash,
+                toolCallOrdinalWithinBatch: 0,
+                resultRank: 0,
+                accepted: true
+              }
+            ]
+          }
+        }),
+      'invalid_definition'
+    )
+    const activationBaseInput = {
+      ...baseInput,
+      request: { ...baseInput.request, requestSeq: 2 },
+      selectionReasons: [
+        { stableTargetKey: readEntry.stableTargetKey, reason: 'search-result' as const }
+      ]
+    }
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...activationBaseInput,
+          activation: {
+            originRequestSeq: 1,
+            decisions: [
+              {
+                ...baseInput.request,
+                stableTargetKey: readEntry.stableTargetKey,
+                canonicalToolDefinitionHash: readEntry.canonicalToolDefinitionHash,
+                toolCallOrdinalWithinBatch: 0,
+                resultRank: 0,
+                accepted: 'yes' as unknown as boolean
+              }
+            ]
+          }
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...activationBaseInput,
+          activation: {
+            originRequestSeq: 1,
+            decisions: [
+              {
+                ...baseInput.request,
+                stableTargetKey: readEntry.stableTargetKey,
+                canonicalToolDefinitionHash: readEntry.canonicalToolDefinitionHash,
+                toolCallOrdinalWithinBatch: 0,
+                resultRank: 0,
+                accepted: false,
+                rejectionCode: 'ineligible'
+              }
+            ]
+          }
+        }),
+      'invalid_definition'
+    )
+    let decisionGetterReads = 0
+    const accessorDecision = {
+      ...baseInput.request,
+      stableTargetKey: readEntry.stableTargetKey,
+      canonicalToolDefinitionHash: readEntry.canonicalToolDefinitionHash,
+      toolCallOrdinalWithinBatch: 0,
+      resultRank: 0
+    } as ToolSurfaceActivationCandidate & { accepted: boolean }
+    Object.defineProperty(accessorDecision, 'accepted', {
+      enumerable: true,
+      get: () => {
+        decisionGetterReads += 1
+        return true
+      }
+    })
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...activationBaseInput,
+          activation: { originRequestSeq: 1, decisions: [accessorDecision] }
+        }),
+      'invalid_definition'
+    )
+    expect(decisionGetterReads).toBe(0)
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...activationBaseInput,
+          activation: {
+            originRequestSeq: 1,
+            decisions: [
+              {
+                ...baseInput.request,
+                stableTargetKey: writeEntry.stableTargetKey,
+                canonicalToolDefinitionHash: writeEntry.canonicalToolDefinitionHash,
+                toolCallOrdinalWithinBatch: 0,
+                resultRank: 1,
+                accepted: false,
+                rejectionCode: 'ineligible'
+              },
+              {
+                ...baseInput.request,
+                stableTargetKey: readEntry.stableTargetKey,
+                canonicalToolDefinitionHash: readEntry.canonicalToolDefinitionHash,
+                toolCallOrdinalWithinBatch: 0,
+                resultRank: 0,
+                accepted: true
+              }
+            ]
+          }
+        }),
+      'invalid_definition'
+    )
+    const proxyActivation = new Proxy(
+      { originRequestSeq: 1, decisions: [] },
+      {
+        get: (target, property, receiver) => {
+          decisionGetterReads += 1
+          return Reflect.get(target, property, receiver)
+        }
+      }
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...activationBaseInput,
+          activation: proxyActivation
+        }),
+      'invalid_definition'
+    )
+    expect(decisionGetterReads).toBe(0)
   })
 
   it('rejects malformed runtime shapes and frozen structural ceiling forgeries', () => {
@@ -1078,6 +1223,34 @@ describe('Tool Surface activation candidate merge', () => {
     expect(mergeToolSurfaceActivationCandidates(candidateScope, [[candidate]])).toEqual([
       activationCandidate('target-a')
     ])
+  })
+
+  it('rejects accessor and Proxy candidates without executing user code', () => {
+    let propertyReads = 0
+    const accessorCandidate = activationCandidate('target-a')
+    Object.defineProperty(accessorCandidate, 'stableTargetKey', {
+      enumerable: true,
+      get: () => {
+        propertyReads += 1
+        return 'target-a'
+      }
+    })
+    const proxyCandidate = new Proxy(activationCandidate('target-b'), {
+      get: (target, property, receiver) => {
+        propertyReads += 1
+        return Reflect.get(target, property, receiver)
+      }
+    })
+
+    expectSurfaceError(
+      () => mergeToolSurfaceActivationCandidates(candidateScope, [[accessorCandidate]]),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () => mergeToolSurfaceActivationCandidates(candidateScope, [[proxyCandidate]]),
+      'invalid_definition'
+    )
+    expect(propertyReads).toBe(0)
   })
 
   it('rejects mixed scopes, invalid ordinals, and conflicting definition identities', () => {
@@ -1357,6 +1530,13 @@ describe('Tool Surface shadow selection', () => {
         toolSearchDefinitionTokens: Number.MAX_SAFE_INTEGER,
         activationReserveDefinitionTokens: 1
       }
+    },
+    {
+      name: 'activation batch registry overflow',
+      policy: {
+        ...SHADOW_POLICY,
+        maxActivationBatchesPerRun: MAX_TOOL_SURFACE_CANDIDATE_BATCHES + 1
+      }
     }
   ])('rejects an impossible $name policy', ({ policy }) => {
     const catalog = buildCanonicalToolCatalog([agentTool('read')])
@@ -1547,6 +1727,52 @@ describe('Tool Surface production selection', () => {
     runId: 'r1',
     requestSeq
   })
+  const createActivationHarness = (
+    hiddenNames: readonly string[],
+    policyOverrides: Partial<ToolSurfaceShadowPolicy> = {}
+  ) => {
+    const definitions = [agentTool('core'), ...hiddenNames.map((name) => agentTool(name))]
+    const catalog = buildCanonicalToolCatalog(definitions)
+    const byName = new Map(
+      catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+    )
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: definitions,
+      initialEligibleDefinitions: definitions,
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: {
+        ...productionPolicy,
+        enterToolCount: 1,
+        exitToolCount: 0,
+        maxInitialToolCount: 8,
+        ...policyOverrides
+      },
+      coreStableTargetKeys: [byName.get('core')!.stableTargetKey]
+    })
+    const build = (requestSeq: number, eligibleDefinitions = definitions) =>
+      selected.controller.build({
+        request: request(requestSeq),
+        eligibleDefinitions,
+        toolSearchAvailable: true
+      })
+    const candidate = (
+      name: string,
+      originRequestSeq: number,
+      toolCallOrdinalWithinBatch = 0,
+      resultRank = 0
+    ): ToolSurfaceActivationCandidate => {
+      const entry = byName.get(name)!
+      return {
+        ...request(originRequestSeq),
+        ...definitionIdentity(entry.stableTargetKey, entry.canonicalToolDefinitionHash),
+        toolCallOrdinalWithinBatch,
+        resultRank
+      }
+    }
+    const initial = build(1)
+    selected.controller.admit(initial)
+    return { definitions, byName, selected, build, candidate }
+  }
 
   it('keeps a small catalog fully active without adding ToolSearch', () => {
     const read = agentTool('read')
@@ -1786,6 +2012,354 @@ describe('Tool Surface production selection', () => {
     expect(restored.activeEntries.map((entry) => entry.activationOrdinal)).toEqual([0, 1])
   })
 
+  it('stages immutable activation provenance and commits it only on the next admitted View', () => {
+    const read = agentTool('read')
+    const hidden = agentTool('hidden')
+    const other = agentTool('other')
+    const definitions = [read, hidden, other]
+    const catalog = buildCanonicalToolCatalog(definitions)
+    const byName = new Map(
+      catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+    )
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: definitions,
+      initialEligibleDefinitions: definitions,
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: {
+        ...productionPolicy,
+        enterToolCount: 1,
+        exitToolCount: 0,
+        maxInitialToolCount: 5
+      },
+      coreStableTargetKeys: [byName.get('read')!.stableTargetKey]
+    })
+    const build = (requestSeq: number, eligibleDefinitions = definitions) =>
+      selected.controller.build({
+        request: request(requestSeq),
+        eligibleDefinitions,
+        toolSearchAvailable: true
+      })
+    const initial = build(1)
+    selected.controller.admit(initial)
+    const hiddenEntry = byName.get('hidden')!
+    const candidate: ToolSurfaceActivationCandidate = {
+      ...request(1),
+      stableTargetKey: hiddenEntry.stableTargetKey,
+      canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
+      toolCallOrdinalWithinBatch: 0,
+      resultRank: 0
+    }
+
+    selected.controller.stageActivationBatch([candidate])
+    expect(() => selected.controller.stageActivationBatch([structuredClone(candidate)])).not.toThrow()
+    expectSurfaceError(
+      () =>
+        selected.controller.stageActivationBatch([
+          { ...candidate, resultRank: 1 }
+        ]),
+      'conflicting_tool'
+    )
+    expectSurfaceError(() => build(1), 'invalid_definition')
+
+    const drifted = build(2, [
+      read,
+      agentTool('hidden', {
+        function: { ...hidden.function, description: 'live drift' }
+      }),
+      other
+    ])
+    expect(drifted.activation.decisions[0]).toMatchObject({
+      accepted: false,
+      rejectionCode: 'definition-drift'
+    })
+    expect(drifted.toolDefinitions.map((definition) => definition.function.name)).not.toContain(
+      'hidden'
+    )
+
+    const proposal = build(2)
+    const competing = build(3)
+    expect(proposal.toolDefinitions.map((definition) => definition.function.name)).toContain('hidden')
+    expect(proposal.activation).toEqual({
+      originRequestSeq: 1,
+      decisions: [
+        {
+          ...request(1),
+          stableTargetKey: hiddenEntry.stableTargetKey,
+          canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
+          toolCallOrdinalWithinBatch: 0,
+          resultRank: 0,
+          accepted: true
+        }
+      ]
+    })
+    expect(Object.isFrozen(proposal.activation)).toBe(true)
+    expect(Object.isFrozen(proposal.activation.decisions)).toBe(true)
+    expect(Object.isFrozen(proposal.activation.decisions[0])).toBe(true)
+    expect(build(4).activation).toEqual(proposal.activation)
+
+    selected.controller.admit(proposal)
+    expectSurfaceError(() => selected.controller.admit(competing), 'conflicting_tool')
+    expect(() => selected.controller.stageActivationBatch([structuredClone(candidate)])).not.toThrow()
+    expectSurfaceError(
+      () => selected.controller.stageActivationBatch([{ ...candidate, resultRank: 1 }]),
+      'conflicting_tool'
+    )
+    const replayed = build(4)
+    expect(replayed.activation).toEqual({ originRequestSeq: null, decisions: [] })
+    expect(
+      replayed.activeEntries.find((entry) => entry.definition.function.name === 'hidden')
+    ).toMatchObject({ reason: 'search-result', activationOrdinal: 2 })
+    const revoked = build(5, [read, other])
+    selected.controller.admit(revoked)
+    const restored = build(6)
+    expect(restored.activeEntries.find((entry) => entry.definition.function.name === 'hidden')).toMatchObject({
+      reason: 'search-result',
+      activationOrdinal: 2
+    })
+    expectSurfaceError(
+      () =>
+        selected.controller.build({
+          request: { ...request(7), runId: 'wrong-run' },
+          eligibleDefinitions: definitions,
+          toolSearchAvailable: true
+        }),
+      'invalid_definition'
+    )
+  })
+
+  it('rejects staging on a full controller and rejects invalid activation authority', () => {
+    const read = agentTool('read')
+    const full = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read],
+      initialActiveDefinitions: [read],
+      policyVersion: 'full-test'
+    })
+    expect(() => full.stageActivationBatch([])).not.toThrow()
+    expectSurfaceError(
+      () =>
+        full.stageActivationBatch([
+          {
+            ...request(1),
+            ...definitionIdentity('outside'),
+            toolCallOrdinalWithinBatch: 0,
+            resultRank: 0
+          }
+        ]),
+      'invalid_definition'
+    )
+
+    const hidden = agentTool('hidden')
+    const catalog = buildCanonicalToolCatalog([read, hidden])
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: [read, hidden],
+      initialEligibleDefinitions: [read, hidden],
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: { ...productionPolicy, enterToolCount: 1, exitToolCount: 0 }
+    })
+    expect(() => selected.controller.stageActivationBatch([])).not.toThrow()
+    const initial = selected.controller.build({
+      request: request(1),
+      eligibleDefinitions: [read, hidden],
+      toolSearchAvailable: true
+    })
+    selected.controller.admit(initial)
+    const hiddenEntry = catalog.entries.find(
+      (entry) => entry.target.providerVisibleName === 'hidden'
+    )!
+    expectSurfaceError(
+      () =>
+        selected.controller.stageActivationBatch([
+          {
+            ...request(1),
+            runId: 'wrong-run',
+            ...definitionIdentity(hiddenEntry.stableTargetKey, hiddenEntry.canonicalToolDefinitionHash),
+            toolCallOrdinalWithinBatch: 0,
+            resultRank: 0
+          }
+        ]),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        selected.controller.stageActivationBatch([
+          {
+            ...request(1),
+            ...definitionIdentity(hiddenEntry.stableTargetKey, 'b'.repeat(64)),
+            toolCallOrdinalWithinBatch: 0,
+            resultRank: 0
+          }
+        ]),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        selected.controller.stageActivationBatch([
+          {
+            ...request(2),
+            ...definitionIdentity(
+              hiddenEntry.stableTargetKey,
+              hiddenEntry.canonicalToolDefinitionHash
+            ),
+            toolCallOrdinalWithinBatch: 0,
+            resultRank: 0
+          }
+        ]),
+      'invalid_definition'
+    )
+    const outsideEntry = buildCanonicalToolCatalog([agentTool('outside')]).entries[0]
+    expectSurfaceError(
+      () =>
+        selected.controller.stageActivationBatch([
+          {
+            ...request(1),
+            ...definitionIdentity(
+              outsideEntry.stableTargetKey,
+              outsideEntry.canonicalToolDefinitionHash
+            ),
+            toolCallOrdinalWithinBatch: 0,
+            resultRank: 0
+          }
+        ]),
+      'conflicting_tool'
+    )
+  })
+
+  it('applies per-batch count and eligibility limits without evicting active tools', () => {
+    const harness = createActivationHarness(['first', 'second', 'ineligible'], {
+      maxActivationCandidatesPerBatch: 1
+    })
+    harness.selected.controller.stageActivationBatch([
+      harness.candidate('first', 1, 0, 0),
+      harness.candidate('second', 1, 0, 1),
+      harness.candidate('ineligible', 1, 0, 2)
+    ])
+    const proposal = harness.build(
+      2,
+      harness.definitions.filter(
+        (definition) => definition.function.name !== 'ineligible'
+      )
+    )
+
+    expect(proposal.activation.decisions.map((decision) => decision.rejectionCode ?? 'accepted')).toEqual([
+      'accepted',
+      'per-batch-count-cap',
+      'ineligible'
+    ])
+    expect(proposal.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'core',
+      TOOL_SEARCH_AGENT_TOOL_NAME,
+      'first'
+    ])
+  })
+
+  it('applies per-batch and total-surface token limits', () => {
+    const batchHarness = createActivationHarness(['first', 'second'])
+    const firstTokens = batchHarness.byName.get('first')!.definitionTokens
+    const batchLimited = createActivationHarness(['first', 'second'], {
+      maxActivationCandidateDefinitionTokensPerBatch: firstTokens
+    })
+    batchLimited.selected.controller.stageActivationBatch([
+      batchLimited.candidate('first', 1, 0, 0),
+      batchLimited.candidate('second', 1, 0, 1)
+    ])
+    expect(batchLimited.build(2).activation.decisions.map((decision) => decision.rejectionCode)).toEqual([
+      undefined,
+      'per-batch-token-cap'
+    ])
+
+    const searchTokens = buildCanonicalToolCatalog([
+      agentTool(TOOL_SEARCH_AGENT_TOOL_NAME)
+    ]).definitionTokens
+    const coreTokens = batchHarness.byName.get('core')!.definitionTokens
+    const totalLimited = createActivationHarness(['first'], {
+      toolSearchDefinitionTokens: searchTokens,
+      activationReserveDefinitionTokens: 0,
+      maxInitialDefinitionTokens: coreTokens + searchTokens + firstTokens - 1
+    })
+    totalLimited.selected.controller.stageActivationBatch([
+      totalLimited.candidate('first', 1)
+    ])
+    expect(totalLimited.build(2).activation.decisions[0].rejectionCode).toBe(
+      'total-surface-token-cap'
+    )
+  })
+
+  it('applies per-Run target, batch, and total-surface count limits', () => {
+    const targetLimited = createActivationHarness(['first', 'second'], {
+      maxAppendedTargetsPerRun: 1
+    })
+    targetLimited.selected.controller.stageActivationBatch([
+      targetLimited.candidate('first', 1, 0, 0),
+      targetLimited.candidate('second', 1, 0, 1)
+    ])
+    expect(targetLimited.build(2).activation.decisions.map((decision) => decision.rejectionCode)).toEqual([
+      undefined,
+      'per-run-target-cap'
+    ])
+
+    const batchLimited = createActivationHarness(['first', 'second'], {
+      maxActivationBatchesPerRun: 1
+    })
+    batchLimited.selected.controller.stageActivationBatch([batchLimited.candidate('first', 1)])
+    const firstProposal = batchLimited.build(2)
+    batchLimited.selected.controller.admit(firstProposal)
+    batchLimited.selected.controller.stageActivationBatch([batchLimited.candidate('second', 2)])
+    expect(batchLimited.build(3).activation.decisions[0].rejectionCode).toBe(
+      'per-run-batch-cap'
+    )
+
+    const surfaceLimited = createActivationHarness(['first', 'second'], {
+      maxInitialToolCount: 3
+    })
+    surfaceLimited.selected.controller.stageActivationBatch([
+      surfaceLimited.candidate('first', 1, 0, 0),
+      surfaceLimited.candidate('second', 1, 0, 1)
+    ])
+    expect(surfaceLimited.build(2).activation.decisions.map((decision) => decision.rejectionCode)).toEqual([
+      undefined,
+      'total-surface-count-cap'
+    ])
+  })
+
+  it('consumes and replays an all-rejected release without expanding the surface', () => {
+    const harness = createActivationHarness(['hidden'], { maxActivationBatchesPerRun: 1 })
+    const candidate = harness.candidate('hidden', 1)
+    harness.selected.controller.stageActivationBatch([candidate])
+    const rejected = harness.build(
+      2,
+      harness.definitions.filter((definition) => definition.function.name !== 'hidden')
+    )
+
+    expect(rejected.activation.decisions).toEqual([
+      expect.objectContaining({ accepted: false, rejectionCode: 'ineligible' })
+    ])
+    expect(rejected.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'core',
+      TOOL_SEARCH_AGENT_TOOL_NAME
+    ])
+    harness.selected.controller.admit(rejected)
+    expect(() =>
+      harness.selected.controller.stageActivationBatch([structuredClone(candidate)])
+    ).not.toThrow()
+    expectSurfaceError(
+      () =>
+        harness.selected.controller.stageActivationBatch([
+          { ...candidate, resultRank: 1 }
+        ]),
+      'conflicting_tool'
+    )
+
+    harness.selected.controller.stageActivationBatch([harness.candidate('hidden', 2)])
+    const quotaLimited = harness.build(3)
+    expect(quotaLimited.activation.decisions).toEqual([
+      expect.objectContaining({ accepted: false, rejectionCode: 'per-run-batch-cap' })
+    ])
+    expect(quotaLimited.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'core',
+      TOOL_SEARCH_AGENT_TOOL_NAME
+    ])
+  })
+
   it('rejects definition drift and targets outside the frozen virtualized ceiling', () => {
     const read = agentTool('read')
     const write = agentTool('write')
@@ -1813,5 +2387,41 @@ describe('Tool Surface production selection', () => {
       'conflicting_tool'
     )
     expectSurfaceError(() => build([read, write, agentTool('outside')]), 'conflicting_tool')
+  })
+
+  it('bounds aggregate live eligibility before per-definition drift checks', () => {
+    const definitionCount = 1_023
+    const ceilingDefinitions = Array.from({ length: definitionCount }, (_, index) =>
+      agentTool(`tool_${index}`)
+    )
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions,
+      initialEligibleDefinitions: ceilingDefinitions,
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: {
+        ...productionPolicy,
+        enterToolCount: 1,
+        exitToolCount: 0,
+        maxInitialToolCount: 8
+      }
+    })
+    const oversizedDescription = 'x'.repeat(
+      Math.ceil(MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES / definitionCount) + 1_024
+    )
+    const oversizedEligibility = ceilingDefinitions.map((definition) =>
+      agentTool(definition.function.name, {
+        function: { ...definition.function, description: oversizedDescription }
+      })
+    )
+
+    expectSurfaceError(
+      () =>
+        selected.controller.build({
+          request: request(1),
+          eligibleDefinitions: oversizedEligibility,
+          toolSearchAvailable: true
+        }),
+      'limit_exceeded'
+    )
   })
 })

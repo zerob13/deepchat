@@ -42,7 +42,18 @@ const TOOL_SURFACE_SELECTION_REASONS = Object.freeze([
   'core',
   'active-skill',
   'recent',
+  'search-result',
   'tool-search'
+] as const)
+const TOOL_SURFACE_ACTIVATION_REJECTION_CODES = Object.freeze([
+  'ineligible',
+  'definition-drift',
+  'per-batch-count-cap',
+  'per-batch-token-cap',
+  'per-run-batch-cap',
+  'per-run-target-cap',
+  'total-surface-count-cap',
+  'total-surface-token-cap'
 ] as const)
 // Run ceilings are process-live immutable capabilities, not serializable authority or latest state.
 const issuedRunToolCeilings = new WeakSet<ToolSurfaceRunCeiling>()
@@ -100,6 +111,7 @@ export type ToolSurfaceSelectionReason =
   | 'core'
   | 'active-skill'
   | 'recent'
+  | 'search-result'
   | 'tool-search'
 
 export type ToolSurfaceShadowTriggerReason =
@@ -126,6 +138,10 @@ export interface ToolSurfaceShadowPolicy {
   readonly maxInitialDefinitionTokens: number
   readonly activationReserveToolCount: number
   readonly activationReserveDefinitionTokens: number
+  readonly maxActivationCandidatesPerBatch: number
+  readonly maxActivationCandidateDefinitionTokensPerBatch: number
+  readonly maxActivationBatchesPerRun: number
+  readonly maxAppendedTargetsPerRun: number
   readonly toolSearchDefinitionTokens: number
   readonly toolSearchPromptTokens: number
 }
@@ -174,6 +190,27 @@ export interface ToolSurfaceSnapshot {
   readonly eligibleCatalog: CanonicalToolCatalog
   readonly activeEntries: readonly ToolSurfaceSnapshotActiveEntry[]
   readonly toolDefinitions: readonly MCPToolDefinition[]
+  readonly activation: ToolSurfaceSnapshotActivation
+}
+
+export type ToolSurfaceActivationRejectionCode =
+  | 'ineligible'
+  | 'definition-drift'
+  | 'per-batch-count-cap'
+  | 'per-batch-token-cap'
+  | 'per-run-batch-cap'
+  | 'per-run-target-cap'
+  | 'total-surface-count-cap'
+  | 'total-surface-token-cap'
+
+export interface ToolSurfaceActivationDecision extends ToolSurfaceActivationCandidate {
+  readonly accepted: boolean
+  readonly rejectionCode?: ToolSurfaceActivationRejectionCode
+}
+
+export interface ToolSurfaceSnapshotActivation {
+  readonly originRequestSeq: number | null
+  readonly decisions: readonly ToolSurfaceActivationDecision[]
 }
 
 export interface ToolSurfaceRunController {
@@ -185,6 +222,7 @@ export interface ToolSurfaceRunController {
     readonly eligibleDefinitions: readonly MCPToolDefinition[]
     readonly toolSearchAvailable?: boolean
   }): ToolSurfaceSnapshot
+  stageActivationBatch(candidates: readonly ToolSurfaceActivationCandidate[]): void
   admit(snapshot: ToolSurfaceSnapshot): void
 }
 
@@ -509,6 +547,13 @@ function isValidShadowPolicy(policy: ToolSurfaceShadowPolicy): boolean {
     policy.activationReserveToolCount <= policy.maxInitialToolCount &&
     isNonNegativeInteger(policy.activationReserveDefinitionTokens) &&
     policy.activationReserveDefinitionTokens <= policy.maxInitialDefinitionTokens &&
+    isNonNegativeInteger(policy.maxActivationCandidatesPerBatch) &&
+    isNonNegativeInteger(policy.maxActivationCandidateDefinitionTokensPerBatch) &&
+    isNonNegativeInteger(policy.maxActivationBatchesPerRun) &&
+    policy.maxActivationBatchesPerRun <= MAX_TOOL_SURFACE_CANDIDATE_BATCHES &&
+    isNonNegativeInteger(policy.maxAppendedTargetsPerRun) &&
+    policy.maxActivationCandidatesPerBatch <= MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES &&
+    policy.maxAppendedTargetsPerRun <= MAX_TOOL_SURFACE_DEFINITIONS &&
     isNonNegativeInteger(policy.toolSearchDefinitionTokens) &&
     isNonNegativeInteger(policy.toolSearchPromptTokens) &&
     isSafeSumAtMost(
@@ -638,6 +683,18 @@ function compareSafeIntegers(left: number, right: number): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
+function compareActivationCandidateOrder(
+  left: ToolSurfaceActivationCandidate,
+  right: ToolSurfaceActivationCandidate
+): number {
+  return (
+    compareSafeIntegers(left.requestSeq, right.requestSeq) ||
+    compareSafeIntegers(left.toolCallOrdinalWithinBatch, right.toolCallOrdinalWithinBatch) ||
+    compareSafeIntegers(left.resultRank, right.resultRank) ||
+    compareCodePoints(left.stableTargetKey, right.stableTargetKey)
+  )
+}
+
 function requireBoundedDefinitionIdentities(
   identities: readonly ToolSurfaceDefinitionIdentity[],
   label: string,
@@ -660,17 +717,134 @@ function copyDefinitionIdentity(
   }
 }
 
-function copyActivationCandidate(
-  candidate: ToolSurfaceActivationCandidate
-): ToolSurfaceActivationCandidate {
+function requirePlainDataRecord(value: unknown, label: string): Record<string, unknown> {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    nodeTypes.isProxy(value) ||
+    Array.isArray(value) ||
+    Object.getOwnPropertySymbols(value).length > 0
+  ) {
+    throw new ToolSurfaceError(`${label} must be a plain data object.`, 'invalid_definition')
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new ToolSurfaceError(`${label} must be a plain data object.`, 'invalid_definition')
+  }
+  return value as Record<string, unknown>
+}
+
+function readOwnDataProperty(
+  value: object,
+  key: string,
+  label: string,
+  required = true
+): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key)
+  if (!descriptor) {
+    if (!required) return undefined
+    throw new ToolSurfaceError(`${label}.${key} is missing.`, 'invalid_definition')
+  }
+  if (!descriptor.enumerable || !('value' in descriptor)) {
+    throw new ToolSurfaceError(`${label}.${key} must be an enumerable data property.`, 'invalid_definition')
+  }
+  return descriptor.value
+}
+
+function readDataArray(value: unknown, label: string, maxLength: number): readonly unknown[] {
+  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value) || !Array.isArray(value)) {
+    throw new ToolSurfaceError(`${label} must be a data array.`, 'invalid_definition')
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length')
+  if (
+    !lengthDescriptor ||
+    !('value' in lengthDescriptor) ||
+    !Number.isSafeInteger(lengthDescriptor.value) ||
+    lengthDescriptor.value < 0
+  ) {
+    throw new ToolSurfaceError(`${label} has an invalid length.`, 'invalid_definition')
+  }
+  if (lengthDescriptor.value > maxLength) {
+    throw new ToolSurfaceError(`${label} exceeds its bounded limit.`, 'limit_exceeded')
+  }
+  if (
+    Object.getOwnPropertySymbols(value).length > 0 ||
+    Object.getOwnPropertyNames(value).filter((key) => key !== 'length').length !==
+      lengthDescriptor.value
+  ) {
+    throw new ToolSurfaceError(`${label} contains non-index data.`, 'invalid_definition')
+  }
+  const entries: unknown[] = []
+  for (let index = 0; index < lengthDescriptor.value; index += 1) {
+    entries.push(readOwnDataProperty(value, String(index), label))
+  }
+  return entries
+}
+
+function copyActivationCandidate(candidate: unknown): ToolSurfaceActivationCandidate {
+  const value = requirePlainDataRecord(candidate, 'Tool Surface activation candidate')
+  const stableTargetKey = readOwnDataProperty(
+    value,
+    'stableTargetKey',
+    'Tool Surface activation candidate'
+  )
+  const canonicalToolDefinitionHash = readOwnDataProperty(
+    value,
+    'canonicalToolDefinitionHash',
+    'Tool Surface activation candidate'
+  )
+  const sessionId = readOwnDataProperty(value, 'sessionId', 'Tool Surface activation candidate')
+  const messageId = readOwnDataProperty(value, 'messageId', 'Tool Surface activation candidate')
+  const runId = readOwnDataProperty(value, 'runId', 'Tool Surface activation candidate')
+  const requestSeq = readOwnDataProperty(value, 'requestSeq', 'Tool Surface activation candidate')
+  const toolCallOrdinalWithinBatch = readOwnDataProperty(
+    value,
+    'toolCallOrdinalWithinBatch',
+    'Tool Surface activation candidate'
+  )
+  const resultRank = readOwnDataProperty(value, 'resultRank', 'Tool Surface activation candidate')
+  if (
+    typeof stableTargetKey !== 'string' ||
+    typeof canonicalToolDefinitionHash !== 'string' ||
+    typeof sessionId !== 'string' ||
+    typeof messageId !== 'string' ||
+    typeof runId !== 'string' ||
+    typeof requestSeq !== 'number' ||
+    typeof toolCallOrdinalWithinBatch !== 'number' ||
+    typeof resultRank !== 'number'
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface activation candidate contains an invalid scalar value.',
+      'invalid_definition'
+    )
+  }
   return {
-    ...copyDefinitionIdentity(candidate),
-    sessionId: candidate.sessionId,
-    messageId: candidate.messageId,
-    runId: candidate.runId,
-    requestSeq: candidate.requestSeq,
-    toolCallOrdinalWithinBatch: candidate.toolCallOrdinalWithinBatch,
-    resultRank: candidate.resultRank
+    stableTargetKey,
+    canonicalToolDefinitionHash,
+    sessionId,
+    messageId,
+    runId,
+    requestSeq,
+    toolCallOrdinalWithinBatch,
+    resultRank
+  }
+}
+
+function readActivationDecision(value: unknown): {
+  readonly candidate: ToolSurfaceActivationCandidate
+  readonly accepted: unknown
+  readonly rejectionCode: unknown
+} {
+  const decision = requirePlainDataRecord(value, 'Tool Surface activation decision')
+  return {
+    candidate: copyActivationCandidate(decision),
+    accepted: readOwnDataProperty(decision, 'accepted', 'Tool Surface activation decision'),
+    rejectionCode: readOwnDataProperty(
+      decision,
+      'rejectionCode',
+      'Tool Surface activation decision',
+      false
+    )
   }
 }
 
@@ -829,16 +1003,20 @@ export function mergeToolSurfaceActivationCandidates(
   ) {
     throw new ToolSurfaceError('Tool Surface candidate scope is invalid.', 'invalid_definition')
   }
-  if (candidateBatches.length > MAX_TOOL_SURFACE_CANDIDATE_BATCHES) {
-    throw new ToolSurfaceError(
-      'Tool Surface candidate merge exceeds its batch limit.',
-      'limit_exceeded'
-    )
-  }
+  const batches = readDataArray(
+    candidateBatches,
+    'Tool Surface activation candidate batches',
+    MAX_TOOL_SURFACE_CANDIDATE_BATCHES
+  )
 
   let candidateCount = 0
   const candidates: ToolSurfaceActivationCandidate[] = []
-  for (const batch of candidateBatches) {
+  for (const batchValue of batches) {
+    const batch = readDataArray(
+      batchValue,
+      'Tool Surface activation candidate batch',
+      MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+    )
     candidateCount += batch.length
     if (
       !Number.isSafeInteger(candidateCount) ||
@@ -876,16 +1054,7 @@ export function mergeToolSurfaceActivationCandidates(
     }
   }
 
-  candidates.sort(
-    (left, right) =>
-      compareSafeIntegers(left.requestSeq, right.requestSeq) ||
-      compareSafeIntegers(
-        left.toolCallOrdinalWithinBatch,
-        right.toolCallOrdinalWithinBatch
-      ) ||
-      compareSafeIntegers(left.resultRank, right.resultRank) ||
-      compareCodePoints(left.stableTargetKey, right.stableTargetKey)
-  )
+  candidates.sort(compareActivationCandidateOrder)
   const merged: ToolSurfaceActivationCandidate[] = []
   const hashByTarget = new Map<string, string>()
   for (const candidate of candidates) {
@@ -1373,6 +1542,15 @@ function isToolSurfaceSelectionReason(value: unknown): value is ToolSurfaceSelec
   )
 }
 
+function isToolSurfaceActivationRejectionCode(
+  value: unknown
+): value is ToolSurfaceActivationRejectionCode {
+  return (
+    typeof value === 'string' &&
+    (TOOL_SURFACE_ACTIVATION_REJECTION_CODES as readonly string[]).includes(value)
+  )
+}
+
 function catalogEntryMatches(
   left: CanonicalToolCatalogEntry,
   right: CanonicalToolCatalogEntry
@@ -1405,6 +1583,7 @@ export function createToolSurfaceSnapshot(input: {
     readonly stableTargetKey: string
     readonly reason: ToolSurfaceSelectionReason
   }[]
+  readonly activation?: ToolSurfaceSnapshotActivation
 }): ToolSurfaceSnapshot {
   if (
     !input ||
@@ -1415,7 +1594,9 @@ export function createToolSurfaceSnapshot(input: {
     !input.activationLedger ||
     typeof input.activationLedger !== 'object' ||
     !Array.isArray(input.activationLedger.entries) ||
-    (input.selectionReasons !== undefined && !Array.isArray(input.selectionReasons))
+    (input.selectionReasons !== undefined && !Array.isArray(input.selectionReasons)) ||
+    (input.activation !== undefined &&
+      (!input.activation || typeof input.activation !== 'object'))
   ) {
     throw new ToolSurfaceError('Tool Surface snapshot input is invalid.', 'invalid_definition')
   }
@@ -1542,6 +1723,104 @@ export function createToolSurfaceSnapshot(input: {
     )
   }
 
+  let activationOriginRequestSeq: unknown = null
+  let activationDecisionInputs: readonly unknown[] = []
+  if (input.activation !== undefined) {
+    const activationInput = requirePlainDataRecord(
+      input.activation,
+      'Tool Surface activation provenance'
+    )
+    activationOriginRequestSeq = readOwnDataProperty(
+      activationInput,
+      'originRequestSeq',
+      'Tool Surface activation provenance'
+    )
+    activationDecisionInputs = readDataArray(
+      readOwnDataProperty(activationInput, 'decisions', 'Tool Surface activation provenance'),
+      'Tool Surface activation decisions',
+      MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+    )
+  }
+  if (
+    (!input.virtualizationTriggered &&
+      (activationOriginRequestSeq !== null || activationDecisionInputs.length > 0)) ||
+    (activationDecisionInputs.length === 0 && activationOriginRequestSeq !== null) ||
+    (activationDecisionInputs.length > 0 &&
+      (typeof activationOriginRequestSeq !== 'number' ||
+        !Number.isSafeInteger(activationOriginRequestSeq) ||
+        activationOriginRequestSeq <= 0 ||
+        activationOriginRequestSeq >= request.requestSeq))
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface activation provenance has an invalid View origin.',
+      'invalid_definition'
+    )
+  }
+  const activationTargets = new Set<string>()
+  const activationDecisions: ToolSurfaceActivationDecision[] = []
+  let previousActivationCandidate: ToolSurfaceActivationCandidate | null = null
+  for (const decisionInput of activationDecisionInputs) {
+    const decision = readActivationDecision(decisionInput)
+    const candidate = decision.candidate
+    const ceilingEntry = ceilingEntryByTarget.get(candidate.stableTargetKey)
+    const accepted = decision.accepted
+    const rejectionCode = decision.rejectionCode
+    if (typeof accepted !== 'boolean') {
+      throw new ToolSurfaceError(
+        'Tool Surface activation decision is invalid.',
+        'invalid_definition'
+      )
+    }
+    let normalizedRejectionCode: ToolSurfaceActivationRejectionCode | undefined
+    if (accepted) {
+      if (rejectionCode !== undefined) {
+        throw new ToolSurfaceError(
+          'Tool Surface activation decision is invalid.',
+          'invalid_definition'
+        )
+      }
+    } else {
+      if (!isToolSurfaceActivationRejectionCode(rejectionCode)) {
+        throw new ToolSurfaceError(
+          'Tool Surface activation decision is invalid.',
+          'invalid_definition'
+        )
+      }
+      normalizedRejectionCode = rejectionCode
+    }
+    if (
+      candidate.sessionId !== request.sessionId ||
+      candidate.messageId !== request.messageId ||
+      candidate.runId !== request.runId ||
+      candidate.requestSeq !== activationOriginRequestSeq ||
+      !Number.isSafeInteger(candidate.toolCallOrdinalWithinBatch) ||
+      candidate.toolCallOrdinalWithinBatch < 0 ||
+      !Number.isSafeInteger(candidate.resultRank) ||
+      candidate.resultRank < 0 ||
+      !ceilingEntry ||
+      ceilingEntry.canonicalToolDefinitionHash !== candidate.canonicalToolDefinitionHash ||
+      activationTargets.has(candidate.stableTargetKey) ||
+      (previousActivationCandidate !== null &&
+        compareActivationCandidateOrder(previousActivationCandidate, candidate) >= 0) ||
+      (accepted &&
+        (!projectedTargets.has(candidate.stableTargetKey) ||
+          reasonByTarget.get(candidate.stableTargetKey) !== 'search-result')) ||
+      (!accepted && projectedTargets.has(candidate.stableTargetKey))
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation decision is invalid.',
+        'invalid_definition'
+      )
+    }
+    activationTargets.add(candidate.stableTargetKey)
+    previousActivationCandidate = candidate
+    activationDecisions.push({
+      ...candidate,
+      accepted,
+      ...(normalizedRejectionCode ? { rejectionCode: normalizedRejectionCode } : {})
+    })
+  }
+
   const activeEntries = projected.map((entry): ToolSurfaceSnapshotActiveEntry => {
     const definition = eligible.definitionByStableTarget.get(entry.stableTargetKey)
     if (!definition || activeHashByTarget.get(entry.stableTargetKey) !== entry.canonicalToolDefinitionHash) {
@@ -1557,6 +1836,11 @@ export function createToolSurfaceSnapshot(input: {
     })
   })
   const toolDefinitions = Object.freeze(activeEntries.map((entry) => entry.definition))
+  for (const decision of activationDecisions) Object.freeze(decision)
+  const activation = Object.freeze({
+    originRequestSeq: activationOriginRequestSeq as number | null,
+    decisions: Object.freeze(activationDecisions)
+  })
   const snapshot = Object.freeze({
     schemaVersion: TOOL_SURFACE_SNAPSHOT_SCHEMA_VERSION,
     canonicalizationVersion: TOOL_SURFACE_CANONICALIZATION_VERSION,
@@ -1567,7 +1851,8 @@ export function createToolSurfaceSnapshot(input: {
     ceiling: input.ceiling,
     eligibleCatalog: eligible.catalog,
     activeEntries: Object.freeze(activeEntries),
-    toolDefinitions
+    toolDefinitions,
+    activation
   })
   issuedToolSurfaceSnapshots.add(snapshot)
   return snapshot
@@ -1612,7 +1897,20 @@ export function createFullToolSurfaceRunController(input: {
     ceiling,
     policyVersion: input.policyVersion,
     virtualizationTriggered: false,
+    stageActivationBatch: (candidates) => {
+      const candidateBatch = readDataArray(
+        candidates,
+        'Tool Surface activation candidate batch',
+        MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+      )
+      if (candidateBatch.length === 0) return
+      throw new ToolSurfaceError(
+        'A full Tool Surface does not accept activation candidates.',
+        'invalid_definition'
+      )
+    },
     build: ({ request, eligibleDefinitions }) => {
+      buildCanonicalToolCatalog(eligibleDefinitions)
       const eligibleIdentities = eligibleDefinitions.map((definition) => {
         const ceilingEntry = ceilingEntryByVisibleName.get(definition.function.name)
         if (!ceilingEntry) {
@@ -1752,11 +2050,24 @@ export function createPolicySelectedToolSurfaceRun(input: {
   const ceilingEntryByVisibleName = new Map(
     ceiling.catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
   )
+  const ceilingEntryByTarget = new Map(
+    ceiling.catalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  let latestAdmittedRequest: ToolSurfaceRequestIdentity | null = null
+  let pendingCandidates: readonly ToolSurfaceActivationCandidate[] | null = null
+  let pendingOriginRequest: ToolSurfaceRequestIdentity | null = null
+  let pendingFingerprint: string | null = null
+  let admittedActivationBatches = 0
+  let admittedAppendedTargets = 0
+  const consumedReleaseFingerprintByRequestSeq = new Map<number, string>()
   const proposals = new WeakMap<
     ToolSurfaceSnapshot,
     {
       readonly baseLedger: ToolSurfaceActivationLedger
       readonly nextLedger: ToolSurfaceActivationLedger
+      readonly pendingCandidates: readonly ToolSurfaceActivationCandidate[] | null
+      readonly pendingFingerprint: string | null
+      readonly appendedTargets: number
     }
   >()
   const admittedSnapshots = new WeakSet<ToolSurfaceSnapshot>()
@@ -1765,6 +2076,71 @@ export function createPolicySelectedToolSurfaceRun(input: {
     ceiling,
     policyVersion: input.policy.policyVersion,
     virtualizationTriggered: true,
+    stageActivationBatch: (candidates) => {
+      const candidateBatch = readDataArray(
+        candidates,
+        'Tool Surface activation candidate batch',
+        MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+      )
+      if (candidateBatch.length === 0) return
+      if (!latestAdmittedRequest) {
+        throw new ToolSurfaceError(
+          'Activation candidates require an admitted originating View.',
+          'invalid_definition'
+        )
+      }
+      const origin = latestAdmittedRequest
+      const merged = mergeToolSurfaceActivationCandidates(origin, [
+        candidateBatch as readonly ToolSurfaceActivationCandidate[]
+      ])
+      const originRequestSeq = merged[0].requestSeq
+      if (merged.some((candidate) => candidate.requestSeq !== originRequestSeq)) {
+        throw new ToolSurfaceError(
+          'Activation candidates must share one originating View.',
+          'invalid_definition'
+        )
+      }
+      const fingerprint = hashJsonData(merged)
+      const consumedFingerprint = consumedReleaseFingerprintByRequestSeq.get(originRequestSeq)
+      if (consumedFingerprint !== undefined) {
+        if (consumedFingerprint === fingerprint) return
+        throw new ToolSurfaceError(
+          'Activation candidate batch conflicts with a consumed release.',
+          'conflicting_tool'
+        )
+      }
+      if (originRequestSeq !== origin.requestSeq) {
+        throw new ToolSurfaceError(
+          'Activation candidates must originate from the latest admitted View.',
+          'invalid_definition'
+        )
+      }
+      const admittedTargets = new Set(admittedLedger.entries.map((entry) => entry.stableTargetKey))
+      for (const candidate of merged) {
+        const ceilingEntry = ceilingEntryByTarget.get(candidate.stableTargetKey)
+        if (
+          !ceilingEntry ||
+          ceilingEntry.canonicalToolDefinitionHash !== candidate.canonicalToolDefinitionHash ||
+          admittedTargets.has(candidate.stableTargetKey) ||
+          isToolSearchCatalogEntry(ceilingEntry)
+        ) {
+          throw new ToolSurfaceError(
+            'Activation candidate is outside the exact Run Tool Ceiling.',
+            'conflicting_tool'
+          )
+        }
+      }
+      if (pendingCandidates) {
+        if (pendingFingerprint === fingerprint) return
+        throw new ToolSurfaceError(
+          'Activation candidate batch conflicts with an existing release.',
+          'conflicting_tool'
+        )
+      }
+      pendingCandidates = merged
+      pendingOriginRequest = origin
+      pendingFingerprint = fingerprint
+    },
     build: ({ request, eligibleDefinitions, toolSearchAvailable }) => {
       if (toolSearchAvailable !== true) {
         throw new ToolSurfaceError(
@@ -1772,8 +2148,36 @@ export function createPolicySelectedToolSurfaceRun(input: {
           'invalid_definition'
         )
       }
-      const effectiveEligibleDefinitions = [...eligibleDefinitions, runToolSearchDefinition]
-      const eligibleIdentities = effectiveEligibleDefinitions.map((definition) => {
+      if (
+        latestAdmittedRequest &&
+        (request.sessionId !== latestAdmittedRequest.sessionId ||
+          request.messageId !== latestAdmittedRequest.messageId ||
+          request.runId !== latestAdmittedRequest.runId ||
+          request.requestSeq <= latestAdmittedRequest.requestSeq)
+      ) {
+        throw new ToolSurfaceError(
+          'Tool Surface proposal must advance the admitted Run View.',
+          'invalid_definition'
+        )
+      }
+      if (
+        pendingCandidates &&
+        (!pendingOriginRequest ||
+          request.sessionId !== pendingOriginRequest.sessionId ||
+          request.messageId !== pendingOriginRequest.messageId ||
+          request.runId !== pendingOriginRequest.runId ||
+          request.requestSeq <= pendingOriginRequest.requestSeq)
+      ) {
+        throw new ToolSurfaceError(
+          'An activation proposal must be a later View in the same Run scope.',
+          'invalid_definition'
+        )
+      }
+      buildCanonicalToolCatalog([...eligibleDefinitions, runToolSearchDefinition])
+      const effectiveEligibleDefinitions: MCPToolDefinition[] = []
+      const eligibleIdentities: ToolSurfaceDefinitionIdentity[] = []
+      const driftedTargets = new Set<string>()
+      for (const definition of [...eligibleDefinitions, runToolSearchDefinition]) {
         const ceilingEntry = ceilingEntryByVisibleName.get(definition.function.name)
         if (!ceilingEntry) {
           throw new ToolSurfaceError(
@@ -1781,14 +2185,82 @@ export function createPolicySelectedToolSurfaceRun(input: {
             'conflicting_tool'
           )
         }
-        return copyDefinitionIdentity(ceilingEntry)
-      })
+        const liveEntry = buildCanonicalToolCatalog([definition]).entries[0]
+        if (!catalogEntryMatches(ceilingEntry, liveEntry)) {
+          driftedTargets.add(ceilingEntry.stableTargetKey)
+          continue
+        }
+        effectiveEligibleDefinitions.push(definition)
+        eligibleIdentities.push(copyDefinitionIdentity(ceilingEntry))
+      }
+      const pendingTargets = new Set(
+        (pendingCandidates ?? []).map((candidate) => candidate.stableTargetKey)
+      )
+      if ([...driftedTargets].some((target) => !pendingTargets.has(target))) {
+        throw new ToolSurfaceError(
+          'Eligible Tool Surface is outside the Run Tool Ceiling.',
+          'conflicting_tool'
+        )
+      }
       const eligibleTargets = new Set(eligibleIdentities.map((entry) => entry.stableTargetKey))
-      const selectionReasons = [...reasonByTarget.entries()].flatMap(
+      const eligibleByTarget = new Map(
+        eligibleIdentities.map((identity) => [identity.stableTargetKey, identity])
+      )
+      const ledgerTargets = new Set(admittedLedger.entries.map((entry) => entry.stableTargetKey))
+      const decisions: ToolSurfaceActivationDecision[] = []
+      const additions: ToolSurfaceDefinitionIdentity[] = []
+      let batchTokens = 0
+      let totalTokens = admittedLedger.entries.reduce(
+        (sum, entry) => sum + (ceilingEntryByTarget.get(entry.stableTargetKey)?.definitionTokens ?? 0),
+        0
+      )
+      for (const candidate of pendingCandidates ?? []) {
+        let rejectionCode: ToolSurfaceActivationRejectionCode | undefined
+        const ceilingEntry = ceilingEntryByTarget.get(candidate.stableTargetKey)!
+        const eligibleIdentity = eligibleByTarget.get(candidate.stableTargetKey)
+        if (driftedTargets.has(candidate.stableTargetKey)) {
+          rejectionCode = 'definition-drift'
+        } else if (!eligibleIdentity || ledgerTargets.has(candidate.stableTargetKey)) {
+          rejectionCode = 'ineligible'
+        } else if (additions.length >= input.policy.maxActivationCandidatesPerBatch) {
+          rejectionCode = 'per-batch-count-cap'
+        } else if (
+          batchTokens + ceilingEntry.definitionTokens >
+          input.policy.maxActivationCandidateDefinitionTokensPerBatch
+        ) {
+          rejectionCode = 'per-batch-token-cap'
+        } else if (admittedActivationBatches >= input.policy.maxActivationBatchesPerRun) {
+          rejectionCode = 'per-run-batch-cap'
+        } else if (
+          admittedAppendedTargets + additions.length >= input.policy.maxAppendedTargetsPerRun
+        ) {
+          rejectionCode = 'per-run-target-cap'
+        } else if (admittedLedger.entries.length + additions.length >= input.policy.maxInitialToolCount) {
+          rejectionCode = 'total-surface-count-cap'
+        } else if (
+          totalTokens + ceilingEntry.definitionTokens > input.policy.maxInitialDefinitionTokens
+        ) {
+          rejectionCode = 'total-surface-token-cap'
+        }
+        if (!rejectionCode) {
+          additions.push(copyDefinitionIdentity(candidate))
+          ledgerTargets.add(candidate.stableTargetKey)
+          batchTokens += ceilingEntry.definitionTokens
+          totalTokens += ceilingEntry.definitionTokens
+        }
+        decisions.push({
+          ...copyActivationCandidate(candidate),
+          accepted: !rejectionCode,
+          ...(rejectionCode ? { rejectionCode } : {})
+        })
+      }
+      const nextLedger = appendToolSurfaceActivationBatch(admittedLedger, additions)
+      const proposedReasonByTarget = new Map(reasonByTarget)
+      for (const addition of additions) proposedReasonByTarget.set(addition.stableTargetKey, 'search-result')
+      const selectionReasons = [...proposedReasonByTarget.entries()].flatMap(
         ([stableTargetKey, reason]) =>
           eligibleTargets.has(stableTargetKey) ? [{ stableTargetKey, reason }] : []
       )
-      const nextLedger = appendToolSurfaceActivationBatch(admittedLedger, [])
       const snapshot = createToolSurfaceSnapshot({
         request,
         policyVersion: input.policy.policyVersion,
@@ -1796,9 +2268,19 @@ export function createPolicySelectedToolSurfaceRun(input: {
         ceiling,
         eligibleDefinitions: effectiveEligibleDefinitions,
         activationLedger: nextLedger,
-        selectionReasons
+        selectionReasons,
+        activation: {
+          originRequestSeq: pendingOriginRequest?.requestSeq ?? null,
+          decisions
+        }
       })
-      proposals.set(snapshot, { baseLedger: admittedLedger, nextLedger })
+      proposals.set(snapshot, {
+        baseLedger: admittedLedger,
+        nextLedger,
+        pendingCandidates,
+        pendingFingerprint,
+        appendedTargets: additions.length
+      })
       return snapshot
     },
     admit: (snapshot) => {
@@ -1817,7 +2299,49 @@ export function createPolicySelectedToolSurfaceRun(input: {
           'conflicting_tool'
         )
       }
+      if (proposal.pendingCandidates !== pendingCandidates) {
+        throw new ToolSurfaceError(
+          'Tool Surface snapshot was prepared from stale activation candidates.',
+          'conflicting_tool'
+        )
+      }
+      let consumedRelease: { readonly requestSeq: number; readonly fingerprint: string } | null =
+        null
+      if (proposal.pendingCandidates) {
+        const consumedRequestSeq = snapshot.activation.originRequestSeq
+        if (
+          consumedRequestSeq === null ||
+          !proposal.pendingFingerprint ||
+          consumedReleaseFingerprintByRequestSeq.size >= MAX_TOOL_SURFACE_CANDIDATE_BATCHES
+        ) {
+          throw new ToolSurfaceError(
+            'Tool Surface consumed activation release is invalid or exceeds its limit.',
+            consumedReleaseFingerprintByRequestSeq.size >= MAX_TOOL_SURFACE_CANDIDATE_BATCHES
+              ? 'limit_exceeded'
+              : 'invalid_definition'
+          )
+        }
+        consumedRelease = Object.freeze({
+          requestSeq: consumedRequestSeq,
+          fingerprint: proposal.pendingFingerprint
+        })
+      }
       admittedLedger = proposal.nextLedger
+      latestAdmittedRequest = snapshot.request
+      if (proposal.pendingCandidates && consumedRelease) {
+        consumedReleaseFingerprintByRequestSeq.set(
+          consumedRelease.requestSeq,
+          consumedRelease.fingerprint
+        )
+        admittedActivationBatches += 1
+        admittedAppendedTargets += proposal.appendedTargets
+        pendingCandidates = null
+        pendingOriginRequest = null
+        pendingFingerprint = null
+        for (const decision of snapshot.activation.decisions) {
+          if (decision.accepted) reasonByTarget.set(decision.stableTargetKey, 'search-result')
+        }
+      }
       proposals.delete(snapshot)
       admittedSnapshots.add(snapshot)
     }
