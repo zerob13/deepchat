@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "Model {model} tidak menyokong input audio, lampiran audio {count} telah diabaikan."
   },
   "pendingInput": {
+    "resume": "Sambung baris gilir",
+    "resumeFailed": "Gagal menyambung baris gilir",
     "steer": "panduan",
     "queueCount": "Sedia untuk menghantar {count}/{max}",
     "toSteer": "Ganggu & hantar",

@@ -259,6 +259,70 @@ describe('PendingInputPump', () => {
     vi.restoreAllMocks()
   })
 
+  it('keeps a restarted Queue head held across automatic wakeups until manual resume', async () => {
+    const queue = createInput('queue', 'queue')
+    const test = createHarness([queue])
+    test.pump.holdRestartedQueueInputs([queue.id])
+
+    await expect(test.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(false)
+    await expect(test.pump.drain(SESSION_ID, 'completed')).resolves.toBe(false)
+    expect(test.pendingInputs.store.claimQueuedInput).not.toHaveBeenCalled()
+    expect(test.pump.hasRestartHeldQueueInputs(SESSION_ID)).toBe(true)
+    expect(test.pump.hasOnlyRestartHeldQueueInputs(SESSION_ID)).toBe(true)
+
+    expect(test.pump.releaseRestartHoldForSession(SESSION_ID)).toBe(true)
+    expect(test.pump.hasRestartHeldQueueInputs(SESSION_ID)).toBe(false)
+    await expect(test.pump.drain(SESSION_ID, 'manual')).resolves.toBe(true)
+    expect(test.pendingInputs.store.claimQueuedInput).toHaveBeenCalledWith(SESSION_ID, queue.id)
+  })
+
+  it('keeps manual Queue consumption semantics after an attachment-resolution wake', async () => {
+    const attachmentPreparation: AttachmentPreparationSummary = {
+      status: 'needs_user_action',
+      issues: [{ attachmentIndex: 0, reason: 'ocr_failed' }],
+      suggestedActions: ['retry', 'send_without_image_content']
+    }
+    const contexts: PendingInputTurnContext[] = []
+    const start: PendingInputPumpPorts['turnStarter']['start'] = vi.fn(
+      async (_sessionId, _content, context) => {
+        contexts.push(context)
+        return contexts.length === 1
+          ? completion(context, { kind: 'block', attachmentPreparation })
+          : completion(context, { kind: 'consume' })
+      }
+    )
+    const queue = createInput('queue', 'queue')
+    const test = createHarness([queue], start)
+    test.pump.holdRestartedQueueInputs([queue.id])
+    expect(test.pump.releaseRestartHoldForSession(SESSION_ID)).toBe(true)
+
+    await expect(test.pump.drain(SESSION_ID, 'manual')).resolves.toBe(true)
+    await vi.waitFor(() => expect(test.pendingInputs.records.get(queue.id)?.state).toBe('blocked'))
+    expect(contexts[0].consumeClaimBeforeProviderStream).toBe(true)
+
+    const blocked = test.pendingInputs.records.get(queue.id)!
+    test.pendingInputs.records.set(queue.id, {
+      ...blocked,
+      state: 'pending',
+      blocking: null
+    })
+    await expect(test.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(true)
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(2))
+
+    expect(contexts[1].consumeClaimBeforeProviderStream).toBe(true)
+    await vi.waitFor(() => expect(test.pendingInputs.records.has(queue.id)).toBe(false))
+  })
+
+  it('lets an explicit composer Send start without releasing a restarted Queue hold', () => {
+    const queue = createInput('queue', 'queue')
+    const test = createHarness([queue])
+    test.pump.holdRestartedQueueInputs([queue.id])
+
+    expect(test.pump.shouldClaimImmediately(SESSION_ID, 'idle', 'send')).toBe(true)
+    expect(test.pump.shouldClaimImmediately(SESSION_ID, 'idle', 'queue')).toBe(false)
+    expect(test.pump.hasOnlyRestartHeldQueueInputs(SESSION_ID)).toBe(true)
+  })
+
   it('claims steer input before an older queued input', async () => {
     const deferred = createDeferred<TurnCompletion>()
     let executionContext: PendingInputTurnContext | undefined

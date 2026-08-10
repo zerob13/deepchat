@@ -11,6 +11,11 @@ import type { SessionTranscript } from './transcript'
 
 const MAX_ACTIVE_PENDING_INPUTS = 5
 
+export interface PendingInputRestartRecovery {
+  affectedSessionIds: Set<string>
+  heldQueueInputIds: Set<string>
+}
+
 function toUserMessageContent(input: SendMessageInput): UserMessageContent {
   return {
     text: input.text,
@@ -46,6 +51,35 @@ export class SessionPendingInputs {
       throw new Error(`Pending input ${itemId} does not belong to session ${sessionId}`)
     }
     return record
+  }
+
+  createClaimedQueueUserMessage(
+    sessionId: string,
+    itemId: string,
+    content: UserMessageContent
+  ): string {
+    return this.store.runInTransaction(() => {
+      const input = this.store.getInput(itemId)
+      if (
+        !input ||
+        input.sessionId !== sessionId ||
+        input.mode !== 'queue' ||
+        input.state !== 'claimed'
+      ) {
+        throw new Error(`Pending input ${itemId} is not a claimed queue item for ${sessionId}.`)
+      }
+      if (input.messageIds.length > 0) {
+        throw new Error(`Claimed queue item ${itemId} already has a linked message.`)
+      }
+
+      const messageId = this.transcript.createUserMessage(
+        sessionId,
+        this.transcript.getNextOrderSeq(sessionId),
+        content
+      )
+      this.store.linkClaimedQueueMessage(itemId, messageId)
+      return messageId
+    })
   }
 
   queuePendingInput(
@@ -333,63 +367,80 @@ export class SessionPendingInputs {
     this.events.publishMessagesChanged(sessionId, changedMessages)
   }
 
-  recoverClaimedInputsAfterRestart(): number {
-    const sessionIds = new Set<string>()
+  recoverInputsAfterRestart(): PendingInputRestartRecovery {
+    const affectedSessionIds = new Set<string>()
+    const heldQueueInputIds = new Set<string>()
     this.store.runInTransaction(() => {
       for (const input of this.store.listActiveInputs()) {
         if (input.mode === 'queue') {
           if (input.state === 'claimed') {
-            if (input.messageIds.length > 0) {
+            const hasMaterializedUserFact = input.messageIds.some((messageId) => {
+              const message = this.transcript.getMessage(messageId)
+              return message?.sessionId === input.sessionId && message.role === 'user'
+            })
+            if (hasMaterializedUserFact) {
               this.store.consumeQueueInput(input.id)
             } else {
               this.store.releaseClaimedQueueInput(input.id)
+              heldQueueInputIds.add(input.id)
             }
-            sessionIds.add(input.sessionId)
+            affectedSessionIds.add(input.sessionId)
+          } else {
+            heldQueueInputIds.add(input.id)
+            affectedSessionIds.add(input.sessionId)
           }
           continue
         }
 
         if (input.state === 'blocked') {
           this.store.convertSteerInputToQueue(input.id)
-          sessionIds.add(input.sessionId)
+          heldQueueInputIds.add(input.id)
+          affectedSessionIds.add(input.sessionId)
           continue
         }
 
         if (input.state === 'claimed' && input.messageIds.length > 0) {
           this.transcript.settleSteerMessages(input.messageIds)
           this.store.consumeSteerInput(input.id)
-          sessionIds.add(input.sessionId)
+          affectedSessionIds.add(input.sessionId)
           continue
         }
 
         if (input.state === 'claimed') {
           this.store.releaseClaimedInput(input.id)
         }
-        if (input.messageIds.length > 0) {
-          continue
-        }
-        const messageId = this.transcript.createUserMessage(
-          input.sessionId,
-          this.transcript.getNextOrderSeq(input.sessionId),
-          toUserMessageContent(input.payload),
-          {
-            status: 'pending',
-            metadata: {
-              inputReceipt: {
-                mode: 'steer',
-                readAt: null
+        const messageIds = [...input.messageIds]
+        if (messageIds.length === 0) {
+          messageIds.push(
+            this.transcript.createUserMessage(
+              input.sessionId,
+              this.transcript.getNextOrderSeq(input.sessionId),
+              toUserMessageContent(input.payload),
+              {
+                status: 'pending',
+                metadata: {
+                  inputReceipt: {
+                    mode: 'steer',
+                    readAt: null
+                  }
+                }
               }
-            }
-          }
-        )
-        this.store.linkSteerMessage(input.id, messageId)
-        sessionIds.add(input.sessionId)
+            )
+          )
+          this.store.linkSteerMessage(input.id, messageIds[0])
+        }
+        this.transcript.failPendingSteerMessages(messageIds)
+        this.store.consumeSteerInput(input.id)
+        affectedSessionIds.add(input.sessionId)
       }
     })
-    for (const sessionId of sessionIds) {
+    for (const sessionId of affectedSessionIds) {
       this.emitUpdated(sessionId)
     }
-    return sessionIds.size
+    return {
+      affectedSessionIds,
+      heldQueueInputIds
+    }
   }
 
   hasActiveInputs(sessionId: string): boolean {

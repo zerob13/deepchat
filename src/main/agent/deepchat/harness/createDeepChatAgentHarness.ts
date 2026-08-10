@@ -377,6 +377,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     toolService,
     sessionStore,
     messageStore,
+    pendingInputs: pendingInputCoordinator,
     tapeReconciliation: tapeService,
     toolResolver,
     compactionService,
@@ -502,10 +503,11 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
       input
     )
 
-  const recoveredPendingInputs = pendingInputCoordinator.recoverClaimedInputsAfterRestart()
-  if (recoveredPendingInputs > 0) {
+  const pendingInputRecovery = pendingInputCoordinator.recoverInputsAfterRestart()
+  pendingInputPump.holdRestartedQueueInputs(pendingInputRecovery.heldQueueInputIds)
+  if (pendingInputRecovery.affectedSessionIds.size > 0) {
     logger.info(
-      `DeepChatAgent: recovered ${recoveredPendingInputs} sessions with claimed pending inputs`
+      `DeepChatAgent: reconciled ${pendingInputRecovery.affectedSessionIds.size} sessions with pending inputs`
     )
   }
 

@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "モデル {model} は音声入力をサポートしていないため、{count} 件の音声添付を無視しました。"
   },
   "pendingInput": {
+    "resume": "キューを再開",
+    "resumeFailed": "キューを再開できませんでした",
     "steer": "誘導",
     "queueCount": "送信待ち {count}/{max}",
     "toSteer": "中断して送信",

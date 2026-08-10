@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "O modelo {model} não oferece suporte a entrada de áudio. {count} anexo(s) de áudio foram ignorados."
   },
   "pendingInput": {
+    "resume": "Retomar fila",
+    "resumeFailed": "Não foi possível retomar a fila",
     "steer": "Direcionamento",
     "queueCount": "Pendentes {count}/{max}",
     "toSteer": "Interromper e enviar",

@@ -396,13 +396,17 @@ watch(
 )
 
 watch(
-  () => [props.message.id, props.message.inputReceipt?.readAt] as const,
-  ([, readAt]) => {
+  () => [props.message.id, props.message.status, props.message.inputReceipt?.readAt] as const,
+  ([, status, readAt]) => {
     if (receiptTimer) {
       clearTimeout(receiptTimer)
       receiptTimer = null
     }
     if (!props.message.inputReceipt) {
+      receipt.value = null
+      return
+    }
+    if (status === 'error') {
       receipt.value = null
       return
     }

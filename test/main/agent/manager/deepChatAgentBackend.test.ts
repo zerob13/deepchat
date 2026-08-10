@@ -19,6 +19,8 @@ const createPort = (): DeepChatAgentBackendPort => {
       .mockResolvedValue({ status: 'generating', providerId: 'openai', modelId: 'model' }),
     waitForFirstTurnReady: vi.fn().mockResolvedValue(true),
     listPendingInputs: vi.fn().mockResolvedValue([]),
+    isPendingQueueResumeAvailable: vi.fn().mockResolvedValue(false),
+    resumePendingQueue: vi.fn().mockResolvedValue(false),
     steerActiveTurn: vi.fn().mockResolvedValue({ requestId: null, messageId: null }),
     updateQueuedInput: vi.fn().mockResolvedValue({}),
     moveQueuedInput: vi.fn().mockResolvedValue([]),

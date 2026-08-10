@@ -73,6 +73,27 @@ export function usePendingInputActions(options: UsePendingInputActionsOptions) {
     }
   }
 
+  async function onPendingInputResume() {
+    if (options.isReadOnlySession.value || options.isGenerating.value) return
+    if (options.hasBlockingInteraction()) return
+    if (options.pendingInputStore.queueItems.some((item) => item.state === 'blocked')) return
+
+    const sessionId = options.sessionId()
+    try {
+      const started = await options.pendingInputStore.resumeQueue(sessionId)
+      if (started) {
+        options.beginPlanTurn(sessionId)
+      }
+    } catch (error) {
+      console.error('[ChatPage] resume queued inputs failed:', error)
+      options.notify({
+        kind: 'error',
+        code: 'chat.pendingInput.resumeFailed',
+        title: options.t('chat.pendingInput.resumeFailed')
+      })
+    }
+  }
+
   async function onPendingInputResolve(payload: {
     itemId: string
     action: 'retry' | 'send_without_image_content'
@@ -104,6 +125,7 @@ export function usePendingInputActions(options: UsePendingInputActionsOptions) {
     onPendingInputMove,
     onPendingInputDelete,
     onPendingInputSteer,
+    onPendingInputResume,
     onPendingInputResolve
   }
 }

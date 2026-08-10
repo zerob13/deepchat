@@ -32,6 +32,7 @@ function createHarness() {
     moveQueueInput: vi.fn().mockResolvedValue(undefined),
     deleteInput: vi.fn().mockResolvedValue(undefined),
     steerPendingInput: vi.fn().mockResolvedValue(undefined),
+    resumeQueue: vi.fn().mockResolvedValue(true),
     resolveBlockedInput: vi.fn().mockResolvedValue(undefined)
   }
   const beginPlanTurn = vi.fn()
@@ -70,6 +71,39 @@ function createHarness() {
 describe('usePendingInputActions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('resumes an idle Queue once and rebaselines plan state only when a turn starts', async () => {
+    const harness = createHarness()
+    harness.isGenerating.value = false
+
+    await harness.actions.onPendingInputResume()
+
+    expect(harness.pendingInputStore.resumeQueue).toHaveBeenCalledWith('s1')
+    expect(harness.beginPlanTurn).toHaveBeenCalledWith('s1')
+
+    harness.pendingInputStore.resumeQueue.mockResolvedValueOnce(false)
+    await harness.actions.onPendingInputResume()
+    expect(harness.beginPlanTurn).toHaveBeenCalledTimes(1)
+    harness.stop()
+  })
+
+  it('reports Queue resume failures without changing plan state', async () => {
+    const harness = createHarness()
+    harness.isGenerating.value = false
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    harness.pendingInputStore.resumeQueue.mockRejectedValueOnce(new Error('resume failed'))
+
+    await harness.actions.onPendingInputResume()
+
+    expect(harness.notify).toHaveBeenCalledWith({
+      kind: 'error',
+      code: 'chat.pendingInput.resumeFailed',
+      title: 'chat.pendingInput.resumeFailed'
+    })
+    expect(harness.beginPlanTurn).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+    harness.stop()
   })
 
   it('updates an existing queue item without dropping files, search, or skills', async () => {

@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "Il modello {model} non supporta input audio. {count} allegati audio ignorati."
   },
   "pendingInput": {
+    "resume": "Riprendi coda",
+    "resumeFailed": "Impossibile riprendere la coda",
     "steer": "Guida",
     "queueCount": "In attesa {count}/{max}",
     "toSteer": "Interrompi e invia",

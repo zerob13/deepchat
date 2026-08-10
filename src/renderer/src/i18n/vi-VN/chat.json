@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "Model {model} không hỗ trợ đầu vào âm thanh. Đã bỏ qua (các) tệp đính kèm âm thanh {count}."
   },
   "pendingInput": {
+    "resume": "Tiếp tục hàng đợi",
+    "resumeFailed": "Không thể tiếp tục hàng đợi",
     "steer": "Chỉ đạo",
     "queueCount": "Đang chờ gửi {count}/{max}",
     "toSteer": "Ngắt & gửi",

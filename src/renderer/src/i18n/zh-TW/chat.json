@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "模型 {model} 不支援音訊輸入，已忽略 {count} 個音訊附件。"
   },
   "pendingInput": {
+    "resume": "繼續佇列",
+    "resumeFailed": "無法繼續佇列",
     "steer": "打斷",
     "queueCount": "待發 {count}/{max}",
     "toSteer": "打斷並發送",

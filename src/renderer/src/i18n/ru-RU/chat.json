@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "Модель {model} не поддерживает аудиоввод. Пропущено аудиофайлов: {count}."
   },
   "pendingInput": {
+    "resume": "Возобновить очередь",
+    "resumeFailed": "Не удалось возобновить очередь",
     "steer": "Направление",
     "queueCount": "В ожидании {count}/{max}",
     "toSteer": "Прервать и отправить",

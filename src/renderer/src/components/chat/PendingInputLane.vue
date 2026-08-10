@@ -22,6 +22,22 @@
             {{ t('chat.attachments.pending.blockedCount', { count: blockedCount }) }}
           </span>
         </div>
+        <DcButton
+          v-if="showResumeAction"
+          variant="ghost"
+          size="sm"
+          data-testid="pending-resume-queue"
+          class="h-7 shrink-0 rounded-full px-2 text-xs"
+          :disabled="resumeDisabled || resumeLoading"
+          @click="emit('resume-queue')"
+        >
+          <Icon
+            icon="lucide:play"
+            class="mr-1 h-3.5 w-3.5"
+            :class="resumeLoading ? 'animate-pulse' : ''"
+          />
+          {{ t('chat.pendingInput.resume') }}
+        </DcButton>
       </div>
 
       <div
@@ -237,11 +253,17 @@ const props = withDefaults(
     activeLimit?: number
     disableSteerAction?: boolean
     disableQueueSteerAction?: boolean
+    showResumeAction?: boolean
+    resumeDisabled?: boolean
+    resumeLoading?: boolean
   }>(),
   {
     activeLimit: 5,
     disableSteerAction: false,
-    disableQueueSteerAction: false
+    disableQueueSteerAction: false,
+    showResumeAction: false,
+    resumeDisabled: false,
+    resumeLoading: false
   }
 )
 
@@ -250,6 +272,7 @@ const emit = defineEmits<{
   'move-queue': [payload: { itemId: string; toIndex: number }]
   'steer-queue': [itemId: string]
   'delete-queue': [itemId: string]
+  'resume-queue': []
   'resolve-blocked': [payload: { itemId: string; action: 'retry' | 'send_without_image_content' }]
 }>()
 const { t } = useI18n()

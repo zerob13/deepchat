@@ -78,6 +78,8 @@
     "audioInputUnsupportedDescription": "Modellen {model} understøtter ikke lydinput. {count} lydvedhæftning(er) blev ignoreret."
   },
   "pendingInput": {
+    "resume": "Fortsæt kø",
+    "resumeFailed": "Kunne ikke fortsætte køen",
     "steer": "Styring",
     "queueCount": "Afventer {count}/{max}",
     "toSteer": "Afbryd og send",
