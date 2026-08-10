@@ -3,11 +3,14 @@ import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import { TOOL_EXECUTION } from '@shared/types/core/mcp'
 import type { DeepChatToolProfileKind } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { RunToolDefinitionUniverse } from '@/agent/deepchat/runtime/toolResolver'
 import { buildCanonicalToolCatalog } from '@/agent/deepchat/runtime/toolSurface'
 import {
   TOOL_SURFACE_P0A_SHADOW_POLICY,
-  ToolSurfaceShadowDiagnosticsCollector
+  ToolSurfaceShadowDiagnosticsCollector,
+  ToolSurfaceShadowDiagnosticsRegistry
 } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 
 function agentTool(name: string, options: { description?: string } = {}): MCPToolDefinition {
@@ -74,6 +77,14 @@ function assistantToolMessage(name: string): ChatMessage {
       }
     ]
   }
+}
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => undefined
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
 }
 
 describe('Tool Surface shadow diagnostics selection', () => {
@@ -197,15 +208,570 @@ describe('Tool Surface shadow diagnostics selection', () => {
       eligibleDefinitions: [],
       initialViewRequestSeq: 3
     })
+    diagnostics.startRun({
+      universe: null,
+      eligibleDefinitions: [],
+      initialViewRequestSeq: 4
+    })
 
     expect(diagnostics.snapshot().runs).toMatchObject({
-      observed: 3,
+      observed: 4,
       measured: 0,
-      degraded: 1,
+      degraded: 2,
       acpExcluded: 1,
       mandatoryAdmissionBlocked: 0,
       collectorFailures: 1,
-      surfaceRelationCounts: { first: 0, unchanged: 0, changed: 0, unavailable: 3 }
+      surfaceRelationCounts: { first: 0, unchanged: 0, changed: 0, unavailable: 4 }
+    })
+  })
+})
+
+describe('Tool Surface shadow diagnostics registry', () => {
+  it('isolates provider/model/profile lineages and invalidates evicted recorders', () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry({ maxLineagesPerInstance: 1 })
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const definitions = [agentTool('read')]
+    const firstScope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'code' as const
+    }
+    const first = registry.startRun({
+      instance,
+      scope: firstScope,
+      universe: universe(definitions),
+      eligibleDefinitions: definitions,
+      initialViewRequestSeq: 1
+    })
+    registry.startRun({
+      instance,
+      scope: { ...firstScope, modelId: 'model-2' },
+      universe: universe(definitions),
+      eligibleDefinitions: definitions,
+      initialViewRequestSeq: 2
+    })
+    first.recordProviderAttempt({
+      requestSeq: 1,
+      physicalAttempt: 1,
+      usage: { inputTokens: 100 }
+    })
+
+    expect(registry.snapshot({ instance, scope: firstScope })).toBeNull()
+    expect(
+      registry.snapshot({ instance, scope: { ...firstScope, modelId: 'model-2' } })
+    ).toMatchObject({
+      runs: { observed: 1 },
+      initialViewAttempts: { observed: 0 }
+    })
+  })
+
+  it('does not share a lineage between replacement Session instances', () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const firstInstance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const replacement = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const definitions = [agentTool('read')]
+    registry.startRun({
+      instance: firstInstance,
+      scope,
+      universe: universe(definitions),
+      eligibleDefinitions: definitions,
+      initialViewRequestSeq: 1
+    })
+
+    expect(registry.snapshot({ instance: replacement, scope })).toBeNull()
+  })
+
+  it('allows a pending universe to settle after its Run finishes', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const pendingUniverse = deferred<RunToolDefinitionUniverse | null>()
+    let cancelled = 0
+    const recorder = registry.startDeferredRun({
+      instance,
+      scope,
+      universe: pendingUniverse.promise,
+      cancelUniverse: () => {
+        cancelled += 1
+      },
+      eligibleDefinitions: [],
+      initialViewRequestSeq: 1
+    })
+    recorder.recordProviderAttempt({
+      requestSeq: 1,
+      physicalAttempt: 1,
+      usage: { inputTokens: 10 }
+    })
+    recorder.finish()
+
+    expect(cancelled).toBe(0)
+    expect(registry.snapshot({ instance, scope })).toMatchObject({ runs: { observed: 0 } })
+
+    pendingUniverse.resolve(universe([]))
+    await vi.waitFor(() =>
+      expect(registry.snapshot({ instance, scope })).toMatchObject({
+        runs: { observed: 1, measured: 1, degraded: 0, collectorFailures: 0 },
+        initialViewAttempts: { observed: 1, withUsage: 1 }
+      })
+    )
+  })
+
+  it('commits deferred measurements in Run order when universes resolve in reverse', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const firstDefinitions = [agentTool('read')]
+    const secondDefinitions = [agentTool('read'), agentTool('write')]
+    const firstUniverse = deferred<RunToolDefinitionUniverse | null>()
+    const secondUniverse = deferred<RunToolDefinitionUniverse | null>()
+
+    registry
+      .startDeferredRun({
+        instance,
+        scope,
+        universe: firstUniverse.promise,
+        cancelUniverse: () => undefined,
+        eligibleDefinitions: firstDefinitions,
+        initialViewRequestSeq: 1
+      })
+      .finish()
+    registry
+      .startDeferredRun({
+        instance,
+        scope,
+        universe: secondUniverse.promise,
+        cancelUniverse: () => undefined,
+        eligibleDefinitions: secondDefinitions,
+        initialViewRequestSeq: 2
+      })
+      .finish()
+
+    secondUniverse.resolve(universe(secondDefinitions))
+    await Promise.resolve()
+    expect(registry.snapshot({ instance, scope })).toMatchObject({ runs: { observed: 0 } })
+
+    firstUniverse.resolve(universe(firstDefinitions))
+    await vi.waitFor(() =>
+      expect(registry.snapshot({ instance, scope })).toMatchObject({
+        runs: {
+          observed: 2,
+          measured: 2,
+          surfaceRelationCounts: { first: 1, changed: 1, unchanged: 0, unavailable: 0 }
+        }
+      })
+    )
+  })
+
+  it('cancels and invalidates deferred Runs when their Session instance is cleared', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const pendingUniverse = deferred<RunToolDefinitionUniverse | null>()
+    let cancelled = 0
+    const recorder = registry.startDeferredRun({
+      instance,
+      scope,
+      universe: pendingUniverse.promise,
+      cancelUniverse: () => {
+        cancelled += 1
+      },
+      eligibleDefinitions: [],
+      initialViewRequestSeq: 1
+    })
+    recorder.recordProviderAttempt({
+      requestSeq: 1,
+      physicalAttempt: 1,
+      usage: { inputTokens: 10 }
+    })
+
+    registry.clear(instance)
+    pendingUniverse.resolve(universe([]))
+    await Promise.resolve()
+
+    expect(cancelled).toBe(1)
+    expect(registry.snapshot({ instance, scope })).toBeNull()
+  })
+
+  it('cancels pending Runs without erasing settled lineage diagnostics', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    registry
+      .startRun({
+        instance,
+        scope,
+        universe: universe([]),
+        eligibleDefinitions: [],
+        initialViewRequestSeq: 1
+      })
+      .finish()
+    const pendingUniverse = deferred<RunToolDefinitionUniverse | null>()
+    let cancelled = 0
+    registry
+      .startDeferredRun({
+        instance,
+        scope,
+        universe: pendingUniverse.promise,
+        cancelUniverse: () => {
+          cancelled += 1
+        },
+        eligibleDefinitions: [],
+        initialViewRequestSeq: 2
+      })
+      .finish()
+
+    registry.cancelPending(instance)
+    pendingUniverse.resolve(universe([]))
+    await Promise.resolve()
+
+    expect(cancelled).toBe(1)
+    expect(registry.snapshot({ instance, scope })).toMatchObject({ runs: { observed: 1 } })
+  })
+
+  it('owns and cancels a scheduled Run before its universe source starts', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const resolveUniverse = vi.fn(async () => universe([]))
+    registry.scheduleDeferredRun({
+      instance,
+      scope,
+      resolveUniverse,
+      isCurrent: () => true,
+      eligibleDefinitions: [],
+      initialViewRequestSeq: 1,
+      providerAttempts: []
+    })
+
+    registry.cancelPending(instance)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(resolveUniverse).not.toHaveBeenCalled()
+    expect(registry.snapshot({ instance, scope })).toBeNull()
+  })
+
+  it('detaches deferred diagnostics from mutable provider inputs before scheduling', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const originalTool = agentTool('original')
+    const definitions = [originalTool]
+    const messages = [assistantToolMessage('original')]
+    const providerAttempts = [
+      {
+        requestSeq: 1,
+        physicalAttempt: 1,
+        usage: { inputTokens: 10 }
+      }
+    ]
+    registry.scheduleDeferredRun({
+      instance,
+      scope,
+      resolveUniverse: async () => universe([originalTool]),
+      isCurrent: () => true,
+      eligibleDefinitions: definitions,
+      initialViewRequestSeq: 1,
+      providerAttempts,
+      messages
+    })
+
+    definitions.push(agentTool('late-sensitive-tool'))
+    messages[0].tool_calls![0].function.name = 'late-sensitive-tool'
+    providerAttempts[0].usage.inputTokens = 999
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    await vi.waitFor(() =>
+      expect(registry.snapshot({ instance, scope })).toMatchObject({
+        runs: { observed: 1, measured: 1 },
+        surface: { eligibleToolCount: { p50: 1 } },
+        initialViewAttempts: { observed: 1, inputTokens: { p50: 10 } }
+      })
+    )
+  })
+
+  it('rechecks Session currency after a deferred universe resolves', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const pendingUniverse = deferred<RunToolDefinitionUniverse>()
+    let current = true
+    registry.scheduleDeferredRun({
+      instance,
+      scope,
+      resolveUniverse: async () => await pendingUniverse.promise,
+      isCurrent: () => current,
+      eligibleDefinitions: [],
+      initialViewRequestSeq: 1,
+      providerAttempts: []
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    current = false
+    pendingUniverse.resolve(universe([]))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(registry.snapshot({ instance, scope })).toMatchObject({ runs: { observed: 0 } })
+  })
+
+  it('does not let a stalled lineage delay another provider lineage', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const firstScope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const secondScope = { ...firstScope, modelId: 'model-2' }
+    const firstUniverse = deferred<RunToolDefinitionUniverse | null>()
+    const secondUniverse = deferred<RunToolDefinitionUniverse | null>()
+    registry
+      .startDeferredRun({
+        instance,
+        scope: firstScope,
+        universe: firstUniverse.promise,
+        cancelUniverse: () => undefined,
+        eligibleDefinitions: [],
+        initialViewRequestSeq: 1
+      })
+      .finish()
+    registry
+      .startDeferredRun({
+        instance,
+        scope: secondScope,
+        universe: secondUniverse.promise,
+        cancelUniverse: () => undefined,
+        eligibleDefinitions: [],
+        initialViewRequestSeq: 2
+      })
+      .finish()
+
+    secondUniverse.resolve(universe([]))
+    await vi.waitFor(() =>
+      expect(registry.snapshot({ instance, scope: secondScope })).toMatchObject({
+        runs: { observed: 1, measured: 1 }
+      })
+    )
+    expect(registry.snapshot({ instance, scope: firstScope })).toMatchObject({
+      runs: { observed: 0 }
+    })
+    registry.cancelPending(instance)
+  })
+
+  it('cancels a resolved Run while it waits behind the same lineage tail', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const firstUniverse = deferred<RunToolDefinitionUniverse | null>()
+    registry
+      .startDeferredRun({
+        instance,
+        scope,
+        universe: firstUniverse.promise,
+        cancelUniverse: () => undefined,
+        eligibleDefinitions: [],
+        initialViewRequestSeq: 1
+      })
+      .finish()
+    registry
+      .startDeferredRun({
+        instance,
+        scope,
+        universe: Promise.resolve(universe([])),
+        cancelUniverse: () => undefined,
+        eligibleDefinitions: [],
+        initialViewRequestSeq: 2
+      })
+      .finish()
+
+    await Promise.resolve()
+    registry.cancelPending(instance)
+    firstUniverse.resolve(universe([]))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(registry.snapshot({ instance, scope })).toMatchObject({ runs: { observed: 0 } })
+  })
+
+  it('admits at most sixteen scheduled Runs and releases capacity after cancellation', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    const signals: AbortSignal[] = []
+    const never = new Promise<RunToolDefinitionUniverse>(() => undefined)
+    const resolveUniverse = vi.fn((signal: AbortSignal) => {
+      signals.push(signal)
+      return never
+    })
+    for (let index = 0; index < 17; index += 1) {
+      registry.scheduleDeferredRun({
+        instance,
+        scope,
+        resolveUniverse,
+        isCurrent: () => true,
+        eligibleDefinitions: [],
+        initialViewRequestSeq: index + 1,
+        providerAttempts: []
+      })
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(resolveUniverse).toHaveBeenCalledTimes(16)
+    registry.cancelPending(instance)
+    expect(signals).toHaveLength(16)
+    expect(signals.every((signal) => signal.aborted)).toBe(true)
+
+    const replacementSource = vi.fn(async () => universe([]))
+    registry.scheduleDeferredRun({
+      instance,
+      scope,
+      resolveUniverse: replacementSource,
+      isCurrent: () => true,
+      eligibleDefinitions: [],
+      initialViewRequestSeq: 18,
+      providerAttempts: []
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(replacementSource).toHaveBeenCalledOnce()
+    await vi.waitFor(() =>
+      expect(registry.snapshot({ instance, scope })).toMatchObject({ runs: { observed: 1 } })
+    )
+  })
+
+  it('times out a stalled universe and aborts its source fail-open', async () => {
+    vi.useFakeTimers()
+    try {
+      const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+      const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+      const scope = {
+        sessionId: 'session-1',
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        toolProfile: 'general' as const
+      }
+      let sourceSignal: AbortSignal | null = null
+      registry.scheduleDeferredRun({
+        instance,
+        scope,
+        resolveUniverse: async (signal) => {
+          sourceSignal = signal
+          return await new Promise<RunToolDefinitionUniverse>(() => undefined)
+        },
+        isCurrent: () => true,
+        eligibleDefinitions: [],
+        initialViewRequestSeq: 1,
+        providerAttempts: []
+      })
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(sourceSignal?.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(sourceSignal?.aborted).toBe(true)
+      await vi.waitFor(() =>
+        expect(registry.snapshot({ instance, scope })).toMatchObject({
+          runs: { observed: 1, measured: 0, degraded: 1 }
+        })
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('contains synchronous and asynchronous universe source failures', async () => {
+    const registry = new ToolSurfaceShadowDiagnosticsRegistry()
+    const instance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const baseScope = {
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      toolProfile: 'general' as const
+    }
+    registry.scheduleDeferredRun({
+      instance,
+      scope: baseScope,
+      resolveUniverse: () => {
+        throw new Error('sync source failure')
+      },
+      isCurrent: () => true,
+      eligibleDefinitions: [],
+      initialViewRequestSeq: 1,
+      providerAttempts: []
+    })
+    const rejectedScope = { ...baseScope, modelId: 'model-2' }
+    registry.scheduleDeferredRun({
+      instance,
+      scope: rejectedScope,
+      resolveUniverse: async () => {
+        throw new Error('async source failure')
+      },
+      isCurrent: () => true,
+      eligibleDefinitions: [],
+      initialViewRequestSeq: 2,
+      providerAttempts: []
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    await vi.waitFor(() => {
+      expect(registry.snapshot({ instance, scope: baseScope })).toMatchObject({
+        runs: { observed: 1, degraded: 1 }
+      })
+      expect(registry.snapshot({ instance, scope: rejectedScope })).toMatchObject({
+        runs: { observed: 1, degraded: 1 }
+      })
     })
   })
 })

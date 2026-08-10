@@ -1,7 +1,10 @@
 import { types as nodeTypes } from 'node:util'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
-import type { DeepChatToolProfileKind } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import type {
+  DeepChatAgentInstance,
+  DeepChatToolProfileKind
+} from '@/agent/deepchat/instance/deepChatAgentInstance'
 import { hashJsonData } from '@/tape/domain/canonicalJson'
 import type { RunToolDefinitionUniverse } from './toolResolver'
 import {
@@ -42,6 +45,11 @@ const MAX_RECENT_TOOL_NAME_BYTES = 1_024
 const MAX_INITIAL_VIEW_PHYSICAL_ATTEMPTS = 64
 const MAX_SCOPE_FIELD_CODE_UNITS = 1_024
 const MAX_SCOPE_FIELD_BYTES = 4_096
+const DEFAULT_MAX_LINEAGES_PER_INSTANCE = 8
+const MAX_LINEAGES_PER_INSTANCE = 32
+const MAX_DEFERRED_PROVIDER_ATTEMPTS = 64
+const MAX_PENDING_RUNS_PER_INSTANCE = 16
+const TOOL_SURFACE_SHADOW_UNIVERSE_TIMEOUT_MS = 5_000
 
 const TRIGGER_REASONS: readonly ToolSurfaceShadowTriggerReason[] = Object.freeze([
   'none',
@@ -140,11 +148,44 @@ export interface ToolSurfaceShadowRunRecorder {
   finish(): void
 }
 
+export interface ToolSurfaceShadowDiagnosticsRegistryPort {
+  scheduleDeferredRun(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceShadowDiagnosticsScope
+    readonly resolveUniverse: (signal: AbortSignal) => Promise<RunToolDefinitionUniverse>
+    readonly isCurrent: () => boolean
+    readonly eligibleDefinitions: readonly MCPToolDefinition[]
+    readonly initialViewRequestSeq: number
+    readonly providerAttempts: readonly ToolSurfaceProviderAttemptDiagnostic[]
+    readonly messages?: readonly ChatMessage[]
+  }): void
+  snapshot(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceShadowDiagnosticsScope
+  }): ToolSurfaceShadowDiagnosticsSnapshot | null
+  cancelPending(instance: DeepChatAgentInstance): void
+  clear(instance: DeepChatAgentInstance): void
+}
+
 interface ToolSurfaceShadowRunMeasurement {
   readonly measured: boolean
   readonly universeStatus: RunToolDefinitionUniverse['status']
   readonly decision: ToolSurfaceShadowDecision | null
   readonly hypotheticalSurfaceIdentities: readonly ToolSurfaceDefinitionIdentity[]
+}
+
+interface PreparedToolSurfaceShadowRunInput {
+  readonly eligibleCatalog: CanonicalToolCatalog
+  readonly recentToolNames: readonly string[]
+}
+
+interface PreparedToolSurfaceShadowUniverse {
+  readonly status: RunToolDefinitionUniverse['status']
+  readonly complete: boolean
+  readonly mandatoryAdmissionBlocked: boolean
+  readonly ceilingCatalog: CanonicalToolCatalog | null
+  readonly activeSkillRequiredStableTargetKeys: readonly string[]
+  readonly preparationFailed: boolean
 }
 
 interface RunSurfaceRelation {
@@ -156,6 +197,67 @@ const NOOP_RUN_RECORDER: ToolSurfaceShadowRunRecorder = Object.freeze({
   recordProviderAttempt: () => undefined,
   finish: () => undefined
 })
+
+function createAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('Aborted', 'AbortError')
+  }
+  const error = new Error('Aborted')
+  error.name = 'AbortError'
+  return error
+}
+
+function createDeferredUniverseResolution(
+  resolveUniverse: (signal: AbortSignal) => Promise<RunToolDefinitionUniverse>
+): {
+  readonly promise: Promise<RunToolDefinitionUniverse | null>
+  readonly start: () => void
+  readonly cancel: () => void
+} {
+  const controller = new AbortController()
+  let settled = false
+  let started = false
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  let settlePromise: (universe: RunToolDefinitionUniverse | null) => void = () => undefined
+  const cleanup = (): void => {
+    if (timeout) clearTimeout(timeout)
+    timeout = null
+  }
+  const settle = (universe: RunToolDefinitionUniverse | null): void => {
+    if (settled) return
+    settled = true
+    cleanup()
+    settlePromise(universe)
+  }
+  const promise = new Promise<RunToolDefinitionUniverse | null>((resolve) => {
+    settlePromise = resolve
+  })
+  return {
+    promise,
+    start: () => {
+      if (started || settled) return
+      started = true
+      if (controller.signal.aborted) {
+        settle(null)
+        return
+      }
+      timeout = setTimeout(() => {
+        controller.abort(createAbortError())
+        settle(null)
+      }, TOOL_SURFACE_SHADOW_UNIVERSE_TIMEOUT_MS)
+      timeout.unref?.()
+      try {
+        void resolveUniverse(controller.signal).then(settle, () => settle(null))
+      } catch {
+        settle(null)
+      }
+    },
+    cancel: () => {
+      if (!controller.signal.aborted) controller.abort(createAbortError())
+      settle(null)
+    }
+  }
+}
 
 class BoundedNumberRing {
   private readonly values: number[]
@@ -410,6 +512,90 @@ function collectRecentToolNames(messages: readonly ChatMessage[]): readonly stri
   return Object.freeze(names)
 }
 
+function prepareToolSurfaceShadowRunInput(input: {
+  readonly eligibleDefinitions: readonly MCPToolDefinition[]
+  readonly messages?: readonly ChatMessage[]
+}): PreparedToolSurfaceShadowRunInput {
+  return Object.freeze({
+    eligibleCatalog: buildCanonicalToolCatalog(input.eligibleDefinitions),
+    recentToolNames: collectRecentToolNames(input.messages ?? [])
+  })
+}
+
+function cloneProviderAttemptDiagnostic(
+  attempt: ToolSurfaceProviderAttemptDiagnostic
+): ToolSurfaceProviderAttemptDiagnostic {
+  return Object.freeze({
+    requestSeq: attempt.requestSeq,
+    physicalAttempt: attempt.physicalAttempt,
+    usage: attempt.usage
+      ? Object.freeze({
+          inputTokens: attempt.usage.inputTokens,
+          ...(attempt.usage.cacheReadTokens === undefined
+            ? {}
+            : { cacheReadTokens: attempt.usage.cacheReadTokens }),
+          ...(attempt.usage.cacheWriteTokens === undefined
+            ? {}
+            : { cacheWriteTokens: attempt.usage.cacheWriteTokens })
+        })
+      : null
+  })
+}
+
+function prepareProviderAttemptDiagnostics(
+  attempts: readonly ToolSurfaceProviderAttemptDiagnostic[]
+): readonly ToolSurfaceProviderAttemptDiagnostic[] {
+  const prepared: ToolSurfaceProviderAttemptDiagnostic[] = []
+  for (
+    let index = 0;
+    index < Math.min(attempts.length, MAX_DEFERRED_PROVIDER_ATTEMPTS);
+    index += 1
+  ) {
+    prepared.push(cloneProviderAttemptDiagnostic(attempts[index]))
+  }
+  return Object.freeze(prepared)
+}
+
+function prepareToolSurfaceShadowUniverse(
+  universe: RunToolDefinitionUniverse | null
+): PreparedToolSurfaceShadowUniverse | null {
+  if (!universe) return null
+  try {
+    if (universe.status === 'acp-excluded' || !universe.complete) {
+      return Object.freeze({
+        status: universe.status,
+        complete: universe.complete,
+        mandatoryAdmissionBlocked: universe.mandatoryAdmissionBlocked,
+        ceilingCatalog: null,
+        activeSkillRequiredStableTargetKeys: Object.freeze([]),
+        preparationFailed: false
+      })
+    }
+    const activeSkillRequiredStableTargetKeys = universe.skillRequirements
+      .filter((requirement) => requirement.activeAtRunStart && requirement.activatable)
+      .flatMap((requirement) => requirement.requiredStableTargetKeys)
+    return Object.freeze({
+      status: universe.status,
+      complete: universe.complete,
+      mandatoryAdmissionBlocked: universe.mandatoryAdmissionBlocked,
+      ceilingCatalog: buildCanonicalToolCatalog(universe.definitions),
+      activeSkillRequiredStableTargetKeys: Object.freeze([
+        ...activeSkillRequiredStableTargetKeys
+      ]),
+      preparationFailed: false
+    })
+  } catch {
+    return Object.freeze({
+      status: 'degraded',
+      complete: true,
+      mandatoryAdmissionBlocked: false,
+      ceilingCatalog: null,
+      activeSkillRequiredStableTargetKeys: Object.freeze([]),
+      preparationFailed: true
+    })
+  }
+}
+
 function hypotheticalToolSearchIdentity(
   policy: ToolSurfaceShadowPolicy
 ): ToolSurfaceDefinitionIdentity {
@@ -439,15 +625,20 @@ function digestSurfaceIdentities(
 }
 
 function computeToolSurfaceShadowRunMeasurement(input: {
-  readonly universe: RunToolDefinitionUniverse
-  readonly eligibleDefinitions: readonly MCPToolDefinition[]
+  readonly universe: PreparedToolSurfaceShadowUniverse
+  readonly eligibleCatalog: CanonicalToolCatalog
   readonly toolProfile: DeepChatToolProfileKind
   readonly recentToolNames: readonly string[]
   readonly previouslyVirtualized: boolean
   readonly policy: ToolSurfaceShadowPolicy
 }): ToolSurfaceShadowRunMeasurement {
   const { universe } = input
-  if (universe.status === 'acp-excluded' || !universe.complete) {
+  if (
+    universe.status === 'acp-excluded' ||
+    !universe.complete ||
+    universe.preparationFailed ||
+    !universe.ceilingCatalog
+  ) {
     return Object.freeze({
       measured: false,
       universeStatus: universe.status,
@@ -456,11 +647,8 @@ function computeToolSurfaceShadowRunMeasurement(input: {
     })
   }
 
-  const ceilingCatalog = buildCanonicalToolCatalog(universe.definitions)
-  const eligibleCatalog = buildCanonicalToolCatalog(input.eligibleDefinitions)
-  const activeSkillRequiredStableTargetKeys = universe.skillRequirements
-    .filter((requirement) => requirement.activeAtRunStart && requirement.activatable)
-    .flatMap((requirement) => requirement.requiredStableTargetKeys)
+  const ceilingCatalog = universe.ceilingCatalog
+  const eligibleCatalog = input.eligibleCatalog
   const policyRequiredStableTargetKeys = eligibleCatalog.entries
     .filter((entry) => entry.exposure === 'system-model')
     .map((entry) => entry.stableTargetKey)
@@ -488,7 +676,7 @@ function computeToolSurfaceShadowRunMeasurement(input: {
     previouslyVirtualized: input.previouslyVirtualized,
     policyRequiredStableTargetKeys,
     coreStableTargetKeys,
-    activeSkillRequiredStableTargetKeys,
+    activeSkillRequiredStableTargetKeys: universe.activeSkillRequiredStableTargetKeys,
     recentHints: recentStableTargetKeys.flatMap((stableTargetKey) => {
       const identity = eligibleIdentityByTarget.get(stableTargetKey)
       return identity ? [identity] : []
@@ -585,10 +773,36 @@ export class ToolSurfaceShadowDiagnosticsCollector {
   }
 
   startRun(input: {
-    readonly universe: RunToolDefinitionUniverse
+    readonly universe: RunToolDefinitionUniverse | null
     readonly eligibleDefinitions: readonly MCPToolDefinition[]
     readonly initialViewRequestSeq: number
     readonly messages?: readonly ChatMessage[]
+  }): ToolSurfaceShadowRunRecorder {
+    try {
+      const universe = prepareToolSurfaceShadowUniverse(input.universe ?? null)
+      let preparedInput: PreparedToolSurfaceShadowRunInput | null = null
+      if (universe?.status !== 'acp-excluded') {
+        try {
+          preparedInput = prepareToolSurfaceShadowRunInput(input)
+        } catch {}
+      }
+      return this.startPreparedRun({
+        universe,
+        preparedInput,
+        initialViewRequestSeq: input.initialViewRequestSeq
+      })
+    } catch {
+      this.observedRuns = increment(this.observedRuns)
+      this.collectorFailures = increment(this.collectorFailures)
+      this.clearPriorSurface()
+      return NOOP_RUN_RECORDER
+    }
+  }
+
+  startPreparedRun(input: {
+    readonly universe: PreparedToolSurfaceShadowUniverse | null
+    readonly preparedInput: PreparedToolSurfaceShadowRunInput | null
+    readonly initialViewRequestSeq: number
   }): ToolSurfaceShadowRunRecorder {
     this.observedRuns = increment(this.observedRuns)
     let initialViewRequestSeq: number | null = null
@@ -606,10 +820,37 @@ export class ToolSurfaceShadowDiagnosticsCollector {
       }
 
       const universe = input.universe
+      if (!universe) {
+        this.degradedRuns = increment(this.degradedRuns)
+        this.clearPriorSurface()
+        return this.createRunRecorder(
+          { kind: 'unavailable', overlapJaccardRatio: null },
+          initialViewRequestSeq,
+          lifecycleToken
+        )
+      }
       if (universe.status === 'acp-excluded') {
         this.acpExcludedRuns = increment(this.acpExcludedRuns)
         this.clearPriorSurface()
         return NOOP_RUN_RECORDER
+      }
+      if (universe.preparationFailed) {
+        this.collectorFailures = increment(this.collectorFailures)
+        this.clearPriorSurface()
+        return this.createRunRecorder(
+          { kind: 'unavailable', overlapJaccardRatio: null },
+          initialViewRequestSeq,
+          lifecycleToken
+        )
+      }
+      if (!input.preparedInput) {
+        this.collectorFailures = increment(this.collectorFailures)
+        this.clearPriorSurface()
+        return this.createRunRecorder(
+          { kind: 'unavailable', overlapJaccardRatio: null },
+          initialViewRequestSeq,
+          lifecycleToken
+        )
       }
       if (universe.mandatoryAdmissionBlocked) {
         this.mandatoryAdmissionBlockedRuns = increment(this.mandatoryAdmissionBlockedRuns)
@@ -626,9 +867,9 @@ export class ToolSurfaceShadowDiagnosticsCollector {
 
       const measurement = computeToolSurfaceShadowRunMeasurement({
         universe,
-        eligibleDefinitions: input.eligibleDefinitions,
+        eligibleCatalog: input.preparedInput.eligibleCatalog,
         toolProfile: this.toolProfile,
-        recentToolNames: collectRecentToolNames(input.messages ?? []),
+        recentToolNames: input.preparedInput.recentToolNames,
         previouslyVirtualized: this.previouslyVirtualized,
         policy: this.policy
       })
@@ -820,6 +1061,393 @@ export class ToolSurfaceShadowDiagnosticsCollector {
         finished = true
         seenPhysicalAttempts.clear()
       }
+    })
+  }
+}
+
+interface ToolSurfaceShadowDiagnosticsLineage {
+  readonly key: string
+  readonly collector: ToolSurfaceShadowDiagnosticsCollector
+}
+
+/**
+ * Keeps independent bounded collectors for each Session instance and provider/model/profile lineage.
+ * The WeakMap follows the runtime instance lifecycle, and lineage keys retain only a digest.
+ */
+export class ToolSurfaceShadowDiagnosticsRegistry
+  implements ToolSurfaceShadowDiagnosticsRegistryPort
+{
+  private readonly lineagesByInstance = new WeakMap<
+    DeepChatAgentInstance,
+    Map<string, ToolSurfaceShadowDiagnosticsLineage>
+  >()
+  private readonly pendingCancellationsByInstance = new WeakMap<
+    DeepChatAgentInstance,
+    Set<() => void>
+  >()
+  private readonly deferredTailsByInstance = new WeakMap<
+    DeepChatAgentInstance,
+    Map<string, Promise<void>>
+  >()
+  private readonly maxLineagesPerInstance: number
+
+  constructor(
+    private readonly options: {
+      readonly maxLineagesPerInstance?: number
+      readonly sampleCapacity?: number
+      readonly policy?: ToolSurfaceShadowPolicy
+    } = {}
+  ) {
+    const requestedMax = options.maxLineagesPerInstance
+    this.maxLineagesPerInstance =
+      requestedMax !== undefined && Number.isSafeInteger(requestedMax) && requestedMax > 0
+        ? Math.min(requestedMax, MAX_LINEAGES_PER_INSTANCE)
+        : DEFAULT_MAX_LINEAGES_PER_INSTANCE
+  }
+
+  startRun(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceShadowDiagnosticsScope
+    readonly universe: RunToolDefinitionUniverse | null
+    readonly eligibleDefinitions: readonly MCPToolDefinition[]
+    readonly initialViewRequestSeq: number
+    readonly messages?: readonly ChatMessage[]
+  }): ToolSurfaceShadowRunRecorder {
+    try {
+      return this.getOrCreate(input.instance, input.scope).startRun({
+        universe: input.universe,
+        eligibleDefinitions: input.eligibleDefinitions,
+        initialViewRequestSeq: input.initialViewRequestSeq,
+        ...(input.messages === undefined ? {} : { messages: input.messages })
+      })
+    } catch {
+      return NOOP_RUN_RECORDER
+    }
+  }
+
+  startDeferredRun(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceShadowDiagnosticsScope
+    readonly universe: Promise<RunToolDefinitionUniverse | null>
+    readonly cancelUniverse: () => void
+    readonly shouldCommit?: () => boolean
+    readonly eligibleDefinitions: readonly MCPToolDefinition[]
+    readonly initialViewRequestSeq: number
+    readonly messages?: readonly ChatMessage[]
+  }): ToolSurfaceShadowRunRecorder {
+    let preparedInput: PreparedToolSurfaceShadowRunInput | null = null
+    try {
+      preparedInput = prepareToolSurfaceShadowRunInput(input)
+    } catch {}
+    return this.startPreparedDeferredRun({
+      instance: input.instance,
+      scope: input.scope,
+      universe: input.universe,
+      cancelUniverse: input.cancelUniverse,
+      ...(input.shouldCommit === undefined ? {} : { shouldCommit: input.shouldCommit }),
+      preparedInput,
+      initialViewRequestSeq: input.initialViewRequestSeq
+    })
+  }
+
+  private startPreparedDeferredRun(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceShadowDiagnosticsScope
+    readonly universe: Promise<RunToolDefinitionUniverse | null>
+    readonly cancelUniverse: () => void
+    readonly shouldCommit?: () => boolean
+    readonly preparedInput: PreparedToolSurfaceShadowRunInput | null
+    readonly initialViewRequestSeq: number
+  }): ToolSurfaceShadowRunRecorder {
+    let key: string
+    try {
+      key = this.lineageKey(input.instance, input.scope)
+    } catch {
+      try {
+        input.cancelUniverse()
+      } catch {}
+      return NOOP_RUN_RECORDER
+    }
+    const instance = input.instance
+    const cancelUniverse = input.cancelUniverse
+    const shouldCommit = input.shouldCommit
+    const preparedInput = input.preparedInput
+    const universePromise = input.universe
+    const pendingCancellations = this.pendingCancellationsByInstance.get(instance) ?? new Set()
+    if (pendingCancellations.size >= MAX_PENDING_RUNS_PER_INSTANCE) {
+      try {
+        cancelUniverse()
+      } catch {}
+      return NOOP_RUN_RECORDER
+    }
+    let collector: ToolSurfaceShadowDiagnosticsCollector
+    try {
+      collector = this.getOrCreate(instance, input.scope)
+    } catch {
+      try {
+        cancelUniverse()
+      } catch {}
+      return NOOP_RUN_RECORDER
+    }
+    let delegate: ToolSurfaceShadowRunRecorder | null = null
+    let finished = false
+    let invalidated = false
+    const bufferedAttempts: ToolSurfaceProviderAttemptDiagnostic[] = []
+    const initialViewRequestSeq = input.initialViewRequestSeq
+    const invalidate = (): void => {
+      invalidated = true
+      try {
+        cancelUniverse()
+      } catch {}
+    }
+    pendingCancellations.add(invalidate)
+    this.pendingCancellationsByInstance.set(instance, pendingCancellations)
+    const cleanup = (): void => {
+      pendingCancellations.delete(invalidate)
+      if (pendingCancellations.size === 0) {
+        if (this.pendingCancellationsByInstance.get(instance) === pendingCancellations) {
+          this.pendingCancellationsByInstance.delete(instance)
+        }
+      }
+    }
+    let universeResult: Promise<PreparedToolSurfaceShadowUniverse | null>
+    try {
+      universeResult = universePromise.then(
+        (universe) => prepareToolSurfaceShadowUniverse(universe),
+        () => null
+      )
+    } catch {
+      try {
+        cancelUniverse()
+      } catch {}
+      cleanup()
+      return NOOP_RUN_RECORDER
+    }
+
+    const deferredTails = this.deferredTailsByInstance.get(instance) ?? new Map()
+    const previousTail = deferredTails.get(key) ?? Promise.resolve()
+    const currentTail = previousTail
+      .catch(() => undefined)
+      .then(async () => {
+        const universe = await universeResult
+        let commitAllowed = true
+        try {
+          commitAllowed = shouldCommit?.() ?? true
+        } catch {
+          commitAllowed = false
+        }
+        if (
+          invalidated ||
+          !commitAllowed ||
+          this.lineagesByInstance.get(instance)?.get(key)?.collector !== collector
+        ) {
+          bufferedAttempts.length = 0
+          return
+        }
+        delegate = collector.startPreparedRun({
+          universe,
+          preparedInput,
+          initialViewRequestSeq
+        })
+        for (const attempt of bufferedAttempts) delegate.recordProviderAttempt(attempt)
+        bufferedAttempts.length = 0
+        if (finished) delegate.finish()
+      })
+      .catch(() => undefined)
+    deferredTails.set(key, currentTail)
+    this.deferredTailsByInstance.set(instance, deferredTails)
+    void currentTail.then(() => {
+      cleanup()
+      if (deferredTails.get(key) === currentTail) {
+        deferredTails.delete(key)
+        if (
+          deferredTails.size === 0 &&
+          this.deferredTailsByInstance.get(instance) === deferredTails
+        ) {
+          this.deferredTailsByInstance.delete(instance)
+        }
+      }
+    })
+
+    return Object.freeze({
+      recordProviderAttempt: (attempt: ToolSurfaceProviderAttemptDiagnostic): void => {
+        if (finished) return
+        if (delegate) {
+          delegate.recordProviderAttempt(attempt)
+          return
+        }
+        if (bufferedAttempts.length >= MAX_DEFERRED_PROVIDER_ATTEMPTS) return
+        try {
+          bufferedAttempts.push(cloneProviderAttemptDiagnostic(attempt))
+        } catch {}
+      },
+      finish: (): void => {
+        if (finished) return
+        finished = true
+        delegate?.finish()
+      }
+    })
+  }
+
+  scheduleDeferredRun(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceShadowDiagnosticsScope
+    readonly resolveUniverse: (signal: AbortSignal) => Promise<RunToolDefinitionUniverse>
+    readonly isCurrent: () => boolean
+    readonly eligibleDefinitions: readonly MCPToolDefinition[]
+    readonly initialViewRequestSeq: number
+    readonly providerAttempts: readonly ToolSurfaceProviderAttemptDiagnostic[]
+    readonly messages?: readonly ChatMessage[]
+  }): void {
+    const instance = input.instance
+    const scope = Object.freeze({ ...input.scope })
+    try {
+      this.lineageKey(instance, scope)
+    } catch {
+      return
+    }
+    const pendingCancellations = this.pendingCancellationsByInstance.get(instance) ?? new Set()
+    if (pendingCancellations.size >= MAX_PENDING_RUNS_PER_INSTANCE) return
+    let preparedInput: PreparedToolSurfaceShadowRunInput | null = null
+    try {
+      preparedInput = prepareToolSurfaceShadowRunInput(input)
+    } catch {}
+    let providerAttempts: readonly ToolSurfaceProviderAttemptDiagnostic[] = Object.freeze([])
+    try {
+      providerAttempts = prepareProviderAttemptDiagnostics(input.providerAttempts)
+    } catch {}
+    const resolveUniverse = input.resolveUniverse
+    const isCurrent = input.isCurrent
+    const initialViewRequestSeq = input.initialViewRequestSeq
+    let cancelled = false
+    let scheduled: ReturnType<typeof setImmediate> | null = null
+    const cancelScheduled = (): void => {
+      cancelled = true
+      if (scheduled) clearImmediate(scheduled)
+      scheduled = null
+    }
+    const cleanup = (): void => {
+      pendingCancellations.delete(cancelScheduled)
+      if (
+        pendingCancellations.size === 0 &&
+        this.pendingCancellationsByInstance.get(instance) === pendingCancellations
+      ) {
+        this.pendingCancellationsByInstance.delete(instance)
+      }
+    }
+    pendingCancellations.add(cancelScheduled)
+    this.pendingCancellationsByInstance.set(instance, pendingCancellations)
+    try {
+      scheduled = setImmediate(() => {
+        scheduled = null
+        cleanup()
+        if (cancelled) return
+        let universeResolution: ReturnType<typeof createDeferredUniverseResolution> | null = null
+        try {
+          if (!isCurrent()) return
+          universeResolution = createDeferredUniverseResolution(resolveUniverse)
+          const recorder = this.startPreparedDeferredRun({
+            instance,
+            scope,
+            universe: universeResolution.promise,
+            cancelUniverse: universeResolution.cancel,
+            shouldCommit: isCurrent,
+            preparedInput,
+            initialViewRequestSeq
+          })
+          for (const attempt of providerAttempts) {
+            recorder.recordProviderAttempt(attempt)
+          }
+          recorder.finish()
+          universeResolution.start()
+        } catch {
+          universeResolution?.cancel()
+        }
+      })
+      scheduled.unref?.()
+    } catch {
+      cancelScheduled()
+      cleanup()
+    }
+  }
+
+  snapshot(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceShadowDiagnosticsScope
+  }): ToolSurfaceShadowDiagnosticsSnapshot | null {
+    try {
+      const key = this.lineageKey(input.instance, input.scope)
+      return this.lineagesByInstance.get(input.instance)?.get(key)?.collector.snapshot() ?? null
+    } catch {
+      return null
+    }
+  }
+
+  cancelPending(instance: DeepChatAgentInstance): void {
+    const pendingCancellations = this.pendingCancellationsByInstance.get(instance)
+    if (pendingCancellations) {
+      for (const cancel of pendingCancellations) {
+        try {
+          cancel()
+        } catch {}
+      }
+      pendingCancellations.clear()
+      this.pendingCancellationsByInstance.delete(instance)
+    }
+    this.deferredTailsByInstance.delete(instance)
+  }
+
+  clear(instance: DeepChatAgentInstance): void {
+    this.cancelPending(instance)
+    const lineages = this.lineagesByInstance.get(instance)
+    if (!lineages) return
+    for (const lineage of lineages.values()) lineage.collector.clear()
+    this.lineagesByInstance.delete(instance)
+  }
+
+  private getOrCreate(
+    instance: DeepChatAgentInstance,
+    scope: ToolSurfaceShadowDiagnosticsScope
+  ): ToolSurfaceShadowDiagnosticsCollector {
+    const key = this.lineageKey(instance, scope)
+    const lineages = this.lineagesByInstance.get(instance) ?? new Map()
+    const current = lineages.get(key)
+    if (current) {
+      lineages.delete(key)
+      lineages.set(key, current)
+      return current.collector
+    }
+
+    const collector = new ToolSurfaceShadowDiagnosticsCollector({
+      scope,
+      ...(this.options.sampleCapacity === undefined
+        ? {}
+        : { sampleCapacity: this.options.sampleCapacity }),
+      ...(this.options.policy === undefined ? {} : { policy: this.options.policy })
+    })
+    lineages.set(key, { key, collector })
+    while (lineages.size > this.maxLineagesPerInstance) {
+      const oldestKey = lineages.keys().next().value
+      if (typeof oldestKey !== 'string') break
+      lineages.get(oldestKey)?.collector.clear()
+      lineages.delete(oldestKey)
+    }
+    this.lineagesByInstance.set(instance, lineages)
+    return collector
+  }
+
+  private lineageKey(
+    instance: DeepChatAgentInstance,
+    scope: ToolSurfaceShadowDiagnosticsScope
+  ): string {
+    if (resolveScope(scope) === null || scope.sessionId !== instance.sessionId) {
+      throw new Error('Tool Surface diagnostics scope does not match its Session instance.')
+    }
+    return hashJsonData({
+      sessionId: scope.sessionId,
+      providerId: scope.providerId,
+      modelId: scope.modelId,
+      toolProfile: scope.toolProfile
     })
   }
 }

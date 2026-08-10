@@ -14,6 +14,8 @@ import type {
 import type { AcpAgentInstanceDependencyFactory } from '@/agent/acp/instance'
 import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
+import { resolveDeepChatToolProfileKind } from '@/agent/deepchat/runtime/toolResolver'
+import type { ToolSurfaceShadowDiagnosticsSnapshot } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import type { TurnStartContext } from '@/agent/deepchat/runtime/turnCoordinator'
 import type { AgentSessionSendInput } from '@/agent/shared/agentSessionHandle'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
@@ -37,6 +39,22 @@ export class DeepChatAgentHarness
 
   get memoryIngestionObserver(): MemoryIngestionObserver {
     return this.services.memoryIngestionObserver
+  }
+
+  /** Current-lineage main-process diagnostics only; no renderer or public IPC route exposes this. */
+  getToolSurfaceShadowDiagnostics(sessionId: string): ToolSurfaceShadowDiagnosticsSnapshot | null {
+    const scope = this.services.runtime.getHydratedScope(toAppSessionId(sessionId))
+    const state = scope?.state()
+    if (!scope || !state) return null
+    return this.services.toolSurfaceDiagnostics.snapshot({
+      instance: scope.instance,
+      scope: {
+        sessionId,
+        providerId: state.providerId,
+        modelId: state.modelId,
+        toolProfile: resolveDeepChatToolProfileKind(scope.instance.getProjectDir())
+      }
+    })
   }
 
   refreshToolRegistry(): void {
@@ -226,6 +244,12 @@ export class DeepChatAgentHarness
   }
 
   async cancelGeneration(sessionId: string): Promise<void> {
+    const instance = this.services.runtime.getHydratedScope(toAppSessionId(sessionId))?.instance
+    if (instance) {
+      try {
+        this.services.toolSurfaceDiagnostics.cancelPending(instance)
+      } catch {}
+    }
     await this.services.runLifecycle.cancel(sessionId)
   }
 

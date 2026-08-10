@@ -1,5 +1,5 @@
 import type { ProviderExecutionPort } from '@shared/types/provider'
-import type { SkillServicePort } from '@shared/types/skill'
+import type { SkillMetadataSnapshotPort, SkillServicePort } from '@shared/types/skill'
 import type { ToolServicePort } from '@shared/types/tool'
 import type { AgentSettingsPort } from '@/agent/settings'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
@@ -34,6 +34,7 @@ import type {
   DeepChatEventPublisher,
   DeepChatSessionUpdatePublisher
 } from '@/agent/deepchat/runtime/types'
+import type { ToolSurfaceShadowDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
 
 export type DeepChatHarnessSkillPort = Pick<
@@ -49,7 +50,8 @@ export type DeepChatHarnessSkillPort = Pick<
   | 'viewDraftSkill'
   | 'installDraftSkill'
   | 'discardDraftSkill'
->
+> &
+  SkillMetadataSnapshotPort
 
 export interface DeepChatHarnessDependencies {
   providerRuntime: ProviderExecutionPort
@@ -94,5 +96,6 @@ export interface DeepChatRuntimeServices {
   compaction: CompactionRuntimeCoordinator
   transcriptMutation: TranscriptMutationCoordinator
   memoryIngestionObserver: MemoryIngestionObserver
+  toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistry
   acpCompatibility: AcpAgentInstanceDependencyFactory
 }

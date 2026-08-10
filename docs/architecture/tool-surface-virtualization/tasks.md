@@ -20,11 +20,12 @@
 - [x] Add provider ordering and candidate merge utilities with focused tests.
 - [x] Bound canonicalization bytes/depth and prohibit hash caching without proven immutable
       definition revision.
-- [ ] Compute Run-level shadow decisions without changing provider payloads or Tape.
-- [ ] Add bounded content-free diagnostics for schema tokens, triggers, static overlap, and
+- [x] Compute Run-level shadow decisions without changing provider payloads or Tape.
+- [x] Add bounded content-free diagnostics for schema tokens, triggers, static overlap, and
       available baseline cache fields.
-- [ ] Add a development-only aggregate diagnostics read path.
-- [ ] Review and commit the P0-A slice.
+- [x] Add a main-process-only aggregate diagnostics read path without renderer or public IPC
+      exposure.
+- [x] Review and commit the P0-A slice.
 
 ## P0-B: Run And View Surface
 

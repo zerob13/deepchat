@@ -30,6 +30,7 @@ import {
 } from '@/agent/deepchat/runtime/toolAdapters'
 import { DeepChatToolResolver } from '@/agent/deepchat/runtime/toolResolver'
 import { ToolOutputGuard } from '@/agent/deepchat/runtime/toolOutputGuard'
+import { ToolSurfaceShadowDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import { resolveAgentOutputLimits } from '@shared/lib/agentOutputLimits'
 import {
   createToolPermissionReviewer,
@@ -292,6 +293,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     messageProjection
   })
   const interactionParking = new InteractionParkingRegistry()
+  const toolSurfaceDiagnostics = new ToolSurfaceShadowDiagnosticsRegistry()
   const sessionLifecycle = new SessionLifecycleCoordinator({
     registry: runtime,
     providerSettings,
@@ -305,7 +307,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     compaction,
     memory,
     runLifecycle,
-    interactionParking
+    interactionParking,
+    toolSurfaceDiagnostics
   })
   const toolRuntimeBindings: ToolRuntimeBindingDependencies = {
     providerSettings,
@@ -356,6 +359,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     compactionService,
     inputPreparationCoordinator,
     contextCoordinator,
+    toolSurfaceDiagnostics,
     memoryIngestionObserver: memory,
     toolExecutionPort,
     toolResultPort,
@@ -444,7 +448,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     admission: pendingInputAdmission,
     compaction,
     memory,
-    runLifecycle
+    runLifecycle,
+    toolSurfaceDiagnostics
   })
 
   const acpCompatibility: AcpAgentInstanceDependencyFactory = (input) =>
@@ -526,6 +531,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     compaction,
     transcriptMutation,
     memoryIngestionObserver: memory,
+    toolSurfaceDiagnostics,
     acpCompatibility
   }
 }

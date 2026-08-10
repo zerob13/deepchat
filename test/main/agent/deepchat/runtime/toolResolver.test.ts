@@ -627,7 +627,18 @@ describe('DeepChatToolResolver Run definition universe', () => {
     const skillService = {
       getActiveSkills: vi.fn().mockResolvedValue(options?.activeSkills ?? []),
       snapshotPersistedActiveSkillNames: vi.fn(() => options?.activeSkills ?? []),
-      getMetadataList: vi.fn().mockResolvedValue(options?.metadata ?? []),
+      snapshotCachedMetadataList: vi.fn(
+        (_agentId: string, snapshotOptions: { maxItems: number }) =>
+          (options?.metadata?.length ?? 0) > snapshotOptions.maxItems
+            ? {
+                state: 'overflow' as const,
+                minimumItemCount: snapshotOptions.maxItems + 1
+              }
+            : {
+                state: 'ready' as const,
+                skills: options?.metadata ?? []
+              }
+      ),
       validateSkillNames: vi.fn(async (_agentId: string, names: string[]) => names),
       revalidateActiveSkillsForAgent: vi.fn()
     }
@@ -831,7 +842,7 @@ describe('DeepChatToolResolver Run definition universe', () => {
       skillRequirements: [],
       degradationCounts: [{ code: 'active-skill-snapshot-unavailable', count: 1 }]
     })
-    expect(skillService.getMetadataList).not.toHaveBeenCalled()
+    expect(skillService.snapshotCachedMetadataList).not.toHaveBeenCalled()
     expect(getToolDefinitionUniverse).not.toHaveBeenCalled()
   })
 
@@ -1214,6 +1225,25 @@ describe('DeepChatToolResolver Run definition universe', () => {
     warnSpy.mockRestore()
   })
 
+  it('stops shadow universe resolution when its diagnostic signal is aborted', async () => {
+    const { resolver, resourceInstance, getToolDefinitionUniverse, resolveDeepChatAgentConfig } =
+      createUniverseResolver()
+    resolveDeepChatAgentConfig.mockReturnValueOnce(new Promise(() => undefined))
+    const controller = new AbortController()
+
+    const pending = resolver.resolveRunToolDefinitionUniverse(
+      'session-1',
+      null,
+      undefined,
+      resourceInstance as any,
+      controller.signal
+    )
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(getToolDefinitionUniverse).not.toHaveBeenCalled()
+  })
+
   it('excludes ACP before reading Skill or Tool catalogs', async () => {
     const {
       resolver,
@@ -1232,7 +1262,7 @@ describe('DeepChatToolResolver Run definition universe', () => {
 
     expect(result.status).toBe('acp-excluded')
     expect(skillService.snapshotPersistedActiveSkillNames).not.toHaveBeenCalled()
-    expect(skillService.getMetadataList).not.toHaveBeenCalled()
+    expect(skillService.snapshotCachedMetadataList).not.toHaveBeenCalled()
     expect(getAllToolDefinitions).not.toHaveBeenCalled()
     expect(getToolDefinitionUniverse).not.toHaveBeenCalled()
   })

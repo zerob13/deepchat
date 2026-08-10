@@ -1,4 +1,4 @@
-import type { SkillServicePort } from '@shared/types/skill'
+import type { SkillMetadataSnapshotPort, SkillServicePort } from '@shared/types/skill'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ToolServicePort } from '@shared/types/tool'
 import { types as nodeTypes } from 'node:util'
@@ -28,6 +28,7 @@ import {
 import { createToolCatalogPort } from './toolAdapters'
 import type { SkillSettingsPort } from '@/skill/settings'
 import type { AgentSettingsPort } from '@/agent/settings'
+import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import { resolveDeepChatSubagentCapability } from '@shared/lib/deepchatSubagents'
 import {
   normalizeOrchestrationPolicy,
@@ -45,10 +46,10 @@ type ToolResolverSkillPort = Pick<
   SkillServicePort,
   | 'getActiveSkills'
   | 'snapshotPersistedActiveSkillNames'
-  | 'getMetadataList'
   | 'revalidateActiveSkillsForAgent'
   | 'validateSkillNames'
->
+> &
+  SkillMetadataSnapshotPort
 
 export const MAX_RUN_TOOL_UNIVERSE_SKILLS = 1_024
 export const MAX_RUN_TOOL_UNIVERSE_DEFINITIONS = 1_024
@@ -114,6 +115,12 @@ export interface DeepChatToolResolverDependencies {
   skillService: ToolResolverSkillPort
   registry: SessionScopeRegistry & Pick<DeepChatAgentRuntime, 'getToolRegistryRevision'>
   identity: Pick<SessionIdentityService, 'getAgentId' | 'isAcpBackedSubagentSession'>
+}
+
+export function resolveDeepChatToolProfileKind(
+  projectDir: string | null | undefined
+): DeepChatToolProfileKind {
+  return projectDir?.trim() ? 'code' : 'general'
 }
 
 function compareCodePoints(left: string, right: string): number {
@@ -274,8 +281,10 @@ export class DeepChatToolResolver {
     sessionId: string,
     projectDir: string | null,
     activeSkillNamesOverride?: string[],
-    providedResourceInstance?: DeepChatAgentInstance
+    providedResourceInstance?: DeepChatAgentInstance,
+    signal?: AbortSignal
   ): Promise<RunToolDefinitionUniverse> {
+    signal?.throwIfAborted()
     const resourceInstance =
       providedResourceInstance ??
       this.dependencies.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
@@ -322,13 +331,28 @@ export class DeepChatToolResolver {
 
     if (skillsEnabled) {
       try {
-        const resolvedMetadata = await this.dependencies.skillService.getMetadataList(agentId)
-        this.assertCurrent(sessionId, resourceInstance)
-        const inspectedMetadata = inspectSafeArray(resolvedMetadata)
-        if (!inspectedMetadata.ok) {
-          throw new Error('Skill metadata catalog has an invalid shape.')
+        const metadataSnapshot = this.dependencies.skillService.snapshotCachedMetadataList(agentId, {
+          maxItems: MAX_RUN_TOOL_UNIVERSE_SKILLS
+        })
+        if (metadataSnapshot.state === 'unavailable') {
+          throw new Error('Skill metadata catalog has not been discovered.')
         }
-        metadataList = inspectedMetadata.value
+        if (metadataSnapshot.state === 'overflow') {
+          complete = false
+          metadataCatalogOverflow = true
+          addDegradation(
+            'skill-limit-exceeded',
+            metadataSnapshot.minimumItemCount - MAX_RUN_TOOL_UNIVERSE_SKILLS
+          )
+          metadataList = []
+        } else {
+          this.assertCurrent(sessionId, resourceInstance)
+          const inspectedMetadata = inspectSafeArray(metadataSnapshot.skills)
+          if (!inspectedMetadata.ok) {
+            throw new Error('Skill metadata catalog has an invalid shape.')
+          }
+          metadataList = inspectedMetadata.value
+        }
       } catch (error) {
         this.assertCurrent(sessionId, resourceInstance)
         if (isStaleDeepChatInstanceError(error)) throw error
@@ -489,10 +513,12 @@ export class DeepChatToolResolver {
     try {
       toolPolicy = await this.resolveAgentToolPolicy(sessionId, resourceInstance, {
         reportDiagnostics: false,
-        requireComplete: true
+        requireComplete: true,
+        signal
       })
       this.assertCurrent(sessionId, resourceInstance)
     } catch (error) {
+      signal?.throwIfAborted()
       this.assertCurrent(sessionId, resourceInstance)
       if (isStaleDeepChatInstanceError(error)) throw error
       return createEmptyRunToolDefinitionUniverse('degraded', 'tool-policy-unavailable')
@@ -506,19 +532,26 @@ export class DeepChatToolResolver {
       | Awaited<ReturnType<ToolServicePort['getToolDefinitionUniverse']>>
       | undefined
     try {
-      definitionUniverse = await this.dependencies.toolService.getToolDefinitionUniverse({
+      const universeContext = {
         agentId,
         disabledAgentTools: toolPolicy.disabledAgentTools,
-        chatMode: 'agent',
+        chatMode: 'agent' as const,
         conversationId: sessionId,
         sessionKind: toolPolicy.sessionKind,
         agentWorkspacePath: projectDir,
         activeSkillNames: universeSkillNames,
         subagentCapability: toolPolicy.subagentCapability,
         ...(enabledMcpServerIds === undefined ? {} : { enabledMcpServerIds })
-      })
+      }
+      definitionUniverse = await awaitWithAbort(
+        signal
+          ? this.dependencies.toolService.getToolDefinitionUniverse(universeContext, { signal })
+          : this.dependencies.toolService.getToolDefinitionUniverse(universeContext),
+        signal
+      )
       this.assertCurrent(sessionId, resourceInstance)
     } catch (error) {
+      signal?.throwIfAborted()
       this.assertCurrent(sessionId, resourceInstance)
       if (isStaleDeepChatInstanceError(error)) throw error
       complete = false
@@ -746,7 +779,7 @@ export class DeepChatToolResolver {
       resourceInstance?.getAgentId()?.trim() ||
       this.dependencies.identity.getAgentId(sessionId) ||
       'deepchat'
-    const kind: DeepChatToolProfileKind = normalizedProjectDir ? 'code' : 'general'
+    const kind = resolveDeepChatToolProfileKind(normalizedProjectDir)
 
     return {
       kind,
@@ -787,7 +820,11 @@ export class DeepChatToolResolver {
   private async resolveAgentToolPolicy(
     sessionId: string,
     resourceInstance?: DeepChatAgentInstance,
-    options: { reportDiagnostics?: boolean; requireComplete?: boolean } = {}
+    options: {
+      reportDiagnostics?: boolean
+      requireComplete?: boolean
+      signal?: AbortSignal
+    } = {}
   ): Promise<{
     extensionPolicy: AgentExtensionPolicy
     disabledAgentTools: string[]
@@ -808,10 +845,13 @@ export class DeepChatToolResolver {
         slots: config?.subagents
       })
 
-    const [agentTypeResult, configResult] = await Promise.allSettled([
-      this.dependencies.agentSettings.getAgentType(agentId),
-      this.dependencies.agentSettings.resolveDeepChatAgentConfig(agentId)
-    ])
+    const [agentTypeResult, configResult] = await awaitWithAbort(
+      Promise.allSettled([
+        this.dependencies.agentSettings.getAgentType(agentId),
+        this.dependencies.agentSettings.resolveDeepChatAgentConfig(agentId)
+      ]),
+      options.signal
+    )
     if (
       options.requireComplete &&
       (agentTypeResult.status === 'rejected' || configResult.status === 'rejected')
@@ -857,9 +897,12 @@ export class DeepChatToolResolver {
 
       let parentConfig: DeepChatAgentConfig
       try {
-        parentConfig =
-          await this.dependencies.agentSettings.resolveDeepChatAgentConfig(parentAgentId)
+        parentConfig = await awaitWithAbort(
+          this.dependencies.agentSettings.resolveDeepChatAgentConfig(parentAgentId),
+          options.signal
+        )
       } catch (error) {
+        options.signal?.throwIfAborted()
         if (options.reportDiagnostics !== false) {
           console.warn(
             `[DeepChatAgent] Failed to resolve parent tool policy for subagent ${sessionId}:`,

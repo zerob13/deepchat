@@ -77,7 +77,14 @@ import {
 } from '@/tape/domain/executionJournal'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
 import type { RuntimeHookSink } from './runtimeHookSink'
-import type { DeepChatToolResolver } from '@/agent/deepchat/runtime/toolResolver'
+import {
+  resolveDeepChatToolProfileKind,
+  type DeepChatToolResolver
+} from '@/agent/deepchat/runtime/toolResolver'
+import type {
+  ToolSurfaceProviderAttemptDiagnostic,
+  ToolSurfaceShadowDiagnosticsRegistryPort
+} from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import type {
   DeepChatEventPublisher,
   DeepChatSessionUpdatePublisher,
@@ -103,7 +110,8 @@ import {
 } from './contextContributions'
 import {
   resolveDeepChatContextBudgetLength,
-  shouldBypassDeepChatContextBudget
+  shouldBypassDeepChatContextBudget,
+  shouldObserveToolSurfaceShadow
 } from './contextBudgetPolicy'
 import { resolveProviderInputCapabilities } from './providerInputCapabilities'
 import {
@@ -171,6 +179,7 @@ type LoopRunLifecyclePort = Pick<
 
 const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
+const MAX_TOOL_SURFACE_SHADOW_PROVIDER_ATTEMPTS = 64
 
 export type PendingTapeViewContext = {
   taskType: DeepChatTapeViewTaskType
@@ -252,6 +261,7 @@ export interface DeepChatLoopRunnerPorts {
   compactionService: CompactionService
   inputPreparationCoordinator: InputPreparationCoordinator
   contextCoordinator: DeepChatContextCoordinator
+  toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistryPort
   memoryIngestionObserver: MemoryIngestionObserver
   toolExecutionPort: ToolExecutionPort
   toolResultPort: ToolResultPort
@@ -409,9 +419,11 @@ export class DeepChatLoopRunner {
       throw new Error('Request was not sent because the prompt is empty.')
     }
     const sessionKind = this.ports.identity.getSessionKind(sessionId)
-    const strictViewContract =
-      sessionKind === 'subagent' &&
-      !this.ports.identity.isAcpBackedSubagentSession(sessionId, state.providerId)
+    const acpBackedSubagent = this.ports.identity.isAcpBackedSubagentSession(
+      sessionId,
+      state.providerId
+    )
+    const strictViewContract = sessionKind === 'subagent' && !acpBackedSubagent
     if (strictViewContract && !taskContractContext) {
       throw new Error('Contract-bearing child run requires a TaskContract context.')
     }
@@ -433,6 +445,9 @@ export class DeepChatLoopRunner {
       abortSignal
     )
     const baseModelConfig = providerModelFacts.modelConfig
+    const observeToolSurfaceShadow =
+      !acpBackedSubagent &&
+      shouldObserveToolSurfaceShadow(state.providerId, baseModelConfig, state.modelId)
     const capabilitySnapshot = providerModelFacts.capabilitySnapshot
     const interleavedReasoning =
       providedInterleavedReasoning ??
@@ -522,6 +537,8 @@ export class DeepChatLoopRunner {
         abortSignal
       ))
     resourceScope.assertCurrent()
+    const initialRunSkillNames = getEffectiveRuntimeSkillNames()
+    const initialToolProfileRevisionToken = resourceInstance.getToolProfileRevisionToken()
     const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
       this.ports.providerSettings,
       state.providerId,
@@ -539,7 +556,7 @@ export class DeepChatLoopRunner {
       streamState: createState(),
       resources: {
         toolDefinitions: tools,
-        activeSkillNames: getEffectiveRuntimeSkillNames(),
+        activeSkillNames: initialRunSkillNames,
         promptAssembly: initialPromptAssembly,
         commandShell
       },
@@ -557,6 +574,8 @@ export class DeepChatLoopRunner {
         `Execution Journal run identity ${loopRun.runId} was already committed.`
       )
     }
+
+    const toolSurfaceShadowProviderAttempts: ToolSurfaceProviderAttemptDiagnostic[] = []
 
     let terminalCommitAttempted = false
     let committedTerminal: ProcessTerminalSelection | null = null
@@ -897,14 +916,41 @@ export class DeepChatLoopRunner {
               }
             },
             outcome: {
-              append: (outcome) =>
-                ports.tape.appendProviderAttempt({
-                  sessionId,
-                  messageId,
-                  providerId: state.providerId,
-                  modelId: requestModelId,
-                  ...outcome
-                }),
+              append: (outcome) => {
+                try {
+                  ports.tape.appendProviderAttempt({
+                    sessionId,
+                    messageId,
+                    providerId: state.providerId,
+                    modelId: requestModelId,
+                    ...outcome
+                  })
+                } finally {
+                  try {
+                    if (
+                      observeToolSurfaceShadow &&
+                      toolSurfaceShadowProviderAttempts.length <
+                        MAX_TOOL_SURFACE_SHADOW_PROVIDER_ATTEMPTS
+                    ) {
+                      toolSurfaceShadowProviderAttempts.push({
+                        requestSeq: outcome.requestSeq,
+                        physicalAttempt: outcome.physicalAttempt,
+                        usage: outcome.usage
+                          ? {
+                              inputTokens: outcome.usage.inputTokens,
+                              ...(outcome.usage.cacheReadTokens === undefined
+                                ? {}
+                                : { cacheReadTokens: outcome.usage.cacheReadTokens }),
+                              ...(outcome.usage.cacheWriteTokens === undefined
+                                ? {}
+                                : { cacheWriteTokens: outcome.usage.cacheWriteTokens })
+                            }
+                          : null
+                      })
+                    }
+                  } catch {}
+                }
+              },
               onAppendError: (error) =>
                 logger.warn(
                   `[DeepChatAgent] Failed to persist provider attempt outcome: ${
@@ -1058,6 +1104,48 @@ export class DeepChatLoopRunner {
         this.ports.runLifecycle.clearRun(resourceScope, loopRun.runId)
       }
       throw errorToPropagate
+    } finally {
+      if (
+        observeToolSurfaceShadow &&
+        toolSurfaceShadowProviderAttempts.length > 0 &&
+        !abortSignal.aborted &&
+        resourceScope.isCurrent()
+      ) {
+        try {
+          const diagnosticsScope = Object.freeze({
+            sessionId,
+            providerId: state.providerId,
+            modelId: state.modelId,
+            toolProfile: resolveDeepChatToolProfileKind(projectDir)
+          })
+          this.ports.toolSurfaceDiagnostics.scheduleDeferredRun({
+            instance: resourceInstance,
+            scope: diagnosticsScope,
+            resolveUniverse: async (signal) =>
+              await this.ports.toolResolver.resolveRunToolDefinitionUniverse(
+                sessionId,
+                projectDir,
+                initialRunSkillNames,
+                resourceInstance,
+                signal
+              ),
+            isCurrent: () => {
+              const currentState = resourceScope.state()
+              return (
+                !abortSignal.aborted &&
+                resourceScope.isCurrent() &&
+                currentState?.providerId === diagnosticsScope.providerId &&
+                currentState.modelId === diagnosticsScope.modelId &&
+                resourceInstance.getToolProfileRevisionToken() === initialToolProfileRevisionToken
+              )
+            },
+            eligibleDefinitions: tools,
+            initialViewRequestSeq: loopRun.initialRequestSeq + 1,
+            providerAttempts: toolSurfaceShadowProviderAttempts,
+            messages
+          })
+        } catch {}
+      }
     }
   }
 

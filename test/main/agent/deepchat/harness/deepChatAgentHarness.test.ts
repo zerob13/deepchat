@@ -89,6 +89,7 @@ vi.mock('@/events', () => ({
 
 const skillServiceMock = {
   getMetadataList: vi.fn().mockResolvedValue([]),
+  snapshotCachedMetadataList: vi.fn(() => ({ state: 'ready' as const, skills: [] })),
   getActiveSkills: vi.fn().mockResolvedValue([]),
   snapshotPersistedActiveSkillNames: vi.fn(() => []),
   setActiveSkills: vi.fn().mockImplementation(async (_id: string, skills: string[]) => skills),
@@ -701,6 +702,7 @@ function createMockProviderSettings() {
   const settings = {
     capabilityFixture,
     getModelConfig: vi.fn().mockReturnValue({
+      type: ModelType.Chat,
       temperature: 0.7,
       maxTokens: 4096,
       contextLength: 128000,
@@ -880,6 +882,11 @@ function createDelegatingMemoryRuntimePort(getTarget: () => MemoryRuntimePort): 
 function createMockToolService(toolDefs: any[] = []) {
   return {
     getAllToolDefinitions: vi.fn().mockResolvedValue(toolDefs),
+    getToolDefinitionUniverse: vi.fn().mockResolvedValue({
+      definitions: toolDefs,
+      complete: true,
+      unavailableSourceCount: 0
+    }),
     syncAgentToolContext: vi.fn(),
     callTool: vi.fn().mockResolvedValue({
       content: 'tool result',
@@ -2779,6 +2786,295 @@ describe('DeepChatAgentHarness', () => {
   })
 
   describe('processMessage', () => {
+    it('observes shadow surfaces and provider cache usage without changing provider tools', async () => {
+      const eventOrder: string[] = []
+      const tools = [
+        {
+          type: 'function',
+          function: {
+            name: 'tool_b',
+            description: 'Second tool',
+            parameters: { type: 'object', properties: {} }
+          },
+          server: { name: 'test', icons: '', description: '' },
+          source: 'agent',
+          execution: TOOL_EXECUTION.read.parallel
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'tool_a',
+            description: 'First tool',
+            parameters: { type: 'object', properties: {} }
+          },
+          server: { name: 'test', icons: '', description: '' },
+          source: 'agent',
+          execution: TOOL_EXECUTION.read.parallel
+        }
+      ] satisfies MCPToolDefinition[]
+      toolService.getAllToolDefinitions.mockResolvedValue(tools)
+      toolService.getToolDefinitionUniverse.mockImplementation(async () => {
+        eventOrder.push('shadow-universe')
+        return {
+          definitions: tools,
+          complete: true,
+          unavailableSourceCount: 0
+        }
+      })
+      llmProvider.providerInstance.coreStream.mockImplementation(async function* () {
+        eventOrder.push('provider-entered')
+        yield {
+          type: 'usage',
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            total_tokens: 110,
+            cached_tokens: 75,
+            cache_write_tokens: 5
+          }
+        }
+        yield { type: 'stop', stop_reason: 'complete' }
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        eventOrder.push('provider-complete')
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      const providerTools = llmProvider.providerInstance.coreStream.mock.calls[0][5]
+      expect(providerTools).toEqual(tools)
+      expect(providerTools.map((tool: MCPToolDefinition) => tool.function.name)).toEqual([
+        'tool_b',
+        'tool_a'
+      ])
+      expect(eventOrder).toEqual(['provider-entered', 'provider-complete'])
+      await vi.waitFor(() =>
+        expect(eventOrder).toEqual(['provider-entered', 'provider-complete', 'shadow-universe'])
+      )
+      await vi.waitFor(() =>
+        expect(agent.getToolSurfaceShadowDiagnostics('s1')).toMatchObject({
+          runs: { observed: 1, measured: 1, collectorFailures: 0 },
+          surface: {
+            eligibleToolCount: { samples: 1, p50: 2 },
+            hypotheticalActiveToolCount: { samples: 1, p50: 2 }
+          },
+          initialViewAttempts: {
+            observed: 1,
+            withUsage: 1,
+            withCacheReadMetric: 1,
+            withCacheWriteMetric: 1,
+            inputTokens: { p50: 100 },
+            cacheReadTokens: { p50: 75 },
+            cacheWriteTokens: { p50: 5 }
+          }
+        })
+      )
+    })
+
+    it('keeps initial-View transient attempts separate from a later request sequence', async () => {
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions: [],
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      let providerAttempt = 0
+      llmProvider.providerInstance.coreStream.mockImplementation(async function* () {
+        providerAttempt += 1
+        if (providerAttempt === 1) {
+          yield {
+            type: 'error',
+            error_message: 'temporarily unavailable',
+            failure: {
+              statusCode: 503,
+              retryable: true,
+              retryHeaders: { 'retry-after-ms': '0' }
+            }
+          }
+          return
+        }
+        yield {
+          type: 'usage',
+          usage: {
+            prompt_tokens: providerAttempt === 2 ? 100 : 200,
+            completion_tokens: 10,
+            total_tokens: providerAttempt === 2 ? 110 : 210,
+            cached_tokens: providerAttempt === 2 ? 80 : 160
+          }
+        }
+        yield { type: 'stop', stop_reason: 'complete' }
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        for (let request = 0; request < 2; request += 1) {
+          for await (const _event of params.coreStream(
+            params.run.messages,
+            params.modelId,
+            params.modelConfig,
+            params.temperature,
+            params.maxTokens,
+            params.run.resources.toolDefinitions
+          )) {
+          }
+        }
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      expect(llmProvider.providerInstance.coreStream).toHaveBeenCalledTimes(3)
+      await vi.waitFor(() =>
+        expect(agent.getToolSurfaceShadowDiagnostics('s1')).toMatchObject({
+          initialViewAttempts: {
+            observed: 2,
+            withUsage: 1,
+            inputTokens: { samples: 1, p50: 100 },
+            cacheReadTokens: { samples: 1, p50: 80 }
+          }
+        })
+      )
+    })
+
+    it('excludes a context-recovery request sequence from initial-View diagnostics', async () => {
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions: [],
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      llmProvider.providerInstance.coreStream
+        .mockImplementationOnce(async function* () {
+          yield { type: 'error', error_message: 'input exceeds the context window' }
+        })
+        .mockImplementationOnce(async function* () {
+          yield {
+            type: 'usage',
+            usage: {
+              prompt_tokens: 200,
+              completion_tokens: 10,
+              total_tokens: 210,
+              cached_tokens: 160
+            }
+          }
+          yield { type: 'stop', stop_reason: 'complete' }
+        })
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      expect(llmProvider.providerInstance.coreStream).toHaveBeenCalledTimes(2)
+      await vi.waitFor(() =>
+        expect(agent.getToolSurfaceShadowDiagnostics('s1')).toMatchObject({
+          initialViewAttempts: {
+            observed: 1,
+            withUsage: 0,
+            inputTokens: { samples: 0 }
+          }
+        })
+      )
+    })
+
+    it('keeps generation fail-open when a shadow universe source is unavailable', async () => {
+      toolService.getToolDefinitionUniverse.mockRejectedValueOnce(
+        new Error('shadow universe unavailable')
+      )
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await expect(agent.processMessage('s1', 'Hello')).resolves.toMatchObject({
+        requestId: expect.any(String)
+      })
+
+      await vi.waitFor(() =>
+        expect(agent.getToolSurfaceShadowDiagnostics('s1')).toMatchObject({
+          runs: { observed: 1, measured: 0, degraded: 1, collectorFailures: 0 }
+        })
+      )
+    })
+
+    it('drops a shadow sample when the tool profile changes during universe resolution', async () => {
+      const pendingUniverse = deferred<{
+        definitions: MCPToolDefinition[]
+        complete: boolean
+        unavailableSourceCount: number
+      }>()
+      const universeStarted = deferred<void>()
+      toolService.getToolDefinitionUniverse.mockImplementationOnce(async () => {
+        universeStarted.resolve()
+        return await pendingUniverse.promise
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+      await universeStarted.promise
+
+      agent.refreshToolRegistry()
+      pendingUniverse.resolve({ definitions: [], complete: true, unavailableSourceCount: 0 })
+
+      await vi.waitFor(() =>
+        expect(agent.getToolSurfaceShadowDiagnostics('s1')).toMatchObject({
+          runs: { observed: 0, measured: 0 }
+        })
+      )
+    })
+
+    it('does not resolve a shadow universe when generation fails before a provider attempt', async () => {
+      ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('failed before provider admission')
+      )
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(toolService.getToolDefinitionUniverse).not.toHaveBeenCalled()
+      expect(agent.getToolSurfaceShadowDiagnostics('s1')).toBeNull()
+    })
+
     it('creates user and assistant messages with correct order_seq', async () => {
       sqlitePresenter.deepchatMessagesTable.getMaxOrderSeq
         .mockReturnValueOnce(0) // user message: seq 1
@@ -5861,6 +6157,7 @@ describe('DeepChatAgentHarness', () => {
       await agent.processMessage('s-acp-subagent', 'Delegated task')
 
       expect(toolService.getAllToolDefinitions).not.toHaveBeenCalled()
+      expect(toolService.getToolDefinitionUniverse).not.toHaveBeenCalled()
       expect(toolService.buildToolSystemPrompt).not.toHaveBeenCalled()
       expect(buildRuntimeCapabilitiesPrompt).not.toHaveBeenCalled()
       expect(buildSystemEnvPrompt).not.toHaveBeenCalled()
@@ -5890,6 +6187,7 @@ describe('DeepChatAgentHarness', () => {
         executionContract: null
       })
       expect(runtimeDependencies.taskContractContext.prepare).not.toHaveBeenCalled()
+      expect(agent.getToolSurfaceShadowDiagnostics('s-acp-subagent')).toBeNull()
     })
 
     it('keeps local tool injection for regular ACP sessions', async () => {
@@ -5939,6 +6237,8 @@ describe('DeepChatAgentHarness', () => {
       expect(buildRuntimeCapabilitiesPrompt).toHaveBeenCalled()
       expect(buildSystemEnvPrompt).toHaveBeenCalled()
       expect(toolService.buildToolSystemPrompt).toHaveBeenCalled()
+      expect(toolService.getToolDefinitionUniverse).not.toHaveBeenCalled()
+      expect(agent.getToolSurfaceShadowDiagnostics('s-acp-regular')).toBeNull()
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
       expect(callArgs.run.resources.toolDefinitions).toEqual(tools)
@@ -9006,6 +9306,8 @@ describe('DeepChatAgentHarness', () => {
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
       expect(callArgs.maxTokens).toBe(4096)
       expect(prepareSpy).not.toHaveBeenCalled()
+      expect(toolService.getToolDefinitionUniverse).not.toHaveBeenCalled()
+      expect(agent.getToolSurfaceShadowDiagnostics('s1')).toBeNull()
 
       const providerCoreStream = llmProvider.providerInstance.coreStream
       providerCoreStream.mockClear()
@@ -9122,6 +9424,8 @@ describe('DeepChatAgentHarness', () => {
       await agent.processMessage('s1', 'make a video')
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(toolService.getToolDefinitionUniverse).not.toHaveBeenCalled()
+      expect(agent.getToolSurfaceShadowDiagnostics('s1')).toBeNull()
       const providerCoreStream = llmProvider.providerInstance.coreStream
       providerCoreStream.mockClear()
       llmProvider.generateText.mockClear()
@@ -9202,6 +9506,9 @@ describe('DeepChatAgentHarness', () => {
         }
       })
       await agent.processMessage('s1', 'read this aloud')
+
+      expect(toolService.getToolDefinitionUniverse).not.toHaveBeenCalled()
+      expect(agent.getToolSurfaceShadowDiagnostics('s1')).toBeNull()
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
       const providerCoreStream = llmProvider.providerInstance.coreStream

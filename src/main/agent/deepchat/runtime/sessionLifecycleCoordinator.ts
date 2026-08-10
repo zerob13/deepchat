@@ -21,6 +21,7 @@ import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionIdentityService } from './sessionIdentityService'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { InteractionParkingRegistry } from './interactionParkingRegistry'
+import type { ToolSurfaceShadowDiagnosticsRegistryPort } from './toolSurfaceDiagnostics'
 
 export interface SessionInitConfig {
   agentId?: string
@@ -53,6 +54,7 @@ export interface SessionLifecycleCoordinatorDependencies {
     'cancel' | 'clearFirstTurnReady' | 'cancelScopeOperations' | 'scopeFor'
   >
   interactionParking: Pick<InteractionParkingRegistry, 'clearSession'>
+  toolSurfaceDiagnostics: Pick<ToolSurfaceShadowDiagnosticsRegistryPort, 'clear'>
 }
 
 export class SessionLifecycleCoordinator {
@@ -108,6 +110,9 @@ export class SessionLifecycleCoordinator {
     try {
       await this.deps.runLifecycle.cancel(sessionId)
     } finally {
+      try {
+        this.deps.toolSurfaceDiagnostics.clear(instance)
+      } catch {}
       instance.clearOwnedState()
       if (this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.instance === instance) {
         this.deps.registry.evict(toAppSessionId(sessionId))
@@ -129,6 +134,11 @@ export class SessionLifecycleCoordinator {
     this.deps.transcript.deleteBySession(sessionId)
     this.deps.sessionStore.delete(sessionId)
     this.deps.interactionParking.clearSession(sessionId)
+    if (instance) {
+      try {
+        this.deps.toolSurfaceDiagnostics.clear(instance)
+      } catch {}
+    }
     instance?.clearOwnedState()
     this.deps.registry.evict(toAppSessionId(sessionId))
     this.deps.memory.finishSessionDestroy(sessionId)

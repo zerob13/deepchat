@@ -3,6 +3,7 @@ import { ApiEndpointType, ModelType } from '@shared/model'
 import {
   resolveDeepChatContextBudgetLength,
   shouldBypassDeepChatContextBudget,
+  shouldObserveToolSurfaceShadow,
   shouldUseDeepChatContextBudget,
   type ContextBudgetModelConfig
 } from '@/agent/deepchat/runtime/contextBudgetPolicy'
@@ -75,12 +76,35 @@ describe('DeepChat context budget policy', () => {
       providerId: 'openai',
       modelConfig: null,
       modelId: 'gpt-5',
-      expected: true
+      expected: true,
+      shadowExpected: false
+    },
+    {
+      name: 'TTS model id with a stale chat config',
+      providerId: 'openai',
+      modelConfig: CHAT_MODEL,
+      modelId: 'gpt-4o-mini-tts',
+      expected: true,
+      shadowExpected: false
+    },
+    {
+      name: 'embedding model type',
+      providerId: 'openai',
+      modelConfig: { type: ModelType.Embedding },
+      modelId: 'text-embedding-3-small',
+      expected: true,
+      shadowExpected: false
     }
-  ] as const)('returns $expected for $name', ({ providerId, modelConfig, modelId, expected }) => {
-    expect(shouldUseDeepChatContextBudget(providerId, modelConfig, modelId)).toBe(expected)
-    expect(shouldBypassDeepChatContextBudget(providerId, modelConfig, modelId)).toBe(!expected)
-  })
+  ] as const)(
+    'returns $expected for $name',
+    ({ providerId, modelConfig, modelId, expected, ...testCase }) => {
+      expect(shouldUseDeepChatContextBudget(providerId, modelConfig, modelId)).toBe(expected)
+      expect(shouldBypassDeepChatContextBudget(providerId, modelConfig, modelId)).toBe(!expected)
+      expect(shouldObserveToolSurfaceShadow(providerId, modelConfig, modelId)).toBe(
+        'shadowExpected' in testCase ? testCase.shadowExpected : expected
+      )
+    }
+  )
 
   it('maps bypassed models to an effectively unbounded local budget', () => {
     expect(resolveDeepChatContextBudgetLength('acp', 16_384, CHAT_MODEL, 'agent')).toBe(
