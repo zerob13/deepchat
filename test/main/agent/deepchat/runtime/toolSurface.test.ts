@@ -953,6 +953,48 @@ describe('Tool Surface shadow selection', () => {
     expect(decision.hypotheticalActiveToolCount).toBe(1)
   })
 
+  it('preserves newest-first recent hint priority when the initial budget is constrained', () => {
+    const catalog = buildCanonicalToolCatalog([
+      agentTool('alphabetically_first'),
+      agentTool('newest')
+    ])
+    const byName = new Map(
+      catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+    )
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: {
+        ...SHADOW_POLICY,
+        enterToolCount: 1,
+        exitToolCount: 0,
+        maxInitialToolCount: 2,
+        activationReserveToolCount: 0,
+        maxInitialDefinitionTokens: 10_000,
+        activationReserveDefinitionTokens: 0
+      },
+      recentHints: [
+        {
+          stableTargetKey: byName.get('newest')!.stableTargetKey,
+          canonicalToolDefinitionHash: byName.get('newest')!.canonicalToolDefinitionHash
+        },
+        {
+          stableTargetKey: byName.get('alphabetically_first')!.stableTargetKey,
+          canonicalToolDefinitionHash:
+            byName.get('alphabetically_first')!.canonicalToolDefinitionHash
+        }
+      ]
+    })
+
+    expect(decision.selectedEntries).toEqual([
+      expect.objectContaining({
+        stableTargetKey: byName.get('newest')!.stableTargetKey,
+        reason: 'recent'
+      })
+    ])
+  })
+
   it('fails open when current eligibility is not a definition-bound ceiling subset', () => {
     const ceilingCatalog = buildCanonicalToolCatalog([agentTool('read')])
     const eligibleCatalog = buildCanonicalToolCatalog([agentTool('write')])

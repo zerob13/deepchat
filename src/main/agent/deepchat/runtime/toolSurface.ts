@@ -484,6 +484,23 @@ function sortedUniqueKeys(keys: readonly string[]): string[] | null {
   return [...unique].sort(compareCodePoints)
 }
 
+function orderedUniqueKeys(keys: readonly string[]): string[] | null {
+  if (keys.length > MAX_TOOL_SURFACE_SELECTION_HINTS) return null
+  const unique: string[] = []
+  const seen = new Set<string>()
+  let inputBytes = 0
+  for (const key of keys) {
+    if (key.length > MAX_TOOL_SURFACE_DEFINITION_BYTES) return null
+    if (key.trim().length === 0) continue
+    inputBytes += Buffer.byteLength(key, 'utf8')
+    if (inputBytes > MAX_TOOL_SURFACE_HINT_INPUT_BYTES) return null
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(key)
+  }
+  return unique
+}
+
 function hasBoundedDefinitionIdentities(
   identities: readonly ToolSurfaceDefinitionIdentity[]
 ): boolean {
@@ -920,7 +937,7 @@ export function computeToolSurfaceShadowDecision(input: {
     return fallback('selection-input-limit-exceeded')
   }
 
-  const recentKeys = sortedUniqueKeys(
+  const recentKeys = orderedUniqueKeys(
     recentHints
       .filter((hint) => {
         const entry = entryByTarget.get(hint.stableTargetKey)
