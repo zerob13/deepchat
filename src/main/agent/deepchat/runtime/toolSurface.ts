@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { types as nodeTypes } from 'node:util'
 import type { AgentToolExposure } from '@shared/agentTools'
-import { getAgentToolExposure } from '@shared/agentTools'
+import { TOOL_SEARCH_AGENT_TOOL_NAME, getAgentToolExposure } from '@shared/agentTools'
 import {
   stripToolExecutionContract,
   type MCPToolDefinition,
@@ -41,7 +41,8 @@ const TOOL_SURFACE_SELECTION_REASONS = Object.freeze([
   'policy-required',
   'core',
   'active-skill',
-  'recent'
+  'recent',
+  'tool-search'
 ] as const)
 // Run ceilings are process-live immutable capabilities, not serializable authority or latest state.
 const issuedRunToolCeilings = new WeakSet<ToolSurfaceRunCeiling>()
@@ -99,6 +100,7 @@ export type ToolSurfaceSelectionReason =
   | 'core'
   | 'active-skill'
   | 'recent'
+  | 'tool-search'
 
 export type ToolSurfaceShadowTriggerReason =
   | 'none'
@@ -174,14 +176,25 @@ export interface ToolSurfaceSnapshot {
   readonly toolDefinitions: readonly MCPToolDefinition[]
 }
 
-export interface FullToolSurfaceRunController {
+export interface ToolSurfaceRunController {
   readonly ceiling: ToolSurfaceRunCeiling
   readonly policyVersion: string
+  readonly virtualizationTriggered: boolean
   build(input: {
     readonly request: ToolSurfaceRequestIdentity
     readonly eligibleDefinitions: readonly MCPToolDefinition[]
+    readonly toolSearchAvailable?: boolean
   }): ToolSurfaceSnapshot
   admit(snapshot: ToolSurfaceSnapshot): void
+}
+
+export type FullToolSurfaceRunController = ToolSurfaceRunController
+export type ToolSurfaceSelectionPolicy = ToolSurfaceShadowPolicy
+export type ToolSurfaceSelectionDecision = ToolSurfaceShadowDecision
+
+export interface PolicySelectedToolSurfaceRun {
+  readonly decision: ToolSurfaceSelectionDecision
+  readonly controller: ToolSurfaceRunController
 }
 
 export function assertIssuedToolSurfaceSnapshot(
@@ -1371,6 +1384,16 @@ function catalogEntryMatches(
   )
 }
 
+function isToolSearchCatalogEntry(entry: CanonicalToolCatalogEntry): boolean {
+  return (
+    entry.target.source === 'agent' &&
+    entry.target.providerVisibleName === TOOL_SEARCH_AGENT_TOOL_NAME &&
+    entry.target.originalName === TOOL_SEARCH_AGENT_TOOL_NAME &&
+    entry.exposure === 'system-model' &&
+    entry.execution.effect === 'read'
+  )
+}
+
 export function createToolSurfaceSnapshot(input: {
   readonly request: ToolSurfaceRequestIdentity
   readonly policyVersion: string
@@ -1465,6 +1488,18 @@ export function createToolSurfaceSnapshot(input: {
         'conflicting_tool'
       )
     }
+    const ceilingEntry = ceilingEntryByTarget.get(selection.stableTargetKey)
+    const identifiesToolSearch = ceilingEntry ? isToolSearchCatalogEntry(ceilingEntry) : false
+    if (
+      (selection.reason === 'tool-search' &&
+        (!input.virtualizationTriggered || !identifiesToolSearch)) ||
+      (selection.reason !== 'tool-search' && identifiesToolSearch)
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface ToolSearch selection provenance is invalid.',
+        'invalid_definition'
+      )
+    }
     reasonByTarget.set(selection.stableTargetKey, selection.reason)
   }
 
@@ -1479,6 +1514,18 @@ export function createToolSurfaceSnapshot(input: {
     )
   }
   const projectedTargets = new Set(projected.map((entry) => entry.stableTargetKey))
+  if (
+    !input.virtualizationTriggered &&
+    projected.some((entry) => {
+      const ceilingEntry = ceilingEntryByTarget.get(entry.stableTargetKey)
+      return ceilingEntry ? isToolSearchCatalogEntry(ceilingEntry) : false
+    })
+  ) {
+    throw new ToolSurfaceError(
+      'A non-virtualized Tool Surface cannot expose ToolSearch.',
+      'invalid_definition'
+    )
+  }
   if (selectionReasons.some((selection) => !projectedTargets.has(selection.stableTargetKey))) {
     throw new ToolSurfaceError(
       'Tool Surface selection reason does not describe an active target.',
@@ -1564,6 +1611,7 @@ export function createFullToolSurfaceRunController(input: {
   const controller: FullToolSurfaceRunController = {
     ceiling,
     policyVersion: input.policyVersion,
+    virtualizationTriggered: false,
     build: ({ request, eligibleDefinitions }) => {
       const eligibleIdentities = eligibleDefinitions.map((definition) => {
         const ceilingEntry = ceilingEntryByVisibleName.get(definition.function.name)
@@ -1609,6 +1657,172 @@ export function createFullToolSurfaceRunController(input: {
     }
   }
   return Object.freeze(controller)
+}
+
+export function createPolicySelectedToolSurfaceRun(input: {
+  readonly ceilingDefinitions: readonly MCPToolDefinition[]
+  readonly initialEligibleDefinitions: readonly MCPToolDefinition[]
+  readonly toolSearchDefinition: MCPToolDefinition
+  readonly policy: ToolSurfaceSelectionPolicy
+  readonly previouslyVirtualized?: boolean
+  readonly policyRequiredStableTargetKeys?: readonly string[]
+  readonly coreStableTargetKeys?: readonly string[]
+  readonly activeSkillRequiredStableTargetKeys?: readonly string[]
+  readonly recentHints?: readonly ToolSurfaceDefinitionIdentity[]
+}): PolicySelectedToolSurfaceRun {
+  const baseCeiling = buildToolSurfaceRunCeiling(input.ceilingDefinitions)
+  const initialEligibleCatalog = buildCanonicalToolCatalog(input.initialEligibleDefinitions)
+  const decision = computeToolSurfaceShadowDecision({
+    ceilingCatalog: baseCeiling.catalog,
+    eligibleCatalog: initialEligibleCatalog,
+    policy: input.policy,
+    previouslyVirtualized: input.previouslyVirtualized,
+    policyRequiredStableTargetKeys: input.policyRequiredStableTargetKeys,
+    coreStableTargetKeys: input.coreStableTargetKeys,
+    activeSkillRequiredStableTargetKeys: input.activeSkillRequiredStableTargetKeys,
+    recentHints: input.recentHints
+  })
+
+  if (decision.degradationCodes.length > 0 || !decision.initialBudgetFits) {
+    throw new ToolSurfaceError(
+      'Tool Surface selection cannot satisfy the configured initial surface.',
+      decision.degradationCodes.includes('mandatory-budget-exceeded')
+        ? 'limit_exceeded'
+        : 'invalid_definition'
+    )
+  }
+  if (!decision.virtualizationTriggered) {
+    return Object.freeze({
+      decision,
+      controller: createFullToolSurfaceRunController({
+        ceilingDefinitions: input.ceilingDefinitions,
+        initialActiveDefinitions: input.initialEligibleDefinitions,
+        policyVersion: input.policy.policyVersion
+      })
+    })
+  }
+
+  const searchCatalog = buildCanonicalToolCatalog([input.toolSearchDefinition])
+  const searchEntry = searchCatalog.entries[0]
+  if (
+    searchCatalog.entries.length !== 1 ||
+    !isToolSearchCatalogEntry(searchEntry) ||
+    searchEntry.definitionTokens > input.policy.toolSearchDefinitionTokens
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface requires the reserved read-only ToolSearch definition within its budget.',
+      'invalid_definition'
+    )
+  }
+  const ceiling = buildToolSurfaceRunCeiling([
+    ...input.ceilingDefinitions,
+    input.toolSearchDefinition
+  ])
+  const toolSearchCeilingEntry = ceiling.entries.find(
+    (entry) => entry.catalogEntry.stableTargetKey === searchEntry.stableTargetKey
+  )
+  if (!toolSearchCeilingEntry || !isToolSearchCatalogEntry(toolSearchCeilingEntry.catalogEntry)) {
+    throw new ToolSurfaceError(
+      'Run Tool Ceiling lost the reserved ToolSearch definition.',
+      'invalid_definition'
+    )
+  }
+  const runToolSearchDefinition = toolSearchCeilingEntry.definition
+  const initialEntryByTarget = new Map(
+    initialEligibleCatalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  const selectedIdentities = decision.selectedEntries.map((selection) => {
+    const entry = initialEntryByTarget.get(selection.stableTargetKey)
+    if (!entry) {
+      throw new ToolSurfaceError(
+        'Tool Surface selection lost an initial eligible definition.',
+        'invalid_definition'
+      )
+    }
+    return copyDefinitionIdentity(entry)
+  })
+  let admittedLedger = createToolSurfaceActivationLedger([
+    ...selectedIdentities,
+    copyDefinitionIdentity(searchEntry)
+  ])
+  const reasonByTarget = new Map<ToolSurfaceDefinitionIdentity['stableTargetKey'], ToolSurfaceSelectionReason>(
+    decision.selectedEntries.map((entry) => [entry.stableTargetKey, entry.reason])
+  )
+  reasonByTarget.set(searchEntry.stableTargetKey, 'tool-search')
+  const ceilingEntryByVisibleName = new Map(
+    ceiling.catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+  )
+  const proposals = new WeakMap<
+    ToolSurfaceSnapshot,
+    {
+      readonly baseLedger: ToolSurfaceActivationLedger
+      readonly nextLedger: ToolSurfaceActivationLedger
+    }
+  >()
+  const admittedSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+
+  const controller: FullToolSurfaceRunController = {
+    ceiling,
+    policyVersion: input.policy.policyVersion,
+    virtualizationTriggered: true,
+    build: ({ request, eligibleDefinitions, toolSearchAvailable }) => {
+      if (toolSearchAvailable !== true) {
+        throw new ToolSurfaceError(
+          'Virtualized Tool Surface requires current ToolSearch authority.',
+          'invalid_definition'
+        )
+      }
+      const effectiveEligibleDefinitions = [...eligibleDefinitions, runToolSearchDefinition]
+      const eligibleIdentities = effectiveEligibleDefinitions.map((definition) => {
+        const ceilingEntry = ceilingEntryByVisibleName.get(definition.function.name)
+        if (!ceilingEntry) {
+          throw new ToolSurfaceError(
+            'Eligible Tool Surface is outside the Run Tool Ceiling.',
+            'conflicting_tool'
+          )
+        }
+        return copyDefinitionIdentity(ceilingEntry)
+      })
+      const eligibleTargets = new Set(eligibleIdentities.map((entry) => entry.stableTargetKey))
+      const selectionReasons = [...reasonByTarget.entries()].flatMap(
+        ([stableTargetKey, reason]) =>
+          eligibleTargets.has(stableTargetKey) ? [{ stableTargetKey, reason }] : []
+      )
+      const nextLedger = appendToolSurfaceActivationBatch(admittedLedger, [])
+      const snapshot = createToolSurfaceSnapshot({
+        request,
+        policyVersion: input.policy.policyVersion,
+        virtualizationTriggered: true,
+        ceiling,
+        eligibleDefinitions: effectiveEligibleDefinitions,
+        activationLedger: nextLedger,
+        selectionReasons
+      })
+      proposals.set(snapshot, { baseLedger: admittedLedger, nextLedger })
+      return snapshot
+    },
+    admit: (snapshot) => {
+      assertIssuedToolSurfaceSnapshot(snapshot)
+      if (admittedSnapshots.has(snapshot)) return
+      const proposal = proposals.get(snapshot)
+      if (!proposal) {
+        throw new ToolSurfaceError(
+          'Tool Surface snapshot was not prepared by this Run controller.',
+          'invalid_definition'
+        )
+      }
+      if (proposal.baseLedger !== admittedLedger) {
+        throw new ToolSurfaceError(
+          'Tool Surface snapshot was prepared from a stale activation ledger.',
+          'conflicting_tool'
+        )
+      }
+      admittedLedger = proposal.nextLedger
+      proposals.delete(snapshot)
+      admittedSnapshots.add(snapshot)
+    }
+  }
+  return Object.freeze({ decision, controller: Object.freeze(controller) })
 }
 
 function labelFor(index: number): string {

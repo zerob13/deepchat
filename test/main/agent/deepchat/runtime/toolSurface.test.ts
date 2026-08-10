@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TAPE_TOOL_NAMES } from '@shared/agentTools'
+import { TAPE_TOOL_NAMES, TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
 import {
   TOOL_EXECUTION,
   type MCPToolDefinition,
@@ -20,6 +20,7 @@ import {
   computeToolSurfaceShadowDecision,
   computeToolSurfaceStaticDefinitionOverlap,
   createFullToolSurfaceRunController,
+  createPolicySelectedToolSurfaceRun,
   createProviderOrderedToolSurfaceActivationLedger,
   createToolSurfaceActivationLedger,
   createToolSurfaceSnapshot,
@@ -945,6 +946,16 @@ describe('Run Tool Ceiling and Tool Surface snapshots', () => {
         }),
       'invalid_definition'
     )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...baseInput,
+          selectionReasons: [
+            { stableTargetKey: readEntry.stableTargetKey, reason: 'tool-search' }
+          ]
+        }),
+      'invalid_definition'
+    )
   })
 
   it('rejects malformed runtime shapes and frozen structural ceiling forgeries', () => {
@@ -1521,5 +1532,286 @@ describe('Tool Surface shadow selection', () => {
         ),
       'limit_exceeded'
     )
+  })
+})
+
+describe('Tool Surface production selection', () => {
+  const productionPolicy: ToolSurfaceShadowPolicy = {
+    ...SHADOW_POLICY,
+    policyVersion: 'canary-test-v1',
+    toolSearchDefinitionTokens: 1_000
+  }
+  const request = (requestSeq: number) => ({
+    sessionId: 's1',
+    messageId: 'm1',
+    runId: 'r1',
+    requestSeq
+  })
+
+  it('keeps a small catalog fully active without adding ToolSearch', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: [read, write],
+      initialEligibleDefinitions: [write, read],
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: productionPolicy
+    })
+    const snapshot = selected.controller.build({
+      request: request(1),
+      eligibleDefinitions: [write, read]
+    })
+
+    expect(selected.decision.virtualizationTriggered).toBe(false)
+    expect(selected.controller.virtualizationTriggered).toBe(false)
+    expect(snapshot.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'write',
+      'read'
+    ])
+    expect(snapshot.eligibleCatalog.entries).toHaveLength(2)
+  })
+
+  it('selects a bounded initial surface and adds ToolSearch only above the threshold', () => {
+    const definitions = ['policy', 'skill', 'core', 'recent', 'hidden'].map((name) =>
+      agentTool(name)
+    )
+    const catalog = buildCanonicalToolCatalog(definitions)
+    const byName = new Map(
+      catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+    )
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: definitions,
+      initialEligibleDefinitions: definitions,
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: { ...productionPolicy, maxInitialToolCount: 6 },
+      policyRequiredStableTargetKeys: [byName.get('policy')!.stableTargetKey],
+      activeSkillRequiredStableTargetKeys: [byName.get('skill')!.stableTargetKey],
+      coreStableTargetKeys: [byName.get('core')!.stableTargetKey],
+      recentHints: [byName.get('recent')!]
+    })
+    const snapshot = selected.controller.build({
+      request: request(1),
+      eligibleDefinitions: definitions,
+      toolSearchAvailable: true
+    })
+
+    expect(selected.decision.virtualizationTriggered).toBe(true)
+    expect(selected.controller.virtualizationTriggered).toBe(true)
+    expect(snapshot.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'policy',
+      'core',
+      'skill',
+      'recent',
+      TOOL_SEARCH_AGENT_TOOL_NAME
+    ])
+    expect(snapshot.activeEntries.map((entry) => entry.reason)).toEqual([
+      'policy-required',
+      'core',
+      'active-skill',
+      'recent',
+      'tool-search'
+    ])
+    expect(snapshot.toolDefinitions.some((definition) => definition.function.name === 'hidden')).toBe(
+      false
+    )
+  })
+
+  it('fails closed instead of restoring a large full catalog when mandatory selection cannot fit', () => {
+    const definitions = [agentTool('required'), agentTool('hidden')]
+    const catalog = buildCanonicalToolCatalog(definitions)
+
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+          policy: {
+            ...productionPolicy,
+            enterToolCount: 1,
+            exitToolCount: 0,
+            maxInitialToolCount: 1,
+            activationReserveToolCount: 0
+          },
+          activeSkillRequiredStableTargetKeys: [catalog.entries[0].stableTargetKey]
+        }),
+      'limit_exceeded'
+    )
+
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+          policy: {
+            ...productionPolicy,
+            enterToolCount: 1,
+            exitToolCount: 0,
+            maxInitialDefinitionTokens: productionPolicy.toolSearchDefinitionTokens,
+            activationReserveDefinitionTokens: 0
+          },
+          activeSkillRequiredStableTargetKeys: [catalog.entries[0].stableTargetKey]
+        }),
+      'limit_exceeded'
+    )
+  })
+
+  it('fails closed when the policy underestimates the real ToolSearch definition', () => {
+    const definitions = [agentTool('read'), agentTool('write')]
+
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+          policy: {
+            ...productionPolicy,
+            enterToolCount: 1,
+            exitToolCount: 0,
+            toolSearchDefinitionTokens: 1
+          }
+        }),
+      'invalid_definition'
+    )
+  })
+
+  it('rejects definitions that impersonate the reserved ToolSearch capability', () => {
+    const definitions = [agentTool('read'), agentTool('write')]
+    const policy = { ...productionPolicy, enterToolCount: 1, exitToolCount: 0 }
+
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: agentTool('not_tool_search'),
+          policy
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: mcpTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+          policy
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME, {
+            execution: TOOL_EXECUTION.write
+          }),
+          policy
+        }),
+      'invalid_definition'
+    )
+  })
+
+  it('uses the frozen Run-owned ToolSearch definition and requires current authority', () => {
+    const definitions = [agentTool('read'), agentTool('write')]
+    const toolSearchDefinition = agentTool(TOOL_SEARCH_AGENT_TOOL_NAME)
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: definitions,
+      initialEligibleDefinitions: definitions,
+      toolSearchDefinition,
+      policy: { ...productionPolicy, enterToolCount: 1, exitToolCount: 0 }
+    })
+    toolSearchDefinition.function.description = 'mutated after Run creation'
+
+    expectSurfaceError(
+      () =>
+        selected.controller.build({
+          request: request(1),
+          eligibleDefinitions: definitions,
+          toolSearchAvailable: false
+        }),
+      'invalid_definition'
+    )
+    const snapshot = selected.controller.build({
+      request: request(2),
+      eligibleDefinitions: definitions,
+      toolSearchAvailable: true
+    })
+    expect(
+      snapshot.toolDefinitions.find(
+        (definition) => definition.function.name === TOOL_SEARCH_AGENT_TOOL_NAME
+      )?.function.description
+    ).toBe(`${TOOL_SEARCH_AGENT_TOOL_NAME} description`)
+  })
+
+  it('preserves activation order across revocation and rejects stale competing admission', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+    const catalog = buildCanonicalToolCatalog([read, write])
+    const readKey = catalog.entries.find(
+      (entry) => entry.target.providerVisibleName === 'read'
+    )!.stableTargetKey
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: [read, write],
+      initialEligibleDefinitions: [read, write],
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: { ...productionPolicy, enterToolCount: 1, exitToolCount: 0 },
+      coreStableTargetKeys: [readKey]
+    })
+    const build = (requestSeq: number, eligibleDefinitions: MCPToolDefinition[]) =>
+      selected.controller.build({
+        request: request(requestSeq),
+        eligibleDefinitions,
+        toolSearchAvailable: true
+      })
+    const first = build(1, [read, write])
+    const competing = build(2, [read, write])
+
+    selected.controller.admit(first)
+    expectSurfaceError(() => selected.controller.admit(competing), 'conflicting_tool')
+    const revoked = build(3, [write])
+    selected.controller.admit(revoked)
+    const restored = build(4, [read, write])
+
+    expect(revoked.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      TOOL_SEARCH_AGENT_TOOL_NAME
+    ])
+    expect(restored.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'read',
+      TOOL_SEARCH_AGENT_TOOL_NAME
+    ])
+    expect(restored.activeEntries.map((entry) => entry.activationOrdinal)).toEqual([0, 1])
+  })
+
+  it('rejects definition drift and targets outside the frozen virtualized ceiling', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: [read, write],
+      initialEligibleDefinitions: [read, write],
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: { ...productionPolicy, enterToolCount: 1, exitToolCount: 0 }
+    })
+    const build = (eligibleDefinitions: MCPToolDefinition[]) =>
+      selected.controller.build({
+        request: request(1),
+        eligibleDefinitions,
+        toolSearchAvailable: true
+      })
+
+    expectSurfaceError(
+      () =>
+        build([
+          agentTool('read', {
+            function: { ...read.function, description: 'drifted after Run creation' }
+          }),
+          write
+        ]),
+      'conflicting_tool'
+    )
+    expectSurfaceError(() => build([read, write, agentTool('outside')]), 'conflicting_tool')
   })
 })
