@@ -45,6 +45,7 @@ import {
 } from './providerRetryPolicy'
 import {
   assertIssuedToolSurfaceSnapshot,
+  type ToolSurfaceActivationCandidate,
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
 
@@ -185,6 +186,7 @@ export interface ProviderAttemptToolSurfacePort {
   build(input: { requestSeq: number; tools: readonly MCPToolDefinition[] }): ToolSurfaceSnapshot
   /** Commits only the prepared in-memory Run ordering; it must not perform I/O or cancel the Run. */
   admit(input: { requestSeq: number; snapshot: ToolSurfaceSnapshot }): void
+  releaseActivationCandidates(candidates: readonly ToolSurfaceActivationCandidate[]): void
 }
 
 export interface ProviderRateGatePort {
@@ -749,7 +751,12 @@ export class DeepChatContextCoordinator {
       }
       bindActiveRequestContract(input.run, requestSeq, executionContract)
       if (toolSurfaceSnapshot) {
-        bindActiveRequestToolSurface(input.run, requestSeq, toolSurfaceSnapshot)
+        bindActiveRequestToolSurface(
+          input.run,
+          requestSeq,
+          toolSurfaceSnapshot,
+          input.toolSurface!.releaseActivationCandidates
+        )
       }
 
       return {

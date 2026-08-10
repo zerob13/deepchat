@@ -16,6 +16,7 @@ import {
   CRON_JOB_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_NAME,
   SUBAGENT_ORCHESTRATOR_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
   assertAgentToolExposure,
   getAgentToolExposure
 } from '@shared/agentTools'
@@ -24,6 +25,13 @@ import { parseChildAgentResultEnvelope } from '@shared/orchestration/resultSafet
 import { LiveDelegationConsentAuthority } from '@/orchestration/liveDelegationConsent'
 import { createOpaquePromptAssembly } from '@/agent/deepchat/resources/promptAssembly'
 import { buildExecutionContract } from '@/tape/domain/executionContract'
+import {
+  buildCanonicalToolCatalog,
+  createPolicySelectedToolSurfaceRun,
+  createToolSurfaceExecutionBatch,
+  revokeToolSurfaceExecutionEligibility,
+  type ToolSurfaceShadowPolicy
+} from '@/agent/deepchat/runtime/toolSurface'
 
 vi.mock('electron', () => ({
   app: {
@@ -117,6 +125,62 @@ const buildToolExecutionContract = (
   })
 }
 
+function buildToolSurfaceExecutionContext(stale = false) {
+  const agentTool = (name: string): MCPToolDefinition => ({
+    type: 'function',
+    source: 'agent' as const,
+    execution: TOOL_EXECUTION.read.parallel,
+    function: {
+      name,
+      description: `${name} tool`,
+      parameters: { type: 'object', properties: {} }
+    },
+    server: { name: 'deepchat', icons: '', description: 'DeepChat' }
+  })
+  const hidden = agentTool('hidden')
+  const toolSearch = agentTool(TOOL_SEARCH_AGENT_TOOL_NAME)
+  const policy: ToolSurfaceShadowPolicy = {
+    policyVersion: 'tool-service-test-v1',
+    enterToolCount: 1,
+    exitToolCount: 0,
+    enterEstimatedInputTokens: 1,
+    exitEstimatedInputTokens: 0,
+    maxInitialToolCount: 2,
+    maxInitialDefinitionTokens: 100_000,
+    activationReserveToolCount: 1,
+    activationReserveDefinitionTokens: 10_000,
+    maxActivationCandidatesPerBatch: 2,
+    maxActivationCandidateDefinitionTokensPerBatch: 10_000,
+    maxActivationBatchesPerRun: 2,
+    maxAppendedTargetsPerRun: 2,
+    toolSearchDefinitionTokens: buildCanonicalToolCatalog([toolSearch]).definitionTokens,
+    toolSearchPromptTokens: 0
+  }
+  const selected = createPolicySelectedToolSurfaceRun({
+    ceilingDefinitions: [hidden],
+    initialEligibleDefinitions: [hidden],
+    toolSearchDefinition: toolSearch,
+    policy,
+    coreStableTargetKeys: []
+  })
+  const request = {
+    sessionId: 'session-1',
+    messageId: 'message-1',
+    runId: CONTRACT_RUN_ID,
+    requestSeq: 1
+  }
+  const snapshot = selected.controller.build({
+    request,
+    eligibleDefinitions: [hidden],
+    toolSearchAvailable: true
+  })
+  selected.controller.admit(snapshot)
+  const batch = createToolSurfaceExecutionBatch({ snapshot })
+  const context = batch.createContext(0)
+  if (stale) batch.seal()
+  return { batch, context, request }
+}
+
 const cronJobFixture = {
   id: 'job-1',
   name: 'Daily summary',
@@ -178,6 +242,95 @@ const cronJobRunFixture = {
 } as any
 
 describe('ToolService', () => {
+  it('rejects stale ToolSearch execution contexts before authorization side effects', async () => {
+    const stale = buildToolSurfaceExecutionContext(true)
+    const revoked = buildToolSurfaceExecutionContext()
+    revokeToolSurfaceExecutionEligibility(revoked.context.snapshot)
+    const active = buildToolSurfaceExecutionContext()
+    const resolveConversationExecutionAuthority = vi.fn()
+    const effectObserver = {
+      beforeToolAuthorization: vi.fn(),
+      beforeToolExecution: vi.fn()
+    }
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: {
+        getAllToolDefinitions: vi.fn().mockResolvedValue([]),
+        callTool: vi.fn()
+      } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({ resolveConversationExecutionAuthority }),
+      effectObserver
+    })
+
+    const toolSearchRequest = {
+      id: 'tool-search-1',
+      type: 'function' as const,
+      function: { name: TOOL_SEARCH_AGENT_TOOL_NAME, arguments: '{}' },
+      conversationId: stale.request.sessionId
+    }
+    await expect(
+      toolService.callTool(toolSearchRequest, {
+        messageId: stale.request.messageId,
+        runId: stale.request.runId,
+        requestSeq: stale.request.requestSeq,
+        toolSurfaceContext: stale.context
+      })
+    ).rejects.toThrow(/no longer active|stale/)
+    await expect(
+      toolService.callTool(
+        { ...toolSearchRequest, conversationId: revoked.request.sessionId },
+        {
+          messageId: revoked.request.messageId,
+          runId: revoked.request.runId,
+          requestSeq: revoked.request.requestSeq,
+          toolSurfaceContext: revoked.context
+        }
+      )
+    ).rejects.toThrow(/no longer active|stale/)
+    await expect(
+      toolService.callTool(toolSearchRequest, {
+        messageId: 'wrong-message',
+        runId: active.request.runId,
+        requestSeq: active.request.requestSeq,
+        toolSurfaceContext: active.context
+      })
+    ).rejects.toThrow(/does not match/)
+    await expect(
+      toolService.callTool(
+        { ...toolSearchRequest, function: { name: 'not-search', arguments: '{}' } },
+        {
+          messageId: active.request.messageId,
+          runId: active.request.runId,
+          requestSeq: active.request.requestSeq,
+          toolSurfaceContext: active.context
+        }
+      )
+    ).rejects.toThrow(/reserved for ToolSearch/)
+    await expect(
+      toolService.callTool(toolSearchRequest, {
+        messageId: active.request.messageId,
+        runId: active.request.runId,
+        requestSeq: active.request.requestSeq
+      })
+    ).rejects.toThrow(/requires an active request-scoped execution context/)
+    await expect(
+      toolService.callTool(toolSearchRequest, {
+        messageId: active.request.messageId,
+        runId: active.request.runId,
+        requestSeq: active.request.requestSeq,
+        toolSurfaceContext: { ...active.context }
+      })
+    ).rejects.toThrow(/not issued by the request-scoped builder/)
+    expect(resolveConversationExecutionAuthority).not.toHaveBeenCalled()
+    expect(effectObserver.beforeToolAuthorization).not.toHaveBeenCalled()
+    expect(effectObserver.beforeToolExecution).not.toHaveBeenCalled()
+    active.batch.discard()
+  })
+
   it('meets the frozen execution contract with current authority at dispatch', async () => {
     const definition = buildContractMcpDefinition()
     const resolveConversationExecutionAuthority = vi.fn(async (sessionId: string) => ({
@@ -589,6 +742,53 @@ describe('ToolService', () => {
       })
     )
     expect(mcpService.callTool).not.toHaveBeenCalled()
+  })
+
+  it('prevents MCP tools from shadowing the reserved ToolSearch identity', async () => {
+    const mcpService = {
+      getAllToolDefinitions: vi
+        .fn()
+        .mockResolvedValue([buildToolDefinition(TOOL_SEARCH_AGENT_TOOL_NAME, 'mcp-search')]),
+      callTool: vi.fn()
+    } as any
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+
+    const definitions = await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      agentWorkspacePath: 'C:\\\\workspace',
+      conversationId: 'session-1'
+    })
+    expect(
+      definitions.filter((definition) => definition.function.name === TOOL_SEARCH_AGENT_TOOL_NAME)
+    ).toEqual([])
+
+    const active = buildToolSurfaceExecutionContext()
+    await expect(
+      toolService.callTool(
+        {
+          id: 'tool-search-1',
+          type: 'function',
+          function: { name: TOOL_SEARCH_AGENT_TOOL_NAME, arguments: '{}' },
+          conversationId: active.request.sessionId
+        },
+        {
+          messageId: active.request.messageId,
+          runId: active.request.runId,
+          requestSeq: active.request.requestSeq,
+          toolSurfaceContext: active.context
+        }
+      )
+    ).rejects.toThrow(/not found in any source/)
+    expect(mcpService.callTool).not.toHaveBeenCalled()
+    active.batch.discard()
   })
 
   it('keeps every Tape capability name reserved against same-name MCP tools', async () => {

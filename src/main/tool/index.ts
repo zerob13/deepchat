@@ -26,6 +26,7 @@ import {
   LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME,
   SUBAGENT_ORCHESTRATOR_TOOL_NAME,
   TAPE_TOOL_NAMES,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
   getAgentToolExposure,
   isUserConfigurableAgentTool
 } from '@shared/agentTools'
@@ -53,6 +54,14 @@ import { YO_BROWSER_TOOL_NAMES } from './browser/definitions'
 import type { SkillSettingsPort } from '@/skill/settings'
 import type { AgentSettingsPort } from '@/agent/settings'
 import type { SettingsStore } from '@/config/settingsStore'
+import {
+  assertActiveToolSurfaceExecutionContext,
+  type ToolSurfaceExecutionContext
+} from '@/agent/deepchat/runtime/toolSurface'
+
+type MainProcessToolCallOptions = ToolCallOptions & {
+  readonly toolSurfaceContext?: ToolSurfaceExecutionContext
+}
 import type { AgentCommandEnvironmentPort } from './agentTools/agentBashHandler'
 import type { ToolEffectObserver } from './effectObserver'
 import { resolvePluginToolPolicy } from '@/plugin/toolPolicyStore'
@@ -93,6 +102,7 @@ const RESERVED_AGENT_TOOL_NAMES = new Set<string>([
   CRON_JOB_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_NAME,
   SUBAGENT_ORCHESTRATOR_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
   ...Object.values(TAPE_TOOL_NAMES)
 ])
 const MAX_UNAVAILABLE_TOOL_DEFINITION_SOURCES = 1_024
@@ -424,10 +434,27 @@ export class ToolService implements ToolServicePort {
    */
   async callTool(
     request: MCPToolCall,
-    options?: ToolCallOptions
+    options?: MainProcessToolCallOptions
   ): Promise<{ content: unknown; rawData: MCPToolResponse }> {
     options?.signal?.throwIfAborted()
     const toolName = request.function.name
+    const toolSurfaceContext = options?.toolSurfaceContext
+    if (toolName === TOOL_SEARCH_AGENT_TOOL_NAME && !toolSurfaceContext) {
+      throw new Error('ToolSearch requires an active request-scoped execution context.')
+    }
+    if (toolName !== TOOL_SEARCH_AGENT_TOOL_NAME && toolSurfaceContext) {
+      throw new Error('Tool Surface execution context is reserved for ToolSearch.')
+    }
+    const assertToolSurfaceContextActive = (): void => {
+      if (!toolSurfaceContext) return
+      assertActiveToolSurfaceExecutionContext(toolSurfaceContext, {
+        sessionId: request.conversationId?.trim() ?? '',
+        messageId: options.messageId?.trim() ?? '',
+        runId: options.runId?.trim() ?? '',
+        requestSeq: options.requestSeq ?? 0
+      })
+    }
+    assertToolSurfaceContextActive()
     const source = this.getToolSource(toolName, request.conversationId)
 
     if (!source) {
@@ -437,6 +464,7 @@ export class ToolService implements ToolServicePort {
     const permissionMode =
       (await this.observeToolAuthorization(request, source, options?.signal))?.permissionMode ??
       options?.permissionMode
+    assertToolSurfaceContextActive()
 
     if (source === 'agent') {
       if (!this.agentToolManager) {
@@ -448,6 +476,7 @@ export class ToolService implements ToolServicePort {
         options?.signal
       )
       this.assertSubagentAgentToolAllowed(preflightPolicy, toolName)
+      assertToolSurfaceContextActive()
 
       let liveDelegationAuthorization: LiveDelegationStartAuthorization | undefined
       if (toolName === LIVE_DELEGATION_AGENT_TOOL_NAME) {
@@ -493,6 +522,7 @@ export class ToolService implements ToolServicePort {
       )
       this.assertSubagentAgentToolAllowed(dispatchPolicy, toolName)
       await this.assertExecutionContractDispatchAllowed(request, source, options)
+      assertToolSurfaceContextActive()
       // Route to Agent tool manager
       const response = await this.agentToolManager.callTool(
         toolName,
@@ -505,6 +535,9 @@ export class ToolService implements ToolServicePort {
           signal: options?.signal,
           allowExternalFileAccess: allowsExternalFileAccess(permissionMode),
           activeSkillNames: options?.activeSkillNames,
+          ...(toolName === TOOL_SEARCH_AGENT_TOOL_NAME && options?.toolSurfaceContext
+            ? { toolSurfaceContext: options.toolSurfaceContext }
+            : {}),
           commandShell: options?.commandShell,
           oneShotCommandGrantId: options?.oneShotCommandGrantId,
           liveDelegationAuthorization,

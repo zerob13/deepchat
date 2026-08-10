@@ -13,6 +13,7 @@ import type { ModelConfig } from '@shared/types/provider'
 import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { MemorySessionHandle } from '@/agent/deepchat/memory/memoryPromptContributor'
 import type { ContextRuntimeContributions } from '@/agent/deepchat/runtime/contextContributions'
+import type { ToolSurfaceExecutionContext } from '@/agent/deepchat/runtime/toolSurface'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import type { ResolvedCommandShell } from '@shared/commandShell'
@@ -47,6 +48,7 @@ export interface DeepChatTaskContractContextPort {
 export type ToolExecutionOptions = Omit<ToolCallOptions, 'commitDispatch' | 'commandShell'> & {
   commitDispatch: ToolDispatchCommit
   commandShell: ResolvedCommandShell
+  toolSurfaceContext?: ToolSurfaceExecutionContext
 }
 
 export interface ToolExecutionPort {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { TAPE_TOOL_NAMES, TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
 import {
   TOOL_EXECUTION,
@@ -15,6 +15,8 @@ import {
   MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES,
   ToolSurfaceError,
   appendToolSurfaceActivationBatch,
+  assertActiveToolSurfaceExecutionContext,
+  assertIssuedToolSurfaceExecutionContext,
   buildCanonicalToolCatalog,
   buildToolSurfaceRunCeiling,
   computeToolSurfaceShadowDecision,
@@ -23,6 +25,7 @@ import {
   createPolicySelectedToolSurfaceRun,
   createProviderOrderedToolSurfaceActivationLedger,
   createToolSurfaceActivationLedger,
+  createToolSurfaceExecutionBatch,
   createToolSurfaceSnapshot,
   mergeToolSurfaceActivationCandidates,
   projectToolSurfaceActiveEntries,
@@ -2221,6 +2224,113 @@ describe('Tool Surface production selection', () => {
           }
         ]),
       'conflicting_tool'
+    )
+  })
+
+  it('issues immutable request-scoped execution contexts only for virtualized ToolSearch Views', () => {
+    const harness = createActivationHarness(['hidden'])
+    const snapshot = harness.build(2)
+    expectSurfaceError(
+      () => createToolSurfaceExecutionBatch({ snapshot }),
+      'invalid_definition'
+    )
+    harness.selected.controller.admit(snapshot)
+    const batch = createToolSurfaceExecutionBatch({ snapshot })
+    expectSurfaceError(
+      () => createToolSurfaceExecutionBatch({ snapshot }),
+      'invalid_definition'
+    )
+    expectSurfaceError(() => batch.createContext(-1), 'invalid_definition')
+    batch
+      .createContext(0)
+      .submitActivationCandidates([harness.candidate('hidden', 2, 0)])
+    const context = batch.createContext(3)
+
+    expect(context.snapshot).toBe(snapshot)
+    expect(context.toolCallOrdinalWithinBatch).toBe(3)
+    expect(batch.snapshot).toBe(snapshot)
+    expect(Object.isFrozen(batch)).toBe(true)
+    expect(Object.isFrozen(context)).toBe(true)
+    expect(() => assertIssuedToolSurfaceExecutionContext(context)).not.toThrow()
+    expect(() => assertActiveToolSurfaceExecutionContext(context, snapshot.request)).not.toThrow()
+    expect(() => assertIssuedToolSurfaceExecutionContext({ ...context })).toThrow(
+      /request-scoped builder/
+    )
+    const candidate = harness.candidate('hidden', 2, 3)
+    context.submitActivationCandidates([candidate])
+    batch.acceptToolCallCandidates(3)
+    expect(batch.seal()).toEqual([
+      expect.objectContaining({
+        stableTargetKey: candidate.stableTargetKey,
+        requestSeq: 2,
+        toolCallOrdinalWithinBatch: 3
+      })
+    ])
+    expect(() => assertActiveToolSurfaceExecutionContext(context, snapshot.request)).toThrow(
+      /no longer active|stale/
+    )
+    expectSurfaceError(
+      () => context.submitActivationCandidates([{ ...candidate, toolCallOrdinalWithinBatch: 2 }]),
+      'invalid_definition'
+    )
+
+    const boundedSnapshot = harness.build(3)
+    harness.selected.controller.admit(boundedSnapshot)
+    const boundedBatch = createToolSurfaceExecutionBatch({ snapshot: boundedSnapshot })
+    const boundedContext = boundedBatch.createContext(0)
+    const boundedCandidate = harness.candidate('hidden', 3, 0)
+    for (let index = 0; index < MAX_TOOL_SURFACE_CANDIDATE_BATCHES; index += 1) {
+      boundedContext.submitActivationCandidates([
+        { ...boundedCandidate, resultRank: index }
+      ])
+    }
+    expectSurfaceError(
+      () =>
+        boundedContext.submitActivationCandidates([
+          {
+            ...boundedCandidate,
+            resultRank: MAX_TOOL_SURFACE_CANDIDATE_BATCHES
+          }
+        ]),
+      'limit_exceeded'
+    )
+    boundedBatch.discard()
+
+    const abandonedSnapshot = harness.build(4)
+    harness.selected.controller.admit(abandonedSnapshot)
+    const replacementSnapshot = harness.build(5)
+    harness.selected.controller.admit(replacementSnapshot)
+    expectSurfaceError(
+      () => createToolSurfaceExecutionBatch({ snapshot: abandonedSnapshot }),
+      'invalid_definition'
+    )
+    createToolSurfaceExecutionBatch({ snapshot: replacementSnapshot }).discard()
+
+    const activeSnapshot = harness.build(6)
+    harness.selected.controller.admit(activeSnapshot)
+    const activeBatch = createToolSurfaceExecutionBatch({ snapshot: activeSnapshot })
+    const activeContext = activeBatch.createContext(0)
+    const nextSnapshot = harness.build(7)
+    harness.selected.controller.admit(nextSnapshot)
+    expect(() => activeContext.submitActivationCandidates([])).toThrow(/no longer active/)
+    expect(() =>
+      assertActiveToolSurfaceExecutionContext(activeContext, activeSnapshot.request)
+    ).toThrow(/stale|no longer active/)
+    activeBatch.discard()
+
+    const fullController = createFullToolSurfaceRunController({
+      ceilingDefinitions: harness.definitions,
+      initialActiveDefinitions: harness.definitions,
+      policyVersion: 'full-test'
+    })
+    const full = fullController.build({
+      request: request(1),
+      eligibleDefinitions: harness.definitions
+    })
+    fullController.admit(full)
+    expectSurfaceError(
+      () => createToolSurfaceExecutionBatch({ snapshot: full }),
+      'invalid_definition'
     )
   })
 

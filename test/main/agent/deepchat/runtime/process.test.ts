@@ -18,14 +18,25 @@ import {
 } from '@/agent/deepchat/runtime/toolAdapters'
 import {
   bindActiveRequestContract,
+  bindActiveRequestToolSurface,
   createLoopRun
 } from '@/agent/deepchat/loop/loopRun'
-import type { DeepChatLoopNotification } from '@/agent/deepchat/loop/ports'
+import type {
+  DeepChatLoopNotification,
+  ToolExecutionOptions
+} from '@/agent/deepchat/loop/ports'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { resolveToolOffloadPath } from '@/agent/shared/storage/sessionPaths'
 import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
 import { createDeepSeekReplayJson } from '../../../../fixtures/deepseekResponses'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
+import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  buildCanonicalToolCatalog,
+  createPolicySelectedToolSurfaceRun,
+  createToolSurfaceExecutionBatch,
+  type ToolSurfaceShadowPolicy
+} from '@/agent/deepchat/runtime/toolSurface'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
@@ -130,6 +141,54 @@ function makeTool(name: string): MCPToolDefinition {
     },
     server: { name: 'test-server', icons: '', description: 'Test server' }
   }
+}
+
+function createProcessToolSurfaceHarness() {
+  const hidden = {
+    ...makeTool('hidden'),
+    source: 'agent' as const,
+    execution: TOOL_EXECUTION.read.parallel
+  }
+  const toolSearch = {
+    ...makeTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+    source: 'agent' as const,
+    execution: TOOL_EXECUTION.read.parallel
+  }
+  const toolSearchDefinitionTokens = buildCanonicalToolCatalog([toolSearch]).definitionTokens
+  const policy: ToolSurfaceShadowPolicy = {
+    policyVersion: 'process-test-v1',
+    enterToolCount: 1,
+    exitToolCount: 0,
+    enterEstimatedInputTokens: 1,
+    exitEstimatedInputTokens: 0,
+    maxInitialToolCount: 2,
+    maxInitialDefinitionTokens: 100_000,
+    activationReserveToolCount: 1,
+    activationReserveDefinitionTokens: 10_000,
+    maxActivationCandidatesPerBatch: 2,
+    maxActivationCandidateDefinitionTokensPerBatch: 10_000,
+    maxActivationBatchesPerRun: 2,
+    maxAppendedTargetsPerRun: 2,
+    toolSearchDefinitionTokens,
+    toolSearchPromptTokens: 0
+  }
+  const selected = createPolicySelectedToolSurfaceRun({
+    ceilingDefinitions: [hidden],
+    initialEligibleDefinitions: [hidden],
+    toolSearchDefinition: toolSearch,
+    policy,
+    coreStableTargetKeys: []
+  })
+  const snapshot = selected.controller.build({
+    request: { sessionId: 's1', messageId: 'm1', runId: RUN_ID, requestSeq: 1 },
+    eligibleDefinitions: [hidden],
+    toolSearchAvailable: true
+  })
+  selected.controller.admit(snapshot)
+  const hiddenEntry = selected.controller.ceiling.catalog.entries.find(
+    (entry) => entry.target.providerVisibleName === 'hidden'
+  )!
+  return { selected, snapshot, hiddenEntry }
 }
 
 function createMockToolService(responses: Record<string, string> = {}): ToolServicePort {
@@ -349,6 +408,73 @@ describe('processStream', () => {
         yield { type: 'stop', stop_reason: 'complete' } as LLMCoreStreamEvent
       })()
     }) as unknown as ProcessParams['coreStream']
+  }
+
+  function createToolSearchProcessHarness(
+    order: string[] = [],
+    requestedToolName = TOOL_SEARCH_AGENT_TOOL_NAME
+  ) {
+    const { selected, snapshot, hiddenEntry } = createProcessToolSurfaceHarness()
+    const releaseActivationCandidates = vi.fn((candidates) => {
+      order.push('activation:release')
+      selected.controller.stageActivationBatch(candidates)
+    })
+    const run = createLoopRun({
+      runId: RUN_ID,
+      sessionId: toAppSessionId('s1'),
+      messageId: 'm1',
+      abortController: new AbortController(),
+      messages: [{ role: 'user', content: 'Find a tool' }],
+      streamState: createState(),
+      resources: {
+        toolDefinitions: selected.controller.ceiling.entries.map((entry) => entry.definition),
+        activeSkillNames: [],
+        commandShell: POSIX_COMMAND_SHELL,
+        toolSurfaceMode: 'full'
+      },
+      initialRequestSeq: 1
+    })
+    bindActiveRequestToolSurface(run, 1, snapshot, releaseActivationCandidates)
+    const toolService = createMockToolService()
+    let issuedContext: ToolExecutionOptions['toolSurfaceContext']
+    vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+      const executionOptions = options as ToolExecutionOptions
+      issuedContext = executionOptions.toolSurfaceContext
+      executionOptions.commitDispatch({
+        toolName: request.function.name,
+        toolSource: 'agent',
+        normalizedArguments: {},
+        target: { serverName: 'test-server', originalName: request.function.name }
+      })
+      executionOptions.registerOutcomeProjection?.(() =>
+        issuedContext?.submitActivationCandidates([
+          {
+            ...snapshot.request,
+            stableTargetKey: hiddenEntry.stableTargetKey,
+            canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
+            toolCallOrdinalWithinBatch: 0,
+            resultRank: 0
+          }
+        ])
+      )
+      return {
+        content: 'found',
+        rawData: { toolCallId: request.id, content: 'found', isError: false }
+      }
+    })
+    const params = createParams({
+      run,
+      coreStream: createToolThenCompleteStream(requestedToolName),
+      toolExecution: createToolExecutionPort(toolService)
+    })
+    return {
+      params,
+      hiddenEntry,
+      releaseActivationCandidates,
+      snapshot,
+      toolService,
+      getIssuedContext: () => issuedContext
+    }
   }
 
   function createScriptedCoreStream(
@@ -762,6 +888,133 @@ describe('processStream', () => {
       expect(tapeToolFactWriter.appendToolFact).toHaveBeenCalledTimes(1)
     })
 
+    it('releases ToolSearch candidates only after the settled round is persisted', async () => {
+      const order: string[] = []
+      observeCommitOrder(order)
+      const harness = createToolSearchProcessHarness(order)
+      const result = await processStream(harness.params)
+
+      expect(result.status).toBe('completed')
+      expect(harness.releaseActivationCandidates).toHaveBeenCalledOnce()
+      expect(harness.releaseActivationCandidates).toHaveBeenCalledWith([
+        expect.objectContaining({ stableTargetKey: harness.hiddenEntry.stableTargetKey })
+      ])
+      expect(order.indexOf('activation:release')).toBeGreaterThan(order.indexOf('message:update'))
+      expect(order.indexOf('activation:release')).toBeGreaterThan(order.indexOf('tape:tool_result'))
+      expect(() => harness.getIssuedContext()?.submitActivationCandidates([])).toThrow(
+        /no longer active/
+      )
+    })
+
+    it('revokes an unused ToolSearch View after a terminal provider response', async () => {
+      const harness = createToolSearchProcessHarness()
+      harness.params.coreStream = createScriptedCoreStream([
+        [
+          { type: 'text', content: 'No tool needed.' },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
+      ])
+
+      const result = await processStream(harness.params)
+
+      expect(result).toMatchObject({ status: 'completed' })
+      expect(() => createToolSurfaceExecutionBatch({ snapshot: harness.snapshot })).toThrow(
+        /not bound to a virtualized ToolSearch View/
+      )
+      expect(harness.toolService.callTool).not.toHaveBeenCalled()
+    })
+
+    it('discards ToolSearch candidates when the settled transcript record is unavailable', async () => {
+      const harness = createToolSearchProcessHarness()
+      messageStore.getMessage.mockReturnValue(null)
+
+      const result = await processStream(harness.params)
+
+      expect(result.status).toBe('completed')
+      expect(harness.releaseActivationCandidates).not.toHaveBeenCalled()
+      expect(() => harness.getIssuedContext()?.submitActivationCandidates([])).toThrow(
+        /no longer active/
+      )
+    })
+
+    it('discards ToolSearch candidates when the settled transcript write fails', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const harness = createToolSearchProcessHarness()
+      messageStore.updateAssistantContent.mockImplementation(
+        (_messageId: string, blocks: { type?: string; tool_call?: { response?: string } }[]) => {
+          if (blocks.some((block) => block.tool_call?.response === 'found')) {
+            throw new Error('database unavailable')
+          }
+        }
+      )
+
+      const result = await processStream(harness.params)
+
+      expect(result.status).toBe('completed')
+      expect(harness.releaseActivationCandidates).not.toHaveBeenCalled()
+      expect(() => harness.getIssuedContext()?.submitActivationCandidates([])).toThrow(
+        /no longer active/
+      )
+      errorSpy.mockRestore()
+    })
+
+    it('discards ToolSearch candidates when tool fact persistence fails', async () => {
+      const harness = createToolSearchProcessHarness()
+      tapeToolFactWriter.appendToolFact.mockRejectedValue(new Error('tape unavailable'))
+
+      const result = await processStream(harness.params)
+
+      expect(result.status).toBe('completed')
+      expect(tapeToolFactWriter.appendToolFact).toHaveBeenCalled()
+      expect(harness.releaseActivationCandidates).not.toHaveBeenCalled()
+      expect(() => harness.getIssuedContext()?.submitActivationCandidates([])).toThrow(
+        /no longer active/
+      )
+    })
+
+    it('discards ToolSearch candidates when cancellation arrives during tool fact persistence', async () => {
+      const harness = createToolSearchProcessHarness()
+      let releaseFactWrite!: () => void
+      let markFactWriteStarted!: () => void
+      const factWriteStarted = new Promise<void>((resolve) => {
+        markFactWriteStarted = resolve
+      })
+      const factWriteGate = new Promise<void>((resolve) => {
+        releaseFactWrite = resolve
+      })
+      tapeToolFactWriter.appendToolFact.mockImplementationOnce(async (input) => {
+        markFactWriteStarted()
+        await factWriteGate
+        return { sessionId: input.sessionId, entryId: 1 }
+      })
+
+      const processPromise = processStream(harness.params)
+      await factWriteStarted
+      harness.params.run.abortController.abort()
+      releaseFactWrite()
+      const result = await processPromise
+
+      expect(result.status).toBe('aborted')
+      expect(harness.releaseActivationCandidates).not.toHaveBeenCalled()
+    })
+
+    it('rejects a ceiling-only tool that was hidden from the admitted provider View', async () => {
+      const harness = createToolSearchProcessHarness([], 'hidden')
+
+      const result = await processStream(harness.params)
+
+      expect(result.status).toBe('completed')
+      expect(harness.toolService.callTool).not.toHaveBeenCalled()
+      expect(harness.releaseActivationCandidates).not.toHaveBeenCalled()
+      expect(harness.params.run.messages).toContainEqual(
+        expect.objectContaining({
+          role: 'tool',
+          tool_call_id: 'tc1',
+          content: expect.stringContaining('Tool is not available in the current session')
+        })
+      )
+    })
+
     it('persists a paused tool round before its terminal projection', async () => {
       const order: string[] = []
       observeCommitOrder(order)
@@ -1158,6 +1411,36 @@ describe('processStream', () => {
         requestId: RUN_ID,
         error: 'Connection lost'
       })
+    })
+
+    it('does not execute a tool_use call before its arguments are complete', async () => {
+      const toolService = createMockToolService({ action: 'must not run' })
+      const coreStream = createScriptedCoreStream([
+        [
+          { type: 'tool_call_start', tool_call_id: 'tc1', tool_call_name: 'action' },
+          {
+            type: 'tool_call_chunk',
+            tool_call_id: 'tc1',
+            tool_call_arguments_chunk: '{"path":"partial'
+          },
+          { type: 'stop', stop_reason: 'tool_use' }
+        ]
+      ])
+
+      const result = await processStream(
+        createParams({
+          coreStream,
+          toolExecution: createToolExecutionPort(toolService),
+          tools: [makeTool('action')]
+        })
+      )
+
+      expect(result).toMatchObject({
+        status: 'error',
+        stopReason: 'provider_error',
+        errorMessage: INCOMPLETE_TOOL_USE_ERROR
+      })
+      expect(toolService.callTool).not.toHaveBeenCalled()
     })
 
     it('settles an in-stream abort without a tool Tape snapshot', async () => {
@@ -2851,7 +3134,7 @@ describe('processStream', () => {
     await expect(fs.readFile(offloadPath!, 'utf-8')).resolves.toBe(longScreenshot)
   })
 
-  it('preserves completed-call order for multiple tools in one turn', async () => {
+  it('uses assistant batch order when tool calls complete out of order', async () => {
     let callCount = 0
     const toolService = createMockToolService({
       get_weather: 'Sunny',
@@ -2907,7 +3190,7 @@ describe('processStream', () => {
       (toolService.callTool as ReturnType<typeof vi.fn>).mock.calls.map(
         ([request]) => request.function.name
       )
-    ).toEqual(['get_time', 'get_weather'])
+    ).toEqual(['get_weather', 'get_time'])
     expect(coreStream).toHaveBeenCalledTimes(2)
   })
 

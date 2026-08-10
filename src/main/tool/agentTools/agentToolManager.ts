@@ -70,6 +70,7 @@ import { LiveDelegationAgentTool } from './liveDelegationTool'
 import { normalizeOrchestrationPolicy } from '@shared/orchestration/policy'
 import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 import { resolveAgentOutputLimits, type AgentOutputLimits } from '@shared/lib/agentOutputLimits'
+import type { ToolSurfaceExecutionContext } from '@/agent/deepchat/runtime/toolSurface'
 
 // Consider moving to a shared handlers location in future refactoring
 import {
@@ -136,6 +137,7 @@ interface AgentToolExecutionOptions {
   signal?: AbortSignal
   allowExternalFileAccess?: boolean
   activeSkillNames?: string[]
+  toolSurfaceContext?: ToolSurfaceExecutionContext
   liveDelegationAuthorization?: LiveDelegationStartAuthorization
   commitDispatch?: ToolDispatchCommit
   commandShell?: ResolvedCommandShell

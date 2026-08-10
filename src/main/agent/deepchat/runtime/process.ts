@@ -33,6 +33,10 @@ import {
   type DeepChatLoopCommitCallbacks,
   type DeepChatLoopOutcome
 } from '@/agent/deepchat/loop/deepChatLoopEngine'
+import {
+  revokeActiveRequestToolSurface,
+  type LoopRunRequestToolSurfaceBinding
+} from '@/agent/deepchat/loop/loopRun'
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
 import type { OutputSink } from '@/agent/deepchat/loop/ports'
 import { buildTapeToolFactInputs } from '@/tape/application/factPersistence'
@@ -60,6 +64,7 @@ type ToolRoundBatch = {
   nextAction: 'continue' | 'terminal'
   requestSeq: number
   executionContract: DeepChatExecutionContract | null
+  toolSurface: LoopRunRequestToolSurfaceBinding | null
 }
 
 function getLatestErrorMessage(state: StreamState): string | null {
@@ -143,9 +148,10 @@ function countVisibleToolCallIds(blocks: readonly AssistantMessageBlock[]): Map<
   return counts
 }
 
-function collectOrderedTruncatedDeepChatToolCalls(
+function collectOrderedDeepChatToolCalls(
   state: StreamState,
-  prevBlockCount: number
+  prevBlockCount: number,
+  options: { includePending: boolean } = { includePending: false }
 ): ToolCallResult[] {
   const roundBlocks = state.blocks.slice(prevBlockCount)
   const visibleCallIdCounts = countVisibleToolCallIds(roundBlocks)
@@ -172,6 +178,10 @@ function collectOrderedTruncatedDeepChatToolCalls(
     if (completed?.name.trim()) {
       orderedCalls.push({ ...completed })
       seenCallIds.add(toolCallId)
+      continue
+    }
+
+    if (!options.includePending) {
       continue
     }
 
@@ -874,6 +884,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
 
   logger.info(`[ProcessStream] start session=${io.sessionId} message=${io.messageId}`)
   let eventCount = 0
+  let pendingToolSurfaceCandidateRelease: (() => void) | null = null
   const commits: DeepChatLoopCommitCallbacks<StreamState, ProcessResult, ProcessResult> = {
     updateOutput: ({ outcome }) => {
       if (outcome === 'halted' || firstProviderRoundReady || state.blocks.length === 0) {
@@ -888,23 +899,33 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
         console.warn('[ProcessStream] first provider round readiness callback failed:', error)
       }
     },
-    afterRoundPersisted: async () => {
-      updateOutput()
+    afterRoundPersisted: async ({ outcome }) => {
+      const releaseToolSurfaceCandidates = pendingToolSurfaceCandidateRelease
+      pendingToolSurfaceCandidateRelease = null
+      if (releaseToolSurfaceCandidates && outcome !== 'continue') {
+        throw new Error('Terminal tool settlement cannot release Tool Surface candidates.')
+      }
+      const transcriptPersisted = echo.flush()
+      if (!transcriptPersisted) return
       const record = io.messageStore.getMessage(run.messageId)
       if (!record) return
+      let toolFactsPersisted = true
       try {
         for (const input of buildTapeToolFactInputs(record)) {
           await params.io.tapeToolFactWriter.appendToolFact(input)
         }
       } catch (error) {
+        toolFactsPersisted = false
         logger.warn(
           `[ProcessStream] Failed to append tool facts: ${
             error instanceof Error ? error.message : String(error)
           }`
         )
       }
+      if (toolFactsPersisted && !io.abortSignal.aborted) releaseToolSurfaceCandidates?.()
     },
     settleTurn: ({ outcome }) => {
+      revokeActiveRequestToolSurface(run)
       if (outcome.type === 'thrown') {
         return settleLoopOutcome(
           outcome,
@@ -1092,6 +1113,13 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           }
           const executionContract = activeRequestContract?.executionContract ?? null
           const requestSeq = activeRequestContract?.requestSeq ?? run.requestSeq
+          const toolSurface = run.activeRequestToolSurface
+          if (toolSurface && toolSurface.requestSeq !== requestSeq) {
+            throw new Error('Provider response does not match the active Tool Surface request.')
+          }
+          if (run.resources.toolSurfaceMode === 'full' && !toolSurface) {
+            throw new Error('Provider response lost its active Tool Surface binding.')
+          }
 
           logger.info(
             `[ProcessStream] stream iteration done reason=${state.stopReason} events=${eventCount} blocks=${state.blocks.length}`
@@ -1101,7 +1129,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
 
           const truncatedToolCalls =
             state.stopReason === 'max_tokens'
-              ? collectOrderedTruncatedDeepChatToolCalls(state, prevBlockCount)
+              ? collectOrderedDeepChatToolCalls(state, prevBlockCount, { includePending: true })
               : []
 
           if (state.stopReason === 'max_tokens') {
@@ -1138,7 +1166,8 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 disposition: { kind: 'reject', reason: 'output_truncated' },
                 nextAction,
                 requestSeq,
-                executionContract
+                executionContract,
+                toolSurface
               },
               requestedToolExecutionCount: 0
             }
@@ -1146,7 +1175,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
 
           const completedToolCalls =
             state.stopReason === 'tool_use'
-              ? state.completedToolCalls.map((toolCall) => ({ ...toolCall }))
+              ? collectOrderedDeepChatToolCalls(state, prevBlockCount)
               : []
           if (completedToolCalls.length === 0) {
             return { type: 'terminal' }
@@ -1160,13 +1189,17 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               disposition: { kind: 'execute' },
               nextAction: 'continue',
               requestSeq,
-              executionContract
+              executionContract,
+              toolSurface
             },
             requestedToolExecutionCount: completedToolCalls.length
           }
         },
         settleToolBatch: async ({ run, batch }) => {
           const completedToolBatch = batch.toolCalls.map((toolCall) => ({ ...toolCall }))
+          const settledTools = batch.toolSurface
+            ? [...batch.toolSurface.snapshot.toolDefinitions]
+            : currentTools
           const toolBatchMessageStart = conversationMessages.length
           let startedToolCallCount = 0
           let executed: Awaited<ReturnType<typeof settleToolBatch>>
@@ -1177,7 +1210,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               prevBlockCount: batch.prevBlockCount,
               toolCalls: batch.toolCalls,
               disposition: batch.disposition,
-              tools: currentTools,
+              tools: settledTools,
               toolExecution,
               modelId,
               interleavedReasoning,
@@ -1186,6 +1219,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               toolResults,
               executionJournal: params.io.executionJournalWriter,
               executionContract: batch.executionContract,
+              toolSurface: batch.toolSurface,
               operationScope: {
                 runId: run.runId,
                 requestSeq: batch.requestSeq
@@ -1332,6 +1366,20 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 )
               }
             }
+          }
+
+          if (executed.toolSurfaceActivationCandidates.length > 0) {
+            if (!batch.toolSurface) {
+              throw new Error(
+                'Tool Surface activation candidates lost their request-scoped binding.'
+              )
+            }
+            if (pendingToolSurfaceCandidateRelease) {
+              throw new Error('A Tool Surface candidate release is already pending.')
+            }
+            const activationCandidates = executed.toolSurfaceActivationCandidates
+            pendingToolSurfaceCandidateRelease = () =>
+              batch.toolSurface!.releaseActivationCandidates(activationCandidates)
           }
 
           return {

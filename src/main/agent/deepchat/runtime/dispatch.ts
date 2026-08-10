@@ -13,6 +13,7 @@ import type { AgentToolProgressUpdate } from '@shared/types/tool'
 import type { AssistantMessageBlock, PermissionMode } from '@shared/types/agent-interface'
 import type { AgentPlanSnapshot, AgentPlanTerminalReason } from '@shared/types/agent-plan'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { buildExecutionContractBinding } from '@/tape/domain/executionContract'
 import {
   parseQuestionToolArgs,
@@ -83,6 +84,12 @@ import {
   type ExecutionOperationIdentity
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
+import type { LoopRunRequestToolSurfaceBinding } from '@/agent/deepchat/loop/loopRun'
+import {
+  createToolSurfaceExecutionBatch,
+  type ToolSurfaceActivationCandidate,
+  type ToolSurfaceExecutionBatch
+} from './toolSurface'
 
 type PermissionType = 'read' | 'write' | 'all' | 'command'
 
@@ -220,9 +227,14 @@ interface CommitStagedToolResultsParams {
   rendererFlushHandle: RendererFlushHandle
 }
 
+interface CommittedStagedToolResults {
+  readonly outcome: ToolBatchOutcome<ToolBatchInteraction>
+  readonly successfulToolCallIds: readonly string[]
+}
+
 async function commitStagedToolResults(
   params: CommitStagedToolResultsParams
-): Promise<ToolBatchOutcome<ToolBatchInteraction>> {
+): Promise<CommittedStagedToolResults> {
   const {
     stagedResults,
     pendingInteractions,
@@ -242,6 +254,7 @@ async function commitStagedToolResults(
     maxTokens,
     rendererFlushHandle
   } = params
+  let successfulToolCallIds: readonly string[] = Object.freeze([])
 
   if (stagedResults.length > 0) {
     for (const stagedResult of stagedResults) {
@@ -285,18 +298,30 @@ async function commitStagedToolResults(
     persistToolExecutionState(io, state, rendererFlushHandle)
 
     if (fittedResults.kind === 'terminal_error') {
-      return buildToolBatchOutcome(
-        batchState,
-        pendingInteractions,
-        executed,
-        toolsChanged,
-        fittedResults.message
-      )
+      return {
+        outcome: buildToolBatchOutcome(
+          batchState,
+          pendingInteractions,
+          executed,
+          toolsChanged,
+          fittedResults.message
+        ),
+        successfulToolCallIds: Object.freeze([])
+      }
     }
+
+    successfulToolCallIds = Object.freeze(
+      fittedResults.results
+        .filter((result) => !result.isError && !result.downgraded)
+        .map((result) => result.toolCallId)
+    )
   }
 
   persistToolExecutionState(io, state, rendererFlushHandle)
-  return buildToolBatchOutcome(batchState, pendingInteractions, executed, toolsChanged)
+  return {
+    outcome: buildToolBatchOutcome(batchState, pendingInteractions, executed, toolsChanged),
+    successfulToolCallIds
+  }
 }
 
 function snapshotToolBatchState(
@@ -1670,6 +1695,8 @@ async function runToolCall(params: {
   executionJournal: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
   executionContract?: DeepChatExecutionContract | null
+  toolSurfaceExecutionBatch?: ToolSurfaceExecutionBatch
+  toolCallOrdinalWithinBatch: number
   commandShell: ResolvedCommandShell
   oneShotCommandGrantId?: string
 }): Promise<ToolRunOutcome> {
@@ -1689,10 +1716,16 @@ async function runToolCall(params: {
     executionJournal,
     operationScope,
     executionContract,
+    toolSurfaceExecutionBatch,
+    toolCallOrdinalWithinBatch,
     commandShell,
     oneShotCommandGrantId
   } = params
   const { completedToolCall, toolCall, toolContext } = execution
+  const toolSurfaceContext =
+    completedToolCall.name === TOOL_SEARCH_AGENT_TOOL_NAME && toolSurfaceExecutionBatch
+      ? toolSurfaceExecutionBatch.createContext(toolCallOrdinalWithinBatch)
+      : undefined
   let returnedToolResult: MCPToolResponse | null = null
   let dispatchedOperation: ExecutionOperationIdentity | undefined
   let committedOutcome: StagedToolResult | undefined
@@ -1814,7 +1847,7 @@ async function runToolCall(params: {
       }
       const enabledMcpServerIds = controls?.getEnabledMcpServerIds?.()
       const result = await toolExecution.execute(toolCall, {
-        runId: io.requestId,
+        runId: operationScope.runId,
         messageId: io.messageId,
         requestSeq: operationScope.requestSeq,
         ...(executionContract ? { executionContract } : {}),
@@ -1825,6 +1858,7 @@ async function runToolCall(params: {
         agentId: controls?.getAgentId?.(),
         commitDispatch,
         registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection),
+        ...(toolSurfaceContext ? { toolSurfaceContext } : {}),
         commandShell,
         oneShotCommandGrantId: scopedOneShotCommandGrantId,
         ...(enabledMcpServerIds === null || enabledMcpServerIds === undefined
@@ -2070,12 +2104,17 @@ export interface SettleToolBatchParams {
   executionJournal: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
   executionContract?: DeepChatExecutionContract | null
+  toolSurface?: LoopRunRequestToolSurfaceBinding | null
   commandShell: ResolvedCommandShell
+}
+
+export type SettledToolBatchOutcome = ToolBatchOutcome<ToolBatchInteraction> & {
+  readonly toolSurfaceActivationCandidates: readonly ToolSurfaceActivationCandidate[]
 }
 
 export async function settleToolBatch(
   params: SettleToolBatchParams
-): Promise<ToolBatchOutcome<ToolBatchInteraction>> {
+): Promise<SettledToolBatchOutcome> {
   const {
     state,
     conversation,
@@ -2098,8 +2137,46 @@ export async function settleToolBatch(
     executionJournal,
     operationScope,
     executionContract,
+    toolSurface,
     commandShell
   } = params
+  if (
+    toolSurface &&
+    (toolSurface.requestSeq !== operationScope.requestSeq ||
+      toolSurface.snapshot.request.sessionId !== io.sessionId ||
+      toolSurface.snapshot.request.messageId !== io.messageId ||
+      toolSurface.snapshot.request.runId !== operationScope.runId ||
+      toolSurface.snapshot.request.requestSeq !== operationScope.requestSeq)
+  ) {
+    throw new Error('Tool batch does not match its request-scoped Tool Surface binding.')
+  }
+  const toolSurfaceExecutionBatch =
+    toolSurface?.snapshot.virtualizationTriggered === true
+      ? createToolSurfaceExecutionBatch({ snapshot: toolSurface.snapshot })
+      : null
+  const candidateEligibleToolCallOrdinals = new Set<number>()
+  const sealToolBatchOutcome = (
+    committed: CommittedStagedToolResults
+  ): SettledToolBatchOutcome => {
+    if (committed.outcome.type === 'completed' && !committed.outcome.terminalError) {
+      const successfulToolCallIds = new Set(committed.successfulToolCallIds)
+      for (const ordinal of candidateEligibleToolCallOrdinals) {
+        const toolCall = toolCalls[ordinal]
+        if (toolCall && successfulToolCallIds.has(toolCall.id)) {
+          toolSurfaceExecutionBatch?.acceptToolCallCandidates(ordinal)
+        }
+      }
+    }
+    const candidates = toolSurfaceExecutionBatch?.seal() ?? Object.freeze([])
+    return {
+      ...committed.outcome,
+      toolSurfaceActivationCandidates:
+        committed.outcome.type === 'completed' && !committed.outcome.terminalError
+          ? candidates
+          : Object.freeze([])
+    }
+  }
+  try {
   const { notificationObserver, controls, diagnostics, onToolCallStarted } = collaborators ?? {}
   if (disposition.kind === 'execute') {
     io.abortSignal.throwIfAborted()
@@ -2191,25 +2268,27 @@ export async function settleToolBatch(
       })
     }
 
-    return await commitStagedToolResults({
-      stagedResults,
-      pendingInteractions,
-      batchState,
-      executed,
-      toolsChanged,
-      conversation,
-      state,
-      batchToolCallBlocks,
-      toolBlockStartIndex: prevBlockCount,
-      io,
-      notificationObserver,
-      takeInteractionOrder,
-      toolResults,
-      tools,
-      contextLength,
-      maxTokens,
-      rendererFlushHandle
-    })
+    return sealToolBatchOutcome(
+      await commitStagedToolResults({
+        stagedResults,
+        pendingInteractions,
+        batchState,
+        executed,
+        toolsChanged,
+        conversation,
+        state,
+        batchToolCallBlocks,
+        toolBlockStartIndex: prevBlockCount,
+        io,
+        notificationObserver,
+        takeInteractionOrder,
+        toolResults,
+        tools,
+        contextLength,
+        maxTokens,
+        rendererFlushHandle
+      })
+    )
   }
 
   const toolPermissionMode = resolveToolPermissionMode(permissionMode)
@@ -2226,10 +2305,13 @@ export async function settleToolBatch(
     )
 
     const settledOutcomes = await Promise.allSettled(
-      executions.map(async (execution) => {
+      executions.map(async (execution, toolCallOrdinalWithinBatch) => {
         try {
           let permissionToAutoGrant: NonNullable<PendingToolInteraction['permission']> | null = null
-          if (toolExecution.preCheck) {
+          if (
+            execution.completedToolCall.name !== TOOL_SEARCH_AGENT_TOOL_NAME &&
+            toolExecution.preCheck
+          ) {
             const preChecked = await toolExecution.preCheck(execution.toolCall, {
               permissionMode: toolPermissionMode,
               signal: io.abortSignal,
@@ -2282,6 +2364,8 @@ export async function settleToolBatch(
               executionJournal,
               operationScope,
               executionContract,
+              toolSurfaceExecutionBatch: toolSurfaceExecutionBatch ?? undefined,
+              toolCallOrdinalWithinBatch,
               commandShell,
               oneShotCommandGrantId
             })
@@ -2296,21 +2380,21 @@ export async function settleToolBatch(
         }
       })
     )
-    const outcomes: ToolRunOutcome[] = []
+    const outcomes: { outcome: ToolRunOutcome; toolCallOrdinalWithinBatch: number }[] = []
     let cancellationError: unknown
-    for (const outcome of settledOutcomes) {
-      if (outcome.status === 'fulfilled') {
-        outcomes.push(outcome.value)
-      } else if (isExecutionJournalError(outcome.reason)) {
-        throw outcome.reason
+    for (const [toolCallOrdinalWithinBatch, settled] of settledOutcomes.entries()) {
+      if (settled.status === 'fulfilled') {
+        outcomes.push({ outcome: settled.value, toolCallOrdinalWithinBatch })
+      } else if (isExecutionJournalError(settled.reason)) {
+        throw settled.reason
       } else if (io.abortSignal.aborted) {
-        cancellationError ??= outcome.reason
+        cancellationError ??= settled.reason
       } else {
-        throw outcome.reason
+        throw settled.reason
       }
     }
 
-    for (const outcome of outcomes) {
+    for (const { outcome, toolCallOrdinalWithinBatch } of outcomes) {
       batchState.invokedCallIds.add(
         outcome.kind === 'permission' ? outcome.toolContext.id : outcome.stagedResult.toolCallId
       )
@@ -2339,6 +2423,14 @@ export async function settleToolBatch(
         continue
       }
 
+      if (
+        executions[toolCallOrdinalWithinBatch].completedToolCall.name ===
+          TOOL_SEARCH_AGENT_TOOL_NAME &&
+        !outcome.stagedResult.isError &&
+        outcome.stagedResult.outcomeCommitted === true
+      ) {
+        candidateEligibleToolCallOrdinals.add(toolCallOrdinalWithinBatch)
+      }
       stagedResults.push(outcome.stagedResult)
       toolsChanged = toolsChanged || outcome.toolsChanged
       executed += 1
@@ -2348,7 +2440,7 @@ export async function settleToolBatch(
       throw cancellationError
     }
 
-    return await commitStagedToolResults({
+    const committed = await commitStagedToolResults({
       stagedResults,
       pendingInteractions,
       batchState,
@@ -2367,9 +2459,10 @@ export async function settleToolBatch(
       maxTokens,
       rendererFlushHandle
     })
+    return sealToolBatchOutcome(committed)
   }
 
-  for (const tc of toolCalls) {
+  for (const [toolCallOrdinalWithinBatch, tc] of toolCalls.entries()) {
     if (io.abortSignal.aborted && stagedResults.length > 0) {
       break
     }
@@ -2432,7 +2525,7 @@ export async function settleToolBatch(
 
       let preCheckedPermission: PendingToolInteraction['permission'] | null = null
       let permissionToAutoGrant: NonNullable<PendingToolInteraction['permission']> | null = null
-      if (toolExecution.preCheck) {
+      if (toolCall.function.name !== TOOL_SEARCH_AGENT_TOOL_NAME && toolExecution.preCheck) {
         const preChecked = await toolExecution.preCheck(toolCall, {
           permissionMode: toolPermissionMode,
           signal: io.abortSignal,
@@ -2567,6 +2660,8 @@ export async function settleToolBatch(
           executionJournal,
           operationScope,
           executionContract,
+          toolSurfaceExecutionBatch: toolSurfaceExecutionBatch ?? undefined,
+          toolCallOrdinalWithinBatch,
           commandShell,
           oneShotCommandGrantId
         })
@@ -2601,6 +2696,13 @@ export async function settleToolBatch(
         continue
       }
 
+      if (
+        tc.name === TOOL_SEARCH_AGENT_TOOL_NAME &&
+        !outcome.stagedResult.isError &&
+        outcome.stagedResult.outcomeCommitted === true
+      ) {
+        candidateEligibleToolCallOrdinals.add(toolCallOrdinalWithinBatch)
+      }
       stagedResults.push(outcome.stagedResult)
       toolsChanged = toolsChanged || outcome.toolsChanged
       executed += 1
@@ -2626,7 +2728,7 @@ export async function settleToolBatch(
     }
   }
 
-  return await commitStagedToolResults({
+  const committed = await commitStagedToolResults({
     stagedResults,
     pendingInteractions,
     batchState,
@@ -2645,6 +2747,10 @@ export async function settleToolBatch(
     maxTokens,
     rendererFlushHandle
   })
+  return sealToolBatchOutcome(committed)
+  } finally {
+    toolSurfaceExecutionBatch?.discard()
+  }
 }
 
 function stampGenerationTiming(state: StreamState): void {

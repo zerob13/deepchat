@@ -6,7 +6,7 @@ import {
   type MCPToolDefinition
 } from '@shared/types/core/mcp'
 import type { ToolServicePort } from '@shared/types/tool'
-import type { ToolResultPort } from '@/agent/deepchat/loop/ports'
+import type { ToolExecutionOptions, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import {
   createToolCatalogPort,
   createToolExecutionPort,
@@ -157,6 +157,7 @@ describe('DeepChat tool adapters', () => {
     const abortController = new AbortController()
     const onProgress = vi.fn()
     const commitDispatch = vi.fn()
+    const toolSurfaceContext = {} as NonNullable<ToolExecutionOptions['toolSurfaceContext']>
 
     await port.preCheck(call, { permissionMode })
     await port.execute(call, {
@@ -166,6 +167,7 @@ describe('DeepChat tool adapters', () => {
       activeSkillNames: ['skill-a'],
       agentId: 'agent-1',
       enabledMcpServerIds: ['mcp-1'],
+      toolSurfaceContext,
       commitDispatch
     })
 
@@ -177,6 +179,7 @@ describe('DeepChat tool adapters', () => {
       activeSkillNames: ['skill-a'],
       agentId: 'agent-1',
       enabledMcpServerIds: ['mcp-1'],
+      toolSurfaceContext,
       commitDispatch
     })
   })

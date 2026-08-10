@@ -792,6 +792,10 @@ export class DeepChatLoopRunner {
                     admit: ({ snapshot }) => {
                       resourceScope.assertCurrent()
                       fullToolSurfaceController.admit(snapshot)
+                    },
+                    releaseActivationCandidates: (candidates) => {
+                      resourceScope.assertCurrent()
+                      fullToolSurfaceController.stageActivationBatch(candidates)
                     }
                   }
                 }

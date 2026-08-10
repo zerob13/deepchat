@@ -59,6 +59,14 @@ const TOOL_SURFACE_ACTIVATION_REJECTION_CODES = Object.freeze([
 const issuedRunToolCeilings = new WeakSet<ToolSurfaceRunCeiling>()
 // View snapshots follow the same process-live provenance discipline as their Run ceilings.
 const issuedToolSurfaceSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+// Only admitted Views may issue execution capabilities to tool dispatch.
+const admittedToolSurfaceSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+// Recovery, replacement, and terminal settlement revoke unused execution eligibility.
+const revokedToolSurfaceExecutionSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+// A provider response may settle at most one execution batch for its admitted View.
+const executionBatchIssuedToolSurfaceSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+// Tool execution contexts are request-local capabilities derived from one issued virtualized View.
+const issuedToolSurfaceExecutionContexts = new WeakSet<ToolSurfaceExecutionContext>()
 
 export type ToolSurfaceErrorCode =
   | 'conflicting_tool'
@@ -250,6 +258,11 @@ export function assertIssuedToolSurfaceSnapshot(
   }
 }
 
+export function revokeToolSurfaceExecutionEligibility(snapshot: ToolSurfaceSnapshot): void {
+  assertIssuedToolSurfaceSnapshot(snapshot)
+  revokedToolSurfaceExecutionSnapshots.add(snapshot)
+}
+
 export interface ToolSurfaceCandidateScope {
   readonly sessionId: string
   readonly messageId: string
@@ -263,6 +276,220 @@ export interface ToolSurfaceActivationCandidate extends ToolSurfaceDefinitionIde
   readonly requestSeq: number
   readonly toolCallOrdinalWithinBatch: number
   readonly resultRank: number
+}
+
+export interface ToolSurfaceExecutionContext {
+  readonly snapshot: ToolSurfaceSnapshot
+  readonly toolCallOrdinalWithinBatch: number
+  readonly submitActivationCandidates: (
+    candidates: readonly ToolSurfaceActivationCandidate[]
+  ) => void
+}
+
+const TOOL_SURFACE_EXECUTION_CONTEXT_ACTIVE = Symbol('tool-surface-execution-context-active')
+
+type IssuedToolSurfaceExecutionContext = ToolSurfaceExecutionContext & {
+  readonly [TOOL_SURFACE_EXECUTION_CONTEXT_ACTIVE]: () => boolean
+}
+
+export interface ToolSurfaceExecutionBatch {
+  readonly snapshot: ToolSurfaceSnapshot
+  createContext(toolCallOrdinalWithinBatch: number): ToolSurfaceExecutionContext
+  acceptToolCallCandidates(toolCallOrdinalWithinBatch: number): void
+  seal(): readonly ToolSurfaceActivationCandidate[]
+  discard(): void
+}
+
+export function createToolSurfaceExecutionBatch(input: {
+  readonly snapshot: ToolSurfaceSnapshot
+}): ToolSurfaceExecutionBatch {
+  assertIssuedToolSurfaceSnapshot(input.snapshot)
+  if (
+    !admittedToolSurfaceSnapshots.has(input.snapshot) ||
+    revokedToolSurfaceExecutionSnapshots.has(input.snapshot) ||
+    !input.snapshot.virtualizationTriggered ||
+    !input.snapshot.activeEntries.some(
+      (entry) => entry.definition.function.name === TOOL_SEARCH_AGENT_TOOL_NAME
+    )
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface execution batch is not bound to a virtualized ToolSearch View.',
+      'invalid_definition'
+    )
+  }
+  if (executionBatchIssuedToolSurfaceSnapshots.has(input.snapshot)) {
+    throw new ToolSurfaceError(
+      'Tool Surface execution batch was already issued for this provider View.',
+      'invalid_definition'
+    )
+  }
+  executionBatchIssuedToolSurfaceSnapshots.add(input.snapshot)
+  let active = true
+  let sealedCandidates: readonly ToolSurfaceActivationCandidate[] | null = null
+  const candidateBatchesByToolCall = new Map<
+    number,
+    (readonly ToolSurfaceActivationCandidate[])[]
+  >()
+  const acceptedToolCallOrdinals = new Set<number>()
+  let retainedSubmissionCount = 0
+  let retainedCandidateCount = 0
+  let retainedCandidateBytes = 0
+  const assertActive = (): void => {
+    if (!active || revokedToolSurfaceExecutionSnapshots.has(input.snapshot)) {
+      throw new ToolSurfaceError(
+        'Tool Surface execution context is no longer active.',
+        'invalid_definition'
+      )
+    }
+  }
+  const createContext = (toolCallOrdinalWithinBatch: number): ToolSurfaceExecutionContext => {
+    assertActive()
+    if (!Number.isSafeInteger(toolCallOrdinalWithinBatch) || toolCallOrdinalWithinBatch < 0) {
+      throw new ToolSurfaceError(
+        'Tool Surface execution context has an invalid tool call ordinal.',
+        'invalid_definition'
+      )
+    }
+    if (candidateBatchesByToolCall.has(toolCallOrdinalWithinBatch)) {
+      throw new ToolSurfaceError(
+        'Tool Surface execution context was already issued for this tool call.',
+        'invalid_definition'
+      )
+    }
+    const candidateBatches: (readonly ToolSurfaceActivationCandidate[])[] = []
+    candidateBatchesByToolCall.set(toolCallOrdinalWithinBatch, candidateBatches)
+    const context = Object.freeze({
+      snapshot: input.snapshot,
+      toolCallOrdinalWithinBatch,
+      submitActivationCandidates: (candidates: readonly ToolSurfaceActivationCandidate[]) => {
+        assertActive()
+        const normalized = mergeToolSurfaceActivationCandidates(input.snapshot.request, [candidates])
+        if (
+          normalized.some(
+            (candidate) =>
+              candidate.requestSeq !== input.snapshot.request.requestSeq ||
+              candidate.toolCallOrdinalWithinBatch !== toolCallOrdinalWithinBatch
+          )
+        ) {
+          throw new ToolSurfaceError(
+            'Tool Surface activation candidates do not match their originating tool call.',
+            'invalid_definition'
+          )
+        }
+        if (normalized.length === 0) return
+        const normalizedBytes = Buffer.byteLength(
+          canonicalJsonStringifyData(normalized),
+          'utf8'
+        )
+        const nextSubmissionCount = retainedSubmissionCount + 1
+        const nextCandidateCount = retainedCandidateCount + normalized.length
+        const nextCandidateBytes = retainedCandidateBytes + normalizedBytes
+        if (
+          !Number.isSafeInteger(nextSubmissionCount) ||
+          !Number.isSafeInteger(nextCandidateCount) ||
+          !Number.isSafeInteger(nextCandidateBytes) ||
+          nextSubmissionCount > MAX_TOOL_SURFACE_CANDIDATE_BATCHES ||
+          nextCandidateCount > MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES ||
+          nextCandidateBytes > MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES
+        ) {
+          throw new ToolSurfaceError(
+            'Tool Surface execution batch exceeds its retained candidate limit.',
+            'limit_exceeded'
+          )
+        }
+        candidateBatches.push(normalized)
+        retainedSubmissionCount = nextSubmissionCount
+        retainedCandidateCount = nextCandidateCount
+        retainedCandidateBytes = nextCandidateBytes
+      },
+      [TOOL_SURFACE_EXECUTION_CONTEXT_ACTIVE]: () =>
+        active && !revokedToolSurfaceExecutionSnapshots.has(input.snapshot)
+    })
+    issuedToolSurfaceExecutionContexts.add(context)
+    return context
+  }
+  const acceptToolCallCandidates = (toolCallOrdinalWithinBatch: number): void => {
+    assertActive()
+    if (!candidateBatchesByToolCall.has(toolCallOrdinalWithinBatch)) {
+      throw new ToolSurfaceError(
+        'Tool Surface candidates cannot be accepted for an unissued tool call.',
+        'invalid_definition'
+      )
+    }
+    acceptedToolCallOrdinals.add(toolCallOrdinalWithinBatch)
+  }
+  const seal = (): readonly ToolSurfaceActivationCandidate[] => {
+    if (sealedCandidates) return sealedCandidates
+    assertActive()
+    active = false
+    try {
+      const acceptedCandidateBatches = [...acceptedToolCallOrdinals]
+        .sort((left, right) => left - right)
+        .flatMap((ordinal) => candidateBatchesByToolCall.get(ordinal) ?? [])
+      sealedCandidates = mergeToolSurfaceActivationCandidates(
+        input.snapshot.request,
+        acceptedCandidateBatches
+      )
+      return sealedCandidates
+    } finally {
+      candidateBatchesByToolCall.clear()
+      acceptedToolCallOrdinals.clear()
+      retainedSubmissionCount = 0
+      retainedCandidateCount = 0
+      retainedCandidateBytes = 0
+    }
+  }
+  const discard = (): void => {
+    active = false
+    candidateBatchesByToolCall.clear()
+    acceptedToolCallOrdinals.clear()
+    retainedSubmissionCount = 0
+    retainedCandidateCount = 0
+    retainedCandidateBytes = 0
+  }
+
+  return Object.freeze({
+    snapshot: input.snapshot,
+    createContext,
+    acceptToolCallCandidates,
+    seal,
+    discard
+  })
+}
+
+export function assertIssuedToolSurfaceExecutionContext(
+  context: unknown
+): asserts context is ToolSurfaceExecutionContext {
+  if (
+    !context ||
+    typeof context !== 'object' ||
+    !issuedToolSurfaceExecutionContexts.has(context as ToolSurfaceExecutionContext)
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface execution context was not issued by the request-scoped builder.',
+      'invalid_definition'
+    )
+  }
+}
+
+export function assertActiveToolSurfaceExecutionContext(
+  context: unknown,
+  expectedRequest: ToolSurfaceRequestIdentity
+): asserts context is ToolSurfaceExecutionContext {
+  assertIssuedToolSurfaceExecutionContext(context)
+  const issuedContext = context as IssuedToolSurfaceExecutionContext
+  if (
+    !issuedContext[TOOL_SURFACE_EXECUTION_CONTEXT_ACTIVE]() ||
+    context.snapshot.request.sessionId !== expectedRequest.sessionId ||
+    context.snapshot.request.messageId !== expectedRequest.messageId ||
+    context.snapshot.request.runId !== expectedRequest.runId ||
+    context.snapshot.request.requestSeq !== expectedRequest.requestSeq
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface execution context is stale or does not match the active provider View.',
+      'invalid_definition'
+    )
+  }
 }
 
 export interface ToolSurfaceShadowDecision {
@@ -1952,6 +2179,7 @@ export function createFullToolSurfaceRunController(input: {
       admittedLedger = proposal.nextLedger
       proposals.delete(snapshot)
       admittedSnapshots.add(snapshot)
+      admittedToolSurfaceSnapshots.add(snapshot)
     }
   }
   return Object.freeze(controller)
@@ -2071,6 +2299,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
     }
   >()
   const admittedSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+  let latestExecutionEligibleSnapshot: ToolSurfaceSnapshot | null = null
 
   const controller: FullToolSurfaceRunController = {
     ceiling,
@@ -2326,6 +2555,9 @@ export function createPolicySelectedToolSurfaceRun(input: {
           fingerprint: proposal.pendingFingerprint
         })
       }
+      if (latestExecutionEligibleSnapshot) {
+        revokeToolSurfaceExecutionEligibility(latestExecutionEligibleSnapshot)
+      }
       admittedLedger = proposal.nextLedger
       latestAdmittedRequest = snapshot.request
       if (proposal.pendingCandidates && consumedRelease) {
@@ -2344,6 +2576,8 @@ export function createPolicySelectedToolSurfaceRun(input: {
       }
       proposals.delete(snapshot)
       admittedSnapshots.add(snapshot)
+      admittedToolSurfaceSnapshots.add(snapshot)
+      latestExecutionEligibleSnapshot = snapshot
     }
   }
   return Object.freeze({ decision, controller: Object.freeze(controller) })

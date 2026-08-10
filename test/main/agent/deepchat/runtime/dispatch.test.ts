@@ -27,7 +27,12 @@ import {
   createToolExecutionPort,
   createToolResultPort
 } from '@/agent/deepchat/runtime/toolAdapters'
-import type { DeepChatLoopToolNotification, ToolResultPort } from '@/agent/deepchat/loop/ports'
+import type {
+  DeepChatLoopToolNotification,
+  ToolExecutionOptions,
+  ToolResultPort
+} from '@/agent/deepchat/loop/ports'
+import type { LoopRunRequestToolSurfaceBinding } from '@/agent/deepchat/loop/loopRun'
 import { QUESTION_TOOL_NAME } from '@/tool/agentTools/questionTool'
 import {
   IMAGE_GENERATE_TOOL_NAME,
@@ -38,6 +43,13 @@ import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekRespo
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
 import { ExecutionJournalError } from '@/tape/domain/executionJournal'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
+import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  assertIssuedToolSurfaceExecutionContext,
+  buildCanonicalToolCatalog,
+  createPolicySelectedToolSurfaceRun,
+  type ToolSurfaceShadowPolicy
+} from '@/agent/deepchat/runtime/toolSurface'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 
@@ -126,6 +138,68 @@ function makeAgentImageGenerationTool(): MCPToolDefinition {
   }
 }
 
+function createDispatchToolSurfaceBinding(
+  definitions: readonly MCPToolDefinition[],
+  coreToolNames = definitions.map((definition) => definition.function.name)
+): {
+  readonly tools: MCPToolDefinition[]
+  readonly binding: LoopRunRequestToolSurfaceBinding
+  readonly catalog: ReturnType<typeof buildCanonicalToolCatalog>
+} {
+  const toolSearchDefinition = makeAgentTool(
+    TOOL_SEARCH_AGENT_TOOL_NAME,
+    TOOL_EXECUTION.read.parallel
+  )
+  const catalog = buildCanonicalToolCatalog(definitions)
+  const policy: ToolSurfaceShadowPolicy = {
+    policyVersion: 'dispatch-test-v1',
+    enterToolCount: 1,
+    exitToolCount: 0,
+    enterEstimatedInputTokens: 1,
+    exitEstimatedInputTokens: 0,
+    maxInitialToolCount: definitions.length + 1,
+    maxInitialDefinitionTokens: 100_000,
+    activationReserveToolCount: 0,
+    activationReserveDefinitionTokens: 0,
+    maxActivationCandidatesPerBatch: 8,
+    maxActivationCandidateDefinitionTokensPerBatch: 10_000,
+    maxActivationBatchesPerRun: 4,
+    maxAppendedTargetsPerRun: 8,
+    toolSearchDefinitionTokens: buildCanonicalToolCatalog([toolSearchDefinition]).definitionTokens,
+    toolSearchPromptTokens: 0
+  }
+  const selected = createPolicySelectedToolSurfaceRun({
+    ceilingDefinitions: definitions,
+    initialEligibleDefinitions: definitions,
+    toolSearchDefinition,
+    policy,
+    coreStableTargetKeys: catalog.entries
+      .filter((entry) => coreToolNames.includes(entry.target.providerVisibleName))
+      .map((entry) => entry.stableTargetKey)
+  })
+  const snapshot = selected.controller.build({
+    request: {
+      sessionId: 's1',
+      messageId: 'm1',
+      runId: '11111111-1111-4111-8111-111111111111',
+      requestSeq: 1
+    },
+    eligibleDefinitions: definitions,
+    toolSearchAvailable: true
+  })
+  selected.controller.admit(snapshot)
+  const releaseActivationCandidates = vi.fn(selected.controller.stageActivationBatch)
+  return {
+    tools: snapshot.toolDefinitions as MCPToolDefinition[],
+    catalog,
+    binding: Object.freeze({
+      requestSeq: 1,
+      snapshot,
+      releaseActivationCandidates
+    })
+  }
+}
+
 function createMockToolService(responses: Record<string, string> = {}): ToolServicePort {
   return {
     getAllToolDefinitions: vi.fn().mockResolvedValue([]),
@@ -168,6 +242,7 @@ type TestHooks = Partial<ProcessControlCollaborators & ProcessInternalDiagnostic
   resultNormalizer?: ToolResultPort['normalize']
   providerReplayProjector?: ChatMessageProviderReplayProjector
   executionJournal?: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
+  toolSurface?: LoopRunRequestToolSurfaceBinding
 }
 
 function expectDeepchatEvent(eventName: string, payload: Record<string, unknown>): void {
@@ -259,6 +334,7 @@ async function settleToolBatch(
       runId: '11111111-1111-4111-8111-111111111111',
       requestSeq: 1
     },
+    toolSurface: hooks?.toolSurface,
     commandShell: POSIX_COMMAND_SHELL,
     rendererFlushHandle: flushHandle,
     providerReplayProjector: hooks?.providerReplayProjector,
@@ -308,6 +384,309 @@ describe('dispatch', () => {
   })
 
   describe('settleToolBatch', () => {
+    it.each([
+      { mode: 'serial', execution: TOOL_EXECUTION.write },
+      { mode: 'parallel', execution: TOOL_EXECUTION.read.parallel }
+    ])('binds exact Tool Surface context and assistant ordinals in $mode batches', async ({ execution }) => {
+      const definitions = [
+        makeAgentTool('first', execution),
+        makeAgentTool('second', execution),
+        makeAgentTool('hidden-first', TOOL_EXECUTION.read.parallel),
+        makeAgentTool('hidden-second', TOOL_EXECUTION.read.parallel)
+      ]
+      const { tools, binding, catalog } = createDispatchToolSurfaceBinding(definitions, [
+        'first',
+        'second'
+      ])
+      const entryByName = new Map(
+        catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+      )
+      const toolService = createMockToolService()
+      const contexts = new Map<string, ToolExecutionOptions['toolSurfaceContext']>()
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions | undefined
+        const context = executionOptions?.toolSurfaceContext
+        contexts.set(request.id, context)
+        executionOptions?.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'test-server', originalName: request.function.name }
+        })
+        const hiddenEntry = entryByName.get(request.id === 'tc0' ? 'hidden-first' : 'hidden-second')!
+        executionOptions?.registerOutcomeProjection?.(() =>
+          context?.submitActivationCandidates([
+            {
+              ...binding.snapshot.request,
+              stableTargetKey: hiddenEntry.stableTargetKey,
+              canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
+              toolCallOrdinalWithinBatch: context.toolCallOrdinalWithinBatch,
+              resultRank: 0
+            }
+          ])
+        )
+        return {
+          content: request.function.name,
+          rawData: {
+            toolCallId: request.id,
+            content: request.function.name,
+            isError: false
+          }
+        }
+      })
+      const conversation = [{ role: 'user' as const, content: 'Use both tools' }]
+      for (const index of [0, 1]) {
+        state.blocks.push({
+          type: 'tool_call',
+          content: '',
+          status: 'pending',
+          timestamp: Date.now(),
+          tool_call: {
+            id: `tc${index}`,
+            name: TOOL_SEARCH_AGENT_TOOL_NAME,
+            params: '{}',
+            response: ''
+          }
+        })
+        state.completedToolCalls.push({
+          id: `tc${index}`,
+          name: TOOL_SEARCH_AGENT_TOOL_NAME,
+          arguments: '{}'
+        })
+      }
+
+      const settled = await settleToolBatch(
+        state,
+        conversation,
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32_000,
+        1_024,
+        { toolSurface: binding },
+        'openai'
+      )
+
+      expect(contexts.size).toBe(2)
+      expect(toolService.preCheckToolPermission).not.toHaveBeenCalled()
+      for (const index of [0, 1]) {
+        const context = contexts.get(`tc${index}`)
+        expect(context?.snapshot).toBe(binding.snapshot)
+        expect(context?.toolCallOrdinalWithinBatch).toBe(index)
+        expect(typeof context?.submitActivationCandidates).toBe('function')
+        expect(Object.isFrozen(context)).toBe(true)
+        expect(() => assertIssuedToolSurfaceExecutionContext(context)).not.toThrow()
+      }
+      expect(binding.releaseActivationCandidates).not.toHaveBeenCalled()
+      expect(
+        settled.toolSurfaceActivationCandidates.map((candidate) => candidate.stableTargetKey)
+      ).toEqual([
+        entryByName.get('hidden-first')!.stableTargetKey,
+        entryByName.get('hidden-second')!.stableTargetKey
+      ])
+      const firstContext = contexts.get('tc0')!
+      const hiddenFirst = entryByName.get('hidden-first')!
+      expect(() =>
+        firstContext.submitActivationCandidates([
+          {
+            ...binding.snapshot.request,
+            stableTargetKey: hiddenFirst.stableTargetKey,
+            canonicalToolDefinitionHash: hiddenFirst.canonicalToolDefinitionHash,
+            toolCallOrdinalWithinBatch: 0,
+            resultRank: 0
+          }
+        ])
+      ).toThrow(/no longer active/)
+    })
+
+    it('revokes ToolSearch contexts and discards candidates when settlement fails', async () => {
+      const definitions = [makeAgentTool('hidden', TOOL_EXECUTION.read.parallel)]
+      const { tools, binding, catalog } = createDispatchToolSurfaceBinding(definitions, [])
+      const hiddenEntry = catalog.entries.find(
+        (entry) => entry.target.providerVisibleName === 'hidden'
+      )!
+      const toolService = createMockToolService()
+      let issuedContext: ToolExecutionOptions['toolSurfaceContext']
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions
+        issuedContext = executionOptions.toolSurfaceContext
+        executionOptions.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'test-server', originalName: request.function.name }
+        })
+        executionOptions.registerOutcomeProjection?.(() =>
+          issuedContext?.submitActivationCandidates([
+            {
+              ...binding.snapshot.request,
+              stableTargetKey: hiddenEntry.stableTargetKey,
+              canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
+              toolCallOrdinalWithinBatch: 0,
+              resultRank: 0
+            }
+          ])
+        )
+        return {
+          content: 'found',
+          rawData: { toolCallId: request.id, content: 'found', isError: false }
+        }
+      })
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc0',
+          name: TOOL_SEARCH_AGENT_TOOL_NAME,
+          params: '{}',
+          response: ''
+        }
+      })
+      state.completedToolCalls.push({
+        id: 'tc0',
+        name: TOOL_SEARCH_AGENT_TOOL_NAME,
+        arguments: '{}'
+      })
+      const toolOutputGuard = new ToolOutputGuard()
+      vi.spyOn(toolOutputGuard, 'fitToolBatchOutputs').mockRejectedValue(
+        new Error('transcript settlement failed')
+      )
+
+      await expect(
+        settleToolBatch(
+          state,
+          [{ role: 'user', content: 'Find a tool' }],
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          toolOutputGuard,
+          32_000,
+          1_024,
+          { toolSurface: binding },
+          'openai'
+        )
+      ).rejects.toThrow('transcript settlement failed')
+      expect(binding.releaseActivationCandidates).not.toHaveBeenCalled()
+      expect(() => issuedContext?.submitActivationCandidates([])).toThrow(/no longer active/)
+    })
+
+    it('discards ToolSearch candidates when output fitting downgrades the result', async () => {
+      const definitions = [makeAgentTool('hidden', TOOL_EXECUTION.read.parallel)]
+      const { tools, binding, catalog } = createDispatchToolSurfaceBinding(definitions, [])
+      const hiddenEntry = catalog.entries.find(
+        (entry) => entry.target.providerVisibleName === 'hidden'
+      )!
+      const toolService = createMockToolService()
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions
+        const context = executionOptions.toolSurfaceContext!
+        executionOptions.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'test-server', originalName: request.function.name }
+        })
+        executionOptions.registerOutcomeProjection?.(() =>
+          context.submitActivationCandidates([
+            {
+              ...binding.snapshot.request,
+              stableTargetKey: hiddenEntry.stableTargetKey,
+              canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
+              toolCallOrdinalWithinBatch: 0,
+              resultRank: 0
+            }
+          ])
+        )
+        return {
+          content: 'found',
+          rawData: { toolCallId: request.id, content: 'found', isError: false }
+        }
+      })
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc0',
+          name: TOOL_SEARCH_AGENT_TOOL_NAME,
+          params: '{}',
+          response: ''
+        }
+      })
+      state.completedToolCalls.push({
+        id: 'tc0',
+        name: TOOL_SEARCH_AGENT_TOOL_NAME,
+        arguments: '{}'
+      })
+      const toolOutputGuard = new ToolOutputGuard()
+      vi.spyOn(toolOutputGuard, 'fitToolBatchOutputs').mockImplementation(async ({ results }) => ({
+        kind: 'ok',
+        results: results.map((result) => ({
+          ...result,
+          responseText: 'Tool output could not fit.',
+          contextResponseText: '',
+          isError: true,
+          downgraded: true
+        }))
+      }))
+
+      const settled = await settleToolBatch(
+        state,
+        [{ role: 'user', content: 'Find a tool' }],
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        toolOutputGuard,
+        32_000,
+        1_024,
+        { toolSurface: binding },
+        'openai'
+      )
+
+      expect(settled).toMatchObject({ type: 'completed', toolSurfaceActivationCandidates: [] })
+      expect(state.blocks[0]).toMatchObject({ status: 'error' })
+      expect(binding.releaseActivationCandidates).not.toHaveBeenCalled()
+    })
+
+    it('rejects a stale Tool Surface batch binding before tool execution', async () => {
+      const definitions = [makeAgentTool('read', TOOL_EXECUTION.read.parallel)]
+      const { tools, binding } = createDispatchToolSurfaceBinding(definitions)
+      const toolService = createMockToolService()
+      state.completedToolCalls = [{ id: 'tc1', name: 'read', arguments: '{}' }]
+
+      await expect(
+        settleToolBatch(
+          state,
+          [{ role: 'user', content: 'Read' }],
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          new ToolOutputGuard(),
+          32_000,
+          1_024,
+          { toolSurface: Object.freeze({ ...binding, requestSeq: 2 }) },
+          'openai'
+        )
+      ).rejects.toThrow(/request-scoped Tool Surface binding/)
+      expect(toolService.callTool).not.toHaveBeenCalled()
+    })
+
     it('builds assistant message, calls tools, updates blocks', async () => {
       const tools = [makeAgentTool('get_weather')]
       const toolService = createMockToolService({ get_weather: 'Sunny, 72F' })

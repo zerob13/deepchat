@@ -6,6 +6,8 @@ import type { DeepChatExecutionContract } from '@shared/types/execution-contract
 import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 import {
   assertIssuedToolSurfaceSnapshot,
+  revokeToolSurfaceExecutionEligibility,
+  type ToolSurfaceActivationCandidate,
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
 
@@ -32,6 +34,9 @@ export interface LoopRunRequestContractBinding {
 export interface LoopRunRequestToolSurfaceBinding {
   readonly requestSeq: number
   readonly snapshot: ToolSurfaceSnapshot
+  readonly releaseActivationCandidates: (
+    candidates: readonly ToolSurfaceActivationCandidate[]
+  ) => void
 }
 
 export interface LoopRun<TStreamState> {
@@ -133,11 +138,18 @@ export function advanceRequestSequence(run: LoopRun<unknown>): number {
   if (!Number.isSafeInteger(nextRequestSeq) || nextRequestSeq <= 0) {
     throw new Error('Provider request sequence is exhausted.')
   }
+  revokeActiveRequestToolSurface(run)
   run.requestSeq = nextRequestSeq
   run.physicalAttempt = 0
   run.activeRequestContract = null
-  run.activeRequestToolSurface = null
   return nextRequestSeq
+}
+
+export function revokeActiveRequestToolSurface(run: LoopRun<unknown>): void {
+  const binding = run.activeRequestToolSurface
+  if (!binding) return
+  revokeToolSurfaceExecutionEligibility(binding.snapshot)
+  run.activeRequestToolSurface = null
 }
 
 export function bindActiveRequestContract(
@@ -165,7 +177,8 @@ export function bindActiveRequestContract(
 export function bindActiveRequestToolSurface(
   run: LoopRun<unknown>,
   requestSeq: number,
-  snapshot: ToolSurfaceSnapshot
+  snapshot: ToolSurfaceSnapshot,
+  releaseActivationCandidates: (candidates: readonly ToolSurfaceActivationCandidate[]) => void
 ): LoopRunRequestToolSurfaceBinding {
   if (requestSeq !== run.requestSeq) {
     throw new Error('Tool Surface request sequence does not match the active request.')
@@ -179,7 +192,10 @@ export function bindActiveRequestToolSurface(
   ) {
     throw new Error('Tool Surface identity does not match the active Loop Run.')
   }
-  const binding = Object.freeze({ requestSeq, snapshot })
+  if (typeof releaseActivationCandidates !== 'function') {
+    throw new Error('Tool Surface activation release capability is unavailable.')
+  }
+  const binding = Object.freeze({ requestSeq, snapshot, releaseActivationCandidates })
   run.activeRequestToolSurface = binding
   return binding
 }

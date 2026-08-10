@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import {
   advanceRequestSequence,
@@ -188,9 +188,16 @@ describe('LoopRun', () => {
       activationLedger: createProviderOrderedToolSurfaceActivationLedger([])
     })
 
-    const binding = bindActiveRequestToolSurface(run, requestSeq, snapshot)
+    const releaseActivationCandidates = vi.fn()
+    const binding = bindActiveRequestToolSurface(
+      run,
+      requestSeq,
+      snapshot,
+      releaseActivationCandidates
+    )
 
     expect(binding.snapshot).toBe(snapshot)
+    expect(binding.releaseActivationCandidates).toBe(releaseActivationCandidates)
     expect(run.activeRequestToolSurface).toBe(binding)
     expect(Object.isFrozen(binding)).toBe(true)
     enterPhysicalAttempt(run)
@@ -219,22 +226,36 @@ describe('LoopRun', () => {
         activationLedger: createProviderOrderedToolSurfaceActivationLedger([])
       })
 
-    expect(() => bindActiveRequestToolSurface(run, requestSeq + 1, snapshot())).toThrow(
-      /request sequence/
-    )
+    const releaseActivationCandidates = vi.fn()
     expect(() =>
-      bindActiveRequestToolSurface(run, requestSeq, snapshot({ messageId: 'other' }))
+      bindActiveRequestToolSurface(run, requestSeq + 1, snapshot(), releaseActivationCandidates)
+    ).toThrow(/request sequence/)
+    expect(() =>
+      bindActiveRequestToolSurface(
+        run,
+        requestSeq,
+        snapshot({ messageId: 'other' }),
+        releaseActivationCandidates
+      )
     ).toThrow(/Loop Run/)
     expect(() =>
-      bindActiveRequestToolSurface(run, requestSeq, {
-        request: {
-          sessionId: run.sessionId,
-          messageId: run.messageId,
-          runId: run.runId,
-          requestSeq
-        }
-      } as any)
+      bindActiveRequestToolSurface(
+        run,
+        requestSeq,
+        {
+          request: {
+            sessionId: run.sessionId,
+            messageId: run.messageId,
+            runId: run.runId,
+            requestSeq
+          }
+        } as any,
+        releaseActivationCandidates
+      )
     ).toThrow(/canonical builder/)
+    expect(() => bindActiveRequestToolSurface(run, requestSeq, snapshot(), null as never)).toThrow(
+      /release capability/
+    )
   })
 
   it('restores only valid persisted logical rounds', () => {

@@ -74,7 +74,14 @@ function createFullToolSurfacePort(definitions: readonly MCPToolDefinition[]): {
   const admit = vi.fn<ProviderAttemptToolSurfacePort['admit']>(({ snapshot }) => {
     controller.admit(snapshot)
   })
-  return { port: { build, admit }, build, admit, snapshots }
+  const releaseActivationCandidates: ProviderAttemptToolSurfacePort['releaseActivationCandidates'] =
+    (candidates) => controller.stageActivationBatch(candidates)
+  return {
+    port: { build, admit, releaseActivationCandidates },
+    build,
+    admit,
+    snapshots
+  }
 }
 
 function expectedAttemptOutcome(overrides: Record<string, unknown> = {}) {
@@ -518,7 +525,11 @@ describe('DeepChatContextCoordinator', () => {
       fixture.providerToolRefs[0].map((tool: MCPToolDefinition) => tool.function.name)
     ).toEqual(['write', 'read'])
     expect(fixture.providerToolSurfaceRefs).toEqual([snapshot, snapshot])
-    expect(fixture.run.activeRequestToolSurface).toEqual({ requestSeq: 1, snapshot })
+    expect(fixture.run.activeRequestToolSurface).toEqual({
+      requestSeq: 1,
+      snapshot,
+      releaseActivationCandidates: expect.any(Function)
+    })
     expect(fixture.run.activeRequestToolSurface?.snapshot).toBe(snapshot)
     expect(fixture.providerRequests.map((request) => request.identity)).toEqual([
       { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
@@ -761,7 +772,9 @@ describe('DeepChatContextCoordinator', () => {
       throw surfaceError
     })
     const admit = vi.fn<ProviderAttemptToolSurfacePort['admit']>()
-    const fixture = createAttemptInput({ toolSurface: { build, admit } })
+    const fixture = createAttemptInput({
+      toolSurface: { build, admit, releaseActivationCandidates: vi.fn() }
+    })
 
     await expect(
       collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
@@ -785,7 +798,8 @@ describe('DeepChatContextCoordinator', () => {
       toolSurface: {
         build: ({ requestSeq, tools: requestTools }) =>
           surface.port.build({ requestSeq: requestSeq + 1, tools: requestTools }),
-        admit: surface.port.admit
+        admit: surface.port.admit,
+        releaseActivationCandidates: surface.port.releaseActivationCandidates
       }
     })
 
@@ -814,7 +828,8 @@ describe('DeepChatContextCoordinator', () => {
             },
             toolDefinitions: []
           }) as ToolSurfaceSnapshot,
-        admit: vi.fn()
+        admit: vi.fn(),
+        releaseActivationCandidates: vi.fn()
       }
     })
 
@@ -832,7 +847,8 @@ describe('DeepChatContextCoordinator', () => {
     const fixture = createAttemptInput({
       toolSurface: {
         build: () => null as unknown as ToolSurfaceSnapshot,
-        admit: vi.fn()
+        admit: vi.fn(),
+        releaseActivationCandidates: vi.fn()
       }
     })
 
@@ -849,7 +865,9 @@ describe('DeepChatContextCoordinator', () => {
   it('does not build a Tool Surface after the Run is canceled', async () => {
     const build = vi.fn<ProviderAttemptToolSurfacePort['build']>()
     const admit = vi.fn<ProviderAttemptToolSurfacePort['admit']>()
-    const fixture = createAttemptInput({ toolSurface: { build, admit } })
+    const fixture = createAttemptInput({
+      toolSurface: { build, admit, releaseActivationCandidates: vi.fn() }
+    })
     fixture.run.abortController.abort()
 
     await expect(
@@ -944,7 +962,8 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.providerToolSurfaceRefs).toEqual(surface.snapshots)
     expect(fixture.run.activeRequestToolSurface).toEqual({
       requestSeq: 2,
-      snapshot: surface.snapshots[1]
+      snapshot: surface.snapshots[1],
+      releaseActivationCandidates: expect.any(Function)
     })
     expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
   })

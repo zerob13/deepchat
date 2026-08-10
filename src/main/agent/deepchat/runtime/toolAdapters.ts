@@ -2,6 +2,7 @@ import type { ProviderModelResolutionPort } from '@/provider/settings'
 import type {
   ToolCatalogPort,
   ToolExecutionPort,
+  ToolExecutionOptions,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
 import type { ProviderExecutionPort } from '@shared/types/provider'
@@ -17,6 +18,13 @@ export interface ToolCatalogCacheEntry<TProfile extends string = string> {
   profile: TProfile
   fingerprint: string
   tools: MCPToolDefinition[]
+}
+
+type MainProcessToolExecutionService = Pick<ToolServicePort, 'preCheckToolPermission'> & {
+  callTool(
+    request: Parameters<ToolServicePort['callTool']>[0],
+    options?: ToolExecutionOptions
+  ): ReturnType<ToolServicePort['callTool']>
 }
 
 export function createToolCatalogPort<TProfile extends string>(input: {
@@ -54,7 +62,9 @@ export function createToolCatalogPort<TProfile extends string>(input: {
   }
 }
 
-export function createToolExecutionPort(toolService: ToolServicePort): ToolExecutionPort {
+export function createToolExecutionPort(
+  toolService: MainProcessToolExecutionService
+): ToolExecutionPort {
   return {
     preCheck: (call, options) => toolService.preCheckToolPermission(call, options),
     execute: (call, options) => toolService.callTool(call, options)
