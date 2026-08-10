@@ -18,6 +18,7 @@ import { estimateToolDefinitionTokens } from './contextBuilder'
 
 export const TOOL_SURFACE_CATALOG_SCHEMA_VERSION = 1
 export const TOOL_SURFACE_CANONICALIZATION_VERSION = 'deepchat-tool-definition-v1'
+export const TOOL_SURFACE_ORDERING_VERSION = 'activation-ordinal-v1'
 export const MAX_TOOL_SURFACE_DEFINITIONS = 1_024
 export const MAX_TOOL_SURFACE_DEFINITION_BYTES = 256 * 1_024
 export const MAX_TOOL_SURFACE_TOTAL_DEFINITION_BYTES = 4 * 1_024 * 1_024
@@ -28,8 +29,11 @@ export const MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES = 4 * 1_024 * 1_024
 export const MAX_TOOL_SURFACE_SELECTION_HINTS = MAX_TOOL_SURFACE_DEFINITIONS
 export const MAX_TOOL_SURFACE_OVERLAP_IDENTITIES = MAX_TOOL_SURFACE_DEFINITIONS
 export const MAX_TOOL_SURFACE_HINT_INPUT_BYTES = MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES
+export const MAX_TOOL_SURFACE_CANDIDATE_BATCHES = 1_024
+export const MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES = 4_096
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
+const MAX_TOOL_SURFACE_REQUEST_ID_BYTES = 1_024
 
 export type ToolSurfaceErrorCode =
   | 'conflicting_tool'
@@ -111,6 +115,30 @@ export interface ToolSurfaceShadowSelectionEntry {
 export interface ToolSurfaceDefinitionIdentity {
   readonly stableTargetKey: string
   readonly canonicalToolDefinitionHash: string
+}
+
+export interface ToolSurfaceActivationOrderEntry extends ToolSurfaceDefinitionIdentity {
+  readonly activationOrdinal: number
+}
+
+export interface ToolSurfaceActivationLedger {
+  readonly orderingVersion: typeof TOOL_SURFACE_ORDERING_VERSION
+  readonly entries: readonly ToolSurfaceActivationOrderEntry[]
+}
+
+export interface ToolSurfaceCandidateScope {
+  readonly sessionId: string
+  readonly messageId: string
+  readonly runId: string
+}
+
+export interface ToolSurfaceActivationCandidate extends ToolSurfaceDefinitionIdentity {
+  readonly sessionId: string
+  readonly messageId: string
+  readonly runId: string
+  readonly requestSeq: number
+  readonly toolCallOrdinalWithinBatch: number
+  readonly resultRank: number
 }
 
 export interface ToolSurfaceShadowDecision {
@@ -462,6 +490,8 @@ function hasBoundedDefinitionIdentities(
   let inputBytes = 0
   for (const identity of identities) {
     if (
+      typeof identity?.stableTargetKey !== 'string' ||
+      typeof identity.canonicalToolDefinitionHash !== 'string' ||
       identity.stableTargetKey.length > MAX_TOOL_SURFACE_DEFINITION_BYTES ||
       identity.canonicalToolDefinitionHash.length > 256
     ) {
@@ -473,6 +503,299 @@ function hasBoundedDefinitionIdentities(
     if (inputBytes > MAX_TOOL_SURFACE_HINT_INPUT_BYTES) return false
   }
   return true
+}
+
+function hasCanonicalDefinitionIdentity(identity: ToolSurfaceDefinitionIdentity): boolean {
+  return (
+    identity.stableTargetKey.length > 0 &&
+    identity.stableTargetKey === identity.stableTargetKey.trim() &&
+    !identity.stableTargetKey.includes('\0') &&
+    /^[0-9a-f]{64}$/.test(identity.canonicalToolDefinitionHash)
+  )
+}
+
+function isBoundedRequestIdentity(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value === value.trim() &&
+    !value.includes('\0') &&
+    Buffer.byteLength(value, 'utf8') <= MAX_TOOL_SURFACE_REQUEST_ID_BYTES
+  )
+}
+
+function compareSafeIntegers(left: number, right: number): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function requireBoundedDefinitionIdentities(
+  identities: readonly ToolSurfaceDefinitionIdentity[],
+  label: string,
+  maxIdentities = MAX_TOOL_SURFACE_DEFINITIONS
+): void {
+  if (identities.length > maxIdentities || !hasBoundedDefinitionIdentities(identities)) {
+    throw new ToolSurfaceError(`${label} exceeds its bounded identity limit.`, 'limit_exceeded')
+  }
+  if (!identities.every(hasCanonicalDefinitionIdentity)) {
+    throw new ToolSurfaceError(`${label} contains an invalid canonical identity.`, 'invalid_definition')
+  }
+}
+
+function copyDefinitionIdentity(
+  identity: ToolSurfaceDefinitionIdentity
+): ToolSurfaceDefinitionIdentity {
+  return {
+    stableTargetKey: identity.stableTargetKey,
+    canonicalToolDefinitionHash: identity.canonicalToolDefinitionHash
+  }
+}
+
+function copyActivationCandidate(
+  candidate: ToolSurfaceActivationCandidate
+): ToolSurfaceActivationCandidate {
+  return {
+    ...copyDefinitionIdentity(candidate),
+    sessionId: candidate.sessionId,
+    messageId: candidate.messageId,
+    runId: candidate.runId,
+    requestSeq: candidate.requestSeq,
+    toolCallOrdinalWithinBatch: candidate.toolCallOrdinalWithinBatch,
+    resultRank: candidate.resultRank
+  }
+}
+
+function freezeActivationEntries(
+  entries: ToolSurfaceActivationOrderEntry[]
+): readonly ToolSurfaceActivationOrderEntry[] {
+  for (const entry of entries) Object.freeze(entry)
+  return Object.freeze(entries)
+}
+
+function freezeActivationLedger(
+  entries: ToolSurfaceActivationOrderEntry[]
+): ToolSurfaceActivationLedger {
+  return Object.freeze({
+    orderingVersion: TOOL_SURFACE_ORDERING_VERSION,
+    entries: freezeActivationEntries(entries)
+  })
+}
+
+export function createToolSurfaceActivationLedger(
+  initialIdentities: readonly ToolSurfaceDefinitionIdentity[]
+): ToolSurfaceActivationLedger {
+  requireBoundedDefinitionIdentities(initialIdentities, 'Initial Tool Surface order')
+  const hashByTarget = new Map<string, string>()
+  const entries: ToolSurfaceActivationOrderEntry[] = []
+  for (const identity of initialIdentities) {
+    const previousHash = hashByTarget.get(identity.stableTargetKey)
+    if (previousHash !== undefined) {
+      throw new ToolSurfaceError(
+        previousHash === identity.canonicalToolDefinitionHash
+          ? 'Initial Tool Surface order contains a duplicate target.'
+          : 'Initial Tool Surface order contains conflicting target definitions.',
+        'conflicting_tool'
+      )
+    }
+    hashByTarget.set(identity.stableTargetKey, identity.canonicalToolDefinitionHash)
+    entries.push({ ...copyDefinitionIdentity(identity), activationOrdinal: entries.length })
+  }
+  return freezeActivationLedger(entries)
+}
+
+function validateActivationLedger(
+  ledger: ToolSurfaceActivationLedger
+): Map<string, string> {
+  if (ledger.orderingVersion !== TOOL_SURFACE_ORDERING_VERSION) {
+    throw new ToolSurfaceError(
+      'Tool Surface activation ledger uses an unsupported ordering version.',
+      'invalid_definition'
+    )
+  }
+  const { entries } = ledger
+  requireBoundedDefinitionIdentities(entries, 'Tool Surface activation order')
+  const hashByTarget = new Map<string, string>()
+  entries.forEach((entry, index) => {
+    if (entry.activationOrdinal !== index) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation ordinals must be contiguous.',
+        'invalid_definition'
+      )
+    }
+    const previousHash = hashByTarget.get(entry.stableTargetKey)
+    if (previousHash !== undefined) {
+      throw new ToolSurfaceError(
+        previousHash === entry.canonicalToolDefinitionHash
+          ? 'Tool Surface activation order contains a duplicate target.'
+          : 'Tool Surface activation order contains conflicting target definitions.',
+        'conflicting_tool'
+      )
+    }
+    hashByTarget.set(entry.stableTargetKey, entry.canonicalToolDefinitionHash)
+  })
+  return hashByTarget
+}
+
+export function appendToolSurfaceActivationBatch(
+  ledger: ToolSurfaceActivationLedger,
+  additions: readonly ToolSurfaceDefinitionIdentity[]
+): ToolSurfaceActivationLedger {
+  const hashByTarget = validateActivationLedger(ledger)
+  const currentEntries = ledger.entries
+  requireBoundedDefinitionIdentities(additions, 'Tool Surface activation batch')
+  const pendingByTarget = new Map<string, ToolSurfaceDefinitionIdentity>()
+  for (const identity of additions) {
+    const existingHash = hashByTarget.get(identity.stableTargetKey)
+    if (existingHash !== undefined) {
+      if (existingHash !== identity.canonicalToolDefinitionHash) {
+        throw new ToolSurfaceError(
+          'Tool Surface activation batch conflicts with an active target definition.',
+          'conflicting_tool'
+        )
+      }
+      continue
+    }
+    const pending = pendingByTarget.get(identity.stableTargetKey)
+    if (pending && pending.canonicalToolDefinitionHash !== identity.canonicalToolDefinitionHash) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation batch contains conflicting target definitions.',
+        'conflicting_tool'
+      )
+    }
+    pendingByTarget.set(identity.stableTargetKey, identity)
+  }
+
+  if (currentEntries.length + pendingByTarget.size > MAX_TOOL_SURFACE_DEFINITIONS) {
+    throw new ToolSurfaceError(
+      'Tool Surface activation order exceeds its definition limit.',
+      'limit_exceeded'
+    )
+  }
+  const entries = currentEntries.map((entry) => ({
+    ...copyDefinitionIdentity(entry),
+    activationOrdinal: entry.activationOrdinal
+  }))
+  const orderedAdditions = [...pendingByTarget.values()].sort((left, right) =>
+    compareCodePoints(left.stableTargetKey, right.stableTargetKey)
+  )
+  for (const identity of orderedAdditions) {
+    entries.push({ ...copyDefinitionIdentity(identity), activationOrdinal: entries.length })
+  }
+  return freezeActivationLedger(entries)
+}
+
+export function projectToolSurfaceActiveEntries(
+  ledger: ToolSurfaceActivationLedger,
+  eligibleIdentities: readonly ToolSurfaceDefinitionIdentity[]
+): readonly ToolSurfaceActivationOrderEntry[] {
+  const activeHashByTarget = validateActivationLedger(ledger)
+  requireBoundedDefinitionIdentities(eligibleIdentities, 'Eligible Tool Surface projection')
+  const eligibleTargets = new Set<string>()
+  for (const identity of eligibleIdentities) {
+    const activeHash = activeHashByTarget.get(identity.stableTargetKey)
+    if (activeHash === undefined) continue
+    if (activeHash !== identity.canonicalToolDefinitionHash) {
+      throw new ToolSurfaceError(
+        'Eligible Tool Surface contains a drifted active target definition.',
+        'conflicting_tool'
+      )
+    }
+    eligibleTargets.add(identity.stableTargetKey)
+  }
+  return freezeActivationEntries(
+    ledger.entries
+      .filter((entry) => eligibleTargets.has(entry.stableTargetKey))
+      .map((entry) => ({
+        ...copyDefinitionIdentity(entry),
+        activationOrdinal: entry.activationOrdinal
+      }))
+  )
+}
+
+export function mergeToolSurfaceActivationCandidates(
+  scope: ToolSurfaceCandidateScope,
+  candidateBatches: readonly (readonly ToolSurfaceActivationCandidate[])[]
+): readonly ToolSurfaceActivationCandidate[] {
+  if (
+    !isBoundedRequestIdentity(scope.sessionId) ||
+    !isBoundedRequestIdentity(scope.messageId) ||
+    !isBoundedRequestIdentity(scope.runId)
+  ) {
+    throw new ToolSurfaceError('Tool Surface candidate scope is invalid.', 'invalid_definition')
+  }
+  if (candidateBatches.length > MAX_TOOL_SURFACE_CANDIDATE_BATCHES) {
+    throw new ToolSurfaceError(
+      'Tool Surface candidate merge exceeds its batch limit.',
+      'limit_exceeded'
+    )
+  }
+
+  let candidateCount = 0
+  const candidates: ToolSurfaceActivationCandidate[] = []
+  for (const batch of candidateBatches) {
+    candidateCount += batch.length
+    if (
+      !Number.isSafeInteger(candidateCount) ||
+      candidateCount > MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface candidate merge exceeds its candidate limit.',
+        'limit_exceeded'
+      )
+    }
+    for (const candidate of batch) candidates.push(copyActivationCandidate(candidate))
+  }
+  requireBoundedDefinitionIdentities(
+    candidates,
+    'Tool Surface activation candidates',
+    MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+  )
+
+  for (const candidate of candidates) {
+    if (
+      candidate.sessionId !== scope.sessionId ||
+      candidate.messageId !== scope.messageId ||
+      candidate.runId !== scope.runId ||
+      !Number.isSafeInteger(candidate.requestSeq) ||
+      candidate.requestSeq <= 0 ||
+      !Number.isSafeInteger(candidate.toolCallOrdinalWithinBatch) ||
+      candidate.toolCallOrdinalWithinBatch < 0 ||
+      !Number.isSafeInteger(candidate.resultRank) ||
+      candidate.resultRank < 0
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation candidate has an invalid origin.',
+        'invalid_definition'
+      )
+    }
+  }
+
+  candidates.sort(
+    (left, right) =>
+      compareSafeIntegers(left.requestSeq, right.requestSeq) ||
+      compareSafeIntegers(
+        left.toolCallOrdinalWithinBatch,
+        right.toolCallOrdinalWithinBatch
+      ) ||
+      compareSafeIntegers(left.resultRank, right.resultRank) ||
+      compareCodePoints(left.stableTargetKey, right.stableTargetKey)
+  )
+  const merged: ToolSurfaceActivationCandidate[] = []
+  const hashByTarget = new Map<string, string>()
+  for (const candidate of candidates) {
+    const previousHash = hashByTarget.get(candidate.stableTargetKey)
+    if (previousHash !== undefined) {
+      if (previousHash !== candidate.canonicalToolDefinitionHash) {
+        throw new ToolSurfaceError(
+          'Tool Surface activation candidates contain conflicting target definitions.',
+          'conflicting_tool'
+        )
+      }
+      continue
+    }
+    hashByTarget.set(candidate.stableTargetKey, candidate.canonicalToolDefinitionHash)
+    Object.freeze(candidate)
+    merged.push(candidate)
+  }
+  return Object.freeze(merged)
 }
 
 function freezeShadowDecision(decision: ToolSurfaceShadowDecision): ToolSurfaceShadowDecision {

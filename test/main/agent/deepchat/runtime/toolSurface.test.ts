@@ -6,15 +6,23 @@ import {
   type MCPToolDefinitionBase
 } from '@shared/types/core/mcp'
 import {
+  MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES,
+  MAX_TOOL_SURFACE_CANDIDATE_BATCHES,
   MAX_TOOL_SURFACE_DEFINITION_BYTES,
   MAX_TOOL_SURFACE_DEFINITION_DEPTH,
   MAX_TOOL_SURFACE_OVERLAP_IDENTITIES,
   MAX_TOOL_SURFACE_SELECTION_HINTS,
   MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES,
   ToolSurfaceError,
+  appendToolSurfaceActivationBatch,
   buildCanonicalToolCatalog,
   computeToolSurfaceShadowDecision,
   computeToolSurfaceStaticDefinitionOverlap,
+  createToolSurfaceActivationLedger,
+  mergeToolSurfaceActivationCandidates,
+  projectToolSurfaceActiveEntries,
+  type ToolSurfaceActivationCandidate,
+  type ToolSurfaceDefinitionIdentity,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
 import { buildProviderVisibleToolDefinitionsHash } from '@/tape/domain/executionContract'
@@ -101,6 +109,33 @@ const SHADOW_POLICY: ToolSurfaceShadowPolicy = {
   activationReserveDefinitionTokens: 100,
   toolSearchDefinitionTokens: 50,
   toolSearchPromptTokens: 25
+}
+
+const candidateScope = {
+  sessionId: 'session-1',
+  messageId: 'message-1',
+  runId: '11111111-1111-4111-8111-111111111111'
+}
+
+function definitionIdentity(
+  stableTargetKey: string,
+  canonicalToolDefinitionHash = 'a'.repeat(64)
+): ToolSurfaceDefinitionIdentity {
+  return { stableTargetKey, canonicalToolDefinitionHash }
+}
+
+function activationCandidate(
+  stableTargetKey: string,
+  overrides: Partial<ToolSurfaceActivationCandidate> = {}
+): ToolSurfaceActivationCandidate {
+  return {
+    ...candidateScope,
+    requestSeq: 1,
+    toolCallOrdinalWithinBatch: 0,
+    resultRank: 0,
+    ...definitionIdentity(stableTargetKey),
+    ...overrides
+  }
 }
 
 describe('canonical Tool Surface catalog', () => {
@@ -388,6 +423,267 @@ describe('canonical Tool Surface catalog', () => {
 
     expect(buildCanonicalToolCatalog([left]).definitionTokens).toBe(
       buildCanonicalToolCatalog([right]).definitionTokens
+    )
+  })
+})
+
+describe('Tool Surface provider ordering', () => {
+  it('preserves initial order and appends each activation batch deterministically', () => {
+    const initial = createToolSurfaceActivationLedger([
+      definitionIdentity('target-b'),
+      definitionIdentity('target-a')
+    ])
+    const appended = appendToolSurfaceActivationBatch(initial, [
+      definitionIdentity('target-d'),
+      definitionIdentity('target-b'),
+      definitionIdentity('target-c')
+    ])
+
+    expect(appended.entries).toEqual([
+      { ...definitionIdentity('target-b'), activationOrdinal: 0 },
+      { ...definitionIdentity('target-a'), activationOrdinal: 1 },
+      { ...definitionIdentity('target-c'), activationOrdinal: 2 },
+      { ...definitionIdentity('target-d'), activationOrdinal: 3 }
+    ])
+    expect(initial.entries).toHaveLength(2)
+    expect(Object.isFrozen(appended)).toBe(true)
+    expect(Object.isFrozen(appended.entries)).toBe(true)
+    expect(appended.entries.every((entry) => Object.isFrozen(entry))).toBe(true)
+    expectSurfaceError(
+      () =>
+        createToolSurfaceActivationLedger([
+          definitionIdentity('target-a'),
+          definitionIdentity('target-a')
+        ]),
+      'conflicting_tool'
+    )
+  })
+
+  it('filters revoked targets and restores their original ordinals on re-enablement', () => {
+    const ledger = appendToolSurfaceActivationBatch(
+      createToolSurfaceActivationLedger([
+        definitionIdentity('target-b'),
+        definitionIdentity('target-a')
+      ]),
+      [definitionIdentity('target-d'), definitionIdentity('target-c')]
+    )
+
+    expect(
+      projectToolSurfaceActiveEntries(ledger, [
+        definitionIdentity('target-d'),
+        definitionIdentity('target-a')
+      ]).map((entry) => [entry.stableTargetKey, entry.activationOrdinal])
+    ).toEqual([
+      ['target-a', 1],
+      ['target-d', 3]
+    ])
+    expect(
+      projectToolSurfaceActiveEntries(ledger, [
+        definitionIdentity('target-c'),
+        definitionIdentity('target-b'),
+        definitionIdentity('target-d'),
+        definitionIdentity('target-a')
+      ]).map((entry) => [entry.stableTargetKey, entry.activationOrdinal])
+    ).toEqual([
+      ['target-b', 0],
+      ['target-a', 1],
+      ['target-c', 2],
+      ['target-d', 3]
+    ])
+  })
+
+  it('retains revoked ledger entries while appending and later restoring authority', () => {
+    const initial = createToolSurfaceActivationLedger([
+      definitionIdentity('target-a'),
+      definitionIdentity('target-b'),
+      definitionIdentity('target-c')
+    ])
+    expect(
+      projectToolSurfaceActiveEntries(initial, [
+        definitionIdentity('target-a'),
+        definitionIdentity('target-b')
+      ]).map((entry) => entry.stableTargetKey)
+    ).toEqual(['target-a', 'target-b'])
+
+    const appended = appendToolSurfaceActivationBatch(initial, [definitionIdentity('target-d')])
+    expect(
+      projectToolSurfaceActiveEntries(appended, [
+        definitionIdentity('target-a'),
+        definitionIdentity('target-b'),
+        definitionIdentity('target-d')
+      ]).map((entry) => [entry.stableTargetKey, entry.activationOrdinal])
+    ).toEqual([
+      ['target-a', 0],
+      ['target-b', 1],
+      ['target-d', 3]
+    ])
+    expect(
+      projectToolSurfaceActiveEntries(appended, [
+        definitionIdentity('target-d'),
+        definitionIdentity('target-c'),
+        definitionIdentity('target-b'),
+        definitionIdentity('target-a')
+      ]).map((entry) => [entry.stableTargetKey, entry.activationOrdinal])
+    ).toEqual([
+      ['target-a', 0],
+      ['target-b', 1],
+      ['target-c', 2],
+      ['target-d', 3]
+    ])
+  })
+
+  it('rejects definition drift and malformed activation ledgers', () => {
+    const ledger = createToolSurfaceActivationLedger([definitionIdentity('target-a')])
+    expectSurfaceError(
+      () =>
+        appendToolSurfaceActivationBatch(ledger, [
+          definitionIdentity('target-a', 'b'.repeat(64))
+        ]),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        projectToolSurfaceActiveEntries(ledger, [
+          definitionIdentity('target-a', 'b'.repeat(64))
+        ]),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        appendToolSurfaceActivationBatch(
+          {
+            orderingVersion: 'activation-ordinal-v1',
+            entries: [{ ...definitionIdentity('target-a'), activationOrdinal: 1 }]
+          },
+          []
+        ),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () => createToolSurfaceActivationLedger([definitionIdentity('target-a', 'not-a-hash')]),
+      'invalid_definition'
+    )
+  })
+})
+
+describe('Tool Surface activation candidate merge', () => {
+  it('orders by request, batch ordinal, result rank, and stable target before deduplication', () => {
+    const merged = mergeToolSurfaceActivationCandidates(candidateScope, [
+      [
+        activationCandidate('target-b', { toolCallOrdinalWithinBatch: 1 }),
+        activationCandidate('target-z', { requestSeq: 2 }),
+        activationCandidate('target-a', { resultRank: 1 })
+      ],
+      [
+        activationCandidate('target-c'),
+        activationCandidate('target-c', {
+          requestSeq: 2,
+          toolCallOrdinalWithinBatch: 99,
+          resultRank: 99
+        })
+      ]
+    ])
+
+    expect(merged.map((candidate) => candidate.stableTargetKey)).toEqual([
+      'target-c',
+      'target-a',
+      'target-b',
+      'target-z'
+    ])
+    expect(merged.find((candidate) => candidate.stableTargetKey === 'target-c')).toMatchObject({
+      requestSeq: 1,
+      toolCallOrdinalWithinBatch: 0,
+      resultRank: 0
+    })
+    expect(
+      mergeToolSurfaceActivationCandidates(candidateScope, [
+        [activationCandidate('target-c')],
+        [
+          activationCandidate('target-b', { toolCallOrdinalWithinBatch: 1 }),
+          activationCandidate('target-a', { resultRank: 1 })
+        ],
+        [activationCandidate('target-z', { requestSeq: 2 })]
+      ])
+    ).toEqual(merged)
+    expect(Object.isFrozen(merged)).toBe(true)
+    expect(merged.every((candidate) => Object.isFrozen(candidate))).toBe(true)
+  })
+
+  it('uses stable target order rather than opaque operation identity for exact ties', () => {
+    const merged = mergeToolSurfaceActivationCandidates(candidateScope, [
+      [activationCandidate('target-z'), activationCandidate('target-a')]
+    ])
+
+    expect(merged.map((candidate) => candidate.stableTargetKey)).toEqual([
+      'target-a',
+      'target-z'
+    ])
+  })
+
+  it('does not retain unbounded search or provider metadata', () => {
+    const candidate = {
+      ...activationCandidate('target-a'),
+      query: 'sensitive raw query',
+      toolCallId: 'opaque-provider-id',
+      resultBody: { unbounded: true }
+    } as ToolSurfaceActivationCandidate
+
+    expect(mergeToolSurfaceActivationCandidates(candidateScope, [[candidate]])).toEqual([
+      activationCandidate('target-a')
+    ])
+  })
+
+  it('rejects mixed scopes, invalid ordinals, and conflicting definition identities', () => {
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationCandidates(candidateScope, [
+          [activationCandidate('target-a', { runId: 'another-run' })]
+        ]),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationCandidates(candidateScope, [
+          [activationCandidate('target-a', { toolCallOrdinalWithinBatch: -1 })]
+        ]),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationCandidates(candidateScope, [
+          [
+            activationCandidate('target-a'),
+            activationCandidate('target-a', { canonicalToolDefinitionHash: 'b'.repeat(64) })
+          ]
+        ]),
+      'conflicting_tool'
+    )
+  })
+
+  it('bounds candidate batches and aggregate candidate work', () => {
+    expect(
+      mergeToolSurfaceActivationCandidates(candidateScope, [
+        Array.from({ length: MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES }, () =>
+          activationCandidate('target-a')
+        )
+      ])
+    ).toHaveLength(1)
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationCandidates(
+          candidateScope,
+          Array.from({ length: MAX_TOOL_SURFACE_CANDIDATE_BATCHES + 1 }, () => [])
+        ),
+      'limit_exceeded'
+    )
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationCandidates(candidateScope, [
+          Array.from({ length: MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES + 1 }, (_, index) =>
+            activationCandidate(`target-${index}`)
+          )
+        ]),
+      'limit_exceeded'
     )
   })
 })

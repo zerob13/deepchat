@@ -13,11 +13,11 @@
 ## P0-A: Canonical Domain And Shadow Measurement
 
 - [x] Add canonical bounded Tool Surface domain types and deterministic hash recipes.
-- [ ] Build the Run owned definition universe across current Agent, MCP, Plugin, and valid enabled
+- [x] Build the Run owned definition universe across current Agent, MCP, Plugin, and valid enabled
       Skill capabilities.
-- [ ] Resolve Skill requirements through execution source mapping and cover absent, ambiguous,
+- [x] Resolve Skill requirements through execution source mapping and cover absent, ambiguous,
       unresolved, disabled, reserved, and Plugin-unavailable cases.
-- [ ] Add provider ordering and candidate merge utilities with focused tests.
+- [x] Add provider ordering and candidate merge utilities with focused tests.
 - [x] Bound canonicalization bytes/depth and prohibit hash caching without proven immutable
       definition revision.
 - [ ] Compute Run-level shadow decisions without changing provider payloads or Tape.
