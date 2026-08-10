@@ -585,7 +585,8 @@ function createDescriptorIndependentDeleteHarness(options: {
   const skillService = createMockSkillService()
   const sessionPermissionPort = {
     clearSessionPermissions: vi.fn(),
-    approvePermission: vi.fn().mockResolvedValue(undefined)
+    approvePermission: vi.fn().mockResolvedValue({ kind: 'granted' }),
+    revokeOneShotCommandPermission: vi.fn()
   }
   const providerRuntime = createMockProviderRuntime()
   const providerSettings = createMockProviderSettings()

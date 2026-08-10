@@ -4,6 +4,7 @@ import os from 'os'
 import path from 'path'
 import { AgentToolManager } from '@/tool/agentTools/agentToolManager'
 import { AgentBashHandler } from '@/tool/agentTools/agentBashHandler'
+import { POSIX_COMMAND_SHELL } from '../../../helpers/commandShell'
 import { createAgentToolDependencies } from './agentToolDependencies'
 import { CommandPermissionService } from '@/tool/permission'
 
@@ -60,8 +61,8 @@ describe('AgentToolManager skill file access', () => {
     getSkillExtension: ReturnType<typeof vi.fn>
   }
 
-  const buildManager = () =>
-    new AgentToolManager({
+  const buildManager = () => {
+    const manager = new AgentToolManager({
       skillSettings: { isEnabled: () => true } as any,
       settings: { get: vi.fn() },
       commandPermissionHandler: new CommandPermissionService(),
@@ -88,6 +89,23 @@ describe('AgentToolManager skill file access', () => {
         consumeSettingsApproval: vi.fn().mockReturnValue(false)
       })
     })
+    const callTool = manager.callTool.bind(manager)
+    const preCheckToolPermission = manager.preCheckToolPermission.bind(manager)
+    vi.spyOn(manager, 'callTool').mockImplementation((toolName, args, conversationId, options) =>
+      callTool(toolName, args, conversationId, {
+        commandShell: POSIX_COMMAND_SHELL,
+        ...options
+      })
+    )
+    vi.spyOn(manager, 'preCheckToolPermission').mockImplementation(
+      (toolName, args, conversationId, options) =>
+        preCheckToolPermission(toolName, args, conversationId, {
+          commandShell: POSIX_COMMAND_SHELL,
+          ...options
+        })
+    )
+    return manager
+  }
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -172,7 +190,8 @@ describe('AgentToolManager skill file access', () => {
         content: 'updated',
         base_directory: skillRoot
       },
-      'conv1'
+      'conv1',
+      { commandShell: POSIX_COMMAND_SHELL }
     )
 
     expect(permission).toBeNull()
@@ -228,7 +247,8 @@ describe('AgentToolManager skill file access', () => {
             permissionRequest: expect.objectContaining({
               toolName,
               permissionType,
-              paths: [await fs.realpath(otherAgentSkillFilePath)]
+              paths: [await fs.realpath(otherAgentSkillFilePath)],
+              shellProfile: 'posix'
             })
           })
         })
@@ -276,14 +296,16 @@ describe('AgentToolManager skill file access', () => {
         description: 'Print cwd',
         cwd: skillRoot
       },
-      'conv1'
+      'conv1',
+      { commandShell: POSIX_COMMAND_SHELL }
     )
 
     expect(permission).toEqual(
       expect.objectContaining({
         needsPermission: true,
         permissionType: 'all',
-        paths: [skillRoot]
+        paths: [skillRoot],
+        shellProfile: 'posix'
       })
     )
 
@@ -295,7 +317,8 @@ describe('AgentToolManager skill file access', () => {
           description: 'Print cwd',
           cwd: skillRoot
         },
-        'conv1'
+        'conv1',
+        { commandShell: POSIX_COMMAND_SHELL }
       )
     ).rejects.toThrow(`Working directory is not allowed: ${skillRoot}`)
   })
@@ -329,7 +352,8 @@ describe('AgentToolManager skill file access', () => {
       },
       'conv1',
       {
-        allowExternalFileAccess: true
+        allowExternalFileAccess: true,
+        commandShell: POSIX_COMMAND_SHELL
       }
     )
 
@@ -354,7 +378,7 @@ describe('AgentToolManager skill file access', () => {
           cwd: otherSkillRoot
         },
         'conv1',
-        { allowExternalFileAccess: true }
+        { allowExternalFileAccess: true, commandShell: POSIX_COMMAND_SHELL }
       )
     ).rejects.toThrow('another Agent Skill scope')
   })

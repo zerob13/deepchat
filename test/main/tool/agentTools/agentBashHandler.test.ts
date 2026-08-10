@@ -4,8 +4,13 @@ import fs from 'fs'
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
+import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
 import { AgentBashHandler } from '@/tool/agentTools/agentBashHandler'
 import { CommandPermissionService } from '@/tool/permission/commandPermissionService'
+import {
+  POSIX_COMMAND_SHELL,
+  WINDOWS_POWERSHELL_COMMAND_SHELL
+} from '../../../helpers/commandShell'
 
 vi.mock('child_process', () => ({
   spawn: vi.fn()
@@ -70,10 +75,13 @@ describe('AgentBashHandler', () => {
         offloaded: false
       })
 
-    const result = await handler.executeCommand({
-      command: originalCommand,
-      description: 'List source files'
-    })
+    const result = await handler.executeCommand(
+      {
+        command: originalCommand,
+        description: 'List source files'
+      },
+      { commandShell: POSIX_COMMAND_SHELL }
+    )
 
     expect(runShellProcess).toHaveBeenCalledTimes(2)
     expect(runShellProcess).toHaveBeenNthCalledWith(
@@ -125,10 +133,13 @@ describe('AgentBashHandler', () => {
         offloaded: false
       })
 
-    const result = await handler.executeCommand({
-      command: 'node scripts/check.js',
-      description: 'Run project check'
-    })
+    const result = await handler.executeCommand(
+      {
+        command: 'node scripts/check.js',
+        description: 'Run project check'
+      },
+      { commandShell: POSIX_COMMAND_SHELL }
+    )
 
     expect(runShellProcess).toHaveBeenCalledTimes(1)
     expect(result.rtkApplied).toBe(true)
@@ -140,7 +151,8 @@ describe('AgentBashHandler', () => {
 
   it('creates a scoped command environment only after command approval', async () => {
     const permissionService = new CommandPermissionService()
-    permissionService.approve('conv-1', 'deepchat model', false)
+    const oneShotCommandGrantId = permissionService.approve('conv-1', 'posix:deepchat model', false)
+    expect(oneShotCommandGrantId).not.toBeNull()
     const commandEnvironment = {
       createEnvironment: vi.fn(() => ({
         variables: { DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token' },
@@ -176,7 +188,9 @@ describe('AgentBashHandler', () => {
         description: 'Invoke model'
       },
       {
+        commandShell: POSIX_COMMAND_SHELL,
         conversationId: 'conv-1',
+        oneShotCommandGrantId: oneShotCommandGrantId ?? undefined,
         env: {
           PATH: ['/controlled/bin', '/shared/bin'].join(path.delimiter),
           CONTROLLED_VALUE: 'preserved'
@@ -186,7 +200,8 @@ describe('AgentBashHandler', () => {
 
     expect(commandEnvironment.createEnvironment).toHaveBeenCalledWith(
       'conv-1',
-      'deepchat model invoke --prompt hello'
+      'deepchat model invoke --prompt hello',
+      POSIX_COMMAND_SHELL
     )
     expect(prepareCommand).toHaveBeenCalledWith(
       'deepchat model invoke --prompt hello',
@@ -194,6 +209,7 @@ describe('AgentBashHandler', () => {
         DEEPCHAT_CLI_AGENT_TOKEN: 'scoped-token',
         CONTROLLED_VALUE: 'preserved'
       }),
+      POSIX_COMMAND_SHELL,
       true
     )
     const preparedEnvironment = prepareCommand.mock.calls[0]?.[1] as Record<string, string>
@@ -202,6 +218,42 @@ describe('AgentBashHandler', () => {
       '/controlled/bin',
       '/shared/bin'
     ])
+  })
+
+  it('bypasses RTK rewrites for PowerShell commands', async () => {
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => true },
+      createPermissionService()
+    )
+    const prepareShellCommand = vi
+      .spyOn(rtkRuntimeService, 'prepareShellCommand')
+      .mockResolvedValue({
+        originalCommand: 'Get-ChildItem',
+        command: 'Get-ChildItem',
+        env: { PATH: 'C:\\Windows' },
+        rewritten: false,
+        usedRtk: false,
+        rtkApplied: false,
+        rtkMode: 'bypass',
+        rtkFallbackReason: 'RTK rewrite is unavailable for this command shell'
+      })
+
+    const prepared = await (handler as never).prepareCommand(
+      'Get-ChildItem',
+      {},
+      WINDOWS_POWERSHELL_COMMAND_SHELL
+    )
+
+    expect(prepareShellCommand).toHaveBeenCalledWith('Get-ChildItem', {}, true, {
+      allowRewrite: false
+    })
+    expect(prepared).toMatchObject({
+      command: 'Get-ChildItem',
+      rewritten: false,
+      rtkApplied: false,
+      rtkFallbackReason: 'RTK rewrite bypassed for non-POSIX command shell'
+    })
   })
 
   it('does not issue a scoped environment while command approval is pending', async () => {
@@ -225,7 +277,7 @@ describe('AgentBashHandler', () => {
           command: 'deepchat model invoke --prompt hello',
           description: 'Invoke model'
         },
-        { conversationId: 'conv-1' }
+        { conversationId: 'conv-1', commandShell: POSIX_COMMAND_SHELL }
       )
     ).rejects.toMatchObject({ name: 'Error', message: 'Command permission required' })
     expect(commandEnvironment.createEnvironment).not.toHaveBeenCalled()
@@ -257,11 +309,14 @@ describe('AgentBashHandler', () => {
         offloaded: false
       })
 
-    const result = await handler.executeCommand({
-      command: 'find . -name "*.ts"',
-      description: 'Search ts files',
-      timeout: 1000
-    })
+    const result = await handler.executeCommand(
+      {
+        command: 'find . -name "*.ts"',
+        description: 'Search ts files',
+        timeout: 1000
+      },
+      { commandShell: POSIX_COMMAND_SHELL }
+    )
 
     expect(runShellProcess).toHaveBeenCalledTimes(1)
     expect(result.rtkApplied).toBe(true)
@@ -304,6 +359,7 @@ describe('AgentBashHandler', () => {
         background: true
       },
       {
+        commandShell: POSIX_COMMAND_SHELL,
         conversationId: 'conv-1',
         beforeExecute
       }
@@ -368,6 +424,7 @@ describe('AgentBashHandler', () => {
         cwd: externalCwd
       },
       {
+        commandShell: POSIX_COMMAND_SHELL,
         allowExternalCwd: true
       }
     )
@@ -390,11 +447,14 @@ describe('AgentBashHandler', () => {
     const runShellProcess = vi.spyOn(handler as never, 'runShellProcess' as never)
 
     await expect(
-      handler.executeCommand({
-        command: 'pwd',
-        description: 'Print cwd',
-        cwd: externalCwd
-      })
+      handler.executeCommand(
+        {
+          command: 'pwd',
+          description: 'Print cwd',
+          cwd: externalCwd
+        },
+        { commandShell: POSIX_COMMAND_SHELL }
+      )
     ).rejects.toThrow('Working directory is not allowed')
 
     expect(runShellProcess).not.toHaveBeenCalled()
@@ -416,7 +476,7 @@ describe('AgentBashHandler', () => {
           command: 'pwd',
           description: 'Print working directory'
         },
-        { beforeExecute }
+        { beforeExecute, commandShell: POSIX_COMMAND_SHELL }
       )
     ).rejects.toThrow('Working directory does not exist or is not accessible')
 
@@ -456,7 +516,7 @@ describe('AgentBashHandler', () => {
         command: 'find . -name "*.ts"',
         description: 'Find TypeScript files'
       },
-      { beforeExecute }
+      { beforeExecute, commandShell: POSIX_COMMAND_SHELL }
     )
 
     expect(order).toEqual(['commit', 'spawn'])
@@ -502,6 +562,7 @@ describe('AgentBashHandler', () => {
         yieldMs: 250
       },
       {
+        commandShell: POSIX_COMMAND_SHELL,
         conversationId: 'conv-1'
       }
     )
@@ -560,6 +621,7 @@ describe('AgentBashHandler', () => {
         description: 'Show help'
       },
       {
+        commandShell: POSIX_COMMAND_SHELL,
         conversationId: 'conv-1'
       }
     )
@@ -612,6 +674,7 @@ describe('AgentBashHandler', () => {
         description: 'Run tests'
       },
       {
+        commandShell: POSIX_COMMAND_SHELL,
         conversationId: 'conv-1',
         outputPreviewChars: 7_000
       }
@@ -668,7 +731,7 @@ describe('AgentBashHandler', () => {
         'printf abcdef',
         workspaceRoot,
         1_000,
-        { outputPreviewChars: 3 }
+        { commandShell: POSIX_COMMAND_SHELL, outputPreviewChars: 3 }
       )
       child.stdout.emit('data', 'abcdef')
       child.emit('close', 0, null)

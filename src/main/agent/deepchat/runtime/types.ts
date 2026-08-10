@@ -29,7 +29,9 @@ import type {
   ToolExecutionPort,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
+import type { CommandShellProfile } from '@shared/commandShell'
 import type { ExecutionJournalWriter, TapeToolFactWriter } from '@/tape/ports/capabilities'
+import type { SessionPermissionGrant } from '@/session/contracts'
 
 export interface InterleavedReasoningConfig {
   preserveReasoningContent: boolean
@@ -106,7 +108,8 @@ export type ProcessIoParams = Pick<
 export interface ProcessControlCollaborators {
   autoGrantPermission?: (
     permission: NonNullable<PendingToolInteraction['permission']>
-  ) => Promise<void>
+  ) => Promise<SessionPermissionGrant | null>
+  revokeOneShotCommandPermission?: (signature: string, oneShotGrantId: string) => void
   reviewToolPermission?: (
     request: ToolPermissionReviewRequest
   ) => Promise<ToolPermissionReviewResult>
@@ -192,6 +195,7 @@ export interface PendingToolInteraction {
     requiresUserConfirmation?: boolean
     command?: string
     commandSignature?: string
+    shellProfile?: CommandShellProfile
     paths?: string[]
     commandInfo?: {
       command: string

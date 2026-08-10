@@ -6,8 +6,24 @@ import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAg
 import { buildSystemPromptWithSkills } from '@/agent/deepchat/resources/systemPromptBuilder'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { UNTRUSTED_CHILD_OUTPUT_POLICY } from '@shared/orchestration/resultSafety'
+import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
 describe('DeepChat system prompt builder', () => {
+  it('rejects an invalid command shell before optional prompt contributors can mask it', async () => {
+    const assertCurrent = vi.fn()
+
+    await expect(
+      buildSystemPromptWithSkills(
+        { assertCurrent } as never,
+        {
+          commandShell: { ...POSIX_COMMAND_SHELL, pathStyle: 'win32' }
+        } as never
+      )
+    ).rejects.toThrow()
+
+    expect(assertCurrent).not.toHaveBeenCalled()
+  })
+
   it('assembles byte-identical prompts without a composed-prompt memo', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
     vi.mocked(fs.promises.readFile).mockRejectedValue(
@@ -49,12 +65,14 @@ describe('DeepChat system prompt builder', () => {
       sessionId: 'session-1',
       basePrompt: '  BASE PROMPT  ',
       toolDefinitions: [],
+      commandShell: POSIX_COMMAND_SHELL,
       resourceInstance: instance
     })
     const second = await buildSystemPromptWithSkills(dependencies, {
       sessionId: 'session-1',
       basePrompt: '  BASE PROMPT  ',
       toolDefinitions: [],
+      commandShell: POSIX_COMMAND_SHELL,
       resourceInstance: instance
     })
     const explicit = await buildSystemPromptWithSkills(dependencies, {
@@ -68,6 +86,7 @@ describe('DeepChat system prompt builder', () => {
         }
       ] as any,
       orchestrationPolicy: 'explicit',
+      commandShell: POSIX_COMMAND_SHELL,
       resourceInstance: instance
     })
     const proactive = await buildSystemPromptWithSkills(dependencies, {
@@ -81,6 +100,7 @@ describe('DeepChat system prompt builder', () => {
         }
       ] as any,
       orchestrationPolicy: 'proactive',
+      commandShell: POSIX_COMMAND_SHELL,
       resourceInstance: instance
     })
     const sameNameMcp = await buildSystemPromptWithSkills(dependencies, {
@@ -93,6 +113,7 @@ describe('DeepChat system prompt builder', () => {
           function: { name: 'workflow' }
         }
       ] as any,
+      commandShell: POSIX_COMMAND_SHELL,
       resourceInstance: instance
     })
 
@@ -158,6 +179,7 @@ describe('DeepChat system prompt builder', () => {
         basePrompt: '',
         toolDefinitions: [],
         activeSkillNamesOverride: ['skill-a', 'skill-b'],
+        commandShell: POSIX_COMMAND_SHELL,
         resourceInstance: instance
       }
     )
@@ -214,6 +236,7 @@ describe('DeepChat system prompt builder', () => {
       sessionId: 'session-1',
       basePrompt: 'Base',
       toolDefinitions: [],
+      commandShell: POSIX_COMMAND_SHELL,
       resourceInstance: instance
     }
 

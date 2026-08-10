@@ -177,6 +177,7 @@ import { PluginRuntimeSupervisor } from '../plugin/runtimeSupervisor'
 import { AgentRepository } from '../agent/repository'
 import { AgentDatabase } from '@/agent/data/database'
 import { DeepChatDefaults } from '../agent/deepchat/defaults'
+import { CommandShellService } from '@/agent/shared/process/commandShellService'
 import { AgentTraceSettings } from '../agent/traceSettings'
 import type { MainDatabase } from '../data/mainDatabase'
 import {
@@ -249,6 +250,7 @@ import { SessionRuntimeEvents } from '@/session/runtimeEvents'
 import { TypedEventHub } from '@/events/typedEventHub'
 import { SessionEventRouter } from '@/events/sessionEventRouter'
 import { createMemoryProviderBindings } from './memoryProviderBindings'
+import { createSessionPermissionPort } from './sessionPermissionAdapter'
 import {
   EpisodeRegistry,
   TimeoutNotificationScheduler,
@@ -761,6 +763,7 @@ export async function createMainProcessControl(dependencies: {
         values: { [key]: value }
       })
   })
+  const commandShellService = new CommandShellService({ settings: dependencies.settingsStore })
   const unsubscribeProviderDbCatalog = providerDbLoader.subscribeCatalogChanges((change) => {
     if (change.reason === 'updated') {
       providerRuntime.handleProviderDbUpdated()
@@ -1305,61 +1308,13 @@ export async function createMainProcessControl(dependencies: {
       }
     }
   }
-  sessionPermissionPort = {
-    clearSessionPermissions: (sessionId) => {
-      agentCliTokenAuthority.revokeConversation(sessionId)
-      commandPermissionService.clearConversation(sessionId)
-      filePermissionService.clearConversation(sessionId)
-      settingsPermissionService.clearConversation(sessionId)
-      toolPermissionBroker.cancelConversation(sessionId)
-    },
-    cloneSessionPermissions: (sourceSessionId, targetSessionId) => {
-      // Tool approvals are one-time and intentionally never inherited.
-      toolPermissionBroker.cancelConversation(targetSessionId)
-      commandPermissionService.cloneConversation(sourceSessionId, targetSessionId)
-      filePermissionService.cloneConversation(sourceSessionId, targetSessionId)
-      settingsPermissionService.cloneConversation(sourceSessionId, targetSessionId)
-    },
-    approvePermission: async (sessionId, permission) => {
-      if (permission.requestId && toolPermissionBroker.approve(permission.requestId, sessionId)) {
-        return
-      }
-      const permissionType = permission.permissionType
-      const serverName = permission.serverName || ''
-      const toolName = permission.toolName || ''
-
-      if (permissionType === 'command') {
-        const command = permission.command || permission.commandInfo?.command || ''
-        const signature =
-          permission.commandSignature ||
-          permission.commandInfo?.signature ||
-          (command ? commandPermissionService.extractCommandSignature(command) : '')
-        if (signature) {
-          commandPermissionService.approve(sessionId, signature, false)
-        }
-        return
-      }
-
-      if (
-        serverName === 'agent-filesystem' &&
-        Array.isArray(permission.paths) &&
-        permission.paths.length > 0
-      ) {
-        filePermissionService.approve(sessionId, permission.paths, permissionType, false)
-        return
-      }
-
-      if (serverName === 'deepchat-settings' && toolName) {
-        settingsPermissionService.approve(sessionId, toolName, false)
-        return
-      }
-
-      // MCP execution uses the one-time request handled above.
-    },
-    denyPermission: async (sessionId, requestId) => {
-      toolPermissionBroker.deny(requestId, sessionId)
-    }
-  }
+  sessionPermissionPort = createSessionPermissionPort({
+    agentCliTokenAuthority,
+    commandPermissionService,
+    filePermissionService,
+    settingsPermissionService,
+    toolPermissionBroker
+  })
   // Initialize agent memory layer (opt-in per agent; vectors stored separately from knowledge base)
   const memoryDbDir = path.join(dbDir, 'AgentMemory')
   MemoryVectorStore.recoverQuarantinedStores(memoryDbDir)
@@ -1452,6 +1407,7 @@ export async function createMainProcessControl(dependencies: {
     skillService: skillService,
     skillSettings,
     traceSettings,
+    commandShell: commandShellService,
     promptSettings,
     attachmentRouter,
     interactionContinuationAdmission: {
@@ -2432,6 +2388,8 @@ export async function createMainProcessControl(dependencies: {
         (windowPresenter as WindowPresenter).applyContentProtection(enabled),
       logging: loggingService,
       ocr: ocrSettings,
+      commandShell: commandShellService,
+      publishEvent: publishDeepchatEvent,
       recordActivity: (input) => {
         void settingsDatabase.recordSettingsActivity(input).catch((error) => {
           console.warn('[SettingsActivity] Failed to record settings activity:', error)

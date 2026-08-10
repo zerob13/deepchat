@@ -14,13 +14,15 @@ import {
   RTK_ENABLED_SETTING_KEY,
   rtkRuntimeService
 } from '@/agent/shared/process/rtkRuntimeService'
-import { getUserShell, mergeCommandEnvironment } from '@/agent/shared/process/shellEnvHelper'
+import { mergeCommandEnvironment } from '@/agent/shared/process/shellEnvHelper'
 import {
   createUtf8OutputDecoderPair,
   prepareShellCommandForUtf8Output
 } from '@/agent/shared/process/shellOutputEncoding'
 import { resolveUsableSpawnCwd } from '@/agent/shared/process/spawnGuard'
 import { resolveSessionDir } from '@/agent/shared/storage/sessionPaths'
+import type { ResolvedCommandShell } from '@shared/commandShell'
+import { normalizeCommandShellFilePath } from '@/agent/shared/process/commandShellPath'
 
 // Consider moving to a shared handlers location in future refactoring
 import {
@@ -43,6 +45,8 @@ const ExecuteCommandArgsSchema = z.object({
 })
 
 export interface ExecuteCommandOptions {
+  commandShell: ResolvedCommandShell
+  oneShotCommandGrantId?: string
   conversationId?: string
   env?: Record<string, string>
   stdin?: string
@@ -55,7 +59,8 @@ export interface ExecuteCommandOptions {
 export interface AgentCommandEnvironmentPort {
   createEnvironment(
     conversationId: string,
-    command: string
+    command: string,
+    commandShell: ResolvedCommandShell
   ):
     | Readonly<{
         variables: Readonly<Record<string, string>>
@@ -119,7 +124,7 @@ export class AgentBashHandler {
 
   async executeCommand(
     args: unknown,
-    options: ExecuteCommandOptions = {}
+    options: ExecuteCommandOptions
   ): Promise<{
     output: string | { status: 'running'; sessionId: string }
     rtkApplied: boolean
@@ -133,7 +138,11 @@ export class AgentBashHandler {
     }
 
     const { command, timeout, background, cwd: requestedCwd, yieldMs } = parsed.data
-    const cwd = this.resolveWorkingDirectory(requestedCwd, options.allowExternalCwd)
+    const cwd = this.resolveWorkingDirectory(
+      requestedCwd,
+      options.commandShell,
+      options.allowExternalCwd
+    )
 
     // Handle background execution
     if (background) {
@@ -142,10 +151,15 @@ export class AgentBashHandler {
 
     const permissionCheck = this.commandPermissionHandler.checkPermission(
       options.conversationId,
-      command
+      command,
+      options.commandShell,
+      options.oneShotCommandGrantId
     )
     if (!permissionCheck.allowed) {
-      const commandInfo = this.commandPermissionHandler.buildCommandInfo(command)
+      const commandInfo = this.commandPermissionHandler.buildCommandInfo(
+        command,
+        options.commandShell
+      )
       const responseContent = 'components.messageBlockPermissionRequest.description.commandWithRisk'
       throw new CommandPermissionRequiredError(responseContent, {
         toolName: 'exec',
@@ -154,6 +168,7 @@ export class AgentBashHandler {
         description: 'Execute command requires approval.',
         command,
         commandSignature: commandInfo.signature,
+        shellProfile: options.commandShell.profile,
         commandInfo,
         conversationId: options.conversationId
       })
@@ -166,6 +181,7 @@ export class AgentBashHandler {
     const prepared = await this.prepareCommand(
       command,
       resolvedEnvironment.env,
+      options.commandShell,
       resolvedEnvironment.preserveCommand
     )
 
@@ -272,14 +288,20 @@ export class AgentBashHandler {
     })
   }
 
-  private resolveWorkingDirectory(requestedCwd?: string, allowExternalCwd = false): string {
+  private resolveWorkingDirectory(
+    requestedCwd: string | undefined,
+    commandShell: ResolvedCommandShell,
+    allowExternalCwd = false
+  ): string {
     const defaultCwd = this.allowedDirectories[0]
     const normalizedInput = requestedCwd?.trim()
     if (!normalizedInput) {
       return defaultCwd
     }
 
-    const expanded = this.expandHome(normalizedInput)
+    const expanded = this.expandHome(
+      normalizeCommandShellFilePath(normalizedInput, commandShell.pathStyle)
+    )
     const resolved = path.isAbsolute(expanded)
       ? this.normalizePath(path.resolve(expanded))
       : this.normalizePath(path.resolve(defaultCwd, expanded))
@@ -323,6 +345,7 @@ export class AgentBashHandler {
     }
 
     const session = await backgroundExecSessionManager.start(conversationId, command, cwd, {
+      commandShell: options.commandShell,
       timeout,
       env: options.env,
       outputPrefix: options.outputPrefix,
@@ -383,8 +406,8 @@ export class AgentBashHandler {
     timeout: number,
     options: ExecuteCommandOptions
   ): Promise<CompletedShellProcessResult> {
-    const { shell, args } = getUserShell()
-    const shellCommand = prepareShellCommandForUtf8Output(shell, command)
+    const { executable: shell, args, dialect } = options.commandShell
+    const shellCommand = prepareShellCommandForUtf8Output(dialect, command)
     const outputFilePath = this.createOutputFilePath(options.conversationId, options.outputPrefix)
     const outputPreviewChars = options.outputPreviewChars ?? COMMAND_PREVIEW_CHARS
     const offloadThresholdChars = Math.min(COMMAND_OFFLOAD_THRESHOLD, outputPreviewChars)
@@ -394,6 +417,7 @@ export class AgentBashHandler {
         cwd,
         env: options.env ? { ...options.env } : { ...process.env },
         detached: process.platform !== 'win32',
+        windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe']
       })
 
@@ -599,9 +623,17 @@ export class AgentBashHandler {
       throw new Error('Background execution requires a conversation ID')
     }
 
-    const permissionCheck = this.commandPermissionHandler.checkPermission(conversationId, command)
+    const permissionCheck = this.commandPermissionHandler.checkPermission(
+      conversationId,
+      command,
+      options.commandShell,
+      options.oneShotCommandGrantId
+    )
     if (!permissionCheck.allowed) {
-      const commandInfo = this.commandPermissionHandler.buildCommandInfo(command)
+      const commandInfo = this.commandPermissionHandler.buildCommandInfo(
+        command,
+        options.commandShell
+      )
       throw new CommandPermissionRequiredError(
         'components.messageBlockPermissionRequest.description.commandWithRisk',
         {
@@ -611,6 +643,7 @@ export class AgentBashHandler {
           description: 'Execute command requires approval.',
           command,
           commandSignature: commandInfo.signature,
+          shellProfile: options.commandShell.profile,
           commandInfo,
           conversationId
         }
@@ -622,6 +655,7 @@ export class AgentBashHandler {
     const prepared = await this.prepareCommand(
       command,
       resolvedEnvironment.env,
+      options.commandShell,
       resolvedEnvironment.preserveCommand
     )
 
@@ -636,6 +670,7 @@ export class AgentBashHandler {
       prepared.command,
       spawnCwd,
       {
+        commandShell: options.commandShell,
         timeout: timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
         env: prepared.env,
         outputPrefix: options.outputPrefix,
@@ -666,14 +701,16 @@ export class AgentBashHandler {
 
   private async prepareCommand(
     command: string,
-    env?: Record<string, string>,
+    env: Record<string, string> | undefined,
+    commandShell: ResolvedCommandShell,
     preserveCommand = false
   ): Promise<PreparedCommand> {
     const baseEnv = env ?? {}
     const prepared = await rtkRuntimeService.prepareShellCommand(
       command,
       baseEnv,
-      !preserveCommand && this.settings.get<boolean>(RTK_ENABLED_SETTING_KEY) !== false
+      !preserveCommand && this.settings.get<boolean>(RTK_ENABLED_SETTING_KEY) !== false,
+      { allowRewrite: commandShell.dialect === 'posix' }
     )
     return {
       originalCommand: prepared.originalCommand,
@@ -684,7 +721,9 @@ export class AgentBashHandler {
       rtkMode: prepared.rtkMode,
       rtkFallbackReason: preserveCommand
         ? 'RTK rewrite bypassed for scoped command authority'
-        : prepared.rtkFallbackReason
+        : commandShell.dialect !== 'posix' && prepared.rtkMode !== 'direct'
+          ? 'RTK rewrite bypassed for non-POSIX command shell'
+          : prepared.rtkFallbackReason
     }
   }
 
@@ -693,7 +732,11 @@ export class AgentBashHandler {
     options: ExecuteCommandOptions
   ): ResolvedCommandEnvironment {
     const scopedEnvironment = options.conversationId
-      ? this.commandEnvironment?.createEnvironment(options.conversationId, command)
+      ? this.commandEnvironment?.createEnvironment(
+          options.conversationId,
+          command,
+          options.commandShell
+        )
       : undefined
     if (!scopedEnvironment) return { env: options.env, preserveCommand: false }
     return {
@@ -727,6 +770,7 @@ export class AgentBashHandler {
    */
   checkCommandPermission(
     command: string,
+    commandShell: ResolvedCommandShell,
     conversationId?: string
   ): {
     needsPermission: boolean
@@ -740,12 +784,16 @@ export class AgentBashHandler {
       baseCommand?: string
     }
   } {
-    const permissionCheck = this.commandPermissionHandler.checkPermission(conversationId, command)
+    const permissionCheck = this.commandPermissionHandler.checkPermission(
+      conversationId,
+      command,
+      commandShell
+    )
     if (permissionCheck.allowed) {
       return { needsPermission: false }
     }
 
-    const commandInfo = this.commandPermissionHandler.buildCommandInfo(command)
+    const commandInfo = this.commandPermissionHandler.buildCommandInfo(command, commandShell)
     return {
       needsPermission: true,
       description: `Command "${command}" requires permission`,

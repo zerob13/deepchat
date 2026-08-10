@@ -43,6 +43,15 @@ import type {
   ToolExecutionPort,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
+import {
+  CommandShellProfileSchema,
+  type CommandShellProfile,
+  type ResolvedCommandShell
+} from '@shared/commandShell'
+import {
+  buildCommandPermissionSignature,
+  isCommandSignatureForProfile
+} from '@/tool/permission'
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
 import { cloneBlocksForRenderer } from '@/session/clientMessageProjection'
 import { buildTerminalErrorBlocks } from '@/session/data/transcript'
@@ -145,6 +154,7 @@ type PermissionRequestLike = {
   description?: string
   command?: string
   commandSignature?: string
+  shellProfile?: CommandShellProfile
   commandInfo?: {
     command: string
     riskLevel: 'low' | 'medium' | 'high' | 'critical'
@@ -1160,6 +1170,7 @@ function normalizePermissionRequest(
     typeof request?.description === 'string' && request.description.trim().length > 0
       ? request.description
       : fallback.description
+  const parsedShellProfile = CommandShellProfileSchema.safeParse(request?.shellProfile)
 
   return {
     permissionType,
@@ -1173,6 +1184,7 @@ function normalizePermissionRequest(
     command: typeof request?.command === 'string' ? request.command : undefined,
     commandSignature:
       typeof request?.commandSignature === 'string' ? request.commandSignature : undefined,
+    shellProfile: parsedShellProfile.success ? parsedShellProfile.data : undefined,
     paths: Array.isArray(request?.paths)
       ? request.paths.filter((item): item is string => typeof item === 'string' && item.length > 0)
       : undefined,
@@ -1182,11 +1194,58 @@ function normalizePermissionRequest(
 
 async function autoGrantPermission(
   controls: ProcessControlCollaborators | undefined,
-  _conversationId: string,
   permission: NonNullable<PendingToolInteraction['permission']>
-): Promise<void> {
+): ReturnType<NonNullable<ProcessControlCollaborators['autoGrantPermission']>> {
   if (controls?.autoGrantPermission) {
-    await controls.autoGrantPermission(permission)
+    return (await controls.autoGrantPermission(permission)) ?? null
+  }
+  return null
+}
+
+function getOneShotCommandSignature(
+  permission: NonNullable<PendingToolInteraction['permission']>
+): string | null {
+  if (permission.permissionType !== 'command') return null
+  const signature = permission.commandSignature?.trim()
+  const profile = CommandShellProfileSchema.safeParse(permission.shellProfile)
+  return signature && profile.success && isCommandSignatureForProfile(signature, profile.data)
+    ? signature
+    : null
+}
+
+async function runWithAutoGrantedPermission<T>(
+  controls: ProcessControlCollaborators | undefined,
+  permission: NonNullable<PendingToolInteraction['permission']>,
+  run: (oneShotCommandGrantId?: string) => Promise<T>
+): Promise<T> {
+  const expectedCommandSignature = getOneShotCommandSignature(permission)
+  if (permission.permissionType === 'command' && !expectedCommandSignature) {
+    throw new Error('Command approval is missing a valid shell profile and signature.')
+  }
+  let grant: Awaited<ReturnType<typeof autoGrantPermission>> = null
+  try {
+    grant = await autoGrantPermission(controls, permission)
+    if (expectedCommandSignature) {
+      if (grant?.kind !== 'command') {
+        throw new Error('Command approval did not return a one-shot grant lease.')
+      }
+      if (grant.signature !== expectedCommandSignature) {
+        throw new Error('Command approval returned a lease for another signature.')
+      }
+      return await run(grant.oneShotGrantId)
+    }
+    if (grant?.kind === 'command') {
+      throw new Error('Non-command approval returned a command grant lease.')
+    }
+    return await run()
+  } finally {
+    if (grant?.kind === 'command') {
+      try {
+        controls?.revokeOneShotCommandPermission?.(grant.signature, grant.oneShotGrantId)
+      } catch (error) {
+        console.warn('[DeepChatDispatch] Failed to revoke one-shot command grant:', error)
+      }
+    }
   }
 }
 
@@ -1280,22 +1339,32 @@ function isReviewableFullAccessToolCall(execution: ToolExecutionContext): boolea
 }
 
 function buildSyntheticPermissionForReview(
-  execution: ToolExecutionContext
+  execution: ToolExecutionContext,
+  commandShell: ResolvedCommandShell
 ): NonNullable<PendingToolInteraction['permission']> {
   const name = execution.toolContext.name
   const lowerName = name.toLowerCase()
   const paths = extractToolArgPaths(execution.toolContext.args)
   const command = extractToolArgCommand(execution.toolContext.args)
-  if (
-    command ||
-    ['bash', 'shell', 'terminal', 'command'].some((part) => lowerName.includes(part))
-  ) {
+  if (command) {
     return {
       permissionType: 'command',
       description: `Auto-review requested approval for command tool ${name}.`,
       toolName: name,
       serverName: execution.toolContext.serverName,
       command,
+      commandSignature: buildCommandPermissionSignature(command, commandShell),
+      shellProfile: commandShell.profile,
+      rememberable: false
+    }
+  }
+
+  if (['bash', 'shell', 'terminal', 'command'].some((part) => lowerName.includes(part))) {
+    return {
+      permissionType: 'all',
+      description: `Auto-review requested approval for command tool ${name}.`,
+      toolName: name,
+      serverName: execution.toolContext.serverName,
       rememberable: false
     }
   }
@@ -1311,6 +1380,7 @@ function buildSyntheticPermissionForReview(
     toolName: name,
     serverName: paths.length > 0 ? 'agent-filesystem' : execution.toolContext.serverName,
     paths: paths.length > 0 ? paths : undefined,
+    ...(paths.length > 0 ? { shellProfile: commandShell.profile } : {}),
     rememberable: false
   }
 }
@@ -1583,6 +1653,8 @@ async function runToolCall(params: {
   onToolCallStarted?: (toolCallId: string) => void
   executionJournal: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
+  commandShell: ResolvedCommandShell
+  oneShotCommandGrantId?: string
 }): Promise<ToolRunOutcome> {
   const {
     execution,
@@ -1598,7 +1670,9 @@ async function runToolCall(params: {
     allowProgressUpdates,
     onToolCallStarted,
     executionJournal,
-    operationScope
+    operationScope,
+    commandShell,
+    oneShotCommandGrantId
   } = params
   const { completedToolCall, toolCall, toolContext } = execution
   let returnedToolResult: MCPToolResponse | null = null
@@ -1713,7 +1787,7 @@ async function runToolCall(params: {
       }
       dispatchedOperation = operation
     }
-    const callTool = async () => {
+    const callTool = async (scopedOneShotCommandGrantId = oneShotCommandGrantId) => {
       returnedToolResult = null
       io.abortSignal.throwIfAborted()
       if (!toolCallStarted) {
@@ -1730,6 +1804,8 @@ async function runToolCall(params: {
         agentId: controls?.getAgentId?.(),
         commitDispatch,
         registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection),
+        commandShell,
+        oneShotCommandGrantId: scopedOneShotCommandGrantId,
         ...(enabledMcpServerIds === null || enabledMcpServerIds === undefined
           ? {}
           : { enabledMcpServerIds })
@@ -1762,8 +1838,11 @@ async function runToolCall(params: {
           }
         }
         if (permissionMode === 'full_access') {
-          await autoGrantPermission(controls, io.sessionId, pendingPermission)
-          toolCallResult = await callTool()
+          toolCallResult = await runWithAutoGrantedPermission(
+            controls,
+            pendingPermission,
+            callTool
+          )
           toolRawData = toolCallResult.rawData
         } else if (permissionMode === 'auto_approve') {
           const review = await reviewAutoApproveAction({
@@ -1777,8 +1856,11 @@ async function runToolCall(params: {
             reason: 'requires_permission'
           })
           if (review === 'auto_allow') {
-            await autoGrantPermission(controls, io.sessionId, pendingPermission)
-            toolCallResult = await callTool()
+            toolCallResult = await runWithAutoGrantedPermission(
+              controls,
+              pendingPermission,
+              callTool
+            )
             toolRawData = toolCallResult.rawData
           } else {
             return {
@@ -1966,6 +2048,7 @@ export interface SettleToolBatchParams {
   providerId?: string
   executionJournal: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
+  commandShell: ResolvedCommandShell
 }
 
 export async function settleToolBatch(
@@ -1991,7 +2074,8 @@ export async function settleToolBatch(
     collaborators,
     providerId,
     executionJournal,
-    operationScope
+    operationScope,
+    commandShell
   } = params
   const { notificationObserver, controls, diagnostics, onToolCallStarted } = collaborators ?? {}
   if (disposition.kind === 'execute') {
@@ -2121,10 +2205,12 @@ export async function settleToolBatch(
     const settledOutcomes = await Promise.allSettled(
       executions.map(async (execution) => {
         try {
+          let permissionToAutoGrant: NonNullable<PendingToolInteraction['permission']> | null = null
           if (toolExecution.preCheck) {
             const preChecked = await toolExecution.preCheck(execution.toolCall, {
               permissionMode: toolPermissionMode,
-              signal: io.abortSignal
+              signal: io.abortSignal,
+              commandShell
             })
             io.abortSignal.throwIfAborted()
             if (preChecked?.needsPermission) {
@@ -2141,37 +2227,44 @@ export async function settleToolBatch(
                     toolContext: execution.toolContext
                   }
                 }
-                await autoGrantPermission(controls, io.sessionId, permission)
-                io.abortSignal.throwIfAborted()
+                permissionToAutoGrant = permission
               }
             }
           }
 
-          emitDeepChatLoopNotification(notificationObserver, {
-            event: 'PreToolUse',
-            tool: {
-              callId: execution.completedToolCall.id,
-              name: execution.completedToolCall.name,
-              params: execution.completedToolCall.arguments
-            }
-          })
+          const execute = async (oneShotCommandGrantId?: string): Promise<ToolRunOutcome> => {
+            io.abortSignal.throwIfAborted()
+            emitDeepChatLoopNotification(notificationObserver, {
+              event: 'PreToolUse',
+              tool: {
+                callId: execution.completedToolCall.id,
+                name: execution.completedToolCall.name,
+                params: execution.completedToolCall.arguments
+              }
+            })
 
-          return await runToolCall({
-            execution,
-            toolExecution,
-            toolResults,
-            permissionMode,
-            toolPermissionMode,
-            controls,
-            io,
-            state,
-            batchToolCallBlocks,
-            rendererFlushHandle,
-            allowProgressUpdates: false,
-            onToolCallStarted,
-            executionJournal,
-            operationScope
-          })
+            return await runToolCall({
+              execution,
+              toolExecution,
+              toolResults,
+              permissionMode,
+              toolPermissionMode,
+              controls,
+              io,
+              state,
+              batchToolCallBlocks,
+              rendererFlushHandle,
+              allowProgressUpdates: false,
+              onToolCallStarted,
+              executionJournal,
+              operationScope,
+              commandShell,
+              oneShotCommandGrantId
+            })
+          }
+          return permissionToAutoGrant
+            ? await runWithAutoGrantedPermission(controls, permissionToAutoGrant, execute)
+            : await execute()
         } catch (error) {
           if (isExecutionJournalError(error)) throw error
           if (io.abortSignal.aborted) throw error
@@ -2313,10 +2406,12 @@ export async function settleToolBatch(
       }
 
       let preCheckedPermission: PendingToolInteraction['permission'] | null = null
+      let permissionToAutoGrant: NonNullable<PendingToolInteraction['permission']> | null = null
       if (toolExecution.preCheck) {
         const preChecked = await toolExecution.preCheck(toolCall, {
           permissionMode: toolPermissionMode,
-          signal: io.abortSignal
+          signal: io.abortSignal,
+          commandShell
         })
         io.abortSignal.throwIfAborted()
         if (preChecked?.needsPermission) {
@@ -2331,8 +2426,7 @@ export async function settleToolBatch(
       if (preCheckedPermission) {
         let shouldAskUser = preCheckedPermission.requiresUserConfirmation === true
         if (!shouldAskUser && permissionMode === 'full_access') {
-          await autoGrantPermission(controls, io.sessionId, preCheckedPermission)
-          io.abortSignal.throwIfAborted()
+          permissionToAutoGrant = preCheckedPermission
         } else if (!shouldAskUser && permissionMode === 'auto_approve') {
           const review = await reviewAutoApproveAction({
             controls,
@@ -2345,8 +2439,7 @@ export async function settleToolBatch(
             reason: 'precheck'
           })
           if (review === 'auto_allow') {
-            await autoGrantPermission(controls, io.sessionId, preCheckedPermission)
-            io.abortSignal.throwIfAborted()
+            permissionToAutoGrant = preCheckedPermission
           } else {
             shouldAskUser = true
           }
@@ -2384,7 +2477,7 @@ export async function settleToolBatch(
         !preCheckedPermission &&
         isReviewableFullAccessToolCall(execution)
       ) {
-        const reviewPermission = buildSyntheticPermissionForReview(execution)
+        const reviewPermission = buildSyntheticPermissionForReview(execution, commandShell)
         const review = await reviewAutoApproveAction({
           controls,
           io,
@@ -2420,31 +2513,39 @@ export async function settleToolBatch(
         }
       }
 
-      emitDeepChatLoopNotification(notificationObserver, {
-        event: 'PreToolUse',
-        tool: {
-          callId: tc.id,
-          name: tc.name,
-          params: tc.arguments
-        }
-      })
+      const execute = async (oneShotCommandGrantId?: string): Promise<ToolRunOutcome> => {
+        io.abortSignal.throwIfAborted()
+        emitDeepChatLoopNotification(notificationObserver, {
+          event: 'PreToolUse',
+          tool: {
+            callId: tc.id,
+            name: tc.name,
+            params: tc.arguments
+          }
+        })
 
-      const outcome = await runToolCall({
-        execution,
-        toolExecution,
-        toolResults,
-        permissionMode,
-        toolPermissionMode,
-        controls,
-        io,
-        state,
-        batchToolCallBlocks,
-        rendererFlushHandle,
-        allowProgressUpdates: true,
-        onToolCallStarted,
-        executionJournal,
-        operationScope
-      })
+        return await runToolCall({
+          execution,
+          toolExecution,
+          toolResults,
+          permissionMode,
+          toolPermissionMode,
+          controls,
+          io,
+          state,
+          batchToolCallBlocks,
+          rendererFlushHandle,
+          allowProgressUpdates: true,
+          onToolCallStarted,
+          executionJournal,
+          operationScope,
+          commandShell,
+          oneShotCommandGrantId
+        })
+      }
+      const outcome = permissionToAutoGrant
+        ? await runWithAutoGrantedPermission(controls, permissionToAutoGrant, execute)
+        : await execute()
       batchState.invokedCallIds.add(tc.id)
 
       if (outcome.kind === 'permission') {

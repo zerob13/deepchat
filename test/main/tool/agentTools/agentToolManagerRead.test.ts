@@ -4,6 +4,7 @@ import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import { AgentToolManager } from '@/tool/agentTools/agentToolManager'
+import { POSIX_COMMAND_SHELL } from '../../../helpers/commandShell'
 import { AgentBashHandler } from '@/tool/agentTools/agentBashHandler'
 import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
 import * as sessionVisionResolverModule from '@/agent/vision/sessionVisionResolver'
@@ -56,6 +57,8 @@ describe('AgentToolManager read routing', () => {
   }
   let resolveConversationWorkdir: ReturnType<typeof vi.fn>
   let resolveConversationSessionInfo: ReturnType<typeof vi.fn>
+  let callToolWithoutCommandShell: AgentToolManager['callTool']
+  let preCheckWithoutCommandShell: AgentToolManager['preCheckToolPermission']
 
   beforeEach(async () => {
     vi.clearAllMocks()
@@ -118,6 +121,56 @@ describe('AgentToolManager read routing', () => {
         consumeSettingsApproval: vi.fn().mockReturnValue(false)
       })
     })
+    callToolWithoutCommandShell = manager.callTool.bind(manager)
+    preCheckWithoutCommandShell = manager.preCheckToolPermission.bind(manager)
+    vi.spyOn(manager, 'callTool').mockImplementation((toolName, args, conversationId, options) =>
+      callToolWithoutCommandShell(toolName, args, conversationId, {
+        commandShell: POSIX_COMMAND_SHELL,
+        ...options
+      })
+    )
+    vi.spyOn(manager, 'preCheckToolPermission').mockImplementation(
+      (toolName, args, conversationId, options) =>
+        preCheckWithoutCommandShell(toolName, args, conversationId, {
+          commandShell: POSIX_COMMAND_SHELL,
+          ...options
+        })
+    )
+  })
+
+  it('fails closed before filesystem execution or pre-check without a shell spec', async () => {
+    await expect(
+      callToolWithoutCommandShell('read', { path: 'note.txt' }, 'conv1')
+    ).rejects.toThrow('requires a resolved command shell')
+    await expect(
+      preCheckWithoutCommandShell('read', { path: 'note.txt' }, 'conv1')
+    ).rejects.toThrow('requires a resolved command shell')
+    await expect(
+      preCheckWithoutCommandShell('process', { action: 'list' }, 'conv1')
+    ).resolves.toBeNull()
+
+    expect(fileService.getMimeType).not.toHaveBeenCalled()
+  })
+
+  it('validates the shell spec before resolving filesystem state', async () => {
+    const malformedCommandShell = {
+      ...POSIX_COMMAND_SHELL,
+      pathStyle: 'msys'
+    }
+
+    await expect(
+      callToolWithoutCommandShell('read', { path: 'note.txt' }, 'conv1', {
+        commandShell: malformedCommandShell as never
+      })
+    ).rejects.toThrow()
+    await expect(
+      preCheckWithoutCommandShell('read', { path: 'note.txt' }, 'conv1', {
+        commandShell: malformedCommandShell as never
+      })
+    ).rejects.toThrow()
+
+    expect(resolveConversationWorkdir).not.toHaveBeenCalled()
+    expect(fileService.getMimeType).not.toHaveBeenCalled()
   })
 
   it('declares filesystem execution contracts at the definition owner', async () => {
@@ -168,7 +221,7 @@ describe('AgentToolManager read routing', () => {
     })
 
     try {
-      await manager.callTool(
+      await callToolWithoutCommandShell(
         'process',
         { action: 'write', sessionId: 'bg-session', data: 'continue', eof: true },
         'conv1',
@@ -341,13 +394,19 @@ describe('AgentToolManager read routing', () => {
   it('requests permission for external reads in default access mode', async () => {
     const externalFile = path.join(path.parse(workspaceDir).root, 'deepchat-outside-default.txt')
 
-    const permission = await manager.preCheckToolPermission('read', { path: externalFile }, 'conv1')
+    const permission = await manager.preCheckToolPermission(
+      'read',
+      { path: externalFile },
+      'conv1',
+      { commandShell: POSIX_COMMAND_SHELL }
+    )
 
     expect(permission).toEqual(
       expect.objectContaining({
         needsPermission: true,
         permissionType: 'read',
-        paths: [externalFile]
+        paths: [externalFile],
+        shellProfile: 'posix'
       })
     )
   })

@@ -9,6 +9,8 @@ import { diffLines } from 'diff'
 import { validateGlobPattern, validateRegexPattern } from '@shared/regexValidator'
 import { getLanguageFromFilename } from '@shared/utils/codeLanguage'
 import { glob } from 'glob'
+import type { CommandShellPathStyle } from '@shared/commandShell'
+import { normalizeCommandShellFilePath } from '@/agent/shared/process/commandShellPath'
 import { DEFAULT_AGENT_OUTPUT_LIMITS } from '@shared/lib/agentOutputLimits'
 
 const ReadFileArgsSchema = z.object({
@@ -193,6 +195,9 @@ export class AgentFileSystemHandler {
   private conversationId?: string
   private readonly sessionsRoot: string
   private readonly allowExternalAccess: boolean
+  private readonly commandShellPathStyle: CommandShellPathStyle
+  private readonly pathApi: path.PlatformPath
+  private readonly caseInsensitivePathComparison: boolean
   private readonly readFileAutoTruncateChars: number
   private readonly protectedDirectoryRules: Array<{
     roots: string[]
@@ -206,13 +211,18 @@ export class AgentFileSystemHandler {
       allowExternalAccess?: boolean
       readFileAutoTruncateChars?: number
       protectedDirectoryRules?: ProtectedDirectoryRule[]
+      commandShellPathStyle?: CommandShellPathStyle
     } = {}
   ) {
     if (allowedDirectories.length === 0) {
       throw new Error('At least one allowed directory must be provided')
     }
+    this.commandShellPathStyle = options.commandShellPathStyle ?? 'native'
+    this.pathApi = this.commandShellPathStyle === 'msys' ? path.win32 : path
+    this.caseInsensitivePathComparison =
+      process.platform === 'win32' || this.commandShellPathStyle === 'msys'
     this.allowedDirectories = allowedDirectories.map((dir) =>
-      this.normalizePath(path.resolve(this.expandHome(dir)))
+      this.normalizePath(this.pathApi.resolve(this.expandHome(dir)))
     )
     this.allowedDirectoryRoots = Array.from(
       new Set(
@@ -239,7 +249,7 @@ export class AgentFileSystemHandler {
   }
 
   private normalizePath(p: string): string {
-    return path.normalize(p)
+    return this.pathApi.normalize(p)
   }
 
   private normalizeLineEndings(text: string): string {
@@ -264,20 +274,14 @@ export class AgentFileSystemHandler {
 
   private isPathAllowed(candidatePath: string): boolean {
     if (!this.isProtectedPathAllowed(candidatePath)) return false
-    return this.pathAliases(candidatePath).some((candidateAlias) =>
-      this.allowedDirectoryRoots.some((dir) => {
-        if (candidateAlias === dir) return true
-        const dirWithSeparator = dir.endsWith(path.sep) ? dir : `${dir}${path.sep}`
-        return candidateAlias.startsWith(dirWithSeparator)
-      })
-    )
+    return this.isWithinDirectoryRoots(candidatePath, this.allowedDirectoryRoots)
   }
 
   private resolveDirectoryRoots(directories: string[]): string[] {
     return Array.from(
       new Set(
         directories.flatMap((directory) => {
-          const normalized = this.normalizePath(path.resolve(this.expandHome(directory)))
+          const normalized = this.normalizePath(this.pathApi.resolve(this.expandHome(directory)))
           const roots = this.pathAliases(normalized)
           try {
             roots.push(...this.pathAliases(this.normalizePath(realpathSync.native(normalized))))
@@ -293,14 +297,17 @@ export class AgentFileSystemHandler {
   private isWithinDirectoryRoots(candidatePath: string, roots: string[]): boolean {
     return this.pathAliases(candidatePath).some((candidateAlias) =>
       roots.some((root) => {
-        const candidate =
-          process.platform === 'win32' ? candidateAlias.toLowerCase() : candidateAlias
-        const normalizedRoot = process.platform === 'win32' ? root.toLowerCase() : root
-        if (candidate === normalizedRoot) return true
-        const rootWithSeparator = normalizedRoot.endsWith(path.sep)
-          ? normalizedRoot
-          : `${normalizedRoot}${path.sep}`
-        return candidate.startsWith(rootWithSeparator)
+        const candidate = this.caseInsensitivePathComparison
+          ? candidateAlias.toLowerCase()
+          : candidateAlias
+        const normalizedRoot = this.caseInsensitivePathComparison ? root.toLowerCase() : root
+        const relative = this.pathApi.relative(normalizedRoot, candidate)
+        return (
+          relative === '' ||
+          (relative !== '..' &&
+            !relative.startsWith(`..${this.pathApi.sep}`) &&
+            !this.pathApi.isAbsolute(relative))
+        )
       })
     )
   }
@@ -320,21 +327,28 @@ export class AgentFileSystemHandler {
 
   private expandHome(filepath: string): string {
     if (filepath.startsWith('~/') || filepath === '~') {
-      return path.join(os.homedir(), filepath.slice(1))
+      return this.pathApi.join(os.homedir(), filepath.slice(1))
     }
     return filepath
   }
 
   resolvePath(requestedPath: string, baseDirectory?: string): string {
-    const expandedPath = this.expandHome(requestedPath)
-    const absolute = path.isAbsolute(expandedPath)
-      ? path.resolve(expandedPath)
-      : path.resolve(baseDirectory ?? this.allowedDirectories[0], expandedPath)
+    const shellNormalizedPath = normalizeCommandShellFilePath(
+      requestedPath,
+      this.commandShellPathStyle
+    )
+    const expandedPath = this.expandHome(shellNormalizedPath)
+    const normalizedBaseDirectory = baseDirectory
+      ? normalizeCommandShellFilePath(baseDirectory, this.commandShellPathStyle)
+      : undefined
+    const absolute = this.pathApi.isAbsolute(expandedPath)
+      ? this.pathApi.resolve(expandedPath)
+      : this.pathApi.resolve(normalizedBaseDirectory ?? this.allowedDirectories[0], expandedPath)
     return this.normalizePath(absolute)
   }
 
   isPathAllowedAbsolute(candidatePath: string): boolean {
-    const normalized = this.normalizePath(path.resolve(candidatePath))
+    const normalized = this.normalizePath(this.pathApi.resolve(candidatePath))
     return this.isPathAllowed(normalized)
   }
 
@@ -374,7 +388,7 @@ export class AgentFileSystemHandler {
       return realPath
     } catch (error) {
       pathResolutionError = error
-      const parentDir = path.dirname(normalizedRequested)
+      const parentDir = this.pathApi.dirname(normalizedRequested)
       try {
         const realParentPath = await fs.realpath(parentDir)
         const normalizedParent = this.normalizePath(realParentPath)
@@ -402,11 +416,7 @@ export class AgentFileSystemHandler {
   }
 
   private isWithinSessionsRoot(candidatePath: string): boolean {
-    if (candidatePath === this.sessionsRoot) return true
-    const rootWithSeparator = this.sessionsRoot.endsWith(path.sep)
-      ? this.sessionsRoot
-      : `${this.sessionsRoot}${path.sep}`
-    return candidatePath.startsWith(rootWithSeparator)
+    return this.isWithinDirectoryRoots(candidatePath, [this.sessionsRoot])
   }
 
   private assertSessionReadAllowed(candidatePath: string): void {
@@ -414,18 +424,14 @@ export class AgentFileSystemHandler {
     if (!this.conversationId) {
       throw new Error('Access denied - session files require an active conversation')
     }
-    const sessionDir = this.normalizePath(path.join(this.sessionsRoot, this.conversationId))
-    if (candidatePath === sessionDir) return
-    const sessionWithSeparator = sessionDir.endsWith(path.sep)
-      ? sessionDir
-      : `${sessionDir}${path.sep}`
-    if (!candidatePath.startsWith(sessionWithSeparator)) {
+    const sessionDir = this.normalizePath(this.pathApi.join(this.sessionsRoot, this.conversationId))
+    if (!this.isWithinDirectoryRoots(candidatePath, [sessionDir])) {
       throw new Error('Access denied - session files outside current conversation')
     }
   }
 
   assertReadAllowedAbsolute(candidatePath: string): void {
-    const normalized = this.normalizePath(path.resolve(candidatePath))
+    const normalized = this.normalizePath(this.pathApi.resolve(candidatePath))
     this.assertProtectedPathAllowed(normalized)
     this.assertSessionReadAllowed(normalized)
   }
@@ -682,7 +688,7 @@ export class AgentFileSystemHandler {
 
       for (const entry of entries) {
         if (result.totalMatches >= maxResults) break
-        const fullPath = path.join(currentPath, entry.name)
+        const fullPath = this.pathApi.join(currentPath, entry.name)
         try {
           await this.validatePath(fullPath, undefined, {
             enforceAllowed: false,
@@ -708,7 +714,7 @@ export class AgentFileSystemHandler {
     const stats = await fs.stat(validatedPath)
 
     if (stats.isFile()) {
-      if (minimatch(path.basename(validatedPath), filePattern, { nocase: true })) {
+      if (minimatch(this.pathApi.basename(validatedPath), filePattern, { nocase: true })) {
         await searchInFile(validatedPath)
       }
     } else if (stats.isDirectory()) {
@@ -911,7 +917,7 @@ export class AgentFileSystemHandler {
           accessType: 'write'
         })
         const validDestPath = await this.validatePath(
-          path.join(parsed.data.destination, path.basename(source)),
+          this.pathApi.join(parsed.data.destination, this.pathApi.basename(source)),
           baseDirectory,
           {
             accessType: 'write'
@@ -1141,7 +1147,7 @@ export class AgentFileSystemHandler {
         }
 
         if (entry.isDirectory()) {
-          const subPath = path.join(currentPath, entry.name)
+          const subPath = this.pathApi.join(currentPath, entry.name)
           if (currentDepth < depth) {
             entryData.children = await buildTree(subPath, currentDepth + 1)
           }
@@ -1228,14 +1234,14 @@ export class AgentFileSystemHandler {
             const stats = await fs.stat(filePath)
             return {
               path: filePath,
-              name: path.basename(filePath),
+              name: this.pathApi.basename(filePath),
               modified: stats.mtime,
               size: stats.size
             }
           } catch {
             return {
               path: filePath,
-              name: path.basename(filePath)
+              name: this.pathApi.basename(filePath)
             }
           }
         })

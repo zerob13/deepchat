@@ -50,6 +50,7 @@ import { createState } from '@/agent/deepchat/runtime/types'
 import { AcpPromptController, AcpRuntimeOwner, type AcpClientRuntime } from '@/agent/acp/client'
 import { AcpAgentRuntime } from '@/agent/acp/instance'
 import type { AcpAgentDescriptor } from '@/agent/shared/agentDescriptors'
+import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
 import type { AcpAgentConfig } from '@shared/types/acp'
 import type * as schema from '@agentclientprotocol/sdk/dist/schema/index.js'
@@ -749,6 +750,7 @@ function createRuntimeDependencies(
     sessionPermissionPort?: {
       clearSessionPermissions: ReturnType<typeof vi.fn>
       approvePermission: ReturnType<typeof vi.fn>
+      revokeOneShotCommandPermission: ReturnType<typeof vi.fn>
     }
     resolveAgentPermission?: ReturnType<typeof vi.fn>
     traceSettings?: { isEnabled(): boolean }
@@ -772,7 +774,16 @@ function createRuntimeDependencies(
     },
     sessionPermissionPort: options.sessionPermissionPort ?? {
       clearSessionPermissions: vi.fn(),
-      approvePermission: vi.fn().mockResolvedValue(undefined)
+      approvePermission: vi.fn(async (_sessionId, permission) =>
+        permission.permissionType === 'command'
+          ? {
+              kind: 'command' as const,
+              signature: permission.commandSignature ?? '',
+              oneShotGrantId: 'command-grant-default'
+            }
+          : { kind: 'granted' as const }
+      ),
+      revokeOneShotCommandPermission: vi.fn()
     },
     acpAsLlmProviderPermission: {
       resolveAgentPermission: options.resolveAgentPermission ?? vi.fn().mockResolvedValue(undefined)
@@ -800,6 +811,10 @@ function createRuntimeDependencies(
     interactionContinuationAdmission: options.interactionContinuationAdmission ?? {
       resume: vi.fn().mockResolvedValue(false),
       suspend: vi.fn()
+    },
+    commandShell: {
+      resolveForTurn: vi.fn().mockResolvedValue(POSIX_COMMAND_SHELL),
+      resolveProfile: vi.fn().mockResolvedValue(POSIX_COMMAND_SHELL)
     }
   }
 }
@@ -913,6 +928,7 @@ describe('DeepChatAgentHarness', () => {
   let sessionPermissionPort: {
     clearSessionPermissions: ReturnType<typeof vi.fn>
     approvePermission: ReturnType<typeof vi.fn>
+    revokeOneShotCommandPermission: ReturnType<typeof vi.fn>
   }
   let agent: DeepChatAgentHarness
   let runtimeDependencies: ReturnType<typeof createRuntimeDependencies>
@@ -1077,6 +1093,10 @@ describe('DeepChatAgentHarness', () => {
     params?: string
     serverName?: string
     permissionType?: string
+    command?: string
+    commandSignature?: string
+    shellProfile?: 'posix' | 'cmd' | 'windows-powershell' | 'git-bash'
+    paths?: string[]
   }) => {
     const messageId = input.messageId ?? 'm1'
     const toolCallId = input.toolCallId ?? 'tc1'
@@ -1111,6 +1131,10 @@ describe('DeepChatAgentHarness', () => {
               permissionType: input.permissionType ?? 'write',
               description: 'Need permission',
               toolName: input.toolName,
+              ...(input.command ? { command: input.command } : {}),
+              ...(input.commandSignature ? { commandSignature: input.commandSignature } : {}),
+              ...(input.shellProfile ? { shellProfile: input.shellProfile } : {}),
+              ...(input.paths ? { paths: input.paths } : {}),
               ...(input.serverName ? { serverName: input.serverName } : {})
             })
           }
@@ -1178,7 +1202,16 @@ describe('DeepChatAgentHarness', () => {
     toolService = createMockToolService()
     sessionPermissionPort = {
       clearSessionPermissions: vi.fn(),
-      approvePermission: vi.fn().mockResolvedValue(undefined)
+      approvePermission: vi.fn(async (_sessionId, permission) =>
+        permission.permissionType === 'command'
+          ? {
+              kind: 'command' as const,
+              signature: permission.commandSignature ?? '',
+              oneShotGrantId: 'command-grant-default'
+            }
+          : { kind: 'granted' as const }
+      ),
+      revokeOneShotCommandPermission: vi.fn()
     }
     hookDispatcher = { dispatchEvent: vi.fn() }
     sessionData = createSessionDataFromDatabase(sqlitePresenter as never, {
@@ -7301,7 +7334,11 @@ describe('DeepChatAgentHarness', () => {
           abortController: controller,
           messages: [],
           streamState: createState(),
-          resources: { toolDefinitions: [], activeSkillNames: [] }
+          resources: {
+            toolDefinitions: [],
+            activeSkillNames: [],
+            commandShell: POSIX_COMMAND_SHELL
+          }
         })
       )
 
@@ -10416,7 +10453,7 @@ describe('DeepChatAgentHarness', () => {
         abortController,
         messages: [],
         streamState,
-        resources: { toolDefinitions: [], activeSkillNames: [] }
+        resources: { toolDefinitions: [], activeSkillNames: [], commandShell: POSIX_COMMAND_SHELL }
       })
       instance.registerActiveGeneration(run)
       setRuntimeStatus(agent, 's1', 'generating')
@@ -11531,6 +11568,7 @@ describe('DeepChatAgentHarness', () => {
               description: 'Need pre-check permission',
               toolName: 'write_file',
               serverName: 'agent-filesystem',
+              shellProfile: 'posix',
               paths: ['a.txt']
             })
           }
@@ -11621,6 +11659,7 @@ describe('DeepChatAgentHarness', () => {
                 description: 'Need pre-check permission',
                 toolName: 'write_file',
                 serverName: 'agent-filesystem',
+                shellProfile: 'posix',
                 paths: ['a.txt']
               }
             },
@@ -11686,6 +11725,7 @@ describe('DeepChatAgentHarness', () => {
               description: 'Need post-call permission',
               toolName: 'write_file',
               serverName: 'agent-filesystem',
+              shellProfile: 'posix',
               paths: ['a.txt']
             }
           }
@@ -11816,6 +11856,7 @@ describe('DeepChatAgentHarness', () => {
                 description: 'Need permission',
                 toolName: 'write_file',
                 serverName: 'agent-filesystem',
+                shellProfile: 'posix',
                 paths: ['a.txt']
               })
             }
@@ -11883,6 +11924,7 @@ describe('DeepChatAgentHarness', () => {
                 description: 'Need permission',
                 toolName: 'write_file',
                 serverName: 'agent-filesystem',
+                shellProfile: 'posix',
                 paths: ['a.txt']
               })
             }
@@ -12119,7 +12161,9 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       installPendingPermission({
         toolName: 'write_file',
-        serverName: 'agent-filesystem'
+        serverName: 'agent-filesystem',
+        shellProfile: 'posix',
+        paths: ['/workspace/file.txt']
       })
       toolService.callTool.mockResolvedValueOnce({
         content: 'done',
@@ -12188,7 +12232,9 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       installPendingPermission({
         toolName: 'write_file',
-        serverName: 'agent-filesystem'
+        serverName: 'agent-filesystem',
+        shellProfile: 'posix',
+        paths: ['/workspace/file.txt']
       })
       toolService.callTool.mockResolvedValueOnce({
         content: 'done',
@@ -12237,7 +12283,9 @@ describe('DeepChatAgentHarness', () => {
         await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
         installPendingPermission({
           toolName: 'write_file',
-          serverName: 'agent-filesystem'
+          serverName: 'agent-filesystem',
+          shellProfile: 'posix',
+          paths: ['/workspace/file.txt']
         })
         toolService.callTool.mockResolvedValueOnce({
           content: 'done',
@@ -12977,6 +13025,130 @@ describe('DeepChatAgentHarness', () => {
       )
       expect(getRuntimeState(agent, 's1').status).toBe('error')
     })
+
+    it('revokes a deferred command grant when approval completion observes cancellation', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const row = installPendingPermission({
+        toolName: 'exec',
+        params: '{"command":"npm test"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'command',
+        command: 'npm test',
+        commandSignature: 'posix:npm test',
+        shellProfile: 'posix'
+      })
+      const { abortController } = registerActiveInteractionRun(
+        'm1',
+        JSON.parse(row.content) as AssistantMessageBlock[]
+      )
+      sessionPermissionPort.approvePermission.mockImplementationOnce(async () => {
+        abortController.abort()
+        return {
+          kind: 'command',
+          signature: 'posix:npm test',
+          oneShotGrantId: 'command-grant-cancelled'
+        }
+      })
+      const executeDeferredToolCallSpy = vi.spyOn(DeferredToolExecutor.prototype, 'execute')
+
+      try {
+        await expect(approvePendingTool()).resolves.toEqual({ resumed: false })
+
+        expect(sessionPermissionPort.revokeOneShotCommandPermission).toHaveBeenCalledWith(
+          's1',
+          'posix:npm test',
+          'command-grant-cancelled'
+        )
+        expect(executeDeferredToolCallSpy).not.toHaveBeenCalled()
+      } finally {
+        executeDeferredToolCallSpy.mockRestore()
+      }
+    })
+
+    it('rejects and revokes a deferred command lease for another signature', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const row = installPendingPermission({
+        toolName: 'exec',
+        params: '{"command":"npm test"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'command',
+        command: 'npm test',
+        commandSignature: 'posix:npm test',
+        shellProfile: 'posix'
+      })
+      sessionPermissionPort.approvePermission.mockResolvedValueOnce({
+        kind: 'command',
+        signature: 'git-bash:npm test',
+        oneShotGrantId: 'wrong-command-grant'
+      })
+      const executeDeferredToolCallSpy = vi.spyOn(DeferredToolExecutor.prototype, 'execute')
+
+      try {
+        await expect(approvePendingTool()).rejects.toThrow(
+          'Command approval returned a lease for another signature.'
+        )
+
+        expect(sessionPermissionPort.revokeOneShotCommandPermission).toHaveBeenCalledWith(
+          's1',
+          'git-bash:npm test',
+          'wrong-command-grant'
+        )
+        expect(executeDeferredToolCallSpy).not.toHaveBeenCalled()
+        expect(JSON.parse(row.content)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'action',
+              status: 'pending',
+              extra: expect.objectContaining({ needsUserAction: true })
+            })
+          ])
+        )
+      } finally {
+        executeDeferredToolCallSpy.mockRestore()
+      }
+    })
+
+    it('rejects and revokes a command lease returned for a deferred file approval', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const row = installPendingPermission({
+        toolName: 'write',
+        params: '{"path":"notes.txt","content":"updated"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'write',
+        shellProfile: 'posix',
+        paths: ['/workspace/notes.txt']
+      })
+      sessionPermissionPort.approvePermission.mockResolvedValueOnce({
+        kind: 'command',
+        signature: 'posix:npm test',
+        oneShotGrantId: 'unexpected-command-grant'
+      })
+      const executeDeferredToolCallSpy = vi.spyOn(DeferredToolExecutor.prototype, 'execute')
+
+      try {
+        await expect(approvePendingTool()).rejects.toThrow(
+          'Non-command approval returned an unexpected grant result.'
+        )
+
+        expect(sessionPermissionPort.revokeOneShotCommandPermission).toHaveBeenCalledWith(
+          's1',
+          'posix:npm test',
+          'unexpected-command-grant'
+        )
+        expect(executeDeferredToolCallSpy).not.toHaveBeenCalled()
+        expect(JSON.parse(row.content)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'action',
+              status: 'pending',
+              extra: expect.objectContaining({ needsUserAction: true })
+            })
+          ])
+        )
+      } finally {
+        executeDeferredToolCallSpy.mockRestore()
+      }
+    })
   })
 
   describe('permission mode', () => {
@@ -13236,7 +13408,12 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       installPendingPermission({
         toolName: 'exec',
-        params: '{"command":"npm test"}'
+        params: '{"command":"npm test"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'command',
+        command: 'npm test',
+        commandSignature: 'posix:npm test',
+        shellProfile: 'posix'
       })
 
       const result = await approvePendingTool()
@@ -13292,7 +13469,7 @@ describe('DeepChatAgentHarness', () => {
       toolService.callTool.mockRejectedValueOnce(timeoutError)
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      installPendingPermission({ toolName: 'echo' })
+      installPendingPermission({ toolName: 'echo', serverName: 'test-server' })
 
       const result = await approvePendingTool()
 
@@ -13307,6 +13484,7 @@ describe('DeepChatAgentHarness', () => {
       toolService.getAllToolDefinitions.mockResolvedValueOnce([
         {
           type: 'function',
+          source: 'agent',
           function: {
             name: 'view_image',
             description: 'view image',
@@ -13334,7 +13512,13 @@ describe('DeepChatAgentHarness', () => {
       })
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      installPendingPermission({ toolName: 'view_image' })
+      installPendingPermission({
+        toolName: 'view_image',
+        serverName: 'agent-filesystem',
+        permissionType: 'read',
+        shellProfile: 'posix',
+        paths: ['/workspace/preview.png']
+      })
 
       const result = await approvePendingTool()
 
@@ -13385,7 +13569,10 @@ describe('DeepChatAgentHarness', () => {
                 permissionType: 'command',
                 description: 'Need permission',
                 toolName: 'run_shell',
-                command: 'dir'
+                serverName: 'agent-filesystem',
+                command: 'dir',
+                commandSignature: 'posix:test-signature',
+                shellProfile: 'posix'
               })
             }
           }
@@ -13430,6 +13617,209 @@ describe('DeepChatAgentHarness', () => {
       }
     })
 
+    it('fails closed when a deferred command approval lacks its shell identity', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      installPendingPermission({
+        toolName: 'run_shell',
+        params: '{"command":"dir"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'command'
+      })
+      const executeDeferredToolCallSpy = vi.spyOn(DeferredToolExecutor.prototype, 'execute')
+
+      try {
+        await expect(
+          agent.respondToolInteraction('s1', 'm1', 'tc1', {
+            kind: 'permission',
+            granted: true
+          })
+        ).rejects.toThrow('Command approval is missing a valid shell profile and signature.')
+        expect(sessionPermissionPort.approvePermission).not.toHaveBeenCalled()
+        expect(executeDeferredToolCallSpy).not.toHaveBeenCalled()
+      } finally {
+        executeDeferredToolCallSpy.mockRestore()
+      }
+    })
+
+    it('fails closed before granting a deferred file approval without its shell identity', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      installPendingPermission({
+        toolName: 'write',
+        params: '{"path":"notes.txt","content":"updated"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'write',
+        paths: ['/workspace/notes.txt']
+      })
+      const executeDeferredToolCallSpy = vi.spyOn(DeferredToolExecutor.prototype, 'execute')
+
+      try {
+        await expect(approvePendingTool()).rejects.toThrow(
+          'File approval is missing a valid shell profile.'
+        )
+        expect(sessionPermissionPort.approvePermission).not.toHaveBeenCalled()
+        expect(executeDeferredToolCallSpy).not.toHaveBeenCalled()
+        expect(
+          hookDispatcher.dispatchEvent.mock.calls.some(([event]) => event === 'PreToolUse')
+        ).toBe(false)
+      } finally {
+        executeDeferredToolCallSpy.mockRestore()
+      }
+    })
+
+    it('rejects a deferred file approval with a conflicting server identity', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const row = installPendingPermission({
+        toolName: 'write',
+        params: '{"path":"notes.txt","content":"updated"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'write',
+        shellProfile: 'posix',
+        paths: ['/workspace/notes.txt']
+      })
+      const blocks = JSON.parse(row.content) as AssistantMessageBlock[]
+      const persistedPermission = JSON.parse(String(blocks[1].extra?.permissionRequest)) as Record<
+        string,
+        unknown
+      >
+      persistedPermission.serverName = 'deepchat-settings'
+      blocks[1].extra = {
+        ...blocks[1].extra,
+        permissionRequest: JSON.stringify(persistedPermission)
+      }
+      row.content = JSON.stringify(blocks)
+      const executeDeferredToolCallSpy = vi.spyOn(DeferredToolExecutor.prototype, 'execute')
+
+      try {
+        await expect(approvePendingTool()).rejects.toThrow(
+          'Permission approval tool server identity does not match the tool call.'
+        )
+        expect(sessionPermissionPort.approvePermission).not.toHaveBeenCalled()
+        expect(executeDeferredToolCallSpy).not.toHaveBeenCalled()
+      } finally {
+        executeDeferredToolCallSpy.mockRestore()
+      }
+    })
+
+    it('rejects a deferred file approval without paths before granting any permission', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      installPendingPermission({
+        toolName: 'write',
+        params: '{"path":"notes.txt","content":"updated"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'write',
+        shellProfile: 'posix'
+      })
+      const executeDeferredToolCallSpy = vi.spyOn(DeferredToolExecutor.prototype, 'execute')
+
+      try {
+        await expect(approvePendingTool()).rejects.toThrow('File approval is missing valid paths.')
+        expect(sessionPermissionPort.approvePermission).not.toHaveBeenCalled()
+        expect(executeDeferredToolCallSpy).not.toHaveBeenCalled()
+      } finally {
+        executeDeferredToolCallSpy.mockRestore()
+      }
+    })
+
+    it('rehydrates a pending command approval with its stored shell policy and a fresh lease', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const row = installPendingPermission({
+        toolName: 'exec',
+        params: '{"command":"npm install react"}',
+        serverName: 'agent-filesystem',
+        permissionType: 'command',
+        command: 'npm install react',
+        commandSignature: 'git-bash:npm install',
+        shellProfile: 'git-bash'
+      })
+      const persistedBlocks = JSON.parse(row.content) as AssistantMessageBlock[]
+      const persistedPermission = JSON.parse(
+        String(persistedBlocks[1].extra?.permissionRequest)
+      ) as Record<string, unknown>
+      expect(persistedPermission).toMatchObject({
+        commandSignature: 'git-bash:npm install',
+        shellProfile: 'git-bash'
+      })
+      expect(persistedPermission).not.toHaveProperty('oneShotGrantId')
+
+      sqlitePresenter.deepchatSessionsTable.get.mockReturnValue({
+        id: 's1',
+        provider_id: 'openai',
+        model_id: 'gpt-4',
+        permission_mode: 'default'
+      })
+      sessionPermissionPort = {
+        clearSessionPermissions: vi.fn(),
+        approvePermission: vi.fn(async (_sessionId, permission) => ({
+          kind: 'command' as const,
+          signature: permission.commandSignature ?? '',
+          oneShotGrantId: 'command-grant-after-restart'
+        })),
+        revokeOneShotCommandPermission: vi.fn()
+      }
+      sessionData = createSessionDataFromDatabase(sqlitePresenter as never, {
+        publishPendingInputsChanged: vi.fn(),
+        publishMessagesChanged: vi.fn()
+      })
+      agent = createDeepChatAgentHarness({
+        ...runtimeDependencies,
+        sessionPermissionPort,
+        database: sqlitePresenter,
+        sessionData,
+        toolService,
+        providerRuntime: llmProvider,
+        providerSettings,
+        agentSettings: providerSettings,
+        hookObserver: createHookObserver(hookDispatcher)
+      })
+
+      await expect(agent.getSessionState('s1')).resolves.toMatchObject({ status: 'generating' })
+      const rehydratedInstance = agent.deepChatRuntime.getHydrated(toAppSessionId('s1'))
+      expect(rehydratedInstance?.getPendingInteractions()).toEqual([
+        {
+          messageId: 'm1',
+          toolCallId: 'tc1',
+          origin: 'pre-check-permission',
+          order: 0
+        }
+      ])
+
+      const executeDeferredToolCallSpy = vi
+        .spyOn(DeferredToolExecutor.prototype, 'execute')
+        .mockResolvedValue({
+          responseText: 'terminal failure',
+          isError: true,
+          terminalError: 'terminal failure'
+        })
+
+      try {
+        await expect(approvePendingTool()).resolves.toEqual({ resumed: false })
+
+        expect(sessionPermissionPort.approvePermission).toHaveBeenCalledWith(
+          's1',
+          expect.objectContaining({
+            permissionType: 'command',
+            commandSignature: 'git-bash:npm install',
+            shellProfile: 'git-bash'
+          })
+        )
+        expect(executeDeferredToolCallSpy).toHaveBeenCalledWith(
+          's1',
+          'm1',
+          expect.objectContaining({ id: 'tc1', name: 'exec' }),
+          expect.any(Function),
+          'git-bash',
+          'command-grant-after-restart'
+        )
+        expect(sessionPermissionPort.revokeOneShotCommandPermission).toHaveBeenCalledWith(
+          's1',
+          'git-bash:npm install',
+          'command-grant-after-restart'
+        )
+      } finally {
+        executeDeferredToolCallSpy.mockRestore()
+      }
+    })
+
     it('settles a deferred interaction after T2 persistence fails without replaying the tool', async () => {
       toolService.getAllToolDefinitions.mockResolvedValueOnce([
         {
@@ -13459,7 +13849,10 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const row = installPendingPermission({
         toolName: 'write_file',
-        params: '{"path":"a.txt"}'
+        params: '{"path":"a.txt"}',
+        serverName: 'agent-filesystem',
+        shellProfile: 'posix',
+        paths: ['/workspace/a.txt']
       })
       vi.spyOn(sessionData.tapeStore, 'commitToolOutcome').mockImplementationOnce(() => {
         throw new ExecutionJournalError('T2 unavailable', 'persistence_failed')
@@ -13506,7 +13899,10 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const row = installPendingPermission({
         toolName: 'write_file',
-        params: '{"path":"a.txt"}'
+        params: '{"path":"a.txt"}',
+        serverName: 'agent-filesystem',
+        shellProfile: 'posix',
+        paths: ['/workspace/a.txt']
       })
       vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockImplementationOnce(() => {
         throw new ExecutionJournalError('run terminal unavailable', 'persistence_failed')
@@ -13560,7 +13956,10 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       installPendingPermission({
         toolName: 'write_file',
-        params: '{"path":"a.txt"}'
+        params: '{"path":"a.txt"}',
+        serverName: 'agent-filesystem',
+        shellProfile: 'posix',
+        paths: ['/workspace/a.txt']
       })
       vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockImplementationOnce(() => {
         throw new ExecutionJournalError('run terminal unavailable', 'persistence_failed')
@@ -13619,7 +14018,10 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const row = installPendingPermission({
         toolName: 'write_file',
-        params: '{"path":"a.txt"}'
+        params: '{"path":"a.txt"}',
+        serverName: 'agent-filesystem',
+        shellProfile: 'posix',
+        paths: ['/workspace/a.txt']
       })
       const journalError = new ExecutionJournalError(
         'run terminal unavailable',
@@ -13675,7 +14077,7 @@ describe('DeepChatAgentHarness', () => {
         modelId: 'gpt-4',
         permissionMode: 'auto_approve'
       })
-      installPendingPermission({ toolName: 'echo' })
+      installPendingPermission({ toolName: 'echo', serverName: 'test-server' })
 
       await approvePendingTool()
 
@@ -13704,7 +14106,7 @@ describe('DeepChatAgentHarness', () => {
         modelId: 'gpt-4',
         permissionMode: 'full_access'
       })
-      installPendingPermission({ toolName: 'echo' })
+      installPendingPermission({ toolName: 'echo', serverName: 'test-server' })
 
       const execution = approvePendingTool()
       await vi.waitFor(() => expect(toolService.getAllToolDefinitions).toHaveBeenCalled())
@@ -13761,7 +14163,8 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       installPendingPermission({
         toolCallId: 'tc-subagent',
-        toolName: 'subagent_orchestrator'
+        toolName: 'subagent_orchestrator',
+        serverName: 'agent'
       })
 
       const executionPromise = approvePendingTool('m1', 'tc-subagent')
@@ -13811,7 +14214,7 @@ describe('DeepChatAgentHarness', () => {
         toolService.callTool.mockImplementationOnce(async () => await toolResult.promise)
 
         await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-        const row = installPendingPermission({ toolName: 'echo' })
+        const row = installPendingPermission({ toolName: 'echo', serverName: 'test-server' })
         let currentRow: typeof row | undefined = row
         sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
           id === 'm1' ? currentRow : undefined
@@ -13860,7 +14263,7 @@ describe('DeepChatAgentHarness', () => {
       toolService.callTool.mockImplementationOnce(async () => await toolResult.promise)
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      const row = installPendingPermission({ toolName: 'echo' })
+      const row = installPendingPermission({ toolName: 'echo', serverName: 'test-server' })
       const resume = approvePendingTool()
       await vi.waitFor(() => expect(toolService.callTool).toHaveBeenCalledOnce())
       row.session_id = 'other-session'
@@ -13919,7 +14322,8 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const row = installPendingPermission({
         toolCallId: 'tc-final',
-        toolName: 'subagent_orchestrator'
+        toolName: 'subagent_orchestrator',
+        serverName: 'agent'
       })
 
       const result = await approvePendingTool('m1', 'tc-final')
@@ -13975,7 +14379,10 @@ describe('DeepChatAgentHarness', () => {
       })
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      const staleRow = installPendingPermission({ toolName: 'subagent_orchestrator' })
+      const staleRow = installPendingPermission({
+        toolName: 'subagent_orchestrator',
+        serverName: 'agent'
+      })
       const latestRow = {
         ...staleRow,
         content: JSON.stringify([

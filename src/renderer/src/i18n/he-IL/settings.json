@@ -1,6 +1,29 @@
 {
   "title": "הגדרות",
   "common": {
+    "commandShell": {
+      "title": "מעטפת הפקודות של הסוכן",
+      "auto": "אוטומטי",
+      "windowsPowerShell": "Windows PowerShell",
+      "gitBash": "Git Bash",
+      "executable": "קובץ ההפעלה של Git Bash",
+      "autoDetect": "זיהוי אוטומטי",
+      "browse": "בחירת Git Bash",
+      "clearOverride": "ניקוי הנתיב המותאם אישית",
+      "checking": "Git Bash נבדק...",
+      "available": "זמין: {path}",
+      "refresh": "בדיקה חוזרת",
+      "updateFailed": "לא ניתן לעדכן את הגדרת מעטפת הפקודות.",
+      "checkFailed": "לא ניתן לבדוק אם Git Bash זמין.",
+      "browseFailed": "לא ניתן לבחור את קובץ ההפעלה של Git Bash.",
+      "loadFailed": "לא ניתן לטעון את הגדרת מעטפת הפקודות.",
+      "errors": {
+        "unsupported-platform": "בחירת Git Bash זמינה רק ב-Windows.",
+        "override-invalid": "הנתיב המותאם אישית חייב להפנות אל bash.exe קיים.",
+        "not-found": "Git Bash לא נמצא במכשיר זה.",
+        "validation-failed": "קובץ ההפעלה שזוהה לא עבר את האימות של Git Bash."
+      }
+    },
     "title": "הגדרות כלליות",
     "resetData": "אפס נתונים",
     "language": "שפה",
