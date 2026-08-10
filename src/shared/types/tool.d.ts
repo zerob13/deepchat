@@ -86,6 +86,12 @@ export interface ToolPermissionPreCheckResult {
   [key: string]: unknown
 }
 
+export interface ToolDefinitionUniverseSnapshot {
+  readonly definitions: readonly MCPToolDefinition[]
+  readonly complete: boolean
+  readonly unavailableSourceCount: number
+}
+
 /**
  * Interface for the merged Tool catalog and execution service.
  */
@@ -99,7 +105,7 @@ export interface ToolServicePort {
   /**
    * Resolve the owned definition universe without publishing runtime dispatch mappings.
    */
-  getToolDefinitionUniverse(context: ToolDefinitionContext): Promise<MCPToolDefinition[]>
+  getToolDefinitionUniverse(context: ToolDefinitionContext): Promise<ToolDefinitionUniverseSnapshot>
 
   /**
    * Get only Agent tools that users may enable or disable.

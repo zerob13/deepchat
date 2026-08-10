@@ -243,6 +243,8 @@ export class McpService implements McpServicePort {
           this.pluginRuntimeSupervisor.isServerAvailable(serverName),
         getOwnerPluginId: (serverName) => this.pluginRuntimeSupervisor.getOwnerPluginId(serverName),
         getAvailableToolCatalogs: () => this.pluginRuntimeSupervisor.getAvailableToolCatalogs(),
+        getAvailableToolServerNames: () =>
+          this.pluginRuntimeSupervisor.getAvailableToolServerNames(),
         ensureRunning: (serverName, reason) =>
           this.pluginRuntimeSupervisor.ensureRunning(serverName, reason)
       },
@@ -1162,9 +1164,25 @@ export class McpService implements McpServicePort {
   ): Promise<import('@shared/types/mcp').McpToolDefinitionsSnapshot> {
     const context = normalizeToolAccessContext(enabledMcpTools)
     const enabled = await this.mcpSettings.getMcpEnabled()
+    const [configuredEnabledServerNames, serverConfigs] = enabled
+      ? await Promise.all([
+          this.mcpSettings.getEnabledMcpServers(),
+          this.mcpSettings.getMcpServers()
+        ])
+      : [[], {}]
+    const selectedServerNames = context.enabledServerIds ? new Set(context.enabledServerIds) : null
+    const expectedServerNames = enabled
+      ? configuredEnabledServerNames.filter(
+          (serverName) =>
+            (!selectedServerNames || selectedServerNames.has(serverName)) &&
+            !this.isPluginOwnedServerConfig(serverConfigs[serverName]) &&
+            !this.pluginRuntimeSupervisor.ownsServer(serverName)
+        )
+      : []
     return this.toolManager.snapshotCachedToolDefinitions({
       ...context,
-      includeRegularServers: enabled
+      includeRegularServers: enabled,
+      expectedServerNames
     })
   }
 

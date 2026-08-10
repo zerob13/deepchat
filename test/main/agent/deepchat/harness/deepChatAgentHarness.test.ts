@@ -90,6 +90,7 @@ vi.mock('@/events', () => ({
 const skillServiceMock = {
   getMetadataList: vi.fn().mockResolvedValue([]),
   getActiveSkills: vi.fn().mockResolvedValue([]),
+  snapshotPersistedActiveSkillNames: vi.fn(() => []),
   setActiveSkills: vi.fn().mockImplementation(async (_id: string, skills: string[]) => skills),
   revalidateActiveSkillsForAgent: vi.fn().mockResolvedValue([]),
   validateSkillNames: vi

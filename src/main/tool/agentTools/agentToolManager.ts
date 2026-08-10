@@ -445,13 +445,19 @@ export class AgentToolManager {
     conversationId?: string
     activeSkillNames?: string[]
     subagentCapability?: DeepChatSubagentCapability
-    catalogPurpose?: 'runtime' | 'configurable'
+    catalogPurpose?: 'runtime' | 'configurable' | 'universe'
   }): Promise<MCPToolDefinition[]> {
     const defs: MCPToolDefinition[] = []
     const isAgentMode = context.chatMode === 'agent'
     const isConfigurableCatalog = context.catalogPurpose === 'configurable'
+    const isUniverseCatalog = context.catalogPurpose === 'universe'
+    const isDefinitionOnlyCatalog = isConfigurableCatalog || isUniverseCatalog
     const acceptsExposure = (exposure: AgentToolExposure): boolean =>
       !isConfigurableCatalog || exposure === 'user-configurable'
+    const handleAvailabilityError = (message: string, error: unknown): void => {
+      if (isUniverseCatalog) throw error
+      logger.warn(message, { error })
+    }
     const appendDefinitions = (
       definitions: MCPToolDefinition[],
       expectedExposure: AgentToolExposure
@@ -464,12 +470,12 @@ export class AgentToolManager {
       }
     }
 
-    if (!isConfigurableCatalog) {
+    if (!isDefinitionOnlyCatalog) {
       this.syncContext(context)
     }
 
     // 1. FileSystem tools (agent mode only)
-    if (isAgentMode && (isConfigurableCatalog || this.fileSystemHandler)) {
+    if (isAgentMode && (isDefinitionOnlyCatalog || this.fileSystemHandler)) {
       const fsDefs = this.getFileSystemToolDefinitions()
       appendDefinitions(fsDefs, 'user-configurable')
     }
@@ -489,7 +495,10 @@ export class AgentToolManager {
           appendDefinitions(this.tapeToolHandler.getToolDefinitions(), 'system-model')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to resolve tape tool availability', { error })
+        handleAvailabilityError(
+          '[AgentToolManager] Failed to resolve tape tool availability',
+          error
+        )
       }
     }
 
@@ -500,20 +509,29 @@ export class AgentToolManager {
           appendDefinitions(this.memoryToolHandler.getToolDefinitions(), 'user-configurable')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to resolve memory tool availability', { error })
+        handleAvailabilityError(
+          '[AgentToolManager] Failed to resolve memory tool availability',
+          error
+        )
       }
     }
 
     // 2.25. Image generation tool (deepchat agent sessions with an image model)
     if (isAgentMode) {
       try {
-        if (await this.imageGenerationTool.canUse(context.conversationId)) {
+        if (
+          await this.imageGenerationTool.canUse(
+            context.conversationId,
+            isUniverseCatalog ? { strict: true, reportDiagnostics: false } : undefined
+          )
+        ) {
           appendDefinitions([this.imageGenerationTool.getToolDefinition()], 'user-configurable')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to resolve image generation tool availability', {
+        handleAvailabilityError(
+          '[AgentToolManager] Failed to resolve image generation tool availability',
           error
-        })
+        )
       }
     }
 
@@ -537,7 +555,10 @@ export class AgentToolManager {
           appendDefinitions([subagentToolDefinition], 'system-model')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to resolve subagent tool availability', { error })
+        handleAvailabilityError(
+          '[AgentToolManager] Failed to resolve subagent tool availability',
+          error
+        )
       }
     }
 
@@ -547,8 +568,9 @@ export class AgentToolManager {
       appendDefinitions(skillDefs, 'user-configurable')
 
       if (
-        context.conversationId &&
-        (await this.hasRunnableSkillScripts(context.conversationId, context.activeSkillNames))
+        isUniverseCatalog ||
+        (context.conversationId &&
+          (await this.hasRunnableSkillScripts(context.conversationId, context.activeSkillNames)))
       ) {
         appendDefinitions([this.getSkillRunToolDefinition()], 'user-configurable')
       }
@@ -557,30 +579,34 @@ export class AgentToolManager {
     // 4. DeepChat settings tools (agent mode only, skill gated)
     if (isAgentMode && this.isSkillsEnabled() && context.conversationId) {
       try {
-        const activeSkills =
-          context.activeSkillNames ??
-          (await this.getSkillService().getActiveSkills(context.conversationId))
+        const activeSkills = isUniverseCatalog
+          ? (context.activeSkillNames ?? [])
+          : (context.activeSkillNames ??
+            (await this.getSkillService().getActiveSkills(context.conversationId)))
         if (activeSkills.includes(CHAT_SETTINGS_SKILL_NAME)) {
-          const allowedTools = await this.getSkillService().getActiveSkillsAllowedTools(
-            context.conversationId,
-            activeSkills
-          )
           const requiredSettingsTools = Object.values(CHAT_SETTINGS_TOOL_NAMES)
-          const nonOpenSettingsTools = requiredSettingsTools.filter(
-            (tool) => tool !== CHAT_SETTINGS_TOOL_NAMES.open
-          )
-          const hasNonOpenSettingsTool = nonOpenSettingsTools.some((tool) =>
-            allowedTools.includes(tool)
-          )
-          const effectiveAllowedTools = hasNonOpenSettingsTool
-            ? allowedTools
-            : Array.from(new Set([...allowedTools, ...requiredSettingsTools]))
+          let effectiveAllowedTools: string[] = requiredSettingsTools
+          if (!isUniverseCatalog) {
+            const allowedTools = await this.getSkillService().getActiveSkillsAllowedTools(
+              context.conversationId,
+              activeSkills
+            )
+            const nonOpenSettingsTools = requiredSettingsTools.filter(
+              (tool) => tool !== CHAT_SETTINGS_TOOL_NAMES.open
+            )
+            const hasNonOpenSettingsTool = nonOpenSettingsTools.some((tool) =>
+              allowedTools.includes(tool)
+            )
+            effectiveAllowedTools = hasNonOpenSettingsTool
+              ? allowedTools
+              : Array.from(new Set([...allowedTools, ...requiredSettingsTools]))
+          }
 
           const settingsDefs = buildChatSettingsToolDefinitions(effectiveAllowedTools)
           appendDefinitions(settingsDefs, 'user-configurable')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to load DeepChat settings tools', { error })
+        handleAvailabilityError('[AgentToolManager] Failed to load DeepChat settings tools', error)
       }
     }
 
@@ -589,7 +615,7 @@ export class AgentToolManager {
       try {
         appendDefinitions(this.getYoBrowserToolHandler().getToolDefinitions(), 'user-configurable')
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to load YoBrowser tools', { error })
+        handleAvailabilityError('[AgentToolManager] Failed to load YoBrowser tools', error)
       }
     }
 

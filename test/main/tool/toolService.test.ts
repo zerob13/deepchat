@@ -884,10 +884,13 @@ describe('ToolService', () => {
     const universeDefinition = buildToolDefinition('universe_tool', 'universe-server')
     const conflictingUniverseDefinition = buildToolDefinition('read', 'universe-server')
     const mcpService = {
-      getAllToolDefinitions: vi
-        .fn()
-        .mockResolvedValueOnce([publishedDefinition])
-        .mockResolvedValueOnce([universeDefinition, conflictingUniverseDefinition]),
+      getAllToolDefinitions: vi.fn().mockResolvedValueOnce([publishedDefinition]),
+      snapshotCachedToolDefinitions: vi.fn().mockResolvedValue({
+        state: 'ready',
+        complete: true,
+        failedSourceCount: 0,
+        tools: [universeDefinition, conflictingUniverseDefinition]
+      }),
       callTool: vi.fn()
     } as any
     const toolService = new ToolService({
@@ -913,6 +916,7 @@ describe('ToolService', () => {
       'conv-universe'
     )
     const publishedAccess = (toolService as any).conversationMcpAccessContexts.get('conv-universe')
+    const syncContextSpy = vi.spyOn(AgentToolManager.prototype, 'syncContext')
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     const universe = await toolService.getToolDefinitionUniverse({
@@ -920,10 +924,15 @@ describe('ToolService', () => {
       enabledMcpServerIds: ['universe-server']
     })
 
-    expect(universe.some((definition) => definition.function.name === 'universe_tool')).toBe(true)
-    expect(universe.some((definition) => definition.function.name === 'published_tool')).toBe(false)
+    expect(universe).toMatchObject({ complete: true, unavailableSourceCount: 0 })
     expect(
-      universe.filter(
+      universe.definitions.some((definition) => definition.function.name === 'universe_tool')
+    ).toBe(true)
+    expect(
+      universe.definitions.some((definition) => definition.function.name === 'published_tool')
+    ).toBe(false)
+    expect(
+      universe.definitions.filter(
         (definition) => definition.function.name === 'read' && definition.source === 'mcp'
       )
     ).toHaveLength(1)
@@ -936,9 +945,92 @@ describe('ToolService', () => {
     expect((toolService as any).conversationMcpAccessContexts.get('conv-universe')).toBe(
       publishedAccess
     )
+    expect(syncContextSpy).not.toHaveBeenCalled()
     expect(publishedMapper.getToolSource('published_tool')).toBe('mcp')
     expect(publishedMapper.getToolSource('universe_tool')).toBeUndefined()
     expect([...publishedMcpDefinitions.keys()]).toEqual(['published_tool'])
+
+    mcpService.snapshotCachedToolDefinitions.mockResolvedValueOnce({ state: 'uninitialized' })
+    await expect(toolService.getToolDefinitionUniverse(context)).resolves.toMatchObject({
+      complete: false,
+      unavailableSourceCount: 1
+    })
+
+    mcpService.snapshotCachedToolDefinitions.mockResolvedValueOnce({
+      state: 'ready',
+      complete: false,
+      failedSourceCount: 2,
+      tools: [universeDefinition]
+    })
+    const partialUniverse = await toolService.getToolDefinitionUniverse(context)
+    expect(partialUniverse).toMatchObject({ complete: false, unavailableSourceCount: 2 })
+    expect(
+      partialUniverse.definitions.some((definition) => definition.function.name === 'universe_tool')
+    ).toBe(true)
+
+    mcpService.snapshotCachedToolDefinitions.mockResolvedValueOnce({
+      state: 'ready',
+      complete: true,
+      failedSourceCount: 2,
+      tools: [universeDefinition]
+    })
+    await expect(toolService.getToolDefinitionUniverse(context)).resolves.toMatchObject({
+      complete: false,
+      unavailableSourceCount: 1
+    })
+
+    mcpService.snapshotCachedToolDefinitions.mockResolvedValueOnce({
+      state: 'ready',
+      complete: false,
+      failedSourceCount: Number.POSITIVE_INFINITY,
+      tools: [universeDefinition]
+    })
+    await expect(toolService.getToolDefinitionUniverse(context)).resolves.toMatchObject({
+      complete: false,
+      unavailableSourceCount: 1
+    })
+    syncContextSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('marks strict Agent catalog failures incomplete without logging private errors', async () => {
+    const universeDefinition = buildToolDefinition('universe_tool', 'universe-server')
+    const privateError = new Error('private-agent-availability-error')
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: {
+        getAllToolDefinitions: vi.fn(),
+        snapshotCachedToolDefinitions: vi.fn().mockResolvedValue({
+          state: 'ready',
+          complete: true,
+          failedSourceCount: 0,
+          tools: [universeDefinition]
+        }),
+        callTool: vi.fn()
+      } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({
+        resolveConversationSessionInfo: vi.fn().mockRejectedValue(privateError)
+      })
+    })
+
+    const universe = await toolService.getToolDefinitionUniverse({
+      chatMode: 'agent',
+      conversationId: 'conv-universe'
+    })
+
+    expect(universe).toMatchObject({ complete: false, unavailableSourceCount: 1 })
+    expect(universe.definitions).toContainEqual(
+      expect.objectContaining({ function: expect.objectContaining({ name: 'universe_tool' }) })
+    )
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ error: privateError })
+    )
     warnSpy.mockRestore()
   })
 

@@ -12,6 +12,7 @@ import {
 import type {
   ToolCallOptions,
   ToolDefinitionContext,
+  ToolDefinitionUniverseSnapshot,
   ToolPermissionPreCheckResult,
   ToolServicePort
 } from '@shared/types/tool'
@@ -63,7 +64,10 @@ import {
   assertExecutionContractAllowsDispatch
 } from '@/tape/domain/executionContract'
 
-type McpToolPort = Pick<McpServicePort, 'getAllToolDefinitions' | 'callTool'>
+type McpToolPort = Pick<
+  McpServicePort,
+  'getAllToolDefinitions' | 'snapshotCachedToolDefinitions' | 'callTool'
+>
 
 interface ToolServiceOptions {
   mcpService: McpToolPort
@@ -91,8 +95,12 @@ const RESERVED_AGENT_TOOL_NAMES = new Set<string>([
   SUBAGENT_ORCHESTRATOR_TOOL_NAME,
   ...Object.values(TAPE_TOOL_NAMES)
 ])
+const MAX_UNAVAILABLE_TOOL_DEFINITION_SOURCES = 1_024
 
-const withToolSource = (tools: MCPToolDefinition[], source: 'mcp' | 'agent'): MCPToolDefinition[] =>
+const withToolSource = (
+  tools: readonly MCPToolDefinition[],
+  source: 'mcp' | 'agent'
+): MCPToolDefinition[] =>
   tools.map((tool) => ({
     ...tool,
     source
@@ -191,6 +199,7 @@ export class ToolService implements ToolServicePort {
       this.ensureAgentToolManager(agentWorkspacePath),
       {
         reportRuntimeDiagnostics: true,
+        mcpDefinitionSource: 'refresh',
         onMcpDefinitions: (definitions) =>
           this.rememberMcpDefinitions(context.conversationId, definitions)
       }
@@ -202,14 +211,20 @@ export class ToolService implements ToolServicePort {
   /**
    * Resolve the full owned definition universe without changing runtime dispatch state.
    */
-  async getToolDefinitionUniverse(context: ToolDefinitionContext): Promise<MCPToolDefinition[]> {
+  async getToolDefinitionUniverse(
+    context: ToolDefinitionContext
+  ): Promise<ToolDefinitionUniverseSnapshot> {
     const agentWorkspacePath = context.agentWorkspacePath || null
     const resolved = await this.collectToolDefinitions(
       context,
       this.createAgentToolManager(agentWorkspacePath),
-      { reportRuntimeDiagnostics: false }
+      { reportRuntimeDiagnostics: false, mcpDefinitionSource: 'snapshot' }
     )
-    return resolved.definitions
+    return {
+      definitions: resolved.definitions,
+      complete: resolved.complete,
+      unavailableSourceCount: resolved.unavailableSourceCount
+    }
   }
 
   private async collectToolDefinitions(
@@ -217,26 +232,56 @@ export class ToolService implements ToolServicePort {
     agentToolManager: AgentToolManager,
     options: {
       reportRuntimeDiagnostics: boolean
+      mcpDefinitionSource: 'refresh' | 'snapshot'
       onMcpDefinitions?: (definitions: MCPToolDefinition[]) => void
     }
   ): Promise<{
     definitions: MCPToolDefinition[]
     mapper: ToolMapper
+    complete: boolean
+    unavailableSourceCount: number
   }> {
     const definitions: MCPToolDefinition[] = []
     const mapper = new ToolMapper()
     const chatMode = context.chatMode || 'agent'
     const supportsVision = context.supportsVision || false
     const agentWorkspacePath = context.agentWorkspacePath || null
+    const mcpContext = {
+      enabledTools: context.enabledMcpTools,
+      enabledServerIds: context.enabledMcpServerIds,
+      agentId: context.agentId,
+      conversationId: context.conversationId
+    }
+    const mcpSourceDefinitions =
+      options.mcpDefinitionSource === 'refresh'
+        ? await this.options.mcpService.getAllToolDefinitions(mcpContext)
+        : await this.options.mcpService.snapshotCachedToolDefinitions(mcpContext)
+    const resolvedMcpDefinitions = Array.isArray(mcpSourceDefinitions)
+      ? mcpSourceDefinitions
+      : mcpSourceDefinitions.state === 'ready'
+        ? mcpSourceDefinitions.tools
+        : []
+    let complete =
+      Array.isArray(mcpSourceDefinitions) ||
+      (mcpSourceDefinitions.state === 'ready' && mcpSourceDefinitions.complete === true)
+    let unavailableSourceCount = Array.isArray(mcpSourceDefinitions)
+      ? 0
+      : mcpSourceDefinitions.state === 'ready'
+        ? mcpSourceDefinitions.failedSourceCount
+        : 1
+    if (
+      !Number.isSafeInteger(unavailableSourceCount) ||
+      unavailableSourceCount < 0 ||
+      unavailableSourceCount > MAX_UNAVAILABLE_TOOL_DEFINITION_SOURCES ||
+      (complete && unavailableSourceCount !== 0)
+    ) {
+      complete = false
+      unavailableSourceCount = 1
+    } else if (!complete && unavailableSourceCount === 0) {
+      unavailableSourceCount = 1
+    }
     const mcpDefinitions = withToolSource(
-      (
-        await this.options.mcpService.getAllToolDefinitions({
-          enabledTools: context.enabledMcpTools,
-          enabledServerIds: context.enabledMcpServerIds,
-          agentId: context.agentId,
-          conversationId: context.conversationId
-        })
-      ).filter((tool) => !RESERVED_AGENT_TOOL_NAMES.has(tool.function.name)),
+      resolvedMcpDefinitions.filter((tool) => !RESERVED_AGENT_TOOL_NAMES.has(tool.function.name)),
       'mcp'
     )
     definitions.push(...mcpDefinitions)
@@ -251,7 +296,8 @@ export class ToolService implements ToolServicePort {
           agentWorkspacePath,
           conversationId: context.conversationId,
           activeSkillNames: context.activeSkillNames,
-          subagentCapability: context.subagentCapability
+          subagentCapability: context.subagentCapability,
+          catalogPurpose: options.mcpDefinitionSource === 'snapshot' ? 'universe' : 'runtime'
         }),
         'agent'
       )
@@ -274,11 +320,18 @@ export class ToolService implements ToolServicePort {
       definitions.push(...filteredAgentDefinitions)
       mapper.registerTools(filteredAgentDefinitions, 'agent')
     } catch (error) {
-      if (!options.reportRuntimeDiagnostics) throw error
-      console.warn('[Tool] Failed to load Agent tool definitions', error)
+      if (options.reportRuntimeDiagnostics) {
+        console.warn('[Tool] Failed to load Agent tool definitions', error)
+      } else {
+        complete = false
+        unavailableSourceCount = Math.min(
+          unavailableSourceCount + 1,
+          MAX_UNAVAILABLE_TOOL_DEFINITION_SOURCES
+        )
+      }
     }
 
-    return { definitions, mapper }
+    return { definitions, mapper, complete, unavailableSourceCount }
   }
 
   /**

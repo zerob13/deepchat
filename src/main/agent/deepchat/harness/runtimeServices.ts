@@ -40,6 +40,7 @@ export type DeepChatHarnessSkillPort = Pick<
   SkillServicePort,
   | 'getMetadataList'
   | 'getActiveSkills'
+  | 'snapshotPersistedActiveSkillNames'
   | 'resolveSessionAgentId'
   | 'setActiveSkills'
   | 'revalidateActiveSkillsForAgent'

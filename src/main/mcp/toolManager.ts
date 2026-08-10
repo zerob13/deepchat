@@ -37,6 +37,7 @@ import type {
 import { createPersistedMcpToolResult, getToolVisibility } from './resultProjection'
 import { resolveCachedImageDataUrl as resolveCachedImageDataUrlFromDisk } from '@/platform/imageCache'
 import { findJsonValueDifference, type JsonValueDifference } from './schemaValidation'
+import { types as nodeTypes } from 'node:util'
 
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
@@ -58,6 +59,14 @@ const TOOL_CATALOG_VALIDATION_TIMEOUT_MS = 30_000
 const MAX_SCHEMA_DIFFERENCE_PATH_LENGTH = 512
 const MAX_CACHED_IMAGE_ARGUMENT_REFERENCES = 8
 const MAX_MCP_EXECUTION_ARGUMENT_BYTES = 32 * 1024 * 1024
+const MAX_CACHED_TOOL_SNAPSHOT_DEFINITIONS = 1_024
+const MAX_CACHED_TOOL_SNAPSHOT_DEFINITION_BYTES = 256 * 1_024
+const MAX_CACHED_TOOL_SNAPSHOT_TOTAL_BYTES = 4 * 1_024 * 1_024
+const MAX_CACHED_TOOL_SNAPSHOT_DEFINITION_NODES = 100_000
+const MAX_CACHED_TOOL_SNAPSHOT_TOTAL_NODES = 500_000
+const MAX_CACHED_TOOL_SNAPSHOT_DEPTH = 64
+const MAX_CACHED_TOOL_SNAPSHOT_SOURCES = 1_024
+const MAX_CACHED_TOOL_SNAPSHOT_SOURCE_NAME_BYTES = 1_024
 const CACHED_IMAGE_REFERENCE_PATTERN = /^imgcache:\/\/\S+$/i
 const CACHED_IMAGE_PREFIX_LENGTH = 'imgcache://'.length
 
@@ -83,6 +92,7 @@ type McpToolAccessContext = {
   agentId?: string
   conversationId?: string
   includeRegularServers?: boolean
+  expectedServerNames?: string[]
 }
 
 export type ComputerUsePreviewCall = {
@@ -122,6 +132,7 @@ type PluginMcpOwnershipPort = {
   isServerAvailable(serverName: string): boolean
   getOwnerPluginId(serverName: string): string | undefined
   getAvailableToolCatalogs(): PluginOwnedToolCatalogRegistration[]
+  getAvailableToolServerNames(): string[]
   ensureRunning(serverName: string, reason: PluginRuntimeStartReason): Promise<void>
 }
 
@@ -130,6 +141,7 @@ const NO_PLUGIN_OWNERSHIP: PluginMcpOwnershipPort = {
   isServerAvailable: () => false,
   getOwnerPluginId: () => undefined,
   getAvailableToolCatalogs: () => [],
+  getAvailableToolServerNames: () => [],
   ensureRunning: async (serverName) => {
     throw new Error(`Plugin runtime server "${serverName}" is not registered`)
   }
@@ -175,7 +187,136 @@ const normalizeToolAccessContext = (
     enabledServerIds: normalizeStringList(input?.enabledServerIds),
     agentId: input?.agentId?.trim() || undefined,
     conversationId: input?.conversationId?.trim() || undefined,
-    includeRegularServers: input?.includeRegularServers
+    includeRegularServers: input?.includeRegularServers,
+    expectedServerNames: normalizeStringList(input?.expectedServerNames)
+  }
+}
+
+function assertBoundedCachedToolSnapshot(definitions: readonly MCPToolDefinition[]): void {
+  if (definitions.length > MAX_CACHED_TOOL_SNAPSHOT_DEFINITIONS) {
+    throw new Error('Cached Tool definition snapshot exceeds its definition limit.')
+  }
+
+  let totalBytes = 0
+  let totalNodes = 0
+  for (const definition of definitions) {
+    const ancestors = new Set<object>()
+    const stack: Array<
+      | { readonly kind: 'enter'; readonly value: unknown; readonly depth: number }
+      | { readonly kind: 'exit'; readonly value: object }
+    > = [{ kind: 'enter', value: definition, depth: 0 }]
+    let definitionBytes = 0
+    let definitionNodes = 0
+    const addBytes = (bytes: number): void => {
+      definitionBytes += bytes
+      totalBytes += bytes
+      if (
+        definitionBytes > MAX_CACHED_TOOL_SNAPSHOT_DEFINITION_BYTES ||
+        totalBytes > MAX_CACHED_TOOL_SNAPSHOT_TOTAL_BYTES
+      ) {
+        throw new Error('Cached Tool definition snapshot exceeds its byte limit.')
+      }
+    }
+
+    while (stack.length > 0) {
+      const item = stack.pop()
+      if (!item) break
+      if (item.kind === 'exit') {
+        ancestors.delete(item.value)
+        continue
+      }
+      definitionNodes += 1
+      totalNodes += 1
+      if (
+        definitionNodes > MAX_CACHED_TOOL_SNAPSHOT_DEFINITION_NODES ||
+        totalNodes > MAX_CACHED_TOOL_SNAPSHOT_TOTAL_NODES ||
+        item.depth > MAX_CACHED_TOOL_SNAPSHOT_DEPTH
+      ) {
+        throw new Error('Cached Tool definition snapshot exceeds its structural limit.')
+      }
+
+      if (item.value === null) {
+        addBytes(4)
+        continue
+      }
+      if (typeof item.value === 'boolean') {
+        addBytes(item.value ? 4 : 5)
+        continue
+      }
+      if (typeof item.value === 'number') {
+        if (!Number.isFinite(item.value)) {
+          throw new Error('Cached Tool definition snapshot contains a non-JSON value.')
+        }
+        addBytes(Buffer.byteLength(JSON.stringify(item.value), 'utf8'))
+        continue
+      }
+      if (typeof item.value === 'string') {
+        if (Buffer.byteLength(item.value, 'utf8') > MAX_CACHED_TOOL_SNAPSHOT_DEFINITION_BYTES) {
+          throw new Error('Cached Tool definition snapshot exceeds its byte limit.')
+        }
+        addBytes(Buffer.byteLength(JSON.stringify(item.value), 'utf8'))
+        continue
+      }
+      if (!item.value || typeof item.value !== 'object') {
+        throw new Error('Cached Tool definition snapshot contains a non-JSON value.')
+      }
+      if (ancestors.has(item.value) || nodeTypes.isProxy(item.value)) {
+        throw new Error('Cached Tool definition snapshot contains an unsafe object graph.')
+      }
+      if (Object.getOwnPropertySymbols(item.value).length > 0) {
+        throw new Error('Cached Tool definition snapshot contains a symbol property.')
+      }
+
+      ancestors.add(item.value)
+      stack.push({ kind: 'exit', value: item.value })
+      if (Array.isArray(item.value)) {
+        const keys = Object.getOwnPropertyNames(item.value).filter((key) => key !== 'length')
+        if (keys.length !== item.value.length) {
+          throw new Error('Cached Tool definition snapshot contains an invalid array.')
+        }
+        addBytes(2 + Math.max(0, item.value.length - 1))
+        for (let index = item.value.length - 1; index >= 0; index -= 1) {
+          const descriptor = Object.getOwnPropertyDescriptor(item.value, String(index))
+          if (!descriptor?.enumerable || !('value' in descriptor)) {
+            throw new Error('Cached Tool definition snapshot contains an unsafe property.')
+          }
+          stack.push({ kind: 'enter', value: descriptor.value, depth: item.depth + 1 })
+        }
+        continue
+      }
+
+      const prototype = Object.getPrototypeOf(item.value)
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new Error('Cached Tool definition snapshot contains a non-JSON object.')
+      }
+      const keys = Object.getOwnPropertyNames(item.value)
+      let includedProperties = 0
+      for (let index = keys.length - 1; index >= 0; index -= 1) {
+        const key = keys[index]
+        const descriptor = Object.getOwnPropertyDescriptor(item.value, key)
+        if (!descriptor?.enumerable || !('value' in descriptor)) {
+          throw new Error('Cached Tool definition snapshot contains an unsafe property.')
+        }
+        if (descriptor.value === undefined) continue
+        addBytes(
+          Buffer.byteLength(JSON.stringify(key), 'utf8') + 1 + (includedProperties > 0 ? 1 : 0)
+        )
+        includedProperties += 1
+        stack.push({ kind: 'enter', value: descriptor.value, depth: item.depth + 1 })
+      }
+      addBytes(2)
+    }
+  }
+}
+
+function assertBoundedCachedToolSnapshotSources(serverNames: readonly string[]): void {
+  if (serverNames.length > MAX_CACHED_TOOL_SNAPSHOT_SOURCES) {
+    throw new Error('Cached Tool definition snapshot exceeds its source limit.')
+  }
+  for (const serverName of serverNames) {
+    if (Buffer.byteLength(serverName, 'utf8') > MAX_CACHED_TOOL_SNAPSHOT_SOURCE_NAME_BYTES) {
+      throw new Error('Cached Tool definition snapshot exceeds its source-name limit.')
+    }
   }
 }
 
@@ -185,6 +326,7 @@ export class ToolManager {
   private serverManager: ServerManager
   private cachedToolDefinitions: MCPToolDefinition[] | null = null
   private cachedToolDefinitionFailedServerNames: ReadonlySet<string> | null = null
+  private cachedToolDefinitionSuccessfulServerNames: ReadonlySet<string> | null = null
   private toolNameToTargetMap: Map<string, ToolTarget> | null = null
   private catalogValidationPromises = new WeakMap<McpClient, Promise<CatalogValidationState>>()
   private toolDefinitionsCacheGeneration = 0
@@ -212,6 +354,7 @@ export class ToolManager {
     this.activeToolDefinitionsRefresh = null
     this.cachedToolDefinitions = null
     this.cachedToolDefinitionFailedServerNames = null
+    this.cachedToolDefinitionSuccessfulServerNames = null
     this.toolNameToTargetMap = null
     this.catalogValidationPromises = new WeakMap()
   }
@@ -222,17 +365,43 @@ export class ToolManager {
     if (
       this.cachedToolDefinitions === null ||
       this.cachedToolDefinitionFailedServerNames === null ||
+      this.cachedToolDefinitionSuccessfulServerNames === null ||
       this.toolNameToTargetMap === null
     ) {
       return Object.freeze({ state: 'uninitialized' })
     }
     const context = normalizeToolAccessContext(access)
-    const tools = this.filterToolDefinitionsByContext(this.cachedToolDefinitions, context).map(
-      (definition) => deepFreeze(structuredClone(definition))
+    const selectedDefinitions = this.filterToolDefinitionsByContext(
+      this.cachedToolDefinitions,
+      context
     )
-    const failedSourceCount = [...this.cachedToolDefinitionFailedServerNames].filter((serverName) =>
-      this.isServerAllowedByContext(serverName, context)
-    ).length
+    assertBoundedCachedToolSnapshot(selectedDefinitions)
+    const tools = selectedDefinitions.map((definition) => deepFreeze(structuredClone(definition)))
+    const hasExplicitExpectedServerNames = context.expectedServerNames !== undefined
+    const expectedServerNames = Array.from(
+      new Set([
+        ...(context.expectedServerNames ?? []),
+        ...this.pluginOwnership.getAvailableToolServerNames()
+      ])
+    )
+    assertBoundedCachedToolSnapshotSources(expectedServerNames)
+    const expectedServerNameSet = new Set(expectedServerNames)
+    const failedServerNames = new Set(
+      [...this.cachedToolDefinitionFailedServerNames].filter((serverName) =>
+        hasExplicitExpectedServerNames
+          ? expectedServerNameSet.has(serverName)
+          : this.isServerAllowedByContext(serverName, context)
+      )
+    )
+    for (const serverName of expectedServerNames) {
+      if (
+        !this.cachedToolDefinitionSuccessfulServerNames.has(serverName) &&
+        !this.cachedToolDefinitionFailedServerNames.has(serverName)
+      ) {
+        failedServerNames.add(serverName)
+      }
+    }
+    const failedSourceCount = failedServerNames.size
     return Object.freeze({
       state: 'ready',
       tools: Object.freeze(tools),
@@ -445,6 +614,9 @@ export class ToolManager {
       }
       this.cachedToolDefinitions = results
       this.cachedToolDefinitionFailedServerNames = new Set(loadedSources.failedServerNames)
+      this.cachedToolDefinitionSuccessfulServerNames = new Set(
+        sources.map((source) => source.serverName)
+      )
       this.toolNameToTargetMap = nextToolNameToTargetMap
       console.info(`Cached ${results.length} final tool definitions and populated target map.`)
 
@@ -549,7 +721,11 @@ export class ToolManager {
     toolDefinitions: MCPToolDefinition[],
     context: McpToolAccessContext
   ): MCPToolDefinition[] {
-    if (!context.enabledTools && !context.enabledServerIds) {
+    if (
+      !context.enabledTools &&
+      !context.enabledServerIds &&
+      context.includeRegularServers !== false
+    ) {
       return toolDefinitions
     }
 

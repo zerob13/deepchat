@@ -139,6 +139,10 @@ describe('ToolManager', () => {
           (runtime.catalogs ?? []).filter(
             (catalog) => !runtime.unavailableServers?.has(catalog.serverName)
           ),
+        getAvailableToolServerNames: () =>
+          Object.keys(pluginOwners).filter(
+            (serverName) => !runtime.unavailableServers?.has(serverName)
+          ),
         ensureRunning:
           runtime.ensureRunning ??
           (async (serverName) => {
@@ -1415,6 +1419,29 @@ describe('ToolManager', () => {
     })
   })
 
+  it('excludes cached regular tools when regular MCP access is disabled', async () => {
+    const client = createClient('disabled-regular-server', [
+      { name: 'regular_tool', inputSchema: { properties: {} } }
+    ])
+    const manager = createToolManager(
+      createProviderSettings('disabled-regular-server') as never,
+      createServerManager([client]) as never
+    )
+    await manager.getAllToolDefinitions()
+
+    expect(
+      manager.snapshotCachedToolDefinitions({
+        includeRegularServers: false,
+        expectedServerNames: []
+      })
+    ).toEqual({
+      state: 'ready',
+      tools: [],
+      complete: true,
+      failedSourceCount: 0
+    })
+  })
+
   it('excludes failures outside the requested server scope from snapshot completeness', async () => {
     const failedClient = createClient('failed-server')
     failedClient.listTools.mockRejectedValueOnce(new Error('tool list failed'))
@@ -1448,6 +1475,93 @@ describe('ToolManager', () => {
       complete: false,
       failedSourceCount: 1
     })
+  })
+
+  it('marks an expected regular server missing from the cached refresh incomplete', async () => {
+    const client = createClient('healthy-server')
+    const manager = createToolManager(
+      createProviderSettings('healthy-server') as never,
+      createServerManager([client]) as never
+    )
+    await manager.getAllToolDefinitions()
+
+    expect(
+      manager.snapshotCachedToolDefinitions({
+        enabledServerIds: ['healthy-server', 'startup-failed-server'],
+        expectedServerNames: ['healthy-server', 'startup-failed-server']
+      })
+    ).toMatchObject({
+      state: 'ready',
+      complete: false,
+      failedSourceCount: 1
+    })
+  })
+
+  it('marks an available eager plugin without a cached source incomplete', async () => {
+    const manager = createToolManager(
+      createProviderSettings('unused-server') as never,
+      createServerManager([]) as never,
+      { 'eager-plugin': 'com.deepchat.plugins.fixture' }
+    )
+    await manager.getAllToolDefinitions()
+
+    expect(manager.snapshotCachedToolDefinitions({ expectedServerNames: [] })).toMatchObject({
+      state: 'ready',
+      complete: false,
+      failedSourceCount: 1
+    })
+  })
+
+  it('rejects oversized cached definition snapshots before cloning them', async () => {
+    const client = createClient('bounded-server')
+    const manager = createToolManager(
+      createProviderSettings('bounded-server') as never,
+      createServerManager([client]) as never
+    )
+    await manager.getAllToolDefinitions()
+    const cachedDefinition = (manager as any).cachedToolDefinitions[0]
+    cachedDefinition.function.description = 'x'.repeat(256 * 1_024 + 1)
+
+    expect(() => manager.snapshotCachedToolDefinitions()).toThrow(
+      'Cached Tool definition snapshot exceeds its byte limit.'
+    )
+  })
+
+  it('rejects unsafe cached definition graphs without invoking accessors', async () => {
+    const client = createClient('unsafe-server')
+    const manager = createToolManager(
+      createProviderSettings('unsafe-server') as never,
+      createServerManager([client]) as never
+    )
+    await manager.getAllToolDefinitions()
+    const properties = (manager as any).cachedToolDefinitions[0].function.parameters.properties
+    const getter = vi.fn(() => {
+      throw new Error('accessor should not run')
+    })
+    Object.defineProperty(properties, 'unsafe', {
+      enumerable: true,
+      get: getter
+    })
+
+    expect(() => manager.snapshotCachedToolDefinitions()).toThrow(
+      'Cached Tool definition snapshot contains an unsafe property.'
+    )
+    expect(getter).not.toHaveBeenCalled()
+  })
+
+  it('rejects cyclic cached definition graphs before cloning them', async () => {
+    const client = createClient('cyclic-server')
+    const manager = createToolManager(
+      createProviderSettings('cyclic-server') as never,
+      createServerManager([client]) as never
+    )
+    await manager.getAllToolDefinitions()
+    const properties = (manager as any).cachedToolDefinitions[0].function.parameters.properties
+    properties.self = properties
+
+    expect(() => manager.snapshotCachedToolDefinitions()).toThrow(
+      'Cached Tool definition snapshot contains an unsafe object graph.'
+    )
   })
 
   it('discards a refresh superseded by a configuration cache clear', async () => {
@@ -2275,6 +2389,7 @@ describe('ToolManager', () => {
             }
           }
         ],
+        getAvailableToolServerNames: () => ['cua-driver'],
         ensureRunning: vi.fn().mockResolvedValue(undefined)
       },
       observer

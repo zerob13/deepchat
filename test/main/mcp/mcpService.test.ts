@@ -302,7 +302,75 @@ describe('McpService', () => {
       enabledServerIds: ['selected-server'],
       agentId: undefined,
       conversationId: undefined,
-      includeRegularServers: true
+      includeRegularServers: true,
+      expectedServerNames: []
+    })
+  })
+
+  it('reports only globally enabled regular servers selected by the Agent as expected', async () => {
+    const providerSettings = createProviderSettings(
+      true,
+      false,
+      {
+        selected: { enabled: true },
+        unselected: { enabled: true },
+        disabled: { enabled: false }
+      },
+      ['selected', 'unselected']
+    )
+    const presenter = createMcpService(providerSettings)
+
+    await presenter.snapshotCachedToolDefinitions({
+      enabledServerIds: ['selected', 'disabled']
+    })
+
+    expect(toolManagerMocks.snapshotCachedToolDefinitions).toHaveBeenCalledWith({
+      enabledTools: undefined,
+      enabledServerIds: ['selected', 'disabled'],
+      agentId: undefined,
+      conversationId: undefined,
+      includeRegularServers: true,
+      expectedServerNames: ['selected']
+    })
+  })
+
+  it('does not treat plugin-owned server configurations as regular expected sources', async () => {
+    const providerSettings = createProviderSettings(
+      true,
+      false,
+      {
+        regular: { enabled: true },
+        plugin: { enabled: true, ownerPluginId: 'com.deepchat.plugins.fixture' }
+      },
+      ['regular', 'plugin']
+    )
+    const presenter = createMcpService(providerSettings)
+
+    await presenter.snapshotCachedToolDefinitions()
+
+    expect(toolManagerMocks.snapshotCachedToolDefinitions).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedServerNames: ['regular'] })
+    )
+  })
+
+  it('does not read or expect regular servers while MCP is globally disabled', async () => {
+    const providerSettings = createProviderSettings(false)
+    providerSettings.getEnabledMcpServers.mockRejectedValue(
+      new Error('disabled regular server settings should not be read')
+    )
+    const presenter = createMcpService(providerSettings)
+
+    await expect(presenter.snapshotCachedToolDefinitions()).resolves.toEqual({
+      state: 'uninitialized'
+    })
+    expect(providerSettings.getEnabledMcpServers).not.toHaveBeenCalled()
+    expect(toolManagerMocks.snapshotCachedToolDefinitions).toHaveBeenCalledWith({
+      enabledTools: undefined,
+      enabledServerIds: undefined,
+      agentId: undefined,
+      conversationId: undefined,
+      includeRegularServers: false,
+      expectedServerNames: []
     })
   })
 
