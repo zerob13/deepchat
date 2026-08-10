@@ -131,6 +131,7 @@ function createHarness(onDrain?: (harness: HarnessState) => void) {
     ),
     hasActiveInputs: vi.fn(() => harness.input !== null),
     hasBlockingInput: vi.fn(() => harness.input?.state === 'blocked'),
+    hasClaimedInput: vi.fn(() => harness.input?.state === 'claimed'),
     isAtCapacity: vi.fn(() => false),
     listPendingInputs: vi.fn(() =>
       harness.input && harness.input.state !== 'claimed' && harness.input.state !== 'consumed'
@@ -183,7 +184,10 @@ function createHarness(onDrain?: (harness: HarnessState) => void) {
     claimQueuedInputForPreparation: vi.fn(() => {
       replaceInput({ state: 'claimed', claimedAt: 2 })
       return claim
-    })
+    }),
+    releaseRestartHoldForInput: vi.fn(),
+    releaseRestartHoldForSession: vi.fn(() => true),
+    hasOnlyRestartHeldQueueInputs: vi.fn(() => false)
   }
 
   const ports: PendingInputAdmissionCoordinatorPorts = {
@@ -258,6 +262,36 @@ function createDeferred<T>() {
 }
 
 describe('PendingInputAdmissionCoordinator', () => {
+  it('lists pending Steer inputs without scheduling execution', () => {
+    const test = createHarness()
+    test.harness.input = createInput('steer', 'steer')
+
+    expect(test.coordinator.list(SESSION_ID)).toEqual([test.harness.input])
+    expect(test.pump.schedule).not.toHaveBeenCalled()
+  })
+
+  it('releases the restart hold and requests one manual Queue drain', async () => {
+    const test = createHarness()
+    vi.mocked(test.pump.drain).mockResolvedValueOnce(true)
+
+    await expect(test.coordinator.resumePendingQueue(SESSION_ID)).resolves.toBe(true)
+
+    expect(test.pump.releaseRestartHoldForSession).toHaveBeenCalledWith(SESSION_ID)
+    expect(test.pump.drain).toHaveBeenCalledWith(SESSION_ID, 'manual')
+  })
+
+  it('allows retry mutation only when every active input is a restart-held Queue draft', () => {
+    const test = createHarness()
+
+    expect(() => test.coordinator.assertNoActiveInputs(SESSION_ID)).toThrow(
+      'Please clear the waiting lane before mutating chat history.'
+    )
+    vi.mocked(test.pump.hasOnlyRestartHeldQueueInputs).mockReturnValueOnce(true)
+    expect(() =>
+      test.coordinator.assertNoActiveInputs(SESSION_ID, { allowRestartHeldQueue: true })
+    ).not.toThrow()
+  })
+
   it('accepts steer before the assistant stream starts and ends preparation', async () => {
     const test = createHarness()
     test.harness.preStreamController = new AbortController()

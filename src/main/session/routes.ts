@@ -41,6 +41,7 @@ import {
   sessionsMoveToAgentRoute,
   sessionsQueuePendingInputRoute,
   sessionsRenameRoute,
+  sessionsResumePendingQueueRoute,
   sessionsRestoreRoute,
   sessionsResolveBlockedPendingInputRoute,
   sessionsRetryMessageRoute,
@@ -247,6 +248,15 @@ export function createSessionRoutes(deps: {
         const input = sessionsListPendingInputsRoute.input.parse(rawInput)
         return sessionsListPendingInputsRoute.output.parse({
           items: await deps.turn.listPendingInputs(input.sessionId)
+        })
+      }
+    ],
+    [
+      sessionsResumePendingQueueRoute.name,
+      async (rawInput) => {
+        const input = sessionsResumePendingQueueRoute.input.parse(rawInput)
+        return sessionsResumePendingQueueRoute.output.parse({
+          started: await deps.turn.resumePendingQueue(input.sessionId)
         })
       }
     ],

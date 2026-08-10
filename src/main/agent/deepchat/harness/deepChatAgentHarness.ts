@@ -114,6 +114,10 @@ export class DeepChatAgentHarness
     return this.services.pendingInputAdmission.list(sessionId)
   }
 
+  async resumePendingQueue(sessionId: string): Promise<boolean> {
+    return await this.services.pendingInputAdmission.resumePendingQueue(sessionId)
+  }
+
   async queuePendingInput(
     sessionId: string,
     content: string | SendMessageInput,
@@ -259,8 +263,11 @@ export class DeepChatAgentHarness
     this.services.transcriptMutation.finishClearMessages(sessionId)
   }
 
-  prepareRetry(sessionId: string): Promise<{ projectDir: string | null }> {
-    return this.services.transcriptMutation.prepareRetry(sessionId)
+  prepareRetry(
+    sessionId: string,
+    options?: { allowRestartHeldQueue?: boolean }
+  ): Promise<{ projectDir: string | null }> {
+    return this.services.transcriptMutation.prepareRetry(sessionId, options)
   }
 
   cancelForTranscriptMutation(sessionId: string): Promise<void> {

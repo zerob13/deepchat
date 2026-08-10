@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "El modelo {model} no admite entrada de audio. Se han ignorado {count} adjuntos de audio."
   },
   "pendingInput": {
+    "resume": "Reanudar cola",
+    "resumeFailed": "No se pudo reanudar la cola",
     "steer": "Guiar",
     "queueCount": "En cola {count}/{max}",
     "toSteer": "Interrumpir y enviar",

@@ -11,6 +11,12 @@ import type { SessionTranscript } from './transcript'
 
 const MAX_ACTIVE_PENDING_INPUTS = 5
 
+export interface PendingInputRestartRecovery {
+  affectedSessionIds: Set<string>
+  heldQueueInputIds: Set<string>
+  forceRecoverMessagesBySession: Map<string, Set<string>>
+}
+
 function toUserMessageContent(input: SendMessageInput): UserMessageContent {
   return {
     text: input.text,
@@ -333,8 +339,10 @@ export class SessionPendingInputs {
     this.events.publishMessagesChanged(sessionId, changedMessages)
   }
 
-  recoverClaimedInputsAfterRestart(): number {
-    const sessionIds = new Set<string>()
+  recoverInputsAfterRestart(): PendingInputRestartRecovery {
+    const affectedSessionIds = new Set<string>()
+    const heldQueueInputIds = new Set<string>()
+    const forceRecoverMessagesBySession = new Map<string, Set<string>>()
     this.store.runInTransaction(() => {
       for (const input of this.store.listActiveInputs()) {
         if (input.mode === 'queue') {
@@ -343,53 +351,70 @@ export class SessionPendingInputs {
               this.store.consumeQueueInput(input.id)
             } else {
               this.store.releaseClaimedQueueInput(input.id)
+              heldQueueInputIds.add(input.id)
             }
-            sessionIds.add(input.sessionId)
+            affectedSessionIds.add(input.sessionId)
+          } else {
+            heldQueueInputIds.add(input.id)
+            affectedSessionIds.add(input.sessionId)
           }
           continue
         }
 
         if (input.state === 'blocked') {
           this.store.convertSteerInputToQueue(input.id)
-          sessionIds.add(input.sessionId)
+          heldQueueInputIds.add(input.id)
+          affectedSessionIds.add(input.sessionId)
           continue
         }
 
         if (input.state === 'claimed' && input.messageIds.length > 0) {
           this.transcript.settleSteerMessages(input.messageIds)
           this.store.consumeSteerInput(input.id)
-          sessionIds.add(input.sessionId)
+          affectedSessionIds.add(input.sessionId)
           continue
         }
 
         if (input.state === 'claimed') {
           this.store.releaseClaimedInput(input.id)
         }
-        if (input.messageIds.length > 0) {
-          continue
-        }
-        const messageId = this.transcript.createUserMessage(
-          input.sessionId,
-          this.transcript.getNextOrderSeq(input.sessionId),
-          toUserMessageContent(input.payload),
-          {
-            status: 'pending',
-            metadata: {
-              inputReceipt: {
-                mode: 'steer',
-                readAt: null
+        const messageIds = [...input.messageIds]
+        if (messageIds.length === 0) {
+          messageIds.push(
+            this.transcript.createUserMessage(
+              input.sessionId,
+              this.transcript.getNextOrderSeq(input.sessionId),
+              toUserMessageContent(input.payload),
+              {
+                status: 'pending',
+                metadata: {
+                  inputReceipt: {
+                    mode: 'steer',
+                    readAt: null
+                  }
+                }
               }
-            }
-          }
-        )
-        this.store.linkSteerMessage(input.id, messageId)
-        sessionIds.add(input.sessionId)
+            )
+          )
+          this.store.linkSteerMessage(input.id, messageIds[0])
+        }
+        const forcedMessageIds = forceRecoverMessagesBySession.get(input.sessionId) ?? new Set()
+        for (const messageId of messageIds) {
+          forcedMessageIds.add(messageId)
+        }
+        forceRecoverMessagesBySession.set(input.sessionId, forcedMessageIds)
+        this.store.consumeSteerInput(input.id)
+        affectedSessionIds.add(input.sessionId)
       }
     })
-    for (const sessionId of sessionIds) {
+    for (const sessionId of affectedSessionIds) {
       this.emitUpdated(sessionId)
     }
-    return sessionIds.size
+    return {
+      affectedSessionIds,
+      heldQueueInputIds,
+      forceRecoverMessagesBySession
+    }
   }
 
   hasActiveInputs(sessionId: string): boolean {

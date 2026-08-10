@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "{model} modeli ses girişini desteklemez. {count} ses ekleri yoksayıldı."
   },
   "pendingInput": {
+    "resume": "Kuyruğu sürdür",
+    "resumeFailed": "Kuyruk sürdürülemedi",
     "steer": "Yönlendir",
     "queueCount": "Sıraya alındı ​​{count}/{max}",
     "toSteer": "Kes ve gönder",

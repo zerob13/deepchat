@@ -167,7 +167,9 @@
     "limitReached": "Waiting lane is full (max {max}).",
     "remove": "Remove",
     "steerUnavailable": "Can't interrupt right now",
-    "steerFailed": "Couldn't interrupt this turn"
+    "steerFailed": "Couldn't interrupt this turn",
+    "resume": "Resume queue",
+    "resumeFailed": "Couldn't resume the queue"
   },
   "features": {
     "webSearch": "Web Search",

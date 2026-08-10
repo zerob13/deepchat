@@ -11,6 +11,7 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
   const currentSessionId = ref<string | null>(null)
   const items = ref<PendingSessionInputRecord[]>([])
   const loading = ref(false)
+  const resumingSessionId = ref<string | null>(null)
   const error = ref<string | null>(null)
   let latestLoadRequestId = 0
 
@@ -21,6 +22,7 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
   )
   const activeCount = computed(() => queueItems.value.length)
   const isAtCapacity = computed(() => activeCount.value >= MAX_PENDING_INPUTS)
+  const resumingQueue = computed(() => resumingSessionId.value !== null)
 
   async function loadPendingInputs(sessionId: string): Promise<void> {
     const requestedId = sessionId
@@ -73,6 +75,29 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
       () => sessionClient.queuePendingInput(sessionId, input),
       'Failed to queue message'
     )
+  }
+
+  async function resumeQueue(sessionId: string): Promise<boolean> {
+    if (resumingSessionId.value !== null) {
+      return false
+    }
+    resumingSessionId.value = sessionId
+    let started = false
+    try {
+      await runSessionScopedMutation(
+        sessionId,
+        async () => {
+          const result = await sessionClient.resumePendingQueue(sessionId)
+          started = result.started
+        },
+        'Failed to resume queued messages'
+      )
+      return started
+    } finally {
+      if (resumingSessionId.value === sessionId) {
+        resumingSessionId.value = null
+      }
+    }
   }
 
   async function updateQueueInput(
@@ -128,6 +153,7 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
     currentSessionId.value = null
     items.value = []
     loading.value = false
+    resumingSessionId.value = null
     error.value = null
   }
 
@@ -145,12 +171,14 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
     currentSessionId,
     items,
     loading,
+    resumingQueue,
     error,
     queueItems,
     activeCount,
     isAtCapacity,
     loadPendingInputs,
     queueInput,
+    resumeQueue,
     updateQueueInput,
     moveQueueInput,
     steerPendingInput,

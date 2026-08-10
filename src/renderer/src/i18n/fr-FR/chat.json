@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "Le modèle {model} ne prend pas en charge l'entrée audio. {count} pièce(s) jointe(s) audio ont été ignorées."
   },
   "pendingInput": {
+    "resume": "Reprendre la file",
+    "resumeFailed": "Impossible de reprendre la file",
     "steer": "Guidage",
     "queueCount": "En attente {count}/{max}",
     "toSteer": "Interrompre et envoyer",

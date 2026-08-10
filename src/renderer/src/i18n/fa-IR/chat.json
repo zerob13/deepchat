@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "مدل {model} از ورودی صوتی پشتیبانی نمی‌کند. {count} پیوست صوتی نادیده گرفته شد."
   },
   "pendingInput": {
+    "resume": "ادامه صف",
+    "resumeFailed": "ازسرگیری صف انجام نشد",
     "steer": "هدایت",
     "queueCount": "در انتظار ارسال {count}/{max}",
     "toSteer": "وقفه و ارسال",

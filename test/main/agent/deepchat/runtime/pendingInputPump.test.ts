@@ -259,6 +259,31 @@ describe('PendingInputPump', () => {
     vi.restoreAllMocks()
   })
 
+  it('keeps a restarted Queue head held across automatic wakeups until manual resume', async () => {
+    const queue = createInput('queue', 'queue')
+    const test = createHarness([queue])
+    test.pump.holdRestartedQueueInputs([queue.id])
+
+    await expect(test.pump.drain(SESSION_ID, 'enqueue')).resolves.toBe(false)
+    await expect(test.pump.drain(SESSION_ID, 'completed')).resolves.toBe(false)
+    expect(test.pendingInputs.store.claimQueuedInput).not.toHaveBeenCalled()
+    expect(test.pump.hasOnlyRestartHeldQueueInputs(SESSION_ID)).toBe(true)
+
+    expect(test.pump.releaseRestartHoldForSession(SESSION_ID)).toBe(true)
+    await expect(test.pump.drain(SESSION_ID, 'manual')).resolves.toBe(true)
+    expect(test.pendingInputs.store.claimQueuedInput).toHaveBeenCalledWith(SESSION_ID, queue.id)
+  })
+
+  it('lets an explicit composer Send start without releasing a restarted Queue hold', () => {
+    const queue = createInput('queue', 'queue')
+    const test = createHarness([queue])
+    test.pump.holdRestartedQueueInputs([queue.id])
+
+    expect(test.pump.shouldClaimImmediately(SESSION_ID, 'idle', 'send')).toBe(true)
+    expect(test.pump.shouldClaimImmediately(SESSION_ID, 'idle', 'queue')).toBe(false)
+    expect(test.pump.hasOnlyRestartHeldQueueInputs(SESSION_ID)).toBe(true)
+  })
+
   it('claims steer input before an older queued input', async () => {
     const deferred = createDeferred<TurnCompletion>()
     let executionContext: PendingInputTurnContext | undefined

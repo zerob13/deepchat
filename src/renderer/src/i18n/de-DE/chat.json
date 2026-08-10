@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "Modell {model} unterstützt keine Audioeingabe. {count} Audioanhänge wurden ignoriert."
   },
   "pendingInput": {
+    "resume": "Warteschlange fortsetzen",
+    "resumeFailed": "Warteschlange konnte nicht fortgesetzt werden",
     "steer": "Steuern",
     "queueCount": "Ausstehend {count}/{max}",
     "toSteer": "Unterbrechen & senden",

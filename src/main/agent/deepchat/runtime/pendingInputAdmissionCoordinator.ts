@@ -36,6 +36,7 @@ export type PendingInputAdmissionStorePort = Pick<
   | 'getInput'
   | 'hasActiveInputs'
   | 'hasBlockingInput'
+  | 'hasClaimedInput'
   | 'isAtCapacity'
   | 'listPendingInputs'
   | 'moveQueuedInput'
@@ -69,6 +70,9 @@ export interface PendingInputAdmissionPumpPort {
     sessionId: string,
     itemId: string
   ): ClaimedPendingInputHandle
+  releaseRestartHoldForInput(itemId: string): void
+  releaseRestartHoldForSession(sessionId: string): boolean
+  hasOnlyRestartHeldQueueInputs(sessionId: string): boolean
 }
 
 export interface PendingInputAdmissionCoordinatorPorts {
@@ -88,11 +92,7 @@ export class PendingInputAdmissionCoordinator {
   constructor(private readonly ports: PendingInputAdmissionCoordinatorPorts) {}
 
   list(sessionId: string): PendingSessionInputRecord[] {
-    const inputs = this.ports.pendingInputs.listPendingInputs(sessionId)
-    if (inputs.some((input) => input.mode === 'steer' && input.state === 'pending')) {
-      this.ports.pump.schedule(sessionId, 'enqueue')
-    }
-    return inputs
+    return this.ports.pendingInputs.listPendingInputs(sessionId)
   }
 
   async queue(
@@ -356,8 +356,12 @@ export class PendingInputAdmissionCoordinator {
 
       if (activeGeneration) {
         this.requireActiveAssistantMessage(sessionId, activeGeneration.messageId)
-        return this.ports.pendingInputs.promoteQueuedInputToSteerMessage(sessionId, itemId)
-          .pendingInput
+        const promoted = this.ports.pendingInputs.promoteQueuedInputToSteerMessage(
+          sessionId,
+          itemId
+        ).pendingInput
+        this.ports.pump.releaseRestartHoldForInput(itemId)
+        return promoted
       }
 
       if (
@@ -379,6 +383,7 @@ export class PendingInputAdmissionCoordinator {
         if (!preStreamController.signal.aborted) {
           preStreamController.abort(PENDING_INPUT_ABORT_REASON)
         }
+        this.ports.pump.releaseRestartHoldForInput(itemId)
         return accepted.pendingInput
       }
 
@@ -386,6 +391,7 @@ export class PendingInputAdmissionCoordinator {
         sessionId,
         itemId
       ).pendingInput
+      this.ports.pump.releaseRestartHoldForInput(itemId)
       releaseAcceptanceLane()
       const started = await this.ports.pump.drain(sessionId, 'enqueue')
       if (!started) {
@@ -400,6 +406,7 @@ export class PendingInputAdmissionCoordinator {
   async deletePendingInput(sessionId: string, itemId: string): Promise<void> {
     await this.ensureSessionReady(sessionId)
     this.ports.pendingInputs.deletePendingInput(sessionId, itemId)
+    this.ports.pump.releaseRestartHoldForInput(itemId)
     this.ports.pump.schedule(sessionId, 'enqueue')
   }
 
@@ -417,8 +424,35 @@ export class PendingInputAdmissionCoordinator {
     return record
   }
 
-  assertNoActiveInputs(sessionId: string): void {
+  async resumePendingQueue(sessionId: string): Promise<boolean> {
+    const state = await this.ports.sessionState.get(sessionId)
+    if (!state) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
+    if (this.ports.pendingInputs.hasBlockingInput(sessionId)) {
+      throw new Error('Resolve the blocked attachment input before resuming the queue.')
+    }
+    if (this.ports.pendingInputs.hasClaimedInput(sessionId)) {
+      return false
+    }
+    if (!this.ports.pump.canDrain(sessionId, state.status, 'manual')) {
+      return false
+    }
+    this.ports.pump.releaseRestartHoldForSession(sessionId)
+    return await this.ports.pump.drain(sessionId, 'manual')
+  }
+
+  assertNoActiveInputs(
+    sessionId: string,
+    options?: { allowRestartHeldQueue?: boolean }
+  ): void {
     if (!this.ports.pendingInputs.hasActiveInputs(sessionId)) {
+      return
+    }
+    if (
+      options?.allowRestartHeldQueue === true &&
+      this.ports.pump.hasOnlyRestartHeldQueueInputs(sessionId)
+    ) {
       return
     }
     throw new Error('Please clear the waiting lane before mutating chat history.')

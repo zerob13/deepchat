@@ -52,6 +52,7 @@ export interface DeepChatAgentBackendPort {
     options?: { signal?: AbortSignal }
   ): Promise<MessageStartResult>
   listPendingInputs(sessionId: AppSessionId): Promise<PendingSessionInputRecord[]>
+  resumePendingQueue(sessionId: AppSessionId): Promise<boolean>
   queuePendingInput(
     sessionId: AppSessionId,
     content: SendMessageInput,
@@ -197,7 +198,8 @@ export function createDeepChatAgentBackend(
         setSessionAgentContext: (config) => port.setSessionAgentContext(sessionId, config),
         setModel: (providerId, modelId) => port.setSessionModel(sessionId, providerId, modelId),
         getCompactionState: () => port.getSessionCompactionState(sessionId),
-        compact: () => port.compactSession(sessionId)
+        compact: () => port.compactSession(sessionId),
+        resumePendingQueue: () => port.resumePendingQueue(sessionId)
       }
     }
     handles.set(sessionId, handle)

@@ -119,6 +119,7 @@ export interface TurnStartContext {
 
 export interface TurnExecutionContext extends TurnStartContext {
   claimedInput?: ClaimedPendingInputHandle
+  consumeClaimBeforeProviderStream?: boolean
 }
 
 export interface TurnCoordinatorPorts {
@@ -862,7 +863,16 @@ export class TurnCoordinator {
             contextBuilderVersion: contextBuild.assemblerVersion,
             syntheticContributions: contextBuild.metadata.syntheticContributions
           },
-          onBeforeProviderStream: providerBoundary.complete,
+          onBeforeProviderStream: () => {
+            if (
+              context?.consumeClaimBeforeProviderStream &&
+              claimedInput &&
+              !claimedInput.disposition
+            ) {
+              claimedInput.settle({ kind: 'consume' })
+            }
+            providerBoundary.complete()
+          },
           onRunRegistered: (runId) => {
             streamRunId = runId
           }

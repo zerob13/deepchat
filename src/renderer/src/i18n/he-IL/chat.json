@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "המודל {model} לא תומך בקלט אודיו. {count} קובץ/י אודיו צורף/ו והתעלמנו מהם."
   },
   "pendingInput": {
+    "resume": "המשך תור",
+    "resumeFailed": "לא ניתן להמשיך את התור",
     "steer": "הכוונה",
     "queueCount": "ממתין לשליחה {count}/{max}",
     "toSteer": "להפסיק ולשלוח",

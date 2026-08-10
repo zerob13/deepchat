@@ -75,6 +75,7 @@ export interface PendingInputTurnStarter {
 export interface PendingInputTurnContext {
   projectDir: string | null
   claimedInput: ClaimedPendingInputHandle
+  consumeClaimBeforeProviderStream: boolean
 }
 
 export interface PendingInputPumpPorts {
@@ -206,8 +207,45 @@ class DurablePendingInputClaim implements ClaimedPendingInputHandle {
 export class PendingInputPump {
   private readonly launchedDrains = new Map<string, LaunchedPendingInputDrain>()
   private readonly deferredWakeups = new Map<string, PendingInputWakeReason>()
+  private readonly restartHeldQueueInputIds = new Set<string>()
 
   constructor(private readonly ports: PendingInputPumpPorts) {}
+
+  holdRestartedQueueInputs(inputIds: Iterable<string>): void {
+    for (const inputId of inputIds) {
+      this.restartHeldQueueInputIds.add(inputId)
+    }
+  }
+
+  releaseRestartHoldForInput(itemId: string): void {
+    this.restartHeldQueueInputIds.delete(itemId)
+  }
+
+  releaseRestartHoldForSession(sessionId: string): boolean {
+    let released = false
+    for (const input of this.ports.pendingInputs.listPendingInputs(sessionId)) {
+      if (input.mode === 'queue' && this.restartHeldQueueInputIds.delete(input.id)) {
+        released = true
+      }
+    }
+    return released
+  }
+
+  hasOnlyRestartHeldQueueInputs(sessionId: string): boolean {
+    if (
+      this.ports.pendingInputs.hasBlockingInput(sessionId) ||
+      this.ports.pendingInputs.hasClaimedInput(sessionId)
+    ) {
+      return false
+    }
+    const inputs = this.ports.pendingInputs.listPendingInputs(sessionId)
+    return (
+      inputs.length > 0 &&
+      inputs.every(
+        (input) => input.mode === 'queue' && this.restartHeldQueueInputIds.has(input.id)
+      )
+    )
+  }
 
   hasInteractionBlocker(sessionId: string): boolean {
     const snapshot = this.readGateSnapshot(sessionId)
@@ -243,8 +281,12 @@ export class PendingInputPump {
     if (!this.canDrainWithSnapshot(sessionId, status, 'enqueue', snapshot)) {
       return false
     }
+    const hasWaitingTurnInput =
+      source === 'send'
+        ? this.hasExecutablePendingTurnInput(sessionId)
+        : this.ports.pendingInputs.hasPendingTurnInput(sessionId)
     return (
-      !this.ports.pendingInputs.hasPendingTurnInput(sessionId) &&
+      !hasWaitingTurnInput &&
       !this.ports.pendingInputs.hasBlockingInput(sessionId) &&
       !this.ports.pendingInputs.hasClaimedInput(sessionId)
     )
@@ -353,6 +395,9 @@ export class PendingInputPump {
       const nextQueuedInput = nextSteerInput
         ? null
         : this.ports.pendingInputs.getNextQueuedInput(sessionId)
+      if (nextQueuedInput && this.restartHeldQueueInputIds.has(nextQueuedInput.id)) {
+        return false
+      }
       const nextPendingInput = nextSteerInput ?? nextQueuedInput
       if (!nextPendingInput) {
         return false
@@ -436,7 +481,8 @@ export class PendingInputPump {
     try {
       turn = this.ports.turnStarter.start(claimedInput.sessionId, claimedInput.payload, {
         projectDir,
-        claimedInput: claim
+        claimedInput: claim,
+        consumeClaimBeforeProviderStream: reason === 'manual' && claim.source === 'queue'
       })
     } catch (error) {
       turn = Promise.reject(error)
@@ -534,10 +580,12 @@ export class PendingInputPump {
 
   private rememberDeferredWakeup(sessionId: string, reason: PendingInputWakeReason): void {
     const current = this.deferredWakeups.get(sessionId)
-    this.deferredWakeups.set(
-      sessionId,
-      current === 'enqueue' || reason === 'enqueue' ? 'enqueue' : 'completed'
-    )
+    const priority: Record<PendingInputWakeReason, number> = {
+      completed: 0,
+      enqueue: 1,
+      manual: 2
+    }
+    this.deferredWakeups.set(sessionId, !current || priority[reason] > priority[current] ? reason : current)
   }
 
   private flushDeferredWakeup(sessionId: string): void {
@@ -643,7 +691,15 @@ export class PendingInputPump {
     status: DeepChatSessionState['status'],
     reason: PendingInputWakeReason
   ): boolean {
-    return status === 'idle' || (reason === 'enqueue' && status === 'error')
+    return status === 'idle' || (reason !== 'completed' && status === 'error')
+  }
+
+  private hasExecutablePendingTurnInput(sessionId: string): boolean {
+    if (this.ports.pendingInputs.getNextSteerInput(sessionId)) {
+      return true
+    }
+    const nextQueueInput = this.ports.pendingInputs.getNextQueuedInput(sessionId)
+    return Boolean(nextQueueInput && !this.restartHeldQueueInputIds.has(nextQueueInput.id))
   }
 
   private logDrainError(

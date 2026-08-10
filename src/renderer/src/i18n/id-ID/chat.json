@@ -71,6 +71,8 @@
     "audioInputUnsupportedDescription": "Model {model} tidak mendukung input audio, lampiran audio {count} telah diabaikan."
   },
   "pendingInput": {
+    "resume": "Lanjutkan antrean",
+    "resumeFailed": "Gagal melanjutkan antrean",
     "steer": "panduan",
     "queueCount": "Siap dikirim {count}/{max}",
     "toSteer": "Sela & kirim",

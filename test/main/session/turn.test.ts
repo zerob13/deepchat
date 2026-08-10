@@ -94,6 +94,7 @@ function createHarness(
       state: { status: 'idle', cursorOrderSeq: 4, summaryUpdatedAt: 200 }
     })
   }
+  const resumePendingQueue = vi.fn().mockResolvedValue(true)
   const runtimeSession =
     options.kind === 'acp'
       ? ({ kind: 'acp', pending, toolInteractions, send, cancel, snapshot } as const)
@@ -104,7 +105,8 @@ function createHarness(
           send,
           cancel,
           snapshot,
-          compaction
+          compaction,
+          resumePendingQueue
         } as const)
   const resolveSession = vi.fn(() => runtimeSession)
   const sessions = {
@@ -158,6 +160,7 @@ function createHarness(
     cancel,
     snapshot,
     compaction,
+    resumePendingQueue,
     transcript,
     workdir,
     projection
@@ -165,6 +168,27 @@ function createHarness(
 }
 
 describe('SessionTurn', () => {
+  it('resumes a DeepChat Queue under the Session operation gate', async () => {
+    const harness = createHarness()
+
+    await expect(harness.coordinator.resumePendingQueue('s1')).resolves.toBe(true)
+
+    expect(harness.resumePendingQueue).toHaveBeenCalledTimes(1)
+    expect(harness.workdir.runWithSessionOperationGate).toHaveBeenCalledWith(
+      's1',
+      expect.any(Function)
+    )
+  })
+
+  it('rejects Queue resume for ACP sessions', async () => {
+    const harness = createHarness({ kind: 'acp' })
+
+    await expect(harness.coordinator.resumePendingQueue('s1')).rejects.toThrow(
+      'Pending queue resume is only available for DeepChat sessions.'
+    )
+    expect(harness.resumePendingQueue).not.toHaveBeenCalled()
+  })
+
   it('propagates initial attachment cancellation instead of converting it to user action', async () => {
     const harness = createHarness()
     const controller = new AbortController()

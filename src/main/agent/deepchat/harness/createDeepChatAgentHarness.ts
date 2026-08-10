@@ -499,10 +499,21 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
       input
     )
 
-  const recoveredPendingInputs = pendingInputCoordinator.recoverClaimedInputsAfterRestart()
-  if (recoveredPendingInputs > 0) {
+  const pendingInputRecovery = pendingInputCoordinator.recoverInputsAfterRestart()
+  pendingInputPump.holdRestartedQueueInputs(pendingInputRecovery.heldQueueInputIds)
+  for (const [
+    sessionId,
+    recoveredMessageIds
+  ] of pendingInputRecovery.forceRecoverMessagesBySession) {
+    const forcedMessageIds = forceRecoverMessagesBySession.get(sessionId) ?? new Set<string>()
+    for (const messageId of recoveredMessageIds) {
+      forcedMessageIds.add(messageId)
+    }
+    forceRecoverMessagesBySession.set(sessionId, forcedMessageIds)
+  }
+  if (pendingInputRecovery.affectedSessionIds.size > 0) {
     logger.info(
-      `DeepChatAgent: recovered ${recoveredPendingInputs} sessions with claimed pending inputs`
+      `DeepChatAgent: reconciled ${pendingInputRecovery.affectedSessionIds.size} sessions with pending inputs`
     )
   }
 

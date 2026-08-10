@@ -38,11 +38,13 @@ const setupStore = async () => {
   const unsubscribePendingInputsChanged = vi.fn()
   const sessionClient = {
     listPendingInputs: vi.fn(),
+    resumePendingQueue: vi.fn(),
     queuePendingInput: vi.fn(),
     updateQueuedInput: vi.fn(),
     moveQueuedInput: vi.fn(),
     steerPendingInput: vi.fn(),
     deletePendingInput: vi.fn(),
+    resolveBlockedPendingInput: vi.fn(),
     onPendingInputsChanged: vi.fn(() => unsubscribePendingInputsChanged)
   }
 
@@ -60,6 +62,25 @@ const setupStore = async () => {
 }
 
 describe('pendingInput store', () => {
+  it('tracks Queue resume busy state and returns whether a turn started', async () => {
+    const { store, sessionClient } = await setupStore()
+    const resume = createDeferred<{ started: boolean }>()
+    sessionClient.listPendingInputs
+      .mockResolvedValueOnce([createPendingItem('q1', 's1')])
+      .mockResolvedValueOnce([])
+    sessionClient.resumePendingQueue.mockReturnValueOnce(resume.promise)
+    await store.loadPendingInputs('s1')
+
+    const operation = store.resumeQueue('s1')
+    expect(store.resumingQueue).toBe(true)
+    resume.resolve({ started: true })
+
+    await expect(operation).resolves.toBe(true)
+    expect(sessionClient.resumePendingQueue).toHaveBeenCalledWith('s1')
+    expect(store.resumingQueue).toBe(false)
+    expect(store.items).toEqual([])
+  })
+
   it('ignores stale load results after the active session changes', async () => {
     const { store, sessionClient } = await setupStore()
     const firstLoad = createDeferred<ReturnType<typeof createPendingItem>[]>()

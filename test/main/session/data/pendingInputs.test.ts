@@ -146,3 +146,110 @@ describe('SessionPendingInputs pending steer recovery', () => {
     expect(store.deleteInput).not.toHaveBeenCalled()
   })
 })
+
+function createRecoveryCoordinator(initialRecords: PendingSessionInputRecord[]) {
+  const records = new Map(initialRecords.map((record) => [record.id, { ...record }]))
+  let createdMessage = 0
+  const replace = (itemId: string, patch: Partial<PendingSessionInputRecord>) => {
+    const current = records.get(itemId)
+    if (!current) throw new Error(`Missing input ${itemId}`)
+    const next = { ...current, ...patch }
+    records.set(itemId, next)
+    return next
+  }
+  const store = {
+    runInTransaction: vi.fn((operation: () => unknown) => operation()),
+    listActiveInputs: vi.fn(() =>
+      Array.from(records.values()).filter((record) => record.state !== 'consumed')
+    ),
+    consumeQueueInput: vi.fn((itemId: string) => records.delete(itemId)),
+    consumeSteerInput: vi.fn((itemId: string) =>
+      replace(itemId, { state: 'consumed', consumedAt: 2 })
+    ),
+    releaseClaimedQueueInput: vi.fn((itemId: string) =>
+      replace(itemId, { state: 'pending', claimedAt: null })
+    ),
+    releaseClaimedInput: vi.fn((itemId: string) =>
+      replace(itemId, { state: 'pending', claimedAt: null })
+    ),
+    convertSteerInputToQueue: vi.fn((itemId: string) =>
+      replace(itemId, { mode: 'queue', queueOrder: 1 })
+    ),
+    linkSteerMessage: vi.fn((itemId: string, messageId: string) =>
+      replace(itemId, { messageIds: [messageId] })
+    )
+  }
+  const transcript = {
+    settleSteerMessages: vi.fn(() => []),
+    getNextOrderSeq: vi.fn(() => 1),
+    createUserMessage: vi.fn(() => `recovered-${++createdMessage}`)
+  }
+  const coordinator = new SessionPendingInputs(store as any, transcript as any, {
+    publishPendingInputsChanged: vi.fn(),
+    publishMessagesChanged: vi.fn()
+  })
+  return { coordinator, records, store, transcript }
+}
+
+describe('SessionPendingInputs restart reconciliation', () => {
+  it('holds retained Queue drafts and consumes only a Queue with a materialized user fact', () => {
+    const pending = {
+      ...createRecord('queue-pending', 'session-1', 'queue'),
+      state: 'pending' as const
+    }
+    const claimed = createRecord('queue-claimed', 'session-1', 'queue')
+    const materialized = {
+      ...createRecord('queue-materialized', 'session-1', 'queue'),
+      messageIds: ['user-1']
+    }
+    const { coordinator, records, store } = createRecoveryCoordinator([
+      pending,
+      claimed,
+      materialized
+    ])
+
+    const recovery = coordinator.recoverInputsAfterRestart()
+
+    expect(recovery.heldQueueInputIds).toEqual(new Set(['queue-pending', 'queue-claimed']))
+    expect(recovery.affectedSessionIds).toEqual(new Set(['session-1']))
+    expect(records.get('queue-claimed')?.state).toBe('pending')
+    expect(records.has('queue-materialized')).toBe(false)
+    expect(store.consumeQueueInput).toHaveBeenCalledWith('queue-materialized')
+  })
+
+  it('terminalizes unread Steer messages while preserving a claimed Steer user fact', () => {
+    const pending = {
+      ...createRecord('steer-pending', 'session-1', 'steer'),
+      state: 'pending' as const,
+      messageIds: ['user-1', 'user-2']
+    }
+    const missingMessage = {
+      ...createRecord('steer-missing', 'session-1', 'steer'),
+      state: 'pending' as const
+    }
+    const claimed = {
+      ...createRecord('steer-claimed', 'session-1', 'steer'),
+      messageIds: ['user-read'],
+      assistantMessageId: 'assistant-1'
+    }
+    const { coordinator, records, store, transcript } = createRecoveryCoordinator([
+      pending,
+      missingMessage,
+      claimed
+    ])
+
+    const recovery = coordinator.recoverInputsAfterRestart()
+
+    expect(recovery.forceRecoverMessagesBySession.get('session-1')).toEqual(
+      new Set(['user-1', 'user-2', 'recovered-1'])
+    )
+    expect(transcript.settleSteerMessages).toHaveBeenCalledWith(['user-read'])
+    expect(store.linkSteerMessage).toHaveBeenCalledWith('steer-missing', 'recovered-1')
+    expect(records.get('steer-pending')?.state).toBe('consumed')
+    expect(records.get('steer-missing')?.state).toBe('consumed')
+    expect(records.get('steer-claimed')?.state).toBe('consumed')
+
+    const repeated = coordinator.recoverInputsAfterRestart()
+    expect(repeated.affectedSessionIds.size).toBe(0)
+  })
+})
