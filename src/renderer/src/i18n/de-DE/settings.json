@@ -1,6 +1,29 @@
 {
   "title": "Einstellungen",
   "common": {
+    "commandShell": {
+      "title": "Befehlsshell des Agenten",
+      "auto": "Automatisch",
+      "windowsPowerShell": "Windows PowerShell",
+      "gitBash": "Git Bash",
+      "executable": "Ausführbare Git Bash-Datei",
+      "autoDetect": "Automatisch erkennen",
+      "browse": "Git Bash auswählen",
+      "clearOverride": "Benutzerdefinierten Pfad löschen",
+      "checking": "Git Bash wird überprüft...",
+      "available": "Verfügbar: {path}",
+      "refresh": "Erneut prüfen",
+      "updateFailed": "Die Befehlsshell-Einstellung konnte nicht aktualisiert werden.",
+      "checkFailed": "Die Verfügbarkeit von Git Bash konnte nicht geprüft werden.",
+      "browseFailed": "Die ausführbare Git Bash-Datei konnte nicht ausgewählt werden.",
+      "loadFailed": "Die Befehlsshell-Einstellung konnte nicht geladen werden.",
+      "errors": {
+        "unsupported-platform": "Git Bash kann nur unter Windows ausgewählt werden.",
+        "override-invalid": "Der benutzerdefinierte Pfad muss auf eine vorhandene bash.exe verweisen.",
+        "not-found": "Git Bash wurde auf diesem Gerät nicht gefunden.",
+        "validation-failed": "Die erkannte ausführbare Datei hat die Git Bash-Validierung nicht bestanden."
+      }
+    },
     "title": "Allgemeine Einstellungen",
     "resetData": "Daten zurücksetzen",
     "language": "Sprache",

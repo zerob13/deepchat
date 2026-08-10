@@ -17,6 +17,7 @@ import {
 } from './systemEnvPromptBuilder'
 import { assemblePromptSections, createPromptAssemblySection } from './promptAssembly'
 import type { SkillSettingsPort } from '@/skill/settings'
+import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { UNTRUSTED_CHILD_OUTPUT_POLICY } from '@shared/orchestration/resultSafety'
 import {
@@ -57,6 +58,7 @@ export interface SystemPromptBuildInput {
   activeSkillNamesOverride?: string[]
   orchestrationPolicy?: OrchestrationPolicy
   resourceInstance: DeepChatAgentInstance
+  commandShell: ResolvedCommandShell
 }
 
 type PackageJsonManifest = {
@@ -101,6 +103,7 @@ export async function buildSystemPromptAssemblyWithSkills(
 ): Promise<DeepChatPromptAssembly> {
   const { sessionId, basePrompt, toolDefinitions, activeSkillNamesOverride, resourceInstance } =
     input
+  const commandShell = ResolvedCommandShellSchema.parse(input.commandShell)
   dependencies.assertCurrent(sessionId, resourceInstance)
   const normalizedBase = basePrompt?.trim() ?? ''
   const state = resourceInstance.getRuntimeState()
@@ -266,6 +269,7 @@ export async function buildSystemPromptAssemblyWithSkills(
         modelId,
         workdir,
         now,
+        commandShell,
         modelLookup: dependencies.providerCatalogPort
       })
     ).sections

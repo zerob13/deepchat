@@ -5,7 +5,11 @@ import type {
 } from '@shared/types/agent-interface'
 import type { SkillServicePort } from '@shared/types/skill'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
-import type { SessionPermissionPort } from '@/session/contracts'
+import type {
+  SessionPermissionGrant,
+  SessionPermissionPort,
+  SessionPermissionRequest
+} from '@/session/contracts'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import {
   insertBlocksAfterToolCall,
@@ -52,9 +56,19 @@ import { ExecutionJournalError, isExecutionJournalError } from '@/tape/domain/ex
 import type { InteractionParkingRegistry } from './interactionParkingRegistry'
 import type { TapeViewManifestReader } from '@/tape/ports/capabilities'
 import { resolveDeferredExecutionContract } from './deferredExecutionContract'
+import { CommandShellProfileSchema } from '@shared/commandShell'
+import { isCommandSignatureForProfile } from '@/tool/permission'
 
 const DEFERRED_INTERACTION_PARKED_ERROR =
   'Execution is parked after an Execution Journal failure and will not be retried automatically.'
+
+type DeferredPermissionGrant = {
+  serverName: string
+  command?: {
+    signature: string
+    oneShotGrantId: string
+  }
+}
 
 type InteractionRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
@@ -267,59 +281,77 @@ export class InteractionCoordinator {
             viewManifests: this.ports.viewManifests
           })
           await resumeWaitingAdmission()
-          await awaitWithAbort(
-            this.grantPermissionForPayload(sessionId, permissionPayload, toolCall),
-            interactionAbortSignal
-          )
-          const nextToolCallAccounting = incrementToolCallAccounting(resumeAccounting)
-          let deferredToolCallCounted = false
-          const markDeferredToolCallStarted = () => {
-            if (deferredToolCallCounted) {
-              return
-            }
-            deferredToolCallCounted = true
-            resumeAccounting = nextToolCallAccounting
-            accountingChanged = true
-            this.ports.messageStore.updateAssistantMetadata(
-              messageId,
-              JSON.stringify(resumeAccounting)
-            )
-          }
+          let permissionGrant: DeferredPermissionGrant | null = null
           let execution: DeferredToolExecutionResult
-          if ((nextToolCallAccounting.toolCalls ?? 0) > MAX_TOOL_CALLS) {
-            execution = {
-              responseText: MAX_TOOL_CALLS_SKIPPED_ERROR,
-              isError: true
-            }
-          } else {
-            hooks.emit({
-              event: 'PreToolUse',
-              tool: { callId: toolCall.id, name: toolCall.name, params: toolCall.params }
-            })
-            execution = await this.ports.deferredToolExecutor.execute(
+          try {
+            // Await the cache mutation directly so cleanup always owns the exact grant lease.
+            permissionGrant = await this.grantPermissionForPayload(
               sessionId,
-              messageId,
-              toolCall,
-              markDeferredToolCallStarted,
-              executionContract
+              permissionPayload,
+              toolCall
             )
-            const refreshedInteraction = this.readLatestPendingInteraction(
-              sessionId,
-              messageId,
-              toolCall.id
-            )
-            if (!refreshedInteraction) {
-              return { resumed: false }
+            throwIfAbortRequested(interactionAbortSignal)
+            const nextToolCallAccounting = incrementToolCallAccounting(resumeAccounting)
+            let deferredToolCallCounted = false
+            const markDeferredToolCallStarted = () => {
+              if (deferredToolCallCounted) {
+                return
+              }
+              deferredToolCallCounted = true
+              resumeAccounting = nextToolCallAccounting
+              accountingChanged = true
+              this.ports.messageStore.updateAssistantMetadata(
+                messageId,
+                JSON.stringify(resumeAccounting)
+              )
             }
-            blocks = refreshedInteraction.blocks
-            actionBlock = refreshedInteraction.actionBlock
-            if (
-              (execution.invoked ||
-                execution.terminalError ||
-                execution.journalFailure?.dispatchCommitted) &&
-              !deferredToolCallCounted
-            ) {
-              markDeferredToolCallStarted()
+            if ((nextToolCallAccounting.toolCalls ?? 0) > MAX_TOOL_CALLS) {
+              execution = {
+                responseText: MAX_TOOL_CALLS_SKIPPED_ERROR,
+                isError: true
+              }
+            } else {
+              hooks.emit({
+                event: 'PreToolUse',
+                tool: { callId: toolCall.id, name: toolCall.name, params: toolCall.params }
+              })
+              execution = await this.ports.deferredToolExecutor.execute(
+                sessionId,
+                messageId,
+                toolCall.server_name === permissionGrant.serverName
+                  ? toolCall
+                  : { ...toolCall, server_name: permissionGrant.serverName },
+                markDeferredToolCallStarted,
+                executionContract,
+                permissionPayload?.shellProfile,
+                permissionGrant.command?.oneShotGrantId
+              )
+              const refreshedInteraction = this.readLatestPendingInteraction(
+                sessionId,
+                messageId,
+                toolCall.id
+              )
+              if (!refreshedInteraction) {
+                return { resumed: false }
+              }
+              blocks = refreshedInteraction.blocks
+              actionBlock = refreshedInteraction.actionBlock
+              if (
+                (execution.invoked ||
+                  execution.terminalError ||
+                  execution.journalFailure?.dispatchCommitted) &&
+                !deferredToolCallCounted
+              ) {
+                markDeferredToolCallStarted()
+              }
+            }
+          } finally {
+            if (permissionGrant?.command) {
+              this.ports.sessionPermissionPort.revokeOneShotCommandPermission(
+                sessionId,
+                permissionGrant.command.signature,
+                permissionGrant.command.oneShotGrantId
+              )
             }
           }
           if (execution.journalFailure) {
@@ -721,60 +753,136 @@ export class InteractionCoordinator {
     sessionId: string,
     payload: PendingToolInteraction['permission'] | undefined,
     toolCall: NonNullable<AssistantMessageBlock['tool_call']>
-  ): Promise<void> {
-    if (!payload) return
+  ): Promise<DeferredPermissionGrant> {
+    if (!payload) {
+      throw new Error('Permission approval payload is unavailable.')
+    }
 
     const sessionPermissionPort = this.ports.sessionPermissionPort
     const permissionType = payload.permissionType
-    const serverName = payload.serverName || toolCall.server_name || ''
-    const toolName = payload.toolName || toolCall.name || ''
+    const payloadServerName = payload.serverName?.trim()
+    const toolCallServerName = toolCall.server_name?.trim()
+    if (
+      payloadServerName &&
+      toolCallServerName &&
+      payloadServerName !== toolCallServerName
+    ) {
+      throw new Error('Permission approval tool server identity does not match the tool call.')
+    }
+    const serverName = toolCallServerName || payloadServerName
+    if (!serverName) {
+      throw new Error('Permission approval is missing its tool server identity.')
+    }
+
+    const payloadToolName = payload.toolName?.trim()
+    const toolCallName = toolCall.name?.trim()
+    if (
+      (serverName === 'agent-filesystem' || serverName === 'deepchat-settings') &&
+      payloadToolName &&
+      toolCallName &&
+      payloadToolName !== toolCallName
+    ) {
+      throw new Error('Permission approval tool identity does not match the tool call.')
+    }
+    const toolName = toolCallName || payloadToolName || ''
 
     if (permissionType === 'command') {
       const command = payload.command || payload.commandInfo?.command || ''
-      const signature = payload.commandSignature || payload.commandInfo?.signature || command
-      if (signature) {
-        await sessionPermissionPort.approvePermission(sessionId, {
-          permissionType: 'command',
-          command,
-          commandSignature: signature,
-          commandInfo: payload.commandInfo
-        })
+      const signature = payload.commandSignature?.trim()
+      const parsedProfile = CommandShellProfileSchema.safeParse(payload.shellProfile)
+      if (
+        !signature ||
+        !parsedProfile.success ||
+        !isCommandSignatureForProfile(signature, parsedProfile.data)
+      ) {
+        throw new Error('Command approval is missing a valid shell profile and signature.')
       }
-      return
+      const grant = await sessionPermissionPort.approvePermission(sessionId, {
+        permissionType: 'command',
+        command,
+        commandSignature: signature,
+        shellProfile: parsedProfile.data,
+        commandInfo: payload.commandInfo
+      })
+      if (!grant || grant.kind !== 'command') {
+        throw new Error('Command approval did not return a one-shot grant lease.')
+      }
+      if (grant.signature !== signature) {
+        sessionPermissionPort.revokeOneShotCommandPermission(
+          sessionId,
+          grant.signature,
+          grant.oneShotGrantId
+        )
+        throw new Error('Command approval returned a lease for another signature.')
+      }
+      return {
+        serverName,
+        command: { signature: grant.signature, oneShotGrantId: grant.oneShotGrantId }
+      }
     }
 
-    if (serverName === 'agent-filesystem' && Array.isArray(payload.paths) && payload.paths.length) {
-      await sessionPermissionPort.approvePermission(sessionId, {
+    if (serverName === 'agent-filesystem') {
+      const parsedProfile = CommandShellProfileSchema.safeParse(payload.shellProfile)
+      if (!parsedProfile.success) {
+        throw new Error('File approval is missing a valid shell profile.')
+      }
+      if (
+        !Array.isArray(payload.paths) ||
+        payload.paths.length === 0 ||
+        payload.paths.some((filePath) => typeof filePath !== 'string' || !filePath.trim())
+      ) {
+        throw new Error('File approval is missing valid paths.')
+      }
+      await this.grantNonCommandPermission(sessionId, {
         permissionType:
           permissionType === 'read' || permissionType === 'write' || permissionType === 'all'
             ? permissionType
             : 'write',
         serverName,
         toolName,
-        paths: payload.paths
+        paths: payload.paths,
+        shellProfile: parsedProfile.data
       })
-      return
+      return { serverName }
     }
 
     if (serverName === 'deepchat-settings' && toolName) {
-      await sessionPermissionPort.approvePermission(sessionId, {
+      await this.grantNonCommandPermission(sessionId, {
         permissionType: 'write',
         serverName,
         toolName
       })
-      return
+      return { serverName }
     }
 
     if (
       serverName &&
       (permissionType === 'read' || permissionType === 'write' || permissionType === 'all')
     ) {
-      await sessionPermissionPort.approvePermission(sessionId, {
+      await this.grantNonCommandPermission(sessionId, {
         permissionType,
         serverName,
         toolName,
         requestId: payload.requestId
       })
     }
+    return { serverName }
+  }
+
+  private async grantNonCommandPermission(
+    sessionId: string,
+    permission: SessionPermissionRequest
+  ): Promise<void> {
+    const grant: SessionPermissionGrant =
+      await this.ports.sessionPermissionPort.approvePermission(sessionId, permission)
+    if (grant?.kind === 'granted') return
+    if (grant?.kind === 'command') {
+      this.ports.sessionPermissionPort.revokeOneShotCommandPermission(
+        sessionId,
+        grant.signature,
+        grant.oneShotGrantId
+      )
+    }
+    throw new Error('Non-command approval returned an unexpected grant result.')
   }
 }

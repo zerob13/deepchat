@@ -67,6 +67,7 @@ import type { DeepChatSubagentCapability } from '@shared/types/agent-interface'
 import { resolveSessionDir } from '@/agent/shared/storage/sessionPaths'
 import { LiveDelegationAgentTool } from './liveDelegationTool'
 import { normalizeOrchestrationPolicy } from '@shared/orchestration/policy'
+import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 import { resolveAgentOutputLimits, type AgentOutputLimits } from '@shared/lib/agentOutputLimits'
 
 // Consider moving to a shared handlers location in future refactoring
@@ -99,6 +100,7 @@ export interface AgentToolCallResult {
       description: string
       command?: string
       commandSignature?: string
+      shellProfile?: import('@shared/commandShell').CommandShellProfile
       paths?: string[]
       commandInfo?: {
         command: string
@@ -135,10 +137,17 @@ interface AgentToolExecutionOptions {
   activeSkillNames?: string[]
   liveDelegationAuthorization?: LiveDelegationStartAuthorization
   commitDispatch?: ToolDispatchCommit
+  commandShell?: ResolvedCommandShell
+  oneShotCommandGrantId?: string
+}
+
+type AgentFileSystemExecutionOptions = AgentToolExecutionOptions & {
+  commandShell: ResolvedCommandShell
 }
 
 interface AgentToolPermissionCheckOptions {
   allowExternalFileAccess?: boolean
+  commandShell?: ResolvedCommandShell
 }
 
 const createAbortError = (): Error => {
@@ -685,7 +694,11 @@ export class AgentToolManager {
       if (!this.fileSystemHandler) {
         throw new Error(`FileSystem handler not initialized for tool: ${toolName}`)
       }
-      return await this.callFileSystemTool(toolName, args, conversationId, options)
+      const commandShell = this.requireCommandShell(options?.commandShell)
+      return await this.callFileSystemTool(toolName, args, conversationId, {
+        ...options,
+        commandShell
+      })
     }
 
     // Route to Skill tools
@@ -1090,14 +1103,9 @@ export class AgentToolManager {
   private async callFileSystemTool(
     toolName: string,
     args: Record<string, unknown>,
-    conversationId?: string,
-    options?: AgentToolExecutionOptions
+    conversationId: string | undefined,
+    options: AgentFileSystemExecutionOptions
   ): Promise<AgentToolCallResult> {
-    // Handle process tool separately
-    if (this.isProcessTool(toolName)) {
-      return this.callProcessTool(toolName, args, conversationId, options)
-    }
-
     const schema = this.fileSystemSchemas[toolName as keyof typeof this.fileSystemSchemas]
     if (!schema) {
       throw new Error(`No schema found for FileSystem tool: ${toolName}`)
@@ -1109,7 +1117,7 @@ export class AgentToolManager {
     }
 
     const parsedArgs = validationResult.data
-    const allowExternalFileAccess = options?.allowExternalFileAccess === true
+    const allowExternalFileAccess = options.allowExternalFileAccess === true
 
     // Get dynamic workdir from conversation settings
     let dynamicWorkdir: string | null = null
@@ -1129,11 +1137,11 @@ export class AgentToolManager {
       includeSkillRoots: toolName !== 'exec',
       includeRuntimeRoots: toolName !== 'exec',
       requiredPermission: this.getRequiredFilePermission(toolName),
-      activeSkillNames: options?.activeSkillNames
+      activeSkillNames: options.activeSkillNames
     })
     const protectedDirectoryRules = await this.buildProtectedSkillDirectoryRules(
       conversationId,
-      options?.activeSkillNames
+      options.activeSkillNames
     )
 
     if (toolName === 'exec') {
@@ -1159,7 +1167,8 @@ export class AgentToolManager {
         const skillScopeGuard = new AgentFileSystemHandler(allowedDirectories, {
           conversationId,
           allowExternalAccess: true,
-          protectedDirectoryRules
+          protectedDirectoryRules,
+          commandShellPathStyle: options.commandShell.pathStyle
         })
         skillScopeGuard.assertReadAllowedAbsolute(
           skillScopeGuard.resolvePath(execArgs.cwd, workspaceRoot)
@@ -1176,6 +1185,8 @@ export class AgentToolManager {
         },
         {
           conversationId,
+          commandShell: options.commandShell,
+          oneShotCommandGrantId: options.oneShotCommandGrantId,
           allowExternalCwd: allowExternalFileAccess,
           outputPreviewChars: outputLimits.commandOutputInlineChars,
           beforeExecute: this.createAgentDispatchCommit(
@@ -1212,7 +1223,8 @@ export class AgentToolManager {
     const fileSystemHandler = new AgentFileSystemHandler(allowedDirectories, {
       conversationId,
       allowExternalAccess: allowExternalFileAccess,
-      protectedDirectoryRules
+      protectedDirectoryRules,
+      commandShellPathStyle: options.commandShell.pathStyle
     })
 
     try {
@@ -1240,7 +1252,7 @@ export class AgentToolManager {
           )
           const mimeType = await this.getFileService().getMimeType(validPath)
 
-          if (await shouldRejectAgentBinaryRead(validPath, mimeType)) {
+          if (shouldRejectAgentBinaryRead(mimeType)) {
             return {
               content: buildBinaryReadGuidance(validPath, mimeType, 'agent')
             }
@@ -1268,7 +1280,8 @@ export class AgentToolManager {
             conversationId,
             allowExternalAccess: allowExternalFileAccess,
             readFileAutoTruncateChars: readOutputLimits.readFileAutoTruncateChars,
-            protectedDirectoryRules
+            protectedDirectoryRules,
+            commandShellPathStyle: options.commandShell.pathStyle
           })
 
           if (this.shouldUseRawTextRead(mimeType)) {
@@ -1392,7 +1405,8 @@ export class AgentToolManager {
             conversationId,
             allowExternalFileAccess,
             protectedDirectoryRules,
-            signal: options?.signal,
+            commandShellPathStyle: options.commandShell.pathStyle,
+            signal: options.signal,
             service: this.fffSearchService
           })
           const result = await fffHandler.glob(parsedArgs)
@@ -1421,7 +1435,8 @@ export class AgentToolManager {
             conversationId,
             allowExternalFileAccess,
             protectedDirectoryRules,
-            signal: options?.signal,
+            commandShellPathStyle: options.commandShell.pathStyle,
+            signal: options.signal,
             service: this.fffSearchService
           })
           const result = await fffHandler.grep(parsedArgs)
@@ -1449,13 +1464,17 @@ export class AgentToolManager {
         }
       }
       if (error instanceof FilePermissionRequiredError) {
+        const permissionRequest = {
+          ...error.permissionRequest,
+          shellProfile: options.commandShell.profile
+        }
         return {
           content: error.responseContent,
           rawData: {
             content: error.responseContent,
             isError: false,
             requiresPermission: true,
-            permissionRequest: error.permissionRequest
+            permissionRequest
           }
         }
       }
@@ -1678,7 +1697,7 @@ export class AgentToolManager {
     if (mimeType === 'text/csv') {
       return false
     }
-    if (mimeType.startsWith('text/')) {
+    if (mimeType.startsWith('text/') || mimeType === 'application/octet-stream') {
       return true
     }
 
@@ -2267,6 +2286,7 @@ export class AgentToolManager {
     paths?: string[]
     command?: string
     commandSignature?: string
+    shellProfile?: import('@shared/commandShell').CommandShellProfile
     commandInfo?: {
       command: string
       riskLevel: 'low' | 'medium' | 'high' | 'critical'
@@ -2321,10 +2341,16 @@ export class AgentToolManager {
       }
     }
 
+    if (this.isProcessTool(toolName)) {
+      return null
+    }
+
     if (this.isFileSystemTool(toolName)) {
       if (!this.fileSystemHandler) {
         throw new Error('FileSystem handler not initialized')
       }
+
+      const commandShell = this.requireCommandShell(options.commandShell)
 
       let dynamicWorkdir: string | null = null
       if (conversationId) {
@@ -2348,7 +2374,8 @@ export class AgentToolManager {
       const fileSystemHandler = new AgentFileSystemHandler(allowedDirectories, {
         conversationId,
         allowExternalAccess: allowExternalFileAccess,
-        protectedDirectoryRules
+        protectedDirectoryRules,
+        commandShellPathStyle: commandShell.pathStyle
       })
       const explicitBaseDirectory =
         typeof args.base_directory === 'string' && args.base_directory.trim().length > 0
@@ -2365,6 +2392,7 @@ export class AgentToolManager {
         if (!command) {
           return null
         }
+        const requiredCommandShell = this.requireCommandShell(commandShell)
 
         const requestedCwd = typeof args.cwd === 'string' ? args.cwd.trim() : ''
         if (requestedCwd) {
@@ -2379,13 +2407,18 @@ export class AgentToolManager {
               permissionType: 'all',
               description: `Working directory access requires approval for: ${resolvedCwd}`,
               paths: [resolvedCwd],
+              shellProfile: requiredCommandShell.profile,
               conversationId
             }
           }
         }
 
         if (this.bashHandler.checkCommandPermission) {
-          const result = await this.bashHandler.checkCommandPermission(command, conversationId)
+          const result = await this.bashHandler.checkCommandPermission(
+            command,
+            requiredCommandShell,
+            conversationId
+          )
           if (result.needsPermission) {
             return {
               needsPermission: true,
@@ -2395,16 +2428,12 @@ export class AgentToolManager {
               description: result.description || `Command "${command}" requires permission`,
               command,
               commandSignature: result.signature,
+              shellProfile: requiredCommandShell.profile,
               commandInfo: result.commandInfo,
               conversationId
             }
           }
         }
-        return null
-      }
-
-      // Handle process tool
-      if (toolName === 'process') {
         return null
       }
 
@@ -2434,12 +2463,20 @@ export class AgentToolManager {
           permissionType,
           description: `${isWriteOperation ? 'Write' : 'Read'} access requires approval for: ${denied.join(', ')}`,
           paths: denied,
+          shellProfile: commandShell.profile,
           conversationId
         }
       }
     }
 
     return null
+  }
+
+  private requireCommandShell(commandShell?: ResolvedCommandShell): ResolvedCommandShell {
+    if (!commandShell) {
+      throw new Error('Agent tool requires a resolved command shell.')
+    }
+    return ResolvedCommandShellSchema.parse(commandShell)
   }
 
   private isChatSettingsTool(toolName: string): boolean {
@@ -2611,6 +2648,7 @@ export class AgentToolManager {
 
     const result = await this.getSkillExecutionService().execute(validationResult.data, {
       conversationId,
+      commandShell: this.requireCommandShell(options?.commandShell),
       activeSkillNames: options?.activeSkillNames,
       outputPreviewChars: (await this.resolveOutputLimitsForConversation(conversationId))
         .commandOutputInlineChars,

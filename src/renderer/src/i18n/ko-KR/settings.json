@@ -1,6 +1,29 @@
 {
   "title": "설정",
   "common": {
+    "commandShell": {
+      "title": "Agent 명령 셸",
+      "auto": "자동",
+      "windowsPowerShell": "Windows PowerShell",
+      "gitBash": "Git Bash",
+      "executable": "Git Bash 실행 파일",
+      "autoDetect": "자동 감지",
+      "browse": "Git Bash 찾아보기",
+      "clearOverride": "사용자 지정 경로 지우기",
+      "checking": "Git Bash 확인 중...",
+      "available": "사용 가능: {path}",
+      "refresh": "다시 확인",
+      "updateFailed": "명령 셸 설정을 업데이트하지 못했습니다.",
+      "checkFailed": "Git Bash 사용 가능 여부를 확인하지 못했습니다.",
+      "browseFailed": "Git Bash 실행 파일을 선택하지 못했습니다.",
+      "loadFailed": "명령 셸 설정을 불러오지 못했습니다.",
+      "errors": {
+        "unsupported-platform": "Git Bash는 Windows에서만 선택할 수 있습니다.",
+        "override-invalid": "사용자 지정 경로는 기존 bash.exe를 가리켜야 합니다.",
+        "not-found": "이 기기에서 Git Bash를 찾지 못했습니다.",
+        "validation-failed": "감지된 실행 파일이 Git Bash 검증을 통과하지 못했습니다."
+      }
+    },
     "title": "일반 설정",
     "resetData": "데이터 초기화",
     "language": "언어",

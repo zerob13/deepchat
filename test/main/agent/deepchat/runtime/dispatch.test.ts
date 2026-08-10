@@ -37,6 +37,7 @@ import { resolveToolOffloadPath } from '@/agent/shared/storage/sessionPaths'
 import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
 import { ExecutionJournalError } from '@/tape/domain/executionJournal'
+import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 
@@ -258,6 +259,7 @@ async function settleToolBatch(
       runId: '11111111-1111-4111-8111-111111111111',
       requestSeq: 1
     },
+    commandShell: POSIX_COMMAND_SHELL,
     rendererFlushHandle: flushHandle,
     providerReplayProjector: hooks?.providerReplayProjector,
     collaborators: {
@@ -353,7 +355,8 @@ describe('dispatch', () => {
           providerId: 'openai'
         }),
         expect.objectContaining({
-          signal: expect.any(Object)
+          signal: expect.any(Object),
+          commandShell: POSIX_COMMAND_SHELL
         })
       )
 
@@ -2426,6 +2429,310 @@ describe('dispatch', () => {
       })
     })
 
+    it.each([
+      ['serial', TOOL_EXECUTION.write],
+      ['parallel', TOOL_EXECUTION.read.parallel]
+    ] as const)(
+      'revokes a pre-checked command grant when %s execution is cancelled before dispatch',
+      async (_mode, executionContract) => {
+        const abortController = new AbortController()
+        const abortIo = createIo({ abortSignal: abortController.signal })
+        const tools = [makeAgentTool('exec', executionContract)]
+        const toolService = createMockToolService() as ToolServicePort & {
+          preCheckToolPermission: ReturnType<typeof vi.fn>
+        }
+        toolService.preCheckToolPermission.mockResolvedValue({
+          needsPermission: true,
+          permissionType: 'command',
+          description: 'Need command permission',
+          toolName: 'exec',
+          serverName: 'agent-filesystem',
+          command: 'npm install',
+          commandSignature: 'posix:npm install',
+          shellProfile: 'posix'
+        })
+        const revocationError = new Error('permission store unavailable')
+        const revokeOneShotCommandPermission = vi.fn(() => {
+          throw revocationError
+        })
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const autoGrantPermission = vi.fn(async () => {
+          abortController.abort()
+          return {
+            kind: 'command' as const,
+            signature: 'posix:npm install',
+            oneShotGrantId: 'command-grant-cancelled'
+          }
+        })
+        state.blocks.push({
+          type: 'tool_call',
+          content: '',
+          status: 'pending',
+          timestamp: Date.now(),
+          tool_call: {
+            id: 'tc-exec',
+            name: 'exec',
+            params: '{"command":"npm install"}',
+            response: ''
+          }
+        })
+        state.completedToolCalls = [
+          { id: 'tc-exec', name: 'exec', arguments: '{"command":"npm install"}' }
+        ]
+
+        try {
+          await expect(
+            settleToolBatch(
+              state,
+              [],
+              0,
+              tools,
+              toolService,
+              'gpt-4',
+              abortIo,
+              'full_access',
+              new ToolOutputGuard(),
+              32000,
+              1024,
+              { autoGrantPermission, revokeOneShotCommandPermission }
+            )
+          ).rejects.toMatchObject({ name: 'AbortError' })
+
+          expect(toolService.callTool).not.toHaveBeenCalled()
+          expect(revokeOneShotCommandPermission).toHaveBeenCalledWith(
+            'posix:npm install',
+            'command-grant-cancelled'
+          )
+          expect(warn).toHaveBeenCalledOnce()
+        } finally {
+          warn.mockRestore()
+        }
+      }
+    )
+
+    it('preserves a successful command result when lease cleanup fails', async () => {
+      const tools = [makeAgentTool('exec')]
+      const toolService = createMockToolService({ exec: 'done' }) as ToolServicePort & {
+        preCheckToolPermission: ReturnType<typeof vi.fn>
+      }
+      toolService.preCheckToolPermission.mockResolvedValue({
+        needsPermission: true,
+        permissionType: 'command',
+        description: 'Need command permission',
+        toolName: 'exec',
+        serverName: 'agent-filesystem',
+        command: 'npm install',
+        commandSignature: 'posix:npm install',
+        shellProfile: 'posix'
+      })
+      const autoGrantPermission = vi.fn().mockResolvedValue({
+        kind: 'command',
+        signature: 'posix:npm install',
+        oneShotGrantId: 'command-grant-exec'
+      })
+      const revocationError = new Error('permission store unavailable')
+      const revokeOneShotCommandPermission = vi.fn(() => {
+        throw revocationError
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc-exec',
+          name: 'exec',
+          params: '{"command":"npm install"}',
+          response: ''
+        }
+      })
+      state.completedToolCalls = [
+        { id: 'tc-exec', name: 'exec', arguments: '{"command":"npm install"}' }
+      ]
+
+      try {
+        const result = await settleToolBatch(
+          state,
+          [],
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          new ToolOutputGuard(),
+          32000,
+          1024,
+          { autoGrantPermission, revokeOneShotCommandPermission }
+        )
+
+        expect(toolService.callTool).toHaveBeenCalledWith(
+          expect.objectContaining({ id: 'tc-exec' }),
+          expect.objectContaining({ oneShotCommandGrantId: 'command-grant-exec' })
+        )
+        expect(revokeOneShotCommandPermission).toHaveBeenCalledWith(
+          'posix:npm install',
+          'command-grant-exec'
+        )
+        expect(result.type).toBe('completed')
+        expect(state.blocks[0]).toMatchObject({
+          status: 'success',
+          tool_call: { response: 'done' }
+        })
+        expect(warn).toHaveBeenCalledOnce()
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
+    it.each([
+      [
+        'a non-command grant',
+        { kind: 'granted' as const },
+        'Command approval did not return a one-shot grant lease.',
+        null
+      ],
+      [
+        'a lease for another signature',
+        {
+          kind: 'command' as const,
+          signature: 'git-bash:npm install',
+          oneShotGrantId: 'wrong-command-grant'
+        },
+        'Command approval returned a lease for another signature.',
+        ['git-bash:npm install', 'wrong-command-grant']
+      ]
+    ] as const)(
+      'fails closed when command approval returns %s',
+      async (_description, grant, expectedError, expectedRevocation) => {
+        const tools = [makeAgentTool('exec')]
+        const toolService = createMockToolService() as ToolServicePort & {
+          preCheckToolPermission: ReturnType<typeof vi.fn>
+        }
+        toolService.preCheckToolPermission.mockResolvedValue({
+          needsPermission: true,
+          permissionType: 'command',
+          description: 'Need command permission',
+          toolName: 'exec',
+          serverName: 'agent-filesystem',
+          command: 'npm install',
+          commandSignature: 'posix:npm install',
+          shellProfile: 'posix'
+        })
+        const autoGrantPermission = vi.fn().mockResolvedValue(grant)
+        const revokeOneShotCommandPermission = vi.fn()
+        state.blocks.push({
+          type: 'tool_call',
+          content: '',
+          status: 'pending',
+          timestamp: Date.now(),
+          tool_call: {
+            id: 'tc-exec',
+            name: 'exec',
+            params: '{"command":"npm install"}',
+            response: ''
+          }
+        })
+        state.completedToolCalls = [
+          { id: 'tc-exec', name: 'exec', arguments: '{"command":"npm install"}' }
+        ]
+
+        const result = await settleToolBatch(
+          state,
+          [],
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          new ToolOutputGuard(),
+          32000,
+          1024,
+          { autoGrantPermission, revokeOneShotCommandPermission }
+        )
+
+        expect(result.type).toBe('completed')
+        expect(result.executionState.invokedCallIds).toEqual([])
+        expect(state.blocks[0]).toMatchObject({
+          status: 'error',
+          tool_call: { response: `Error: ${expectedError}` }
+        })
+        expect(toolService.callTool).not.toHaveBeenCalled()
+        if (expectedRevocation) {
+          expect(revokeOneShotCommandPermission).toHaveBeenCalledWith(...expectedRevocation)
+        } else {
+          expect(revokeOneShotCommandPermission).not.toHaveBeenCalled()
+        }
+      }
+    )
+
+    it('revokes a command lease returned for a non-command approval', async () => {
+      const tools = [makeAgentTool('write')]
+      const toolService = createMockToolService() as ToolServicePort & {
+        preCheckToolPermission: ReturnType<typeof vi.fn>
+      }
+      toolService.preCheckToolPermission.mockResolvedValue({
+        needsPermission: true,
+        permissionType: 'write',
+        description: 'Need write permission',
+        toolName: 'write',
+        serverName: 'agent-filesystem',
+        paths: ['/tmp/secret.txt']
+      })
+      const autoGrantPermission = vi.fn().mockResolvedValue({
+        kind: 'command',
+        signature: 'posix:npm install',
+        oneShotGrantId: 'unexpected-command-grant'
+      })
+      const revokeOneShotCommandPermission = vi.fn()
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc-write',
+          name: 'write',
+          params: '{"path":"/tmp/secret.txt"}',
+          response: ''
+        }
+      })
+      state.completedToolCalls = [
+        { id: 'tc-write', name: 'write', arguments: '{"path":"/tmp/secret.txt"}' }
+      ]
+
+      const result = await settleToolBatch(
+        state,
+        [],
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32000,
+        1024,
+        { autoGrantPermission, revokeOneShotCommandPermission }
+      )
+
+      expect(result.type).toBe('completed')
+      expect(result.executionState.invokedCallIds).toEqual([])
+      expect(state.blocks[0]).toMatchObject({
+        status: 'error',
+        tool_call: {
+          response: 'Error: Non-command approval returned a command grant lease.'
+        }
+      })
+      expect(toolService.callTool).not.toHaveBeenCalled()
+      expect(revokeOneShotCommandPermission).toHaveBeenCalledWith(
+        'posix:npm install',
+        'unexpected-command-grant'
+      )
+    })
+
     it('pauses post-call user confirmation without attempting an automatic grant', async () => {
       const tools = [makeAgentTool('deepchat_subagents')]
       const toolService = {
@@ -2534,7 +2841,9 @@ describe('dispatch', () => {
           toolArgs: '{"command":"rm -rf /tmp/project"}',
           permission: expect.objectContaining({
             permissionType: 'command',
-            command: 'rm -rf /tmp/project'
+            command: 'rm -rf /tmp/project',
+            commandSignature: 'posix:rm -rf /tmp/project',
+            shellProfile: 'posix'
           })
         })
       )
@@ -2907,7 +3216,11 @@ describe('dispatch', () => {
 
       expect(toolService.preCheckToolPermission).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'tc-write' }),
-        { permissionMode: 'full_access', signal: io.abortSignal }
+        {
+          permissionMode: 'full_access',
+          signal: io.abortSignal,
+          commandShell: POSIX_COMMAND_SHELL
+        }
       )
       expect(hooks.reviewToolPermission).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2926,7 +3239,16 @@ describe('dispatch', () => {
       )
       expect(toolService.callTool).toHaveBeenCalledWith(
         expect.objectContaining({ id: 'tc-write' }),
-        expect.objectContaining({ permissionMode: 'full_access' })
+        expect.objectContaining({
+          permissionMode: 'full_access',
+          commandShell: POSIX_COMMAND_SHELL
+        })
+      )
+      expect(vi.mocked(toolService.preCheckToolPermission).mock.calls[0][1]?.commandShell).toBe(
+        POSIX_COMMAND_SHELL
+      )
+      expect(vi.mocked(toolService.callTool).mock.calls[0][1]?.commandShell).toBe(
+        POSIX_COMMAND_SHELL
       )
       expect(result.executed).toBe(1)
       expect(result.type).toBe('completed')

@@ -96,6 +96,7 @@ import type {
   TurnCompletion
 } from './pendingInputContracts'
 import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
+import type { CommandShellService } from '@/agent/shared/process/commandShellService'
 
 type TurnRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
@@ -156,6 +157,7 @@ export interface TurnCoordinatorPorts {
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
   identity: Pick<SessionIdentityService, 'getSessionKind' | 'isAcpBackedSubagentSession'>
   taskContractContext: DeepChatTaskContractContextPort
+  commandShell: Pick<CommandShellService, 'resolveForTurn'>
   loopRunner: Pick<DeepChatLoopRunner, 'run'>
   messageProjection: Pick<MessageProjectionService, 'refresh'>
   hookSink: Pick<RuntimeHookSink, 'scope'>
@@ -262,6 +264,11 @@ export class TurnCoordinator {
     const tools = meetTaskContractToolDefinitions(sessionId, resolvedTools, taskContractContext)
     const toolReserveTokens = estimateToolReserveTokens(tools)
     throwIfAbortRequested(signal)
+    const commandShell = await this.runPreStreamStep(
+      { sessionId, messageId, step: 'command-shell', signal },
+      () => awaitWithAbort(this.ports.commandShell.resolveForTurn(), signal)
+    )
+    throwIfAbortRequested(signal)
     const basePromptAssembler = this.ports.promptAssembly.createBasePromptAssembler(instance)
     const basePromptAssembly = await this.runPreStreamStep(
       { sessionId, messageId, step: 'system-prompt', signal },
@@ -271,7 +278,8 @@ export class TurnCoordinator {
             sessionId: toAppSessionId(sessionId),
             configuredPrompt: generationSettings.systemPrompt,
             toolDefinitions: tools,
-            activeSkillNames
+            activeSkillNames,
+            commandShell
           }),
           signal
         )
@@ -288,6 +296,7 @@ export class TurnCoordinator {
       taskContractContext,
       tools,
       toolReserveTokens,
+      commandShell,
       basePromptAssembler,
       basePromptAssembly,
       baseSystemPrompt: basePromptAssembly.prompt
@@ -521,6 +530,7 @@ export class TurnCoordinator {
         taskContractContext,
         tools,
         toolReserveTokens,
+        commandShell,
         basePromptAssembler,
         basePromptAssembly: unguardedBasePromptAssembly
       } = await this.prepareTurnResources({
@@ -842,6 +852,7 @@ export class TurnCoordinator {
           promptPreview: content.text,
           search,
           tools,
+          commandShell,
           baseSystemPrompt,
           basePromptAssembly,
           contextContributions,
@@ -856,7 +867,8 @@ export class TurnCoordinator {
               sessionId: toAppSessionId(sessionId),
               configuredPrompt: generationSettings.systemPrompt,
               toolDefinitions: refreshedTools,
-              activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames
+              activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames,
+              commandShell
             })
             return shouldGuardAttachmentText
               ? appendAttachmentTextSafetySection(refreshedBasePrompt)
@@ -1247,6 +1259,7 @@ export class TurnCoordinator {
         taskContractContext,
         tools,
         toolReserveTokens,
+        commandShell,
         basePromptAssembler,
         basePromptAssembly: unguardedBasePromptAssembly
       } = await this.prepareTurnResources({
@@ -1506,6 +1519,7 @@ export class TurnCoordinator {
           taskContractContext,
           abortController: preStreamAbortController,
           tools,
+          commandShell,
           baseSystemPrompt,
           basePromptAssembly,
           contextContributions,
@@ -1519,7 +1533,8 @@ export class TurnCoordinator {
               sessionId: toAppSessionId(sessionId),
               configuredPrompt: generationSettings.systemPrompt,
               toolDefinitions: refreshedTools,
-              activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames
+              activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames,
+              commandShell
             })
             return shouldGuardAttachmentText
               ? appendAttachmentTextSafetySection(refreshedBasePrompt)

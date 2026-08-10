@@ -100,6 +100,14 @@ describe('renderer api clients', () => {
               return { config: { hooks: [] } }
             case 'config.setHooksNotifications':
               return { config: payload?.config }
+            case 'settings.commandShell.get':
+              return { config: { preference: 'auto' } }
+            case 'settings.commandShell.update':
+              return { config: payload?.config }
+            case 'settings.commandShell.check':
+              return {
+                gitBash: { supported: true, available: false, error: 'not-found' }
+              }
             case 'config.testHookCommand':
               return {
                 result: {
@@ -1284,22 +1292,34 @@ describe('renderer api clients', () => {
 
     await client.getSnapshot(['fontSizeLevel'])
     await client.getSystemFonts()
+    await client.getCommandShell()
+    await client.updateCommandShell({ preference: 'git-bash' })
+    await client.checkCommandShell(true)
     await client.update([{ key: 'fontSizeLevel', value: 3 }])
     await client.openSettings({ routeName: 'settings-display', section: 'fonts' })
     client.onChanged(vi.fn())
+    client.onCommandShellChanged(vi.fn())
 
     expect(bridge.invoke).toHaveBeenNthCalledWith(1, 'settings.getSnapshot', {
       keys: ['fontSizeLevel']
     })
     expect(bridge.invoke).toHaveBeenNthCalledWith(2, 'settings.listSystemFonts', {})
-    expect(bridge.invoke).toHaveBeenNthCalledWith(3, 'settings.update', {
+    expect(bridge.invoke).toHaveBeenNthCalledWith(3, 'settings.commandShell.get', {})
+    expect(bridge.invoke).toHaveBeenNthCalledWith(4, 'settings.commandShell.update', {
+      config: { preference: 'git-bash' }
+    })
+    expect(bridge.invoke).toHaveBeenNthCalledWith(5, 'settings.commandShell.check', {
+      forceRefresh: true
+    })
+    expect(bridge.invoke).toHaveBeenNthCalledWith(6, 'settings.update', {
       changes: [{ key: 'fontSizeLevel', value: 3 }]
     })
-    expect(bridge.invoke).toHaveBeenNthCalledWith(4, 'system.openSettings', {
+    expect(bridge.invoke).toHaveBeenNthCalledWith(7, 'system.openSettings', {
       routeName: 'settings-display',
       section: 'fonts'
     })
     expect(bridge.on).toHaveBeenCalledWith('settings.changed', expect.any(Function))
+    expect(bridge.on).toHaveBeenCalledWith('settings.commandShell.changed', expect.any(Function))
   })
 
   it('routes sessions.steerPendingInput through the registry name', async () => {

@@ -40,6 +40,7 @@ import {
   createOpaquePromptAssembly,
   reconcilePromptAssembly
 } from '@/agent/deepchat/resources/promptAssembly'
+import { CommandShellProfileSchema } from '@shared/commandShell'
 
 const UNKNOWN_CONTEXT_LIMIT = Number.MAX_SAFE_INTEGER
 const MAX_TRUNCATED_TOOL_RECOVERY_ATTEMPTS = 1
@@ -445,6 +446,7 @@ function toStreamingProviderPermission(
     typeof permission.commandSignature === 'string' && permission.commandSignature.trim()
       ? permission.commandSignature.trim()
       : undefined
+  const shellProfile = CommandShellProfileSchema.safeParse(permission.shellProfile)
   const paths = parseStreamingPermissionPaths(permission.paths)
   const commandInfo = parseStreamingPermissionCommandInfo(permission.commandInfo)
   const metadata =
@@ -467,6 +469,7 @@ function toStreamingProviderPermission(
     ...(requestId ? { requestId } : {}),
     ...(command ? { command } : {}),
     ...(commandSignature ? { commandSignature } : {}),
+    ...(shellProfile.success ? { shellProfile: shellProfile.data } : {}),
     ...(paths ? { paths } : {}),
     ...(commandInfo ? { commandInfo } : {}),
     ...(metadata?.rememberable === false ? { rememberable: false } : {})
@@ -1187,6 +1190,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 runId: run.runId,
                 requestSeq: batch.requestSeq
               },
+              commandShell: run.resources.commandShell,
               contextLength:
                 providerId === 'acp'
                   ? Number.MAX_SAFE_INTEGER

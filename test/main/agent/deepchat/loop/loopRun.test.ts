@@ -7,6 +7,7 @@ import {
   enterLogicalRound,
   enterPhysicalAttempt
 } from '@/agent/deepchat/loop/loopRun'
+import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
 function createRun(sessionId: string, initialRequestSeq = 0) {
   return createLoopRun({
@@ -18,7 +19,8 @@ function createRun(sessionId: string, initialRequestSeq = 0) {
     streamState: { blocks: [] as string[] },
     resources: {
       toolDefinitions: [],
-      activeSkillNames: [`${sessionId}-skill`]
+      activeSkillNames: [`${sessionId}-skill`],
+      commandShell: POSIX_COMMAND_SHELL
     },
     initialRequestSeq,
     startedAt: 100
@@ -26,6 +28,33 @@ function createRun(sessionId: string, initialRequestSeq = 0) {
 }
 
 describe('LoopRun', () => {
+  it.each([
+    ['missing', { toolDefinitions: [], activeSkillNames: [] }],
+    [
+      'contradictory',
+      {
+        toolDefinitions: [],
+        activeSkillNames: [],
+        commandShell: {
+          ...POSIX_COMMAND_SHELL,
+          dialect: 'powershell'
+        }
+      }
+    ]
+  ] as const)('rejects a %s command shell contract', (_kind, resources) => {
+    expect(() =>
+      createLoopRun({
+        runId: 'invalid-shell',
+        sessionId: toAppSessionId('session'),
+        messageId: 'message',
+        abortController: new AbortController(),
+        messages: [],
+        streamState: {},
+        resources: resources as never
+      })
+    ).toThrow()
+  })
+
   it('keeps mutable turn state isolated between sessions', () => {
     const first = createRun('first')
     const second = createRun('second')
@@ -120,7 +149,7 @@ describe('LoopRun', () => {
         abortController: new AbortController(),
         messages: [],
         streamState: {},
-        resources: { toolDefinitions: [], activeSkillNames: [] },
+        resources: { toolDefinitions: [], activeSkillNames: [], commandShell: POSIX_COMMAND_SHELL },
         initialLogicalRound: 3
       }).logicalRound
     ).toBe(3)
@@ -133,7 +162,7 @@ describe('LoopRun', () => {
         abortController: new AbortController(),
         messages: [],
         streamState: {},
-        resources: { toolDefinitions: [], activeSkillNames: [] },
+        resources: { toolDefinitions: [], activeSkillNames: [], commandShell: POSIX_COMMAND_SHELL },
         initialLogicalRound: 1.5
       }).logicalRound
     ).toBe(0)
@@ -159,7 +188,12 @@ describe('LoopRun', () => {
       abortController: new AbortController(),
       messages: [{ role: 'system', content: promptAssembly.prompt }],
       streamState: {},
-      resources: { toolDefinitions: [], activeSkillNames: [], promptAssembly }
+      resources: {
+        toolDefinitions: [],
+        activeSkillNames: [],
+        promptAssembly,
+        commandShell: POSIX_COMMAND_SHELL
+      }
     })
 
     expect(run.resources.promptAssembly).toBe(promptAssembly)

@@ -3,11 +3,13 @@ import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 
 export interface LoopRunResources {
   toolDefinitions: MCPToolDefinition[]
   activeSkillNames: string[]
   promptAssembly?: DeepChatPromptAssembly
+  commandShell: ResolvedCommandShell
 }
 
 export interface LoopRunProviderRecovery {
@@ -48,6 +50,7 @@ export interface CreateLoopRunInput<TStreamState> {
     toolDefinitions: readonly MCPToolDefinition[]
     activeSkillNames: readonly string[]
     promptAssembly?: DeepChatPromptAssembly
+    commandShell: ResolvedCommandShell
   }
   initialRequestSeq?: number
   initialLogicalRound?: number
@@ -62,6 +65,11 @@ export function createLoopRun<TStreamState>(
   input: CreateLoopRunInput<TStreamState>
 ): LoopRun<TStreamState> {
   const initialRequestSeq = normalizeInitialCounter(input.initialRequestSeq)
+  const parsedCommandShell = ResolvedCommandShellSchema.parse(input.resources.commandShell)
+  const commandShell = Object.freeze({
+    ...parsedCommandShell,
+    args: Object.freeze([...parsedCommandShell.args])
+  }) as ResolvedCommandShell
   return {
     runId: input.runId,
     sessionId: input.sessionId,
@@ -77,7 +85,8 @@ export function createLoopRun<TStreamState>(
     resources: {
       toolDefinitions: [...input.resources.toolDefinitions],
       activeSkillNames: [...input.resources.activeSkillNames],
-      ...(input.resources.promptAssembly ? { promptAssembly: input.resources.promptAssembly } : {})
+      ...(input.resources.promptAssembly ? { promptAssembly: input.resources.promptAssembly } : {}),
+      commandShell
     },
     providerRecovery: {
       contextOverflowHandoffAttempted: false,

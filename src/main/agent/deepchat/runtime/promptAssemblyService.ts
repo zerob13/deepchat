@@ -17,6 +17,7 @@ import { buildContextCheckpoint } from './contextContributions'
 import { logSlowPreStreamStep } from './preStreamWatchdog'
 import type { SessionIdentityService } from './sessionIdentityService'
 import type { DeepChatToolResolver } from './toolResolver'
+import type { ResolvedCommandShell } from '@shared/commandShell'
 
 export interface PromptAssemblyProjectDirPort {
   resolveProjectDir(
@@ -62,7 +63,8 @@ export class PromptAssemblyService {
     sessionId: string,
     basePrompt: string,
     toolDefinitions: MCPToolDefinition[],
-    activeSkillNamesOverride?: string[],
+    commandShell: ResolvedCommandShell,
+    activeSkillNamesOverride: string[] | undefined,
     resourceInstance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
   ): Promise<string> {
     return await buildSystemPromptWithSkills(this.builderDependencies, {
@@ -71,6 +73,7 @@ export class PromptAssemblyService {
       toolDefinitions,
       activeSkillNamesOverride,
       orchestrationPolicy: this.deps.orchestrationPolicy.resolveOrchestrationPolicy(sessionId),
+      commandShell,
       resourceInstance
     })
   }
@@ -79,6 +82,7 @@ export class PromptAssemblyService {
     sessionId: string,
     basePrompt: string,
     toolDefinitions: MCPToolDefinition[],
+    commandShell: ResolvedCommandShell,
     activeSkillNamesOverride?: string[],
     resourceInstance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
   ): Promise<DeepChatPromptAssembly> {
@@ -88,6 +92,7 @@ export class PromptAssemblyService {
       toolDefinitions,
       activeSkillNamesOverride,
       orchestrationPolicy: this.deps.orchestrationPolicy.resolveOrchestrationPolicy(sessionId),
+      commandShell,
       resourceInstance
     })
   }
@@ -99,6 +104,7 @@ export class PromptAssemblyService {
           input.sessionId,
           input.configuredPrompt,
           [...input.toolDefinitions],
+          input.commandShell,
           [...input.activeSkillNames],
           expectedInstance
         ),
@@ -107,6 +113,7 @@ export class PromptAssemblyService {
           input.sessionId,
           input.configuredPrompt,
           [...input.toolDefinitions],
+          input.commandShell,
           [...input.activeSkillNames],
           expectedInstance
         )

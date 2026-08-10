@@ -1,6 +1,29 @@
 {
   "title": "Ayarlar",
   "common": {
+    "commandShell": {
+      "title": "Agent komut kabuğu",
+      "auto": "Otomatik",
+      "windowsPowerShell": "Windows PowerShell",
+      "gitBash": "Git Bash",
+      "executable": "Git Bash yürütülebilir dosyası",
+      "autoDetect": "Otomatik algıla",
+      "browse": "Git Bash'i bul",
+      "clearOverride": "Özel yolu temizle",
+      "checking": "Git Bash kontrol ediliyor...",
+      "available": "Kullanılabilir: {path}",
+      "refresh": "Tekrar kontrol et",
+      "updateFailed": "Komut kabuğu ayarı güncellenemedi.",
+      "checkFailed": "Git Bash kullanılabilirliği kontrol edilemedi.",
+      "browseFailed": "Git Bash yürütülebilir dosyası seçilemedi.",
+      "loadFailed": "Komut kabuğu ayarı yüklenemedi.",
+      "errors": {
+        "unsupported-platform": "Git Bash seçimi yalnızca Windows'ta kullanılabilir.",
+        "override-invalid": "Özel yol mevcut bir bash.exe dosyasına işaret etmelidir.",
+        "not-found": "Bu cihazda Git Bash bulunamadı.",
+        "validation-failed": "Algılanan yürütülebilir dosya Git Bash doğrulamasını geçemedi."
+      }
+    },
     "title": "Ortak Ayarlar",
     "resetData": "Verileri Sıfırla",
     "language": "Dil",

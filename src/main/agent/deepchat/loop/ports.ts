@@ -15,6 +15,7 @@ import type { MemorySessionHandle } from '@/agent/deepchat/memory/memoryPromptCo
 import type { ContextRuntimeContributions } from '@/agent/deepchat/runtime/contextContributions'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
+import type { ResolvedCommandShell } from '@shared/commandShell'
 
 export interface ProviderRequest {
   runId: string
@@ -43,14 +44,15 @@ export interface DeepChatTaskContractContextPort {
   prepare(sessionId: string): DeepChatTaskContractContext | null
 }
 
-export type ToolExecutionOptions = Omit<ToolCallOptions, 'commitDispatch'> & {
+export type ToolExecutionOptions = Omit<ToolCallOptions, 'commitDispatch' | 'commandShell'> & {
   commitDispatch: ToolDispatchCommit
+  commandShell: ResolvedCommandShell
 }
 
 export interface ToolExecutionPort {
   preCheck(
     call: MCPToolCall,
-    options?: Pick<ToolExecutionOptions, 'permissionMode' | 'signal'>
+    options: Pick<ToolExecutionOptions, 'permissionMode' | 'signal' | 'commandShell'>
   ): Promise<ToolPermissionPreCheckResult | null>
   execute(
     call: MCPToolCall,
@@ -203,6 +205,7 @@ export interface BasePromptAssemblyInput {
   configuredPrompt: string
   toolDefinitions: readonly MCPToolDefinition[]
   activeSkillNames: readonly string[]
+  commandShell: ResolvedCommandShell
 }
 
 export interface BasePromptAssembler {

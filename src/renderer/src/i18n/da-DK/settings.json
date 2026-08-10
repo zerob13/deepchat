@@ -1,6 +1,29 @@
 {
   "title": "Indstillinger",
   "common": {
+    "commandShell": {
+      "title": "Agentens kommandoskal",
+      "auto": "Automatisk",
+      "windowsPowerShell": "Windows PowerShell",
+      "gitBash": "Git Bash",
+      "executable": "Kørbar Git Bash-fil",
+      "autoDetect": "Registrer automatisk",
+      "browse": "Find Git Bash",
+      "clearOverride": "Ryd brugerdefineret sti",
+      "checking": "Kontrollerer Git Bash...",
+      "available": "Tilgængelig: {path}",
+      "refresh": "Kontrollér igen",
+      "updateFailed": "Indstillingen for kommandoskal kunne ikke opdateres.",
+      "checkFailed": "Det kunne ikke kontrolleres, om Git Bash er tilgængelig.",
+      "browseFailed": "Den kørbare Git Bash-fil kunne ikke vælges.",
+      "loadFailed": "Indstillingen for kommandoskal kunne ikke indlæses.",
+      "errors": {
+        "unsupported-platform": "Git Bash kan kun vælges på Windows.",
+        "override-invalid": "Den brugerdefinerede sti skal pege på en eksisterende bash.exe.",
+        "not-found": "Git Bash blev ikke fundet på denne enhed.",
+        "validation-failed": "Den fundne kørbare fil bestod ikke Git Bash-valideringen."
+      }
+    },
     "title": "Generelle indstillinger",
     "resetData": "Nulstil data",
     "language": "Sprog",

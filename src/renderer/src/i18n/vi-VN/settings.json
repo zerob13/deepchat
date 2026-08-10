@@ -1,6 +1,29 @@
 {
   "title": "Cài đặt",
   "common": {
+    "commandShell": {
+      "title": "Shell lệnh của tác nhân",
+      "auto": "Tự động",
+      "windowsPowerShell": "Windows PowerShell",
+      "gitBash": "Git Bash",
+      "executable": "Tệp thực thi Git Bash",
+      "autoDetect": "Tự động phát hiện",
+      "browse": "Tìm Git Bash",
+      "clearOverride": "Xóa đường dẫn tùy chỉnh",
+      "checking": "Đang kiểm tra Git Bash...",
+      "available": "Khả dụng: {path}",
+      "refresh": "Kiểm tra lại",
+      "updateFailed": "Không thể cập nhật cài đặt shell lệnh.",
+      "checkFailed": "Không thể kiểm tra tính khả dụng của Git Bash.",
+      "browseFailed": "Không thể chọn tệp thực thi Git Bash.",
+      "loadFailed": "Không thể tải cài đặt shell lệnh.",
+      "errors": {
+        "unsupported-platform": "Chỉ có thể chọn Git Bash trên Windows.",
+        "override-invalid": "Đường dẫn tùy chỉnh phải trỏ đến tệp bash.exe hiện có.",
+        "not-found": "Không tìm thấy Git Bash trên thiết bị này.",
+        "validation-failed": "Tệp thực thi được phát hiện không vượt qua xác thực Git Bash."
+      }
+    },
     "title": "Cài đặt chung",
     "resetData": "Đặt lại dữ liệu",
     "language": "Ngôn ngữ",

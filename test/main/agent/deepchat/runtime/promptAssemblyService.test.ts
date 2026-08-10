@@ -5,6 +5,7 @@ import {
   PromptAssemblyService,
   type PromptAssemblyServiceDependencies
 } from '@/agent/deepchat/runtime/promptAssemblyService'
+import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
 const SESSION_ID = 'session'
 
@@ -69,11 +70,12 @@ describe('PromptAssemblyService', () => {
     const { runtime, service } = createHarness()
     buildSystemPromptWithSkills.mockClear()
 
-    await service.build(SESSION_ID, 'base', [])
+    await service.build(SESSION_ID, 'base', [], POSIX_COMMAND_SHELL, undefined)
 
     expect(buildSystemPromptWithSkills.mock.calls[0][1]).toMatchObject({
       sessionId: SESSION_ID,
       basePrompt: 'base',
+      commandShell: POSIX_COMMAND_SHELL,
       resourceInstance: runtime.getHydrated(toAppSessionId(SESSION_ID))
     })
   })
@@ -96,7 +98,8 @@ describe('PromptAssemblyService', () => {
           sessionId: SESSION_ID,
           configuredPrompt: 'base',
           toolDefinitions: [],
-          activeSkillNames: []
+          activeSkillNames: [],
+          commandShell: POSIX_COMMAND_SHELL
         })
     ).rejects.toMatchObject({ name: 'StaleDeepChatAgentInstanceError' })
   })
@@ -112,12 +115,14 @@ describe('PromptAssemblyService', () => {
       sessionId: SESSION_ID,
       configuredPrompt: 'base',
       toolDefinitions,
-      activeSkillNames
+      activeSkillNames,
+      commandShell: POSIX_COMMAND_SHELL
     })
 
     expect(assembled).toBe('assembled system prompt')
     const input = buildSystemPromptWithSkills.mock.calls[0][1] as any
     expect(input.resourceInstance).toBe(instance)
+    expect(input.commandShell).toBe(POSIX_COMMAND_SHELL)
     expect(input.activeSkillNamesOverride).toEqual(activeSkillNames)
     expect(input.activeSkillNamesOverride).not.toBe(activeSkillNames)
     expect(input.toolDefinitions).not.toBe(toolDefinitions)

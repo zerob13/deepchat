@@ -1,6 +1,29 @@
 {
   "title": "Ajustes",
   "common": {
+    "commandShell": {
+      "title": "Shell de comandos del agente",
+      "auto": "Automático",
+      "windowsPowerShell": "Windows PowerShell",
+      "gitBash": "Git Bash",
+      "executable": "Ejecutable de Git Bash",
+      "autoDetect": "Detectar automáticamente",
+      "browse": "Buscar Git Bash",
+      "clearOverride": "Borrar ruta personalizada",
+      "checking": "Comprobando Git Bash...",
+      "available": "Disponible: {path}",
+      "refresh": "Comprobar de nuevo",
+      "updateFailed": "No se pudo actualizar la configuración de la shell de comandos.",
+      "checkFailed": "No se pudo comprobar la disponibilidad de Git Bash.",
+      "browseFailed": "No se pudo seleccionar el ejecutable de Git Bash.",
+      "loadFailed": "No se pudo cargar la configuración de la shell de comandos.",
+      "errors": {
+        "unsupported-platform": "Git Bash solo se puede seleccionar en Windows.",
+        "override-invalid": "La ruta personalizada debe apuntar a un bash.exe existente.",
+        "not-found": "No se encontró Git Bash en este dispositivo.",
+        "validation-failed": "El ejecutable detectado no superó la validación de Git Bash."
+      }
+    },
     "title": "Ajustes generales",
     "resetData": "Restablecer datos",
     "language": "Idioma",

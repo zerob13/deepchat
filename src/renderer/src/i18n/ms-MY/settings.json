@@ -1,6 +1,29 @@
 {
   "title": "sediakan",
   "common": {
+    "commandShell": {
+      "title": "Shell perintah Agent",
+      "auto": "Automatik",
+      "windowsPowerShell": "Windows PowerShell",
+      "gitBash": "Git Bash",
+      "executable": "Fail boleh laku Git Bash",
+      "autoDetect": "Kesan secara automatik",
+      "browse": "Semak imbas Git Bash",
+      "clearOverride": "Kosongkan laluan tersuai",
+      "checking": "Memeriksa Git Bash...",
+      "available": "Tersedia: {path}",
+      "refresh": "Periksa semula",
+      "updateFailed": "Tetapan shell perintah tidak dapat dikemas kini.",
+      "checkFailed": "Ketersediaan Git Bash tidak dapat diperiksa.",
+      "browseFailed": "Fail boleh laku Git Bash tidak dapat dipilih.",
+      "loadFailed": "Tetapan shell perintah tidak dapat dimuatkan.",
+      "errors": {
+        "unsupported-platform": "Git Bash hanya boleh dipilih pada Windows.",
+        "override-invalid": "Laluan tersuai mesti merujuk kepada bash.exe yang wujud.",
+        "not-found": "Git Bash tidak ditemui pada peranti ini.",
+        "validation-failed": "Fail boleh laku yang dikesan tidak lulus pengesahan Git Bash."
+      }
+    },
     "title": "Tetapan umum",
     "resetData": "Tetapkan semula data",
     "language": "bahasa",
