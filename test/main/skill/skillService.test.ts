@@ -2843,6 +2843,21 @@ describe('SkillService', () => {
     })
   })
 
+  describe('snapshotPersistedActiveSkillNames', () => {
+    it('clones persisted names without validating, repairing, or writing session state', () => {
+      const persisted = ['skill-1', 'removed']
+      newSessionActiveSkillsStore.set('snapshot-session', persisted)
+
+      const snapshot = skillService.snapshotPersistedActiveSkillNames('snapshot-session')
+
+      expect(snapshot).toEqual(persisted)
+      expect(snapshot).not.toBe(persisted)
+      expect(skillSessionStatePort.hasNewSession).not.toHaveBeenCalled()
+      expect(skillSessionStatePort.repairImportedLegacySessionSkills).not.toHaveBeenCalled()
+      expect(skillSessionStatePort.setPersistedNewSessionSkills).not.toHaveBeenCalled()
+    })
+  })
+
   describe('getActiveSkills', () => {
     it('should return empty skills for new agent sessions', async () => {
       ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)

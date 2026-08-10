@@ -4168,6 +4168,13 @@ export class SkillService implements SkillServicePort {
   }
 
   /**
+   * Snapshot persisted active names without validation, repair, or persistence.
+   */
+  snapshotPersistedActiveSkillNames(conversationId: string): string[] {
+    return [...this.sessionStatePort.getPersistedNewSessionSkills(conversationId)]
+  }
+
+  /**
    * Get active skills for a conversation
    */
   async getActiveSkills(conversationId: string): Promise<string[]> {

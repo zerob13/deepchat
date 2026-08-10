@@ -417,6 +417,7 @@ export interface SkillServicePort {
   listSkillScriptsForAgent(agentId: string, name: string): Promise<SkillScriptDescriptor[]>
 
   // Session state management
+  snapshotPersistedActiveSkillNames(conversationId: string): string[]
   getActiveSkills(conversationId: string): Promise<string[]>
   setActiveSkills(conversationId: string, skills: string[]): Promise<string[]>
   clearNewAgentSessionSkills(conversationId: string): Promise<void>

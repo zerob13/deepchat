@@ -6,6 +6,7 @@ import {
   type MCPServerConfig,
   type MCPToolCall,
   type MCPToolDefinition,
+  type McpToolDefinitionsSnapshot,
   type MCPToolResponse,
   type McpExpectedToolTarget,
   type Resource,
@@ -43,6 +44,15 @@ const isAbortError = (error: unknown): boolean =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+const deepFreeze = <T>(value: T, seen = new Set<object>()): T => {
+  if (!value || typeof value !== 'object' || seen.has(value)) return value
+  seen.add(value)
+  for (const key of Reflect.ownKeys(value)) {
+    deepFreeze(Reflect.get(value, key), seen)
+  }
+  return Object.freeze(value)
+}
+
 const PLUGIN_RUNTIME_DIAGNOSTIC_TIMEOUT_MS = 30_000
 const TOOL_CATALOG_VALIDATION_TIMEOUT_MS = 30_000
 const MAX_SCHEMA_DIFFERENCE_PATH_LENGTH = 512
@@ -72,6 +82,7 @@ type McpToolAccessContext = {
   enabledServerIds?: string[]
   agentId?: string
   conversationId?: string
+  includeRegularServers?: boolean
 }
 
 export type ComputerUsePreviewCall = {
@@ -163,7 +174,8 @@ const normalizeToolAccessContext = (
     enabledTools: normalizeStringList(input?.enabledTools),
     enabledServerIds: normalizeStringList(input?.enabledServerIds),
     agentId: input?.agentId?.trim() || undefined,
-    conversationId: input?.conversationId?.trim() || undefined
+    conversationId: input?.conversationId?.trim() || undefined,
+    includeRegularServers: input?.includeRegularServers
   }
 }
 
@@ -172,6 +184,7 @@ export class ToolManager {
   private readonly mcpSettings: McpSettings
   private serverManager: ServerManager
   private cachedToolDefinitions: MCPToolDefinition[] | null = null
+  private cachedToolDefinitionFailedServerNames: ReadonlySet<string> | null = null
   private toolNameToTargetMap: Map<string, ToolTarget> | null = null
   private catalogValidationPromises = new WeakMap<McpClient, Promise<CatalogValidationState>>()
   private toolDefinitionsCacheGeneration = 0
@@ -198,8 +211,34 @@ export class ToolManager {
     this.activeToolDefinitionsRefresh?.settle()
     this.activeToolDefinitionsRefresh = null
     this.cachedToolDefinitions = null
+    this.cachedToolDefinitionFailedServerNames = null
     this.toolNameToTargetMap = null
     this.catalogValidationPromises = new WeakMap()
+  }
+
+  public snapshotCachedToolDefinitions(
+    access?: string[] | McpToolAccessContext
+  ): McpToolDefinitionsSnapshot {
+    if (
+      this.cachedToolDefinitions === null ||
+      this.cachedToolDefinitionFailedServerNames === null ||
+      this.toolNameToTargetMap === null
+    ) {
+      return Object.freeze({ state: 'uninitialized' })
+    }
+    const context = normalizeToolAccessContext(access)
+    const tools = this.filterToolDefinitionsByContext(this.cachedToolDefinitions, context).map(
+      (definition) => deepFreeze(structuredClone(definition))
+    )
+    const failedSourceCount = [...this.cachedToolDefinitionFailedServerNames].filter((serverName) =>
+      this.isServerAllowedByContext(serverName, context)
+    ).length
+    return Object.freeze({
+      state: 'ready',
+      tools: Object.freeze(tools),
+      complete: failedSourceCount === 0,
+      failedSourceCount
+    })
   }
 
   private isPluginOwnedClient(client: McpClient): boolean {
@@ -279,7 +318,8 @@ export class ToolManager {
       const refreshGeneration = this.toolDefinitionsCacheGeneration
       console.info('Fetching/refreshing tool definitions and target map...')
       const clients = await awaitWithAbort(this.serverManager.getRunningClients(), options?.signal)
-      const sources = await this.loadToolSources(clients ?? [], options?.signal)
+      const loadedSources = await this.loadToolSources(clients ?? [], options?.signal)
+      const sources = loadedSources.sources
       const serverConfigs = await awaitWithAbort(this.mcpSettings.getMcpServers(), options?.signal)
       const results: MCPToolDefinition[] = []
       const nextToolNameToTargetMap = new Map<string, ToolTarget>()
@@ -404,6 +444,7 @@ export class ToolManager {
         return await this.getAllToolDefinitions(access, options)
       }
       this.cachedToolDefinitions = results
+      this.cachedToolDefinitionFailedServerNames = new Set(loadedSources.failedServerNames)
       this.toolNameToTargetMap = nextToolNameToTargetMap
       console.info(`Cached ${results.length} final tool definitions and populated target map.`)
 
@@ -416,12 +457,16 @@ export class ToolManager {
     }
   }
 
-  private async loadToolSources(clients: McpClient[], signal?: AbortSignal): Promise<ToolSource[]> {
+  private async loadToolSources(
+    clients: McpClient[],
+    signal?: AbortSignal
+  ): Promise<{ sources: ToolSource[]; failedServerNames: ReadonlySet<string> }> {
     const catalogRegistrations = this.pluginOwnership.getAvailableToolCatalogs()
     const catalogServerNames = new Set(
       catalogRegistrations.map((registration) => registration.serverName)
     )
     const sources: ToolSource[] = []
+    const failedServerNames = new Set<string>()
 
     for (const client of clients) {
       if (
@@ -453,6 +498,7 @@ export class ToolManager {
         if (signal?.aborted) {
           throw error
         }
+        failedServerNames.add(client.serverName)
         this.handleToolListError(client, error)
       }
     }
@@ -469,7 +515,7 @@ export class ToolManager {
         catalogBacked: true
       })
     }
-    return sources
+    return { sources, failedServerNames }
   }
 
   private filterExplicitlyDeniedTools(serverName: string, tools: readonly Tool[]): readonly Tool[] {
@@ -527,6 +573,9 @@ export class ToolManager {
     // user-configured servers.
     if (this.pluginOwnership.isServerAvailable(serverName)) {
       return true
+    }
+    if (context.includeRegularServers === false) {
+      return false
     }
     return !context.enabledServerIds || context.enabledServerIds.includes(serverName)
   }

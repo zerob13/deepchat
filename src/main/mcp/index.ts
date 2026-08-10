@@ -1157,6 +1157,17 @@ export class McpService implements McpServicePort {
     })
   }
 
+  async snapshotCachedToolDefinitions(
+    enabledMcpTools?: string[] | McpToolAccessContext
+  ): Promise<import('@shared/types/mcp').McpToolDefinitionsSnapshot> {
+    const context = normalizeToolAccessContext(enabledMcpTools)
+    const enabled = await this.mcpSettings.getMcpEnabled()
+    return this.toolManager.snapshotCachedToolDefinitions({
+      ...context,
+      includeRegularServers: enabled
+    })
+  }
+
   /**
    * 获取所有客户端的提示模板，并附加客户端信息
    * @returns 所有提示模板列表，每个提示模板附带所属客户端信息

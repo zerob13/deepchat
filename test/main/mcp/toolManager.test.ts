@@ -1010,6 +1010,11 @@ describe('ToolManager', () => {
     const definitions = await manager.getAllToolDefinitions()
 
     expect(definitions).toEqual([])
+    expect(manager.snapshotCachedToolDefinitions()).toMatchObject({
+      state: 'ready',
+      complete: false,
+      failedSourceCount: 1
+    })
     expect(serverManager.setServerLastError).toHaveBeenCalledWith(
       'plugin-server',
       'tool list failed'
@@ -1026,6 +1031,11 @@ describe('ToolManager', () => {
 
     await expect(manager.getAllToolDefinitions()).resolves.toEqual([])
 
+    expect(manager.snapshotCachedToolDefinitions()).toMatchObject({
+      state: 'ready',
+      complete: false,
+      failedSourceCount: 1
+    })
     expect(semanticNotifications.occur).toHaveBeenCalledWith({
       code: 'mcp.toolListFailed',
       serverName: 'regular-server'
@@ -1034,6 +1044,11 @@ describe('ToolManager', () => {
     manager.invalidateRegistry()
     await expect(manager.getAllToolDefinitions()).resolves.toHaveLength(1)
 
+    expect(manager.snapshotCachedToolDefinitions()).toMatchObject({
+      state: 'ready',
+      complete: true,
+      failedSourceCount: 0
+    })
     expect(semanticNotifications.recover).toHaveBeenCalledWith({
       code: 'mcp.toolListFailed',
       serverName: 'regular-server'
@@ -1316,6 +1331,123 @@ describe('ToolManager', () => {
 
     expect((manager as any).cachedToolDefinitions).toBeNull()
     expect((manager as any).toolNameToTargetMap).toBeNull()
+  })
+
+  it('snapshots cached definitions without refreshing or exposing mutable cache objects', async () => {
+    const client = createClient('cached-server', [
+      {
+        name: 'cached_tool',
+        description: 'Cached tool',
+        inputSchema: { properties: { query: { type: 'string' } }, required: ['query'] }
+      }
+    ])
+    const serverManager = createServerManager([client])
+    const manager = createToolManager(
+      createProviderSettings('cached-server') as never,
+      serverManager as never
+    )
+    const initialState = {
+      cached: (manager as any).cachedToolDefinitions,
+      failures: (manager as any).cachedToolDefinitionFailedServerNames,
+      targets: (manager as any).toolNameToTargetMap,
+      generation: (manager as any).toolDefinitionsCacheGeneration,
+      refresh: (manager as any).activeToolDefinitionsRefresh,
+      validations: (manager as any).catalogValidationPromises
+    }
+
+    expect(manager.snapshotCachedToolDefinitions()).toEqual({ state: 'uninitialized' })
+    expect(serverManager.getRunningClients).not.toHaveBeenCalled()
+    expect(client.listTools).not.toHaveBeenCalled()
+    expect((manager as any).cachedToolDefinitions).toBe(initialState.cached)
+    expect((manager as any).cachedToolDefinitionFailedServerNames).toBe(initialState.failures)
+    expect((manager as any).toolNameToTargetMap).toBe(initialState.targets)
+    expect((manager as any).toolDefinitionsCacheGeneration).toBe(initialState.generation)
+    expect((manager as any).activeToolDefinitionsRefresh).toBe(initialState.refresh)
+    expect((manager as any).catalogValidationPromises).toBe(initialState.validations)
+
+    await manager.getAllToolDefinitions()
+    const cachedDefinitions = (manager as any).cachedToolDefinitions
+    const targetMap = (manager as any).toolNameToTargetMap
+    const listToolCallCount = client.listTools.mock.calls.length
+    const snapshot = manager.snapshotCachedToolDefinitions()
+
+    expect(snapshot).toMatchObject({
+      state: 'ready',
+      complete: true,
+      failedSourceCount: 0,
+      tools: [
+        expect.objectContaining({ function: expect.objectContaining({ name: 'cached_tool' }) })
+      ]
+    })
+    expect(client.listTools).toHaveBeenCalledTimes(listToolCallCount)
+    expect((manager as any).cachedToolDefinitions).toBe(cachedDefinitions)
+    expect((manager as any).toolNameToTargetMap).toBe(targetMap)
+    if (snapshot.state === 'ready') {
+      expect(snapshot.tools[0]).not.toBe(cachedDefinitions[0])
+      expect(Object.isFrozen(snapshot.tools[0].function.parameters.properties.query)).toBe(true)
+      expect(() => {
+        ;(snapshot.tools[0].function.parameters as any).properties.query.type = 'number'
+      }).toThrow(TypeError)
+    }
+    expect(
+      ((manager as any).cachedToolDefinitions[0].function.parameters as any).properties.query.type
+    ).toBe('string')
+
+    manager.invalidateRegistry()
+    expect(manager.snapshotCachedToolDefinitions()).toEqual({ state: 'uninitialized' })
+    expect(client.listTools).toHaveBeenCalledTimes(listToolCallCount)
+  })
+
+  it('distinguishes an empty completed cache from an uninitialized cache', async () => {
+    const serverManager = createServerManager([])
+    const manager = createToolManager(
+      createProviderSettings('unused-server') as never,
+      serverManager as never
+    )
+
+    await expect(manager.getAllToolDefinitions()).resolves.toEqual([])
+
+    expect(manager.snapshotCachedToolDefinitions()).toEqual({
+      state: 'ready',
+      tools: [],
+      complete: true,
+      failedSourceCount: 0
+    })
+  })
+
+  it('excludes failures outside the requested server scope from snapshot completeness', async () => {
+    const failedClient = createClient('failed-server')
+    failedClient.listTools.mockRejectedValueOnce(new Error('tool list failed'))
+    const healthyClient = createClient('healthy-server', [
+      { name: 'healthy_tool', inputSchema: { properties: {} } }
+    ])
+    const serverManager = createServerManager([failedClient, healthyClient])
+    const providerSettings = createProviderSettings('healthy-server')
+    providerSettings.getMcpServers.mockResolvedValue({
+      'failed-server': {},
+      'healthy-server': {}
+    })
+    const manager = createToolManager(providerSettings as never, serverManager as never)
+
+    await manager.getAllToolDefinitions()
+
+    const healthySnapshot = manager.snapshotCachedToolDefinitions({
+      enabledServerIds: ['healthy-server']
+    })
+    expect(healthySnapshot).toMatchObject({
+      state: 'ready',
+      complete: true,
+      failedSourceCount: 0
+    })
+    expect(healthySnapshot.state === 'ready' && healthySnapshot.tools).toHaveLength(1)
+    expect(healthySnapshot.state === 'ready' && healthySnapshot.tools[0].function.name).toBe(
+      'healthy_tool'
+    )
+    expect(manager.snapshotCachedToolDefinitions()).toMatchObject({
+      state: 'ready',
+      complete: false,
+      failedSourceCount: 1
+    })
   })
 
   it('discards a refresh superseded by a configuration cache clear', async () => {
