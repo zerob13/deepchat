@@ -10,7 +10,9 @@ export const createAgentToolDependencies = (
     resolveConversationWorkdir:
       overrides.resolveConversationWorkdir ?? vi.fn().mockResolvedValue(null),
     resolveConversationSessionInfo:
-      overrides.resolveConversationSessionInfo ?? vi.fn().mockResolvedValue(null)
+      overrides.resolveConversationSessionInfo ?? vi.fn().mockResolvedValue(null),
+    resolveConversationExecutionAuthority:
+      overrides.resolveConversationExecutionAuthority ?? vi.fn().mockResolvedValue(null)
   },
   tape: {
     getTapeInfo: overrides.getTapeInfo ?? vi.fn(),

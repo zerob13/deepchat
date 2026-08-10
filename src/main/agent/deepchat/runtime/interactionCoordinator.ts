@@ -54,6 +54,8 @@ import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { RuntimeHookScope, RuntimeHookSink } from './runtimeHookSink'
 import { ExecutionJournalError, isExecutionJournalError } from '@/tape/domain/executionJournal'
 import type { InteractionParkingRegistry } from './interactionParkingRegistry'
+import type { TapeViewManifestReader } from '@/tape/ports/capabilities'
+import { resolveDeferredExecutionContract } from './deferredExecutionContract'
 import { CommandShellProfileSchema } from '@shared/commandShell'
 import { isCommandSignatureForProfile } from '@/tool/permission'
 
@@ -100,6 +102,7 @@ export interface InteractionCoordinatorPorts {
   continuationAdmission: InteractionContinuationAdmissionPort
   publishEvent: DeepChatEventPublisher
   interactionParking: Pick<InteractionParkingRegistry, 'isParked' | 'park'>
+  viewManifests: Pick<TapeViewManifestReader, 'listViewManifestsByMessage'>
 }
 
 export interface InteractionContinuationAdmissionPort {
@@ -270,6 +273,13 @@ export class InteractionCoordinator {
         let shouldDispatchResolvedToolHook = false
 
         if (response.granted) {
+          const executionContract = resolveDeferredExecutionContract({
+            sessionId,
+            messageId,
+            rawBinding: actionBlock.extra?.executionContractBinding,
+            runtimeContract: instance.getPendingToolBatchState()?.executionContract,
+            viewManifests: this.ports.viewManifests
+          })
           await resumeWaitingAdmission()
           let permissionGrant: DeferredPermissionGrant | null = null
           let execution: DeferredToolExecutionResult
@@ -312,6 +322,7 @@ export class InteractionCoordinator {
                   ? toolCall
                   : { ...toolCall, server_name: permissionGrant.serverName },
                 markDeferredToolCallStarted,
+                executionContract,
                 permissionPayload?.shellProfile,
                 permissionGrant.command?.oneShotGrantId
               )

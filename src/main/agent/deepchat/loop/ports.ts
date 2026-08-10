@@ -10,8 +10,11 @@ import type {
 } from '@shared/types/core/mcp'
 import type { ToolCallOptions, ToolPermissionPreCheckResult } from '@shared/types/tool'
 import type { ModelConfig } from '@shared/types/provider'
+import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { MemorySessionHandle } from '@/agent/deepchat/memory/memoryPromptContributor'
 import type { ContextRuntimeContributions } from '@/agent/deepchat/runtime/contextContributions'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import type { ResolvedCommandShell } from '@shared/commandShell'
 
 export interface ProviderRequest {
@@ -35,6 +38,10 @@ export interface ProviderPort {
 
 export interface ToolCatalogPort {
   resolve(input?: { activeSkillNames?: string[] }): Promise<MCPToolDefinition[]>
+}
+
+export interface DeepChatTaskContractContextPort {
+  prepare(sessionId: string): DeepChatTaskContractContext | null
 }
 
 export type ToolExecutionOptions = Omit<ToolCallOptions, 'commitDispatch' | 'commandShell'> & {
@@ -88,6 +95,7 @@ export interface PersistedToolBatchState {
   readonly invokedCallIds: readonly string[]
   readonly committedResultCallIds: readonly string[]
   readonly pendingInteractionCallIds: readonly string[]
+  readonly executionContract?: DeepChatExecutionContract
 }
 
 export type ToolBatchOutcome<
@@ -202,6 +210,7 @@ export interface BasePromptAssemblyInput {
 
 export interface BasePromptAssembler {
   assemble(input: BasePromptAssemblyInput): Promise<string>
+  assembleWithProvenance(input: BasePromptAssemblyInput): Promise<DeepChatPromptAssembly>
 }
 
 export interface PromptReconstructionAnchor {

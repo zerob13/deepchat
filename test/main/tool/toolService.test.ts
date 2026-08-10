@@ -22,6 +22,8 @@ import {
 import { resolveDeepChatSubagentCapability } from '@shared/lib/deepchatSubagents'
 import { parseChildAgentResultEnvelope } from '@shared/orchestration/resultSafety'
 import { LiveDelegationConsentAuthority } from '@/orchestration/liveDelegationConsent'
+import { createOpaquePromptAssembly } from '@/agent/deepchat/resources/promptAssembly'
+import { buildExecutionContract } from '@/tape/domain/executionContract'
 
 vi.mock('electron', () => ({
   app: {
@@ -65,6 +67,55 @@ const buildAgentToolRuntimeMock = (overrides: Record<string, unknown> = {}) =>
     })),
     ...overrides
   })
+
+const CONTRACT_RUN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+
+const buildContractMcpDefinition = (name = 'remote_read'): MCPToolDefinition => {
+  const definition = buildToolDefinition(name, 'remote')
+  return {
+    ...definition,
+    source: 'mcp',
+    server: {
+      ...definition.server,
+      bindingHash: 'a'.repeat(64)
+    }
+  }
+}
+
+const buildToolExecutionContract = (
+  tool: MCPToolDefinition,
+  workspace: string | null = '/workspace',
+  maxSubagentDepth = 0
+) => {
+  const promptAssembly = createOpaquePromptAssembly('System prompt')
+  return buildExecutionContract({
+    request: {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 1
+    },
+    promptAssembly,
+    providerMessages: [
+      { role: 'system', content: promptAssembly.prompt },
+      { role: 'user', content: 'Use the tool' }
+    ],
+    tools: [tool],
+    providerId: 'provider-1',
+    modelId: 'model-1',
+    modelConfig: { contextLength: 1_000 } as any,
+    temperature: 0.2,
+    maxTokens: 100,
+    workspace: workspace ? { kind: 'path', path: workspace } : { kind: 'runtime_default' },
+    maxSubagentDepth,
+    dynamicControlSnapshot: {
+      permissionMode: 'default',
+      requestAdmitted: true,
+      cancellationRequested: false
+    },
+    assemblerVersion: 'test-v1'
+  })
+}
 
 const cronJobFixture = {
   id: 'job-1',
@@ -127,6 +178,260 @@ const cronJobRunFixture = {
 } as any
 
 describe('ToolService', () => {
+  it('meets the frozen execution contract with current authority at dispatch', async () => {
+    const definition = buildContractMcpDefinition()
+    const resolveConversationExecutionAuthority = vi.fn(async (sessionId: string) => ({
+      sessionId,
+      agentId: 'agent-1',
+      projectDir: '/workspace',
+      sessionKind: 'regular',
+      disabledAgentTools: [],
+      subagentCapability: {
+        available: false,
+        reason: 'policy_disabled',
+        cacheKey: 'unavailable'
+      }
+    }))
+    const mcpService = {
+      getAllToolDefinitions: vi.fn().mockResolvedValue([definition]),
+      callTool: vi.fn(async () => ({
+        content: 'ok',
+        rawData: { toolCallId: 'call-1', content: 'ok' }
+      }))
+    } as any
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({ resolveConversationExecutionAuthority })
+    })
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: 'session-1',
+      sessionKind: 'regular'
+    })
+    const executionContract = buildToolExecutionContract(definition)
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'call-1',
+          type: 'function',
+          function: { name: definition.function.name, arguments: '{}' },
+          conversationId: 'session-1'
+        },
+        {
+          runId: CONTRACT_RUN_ID,
+          messageId: 'message-1',
+          requestSeq: 1,
+          executionContract,
+          permissionMode: 'full_access'
+        }
+      )
+    ).resolves.toMatchObject({ content: 'ok' })
+    expect(resolveConversationExecutionAuthority).toHaveBeenCalledTimes(2)
+    expect(mcpService.callTool).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    {
+      name: 'workspace change',
+      authorityUpdate: { projectDir: '/other-workspace' },
+      expectedCode: 'workspace_mismatch'
+    },
+    {
+      name: 'workspace change hidden by trailing whitespace',
+      authorityUpdate: { projectDir: '/workspace ' },
+      expectedCode: 'workspace_mismatch'
+    },
+    {
+      name: 'MCP server revocation',
+      authorityUpdate: { enabledMcpServerIds: [] },
+      expectedCode: 'tool_not_allowed'
+    }
+  ])('rejects current $name before crossing tool dispatch', async (scenario) => {
+    const definition = buildContractMcpDefinition()
+    const runtimeSession = {
+      sessionId: 'session-1',
+      agentId: 'agent-1',
+      projectDir: '/workspace',
+      sessionKind: 'regular',
+      disabledAgentTools: [],
+      enabledMcpServerIds: [definition.server.id],
+      subagentCapability: { available: false, reason: 'policy_disabled', cacheKey: 'off' }
+    }
+    const resolveConversationExecutionAuthority = vi
+      .fn()
+      .mockResolvedValueOnce(runtimeSession)
+      .mockResolvedValueOnce({ ...runtimeSession, ...scenario.authorityUpdate })
+    const mcpService = {
+      getAllToolDefinitions: vi.fn().mockResolvedValue([definition]),
+      callTool: vi.fn()
+    } as any
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({ resolveConversationExecutionAuthority })
+    })
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: 'session-1',
+      sessionKind: 'regular'
+    })
+    await expect(
+      toolService.callTool(
+        {
+          id: 'call-1',
+          type: 'function',
+          function: { name: definition.function.name, arguments: '{}' },
+          conversationId: 'session-1'
+        },
+        {
+          runId: CONTRACT_RUN_ID,
+          messageId: 'message-1',
+          requestSeq: 1,
+          executionContract: buildToolExecutionContract(definition),
+          permissionMode: 'full_access'
+        }
+      )
+    ).rejects.toMatchObject({ code: scenario.expectedCode })
+    expect(mcpService.callTool).not.toHaveBeenCalled()
+  })
+
+  it('rejects an Agent tool disabled by current Session authority', async () => {
+    const resolveConversationExecutionAuthority = vi.fn(async (sessionId: string) => ({
+      sessionId,
+      agentId: 'agent-1',
+      projectDir: '/workspace',
+      sessionKind: 'regular' as const,
+      disabledAgentTools: ['read'],
+      subagentCapability: {
+        available: false as const,
+        reason: 'policy_disabled' as const,
+        cacheKey: 'off'
+      }
+    }))
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: { getAllToolDefinitions: vi.fn().mockResolvedValue([]) } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({ resolveConversationExecutionAuthority })
+    })
+    const definitions = await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: 'session-1',
+      sessionKind: 'regular',
+      agentWorkspacePath: '/workspace'
+    })
+    const definition = definitions.find((candidate) => candidate.function.name === 'read')
+    expect(definition).toBeDefined()
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'call-1',
+          type: 'function',
+          function: { name: 'read', arguments: '{}' },
+          conversationId: 'session-1'
+        },
+        {
+          runId: CONTRACT_RUN_ID,
+          messageId: 'message-1',
+          requestSeq: 1,
+          executionContract: buildToolExecutionContract(definition!),
+          permissionMode: 'full_access'
+        }
+      )
+    ).rejects.toMatchObject({ code: 'tool_not_allowed' })
+    expect(resolveConversationExecutionAuthority).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks live delegation authority immediately before Agent dispatch', async () => {
+    const availableCapability = resolveDeepChatSubagentCapability({
+      agentType: 'deepchat',
+      sessionKind: 'regular',
+      agentPolicyEnabled: true,
+      slots: [
+        {
+          id: 'self',
+          targetType: 'self',
+          displayName: 'Self Clone',
+          description: 'Delegate work.'
+        }
+      ]
+    })
+    const baseAuthority = {
+      sessionId: 'session-1',
+      agentId: 'agent-1',
+      projectDir: '/workspace',
+      sessionKind: 'regular' as const,
+      disabledAgentTools: []
+    }
+    const resolveConversationExecutionAuthority = vi
+      .fn()
+      .mockResolvedValueOnce({ ...baseAuthority, subagentCapability: availableCapability })
+      .mockResolvedValueOnce({
+        ...baseAuthority,
+        subagentCapability: {
+          available: false,
+          reason: 'policy_disabled',
+          cacheKey: 'off'
+        }
+      })
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: { getAllToolDefinitions: vi.fn().mockResolvedValue([]) } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({ resolveConversationExecutionAuthority })
+    })
+    const definitions = await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: 'session-1',
+      sessionKind: 'regular',
+      agentWorkspacePath: '/workspace',
+      subagentCapability: availableCapability
+    })
+    const definition = definitions.find(
+      (candidate) => candidate.function.name === LIVE_DELEGATION_AGENT_TOOL_NAME
+    )
+    expect(definition).toBeDefined()
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'call-1',
+          type: 'function',
+          function: {
+            name: LIVE_DELEGATION_AGENT_TOOL_NAME,
+            arguments: JSON.stringify({ operation: 'list' })
+          },
+          conversationId: 'session-1'
+        },
+        {
+          runId: CONTRACT_RUN_ID,
+          messageId: 'message-1',
+          requestSeq: 1,
+          executionContract: buildToolExecutionContract(definition!, '/workspace', 1),
+          permissionMode: 'full_access'
+        }
+      )
+    ).rejects.toMatchObject({ code: 'subagent_depth_exceeded' })
+    expect(resolveConversationExecutionAuthority).toHaveBeenCalledTimes(2)
+  })
+
   it('records effect intent before dispatch and blocks execution when it cannot persist', async () => {
     const order: string[] = []
     const effectObserver = {

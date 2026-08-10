@@ -392,6 +392,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     attachmentRouter,
     sessionSettings,
     promptAssembly,
+    identity,
+    taskContractContext: deps.taskContractContext,
     commandShell,
     loopRunner,
     messageProjection,
@@ -432,7 +434,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     hookSink,
     turnCoordinator,
     continuationAdmission: deps.interactionContinuationAdmission,
-    interactionParking
+    interactionParking,
+    viewManifests: tapeService
   })
   const transcriptMutation = new TranscriptMutationCoordinator({
     registry: runtime,

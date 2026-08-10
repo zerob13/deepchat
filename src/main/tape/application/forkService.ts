@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid'
 import logger from 'electron-log'
 import type { DeepChatTapeEntryRow } from '../domain/entry'
+import { isContractTapeReservedName } from '../domain/contractFacts'
 import { isExecutionJournalReservedName } from '../domain/executionJournal'
 import type { TapeApplicationProviders } from '../ports/application'
 import { deleteTapeGeneration } from './generationLifecycle'
@@ -201,6 +202,7 @@ export class TapeForkService {
         .filter(
           (entry) =>
             !isExecutionJournalReservedName(entry.name) &&
+            !isContractTapeReservedName(entry.name) &&
             !(
               entry.kind === 'anchor' &&
               (entry.name === 'session/start' || entry.name === 'fork/start')

@@ -2,6 +2,7 @@ import logger from '@shared/logger'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { PermissionRequestPayload } from '@shared/types/core/llm-events'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import type {
   IoParams,
   PendingToolInteraction,
@@ -35,6 +36,10 @@ import {
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
 import type { OutputSink } from '@/agent/deepchat/loop/ports'
 import { buildTapeToolFactInputs } from '@/tape/application/factPersistence'
+import {
+  createOpaquePromptAssembly,
+  reconcilePromptAssembly
+} from '@/agent/deepchat/resources/promptAssembly'
 import { CommandShellProfileSchema } from '@shared/commandShell'
 
 const UNKNOWN_CONTEXT_LIMIT = Number.MAX_SAFE_INTEGER
@@ -53,6 +58,8 @@ type ToolRoundBatch = {
   toolCalls: ToolCallResult[]
   disposition: ToolBatchDisposition
   nextAction: 'continue' | 'terminal'
+  requestSeq: number
+  executionContract: DeepChatExecutionContract | null
 }
 
 function getLatestErrorMessage(state: StreamState): string | null {
@@ -1079,6 +1086,13 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
             echo.schedule()
           }
 
+          const activeRequestContract = run.activeRequestContract
+          if (activeRequestContract && activeRequestContract.requestSeq !== run.requestSeq) {
+            throw new Error('Provider response does not match the active ExecutionContract request.')
+          }
+          const executionContract = activeRequestContract?.executionContract ?? null
+          const requestSeq = activeRequestContract?.requestSeq ?? run.requestSeq
+
           logger.info(
             `[ProcessStream] stream iteration done reason=${state.stopReason} events=${eventCount} blocks=${state.blocks.length}`
           )
@@ -1122,7 +1136,9 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 prevBlockCount,
                 toolCalls: truncatedToolCalls,
                 disposition: { kind: 'reject', reason: 'output_truncated' },
-                nextAction
+                nextAction,
+                requestSeq,
+                executionContract
               },
               requestedToolExecutionCount: 0
             }
@@ -1142,7 +1158,9 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               prevBlockCount,
               toolCalls: completedToolCalls,
               disposition: { kind: 'execute' },
-              nextAction: 'continue'
+              nextAction: 'continue',
+              requestSeq,
+              executionContract
             },
             requestedToolExecutionCount: completedToolCalls.length
           }
@@ -1167,9 +1185,10 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               permissionMode,
               toolResults,
               executionJournal: params.io.executionJournalWriter,
+              executionContract: batch.executionContract,
               operationScope: {
                 runId: run.runId,
-                requestSeq: run.requestSeq
+                requestSeq: batch.requestSeq
               },
               commandShell: run.resources.commandShell,
               contextLength:
@@ -1292,7 +1311,20 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                   activeSkillNames,
                   currentTools
                 )
-                replaceLeadingSystemMessage(conversationMessages, refreshedSystemPrompt)
+                const refreshedAssembly =
+                  typeof refreshedSystemPrompt === 'string'
+                    ? createOpaquePromptAssembly(refreshedSystemPrompt)
+                    : refreshedSystemPrompt
+                replaceLeadingSystemMessage(conversationMessages, refreshedAssembly.prompt)
+                const effectiveSystemPrompt =
+                  conversationMessages[0]?.role === 'system' &&
+                  typeof conversationMessages[0].content === 'string'
+                    ? conversationMessages[0].content
+                    : ''
+                run.resources.promptAssembly = reconcilePromptAssembly(
+                  refreshedAssembly,
+                  effectiveSystemPrompt
+                )
               } catch (error) {
                 console.warn(
                   '[ProcessStream] failed to refresh system prompt after skill activation:',

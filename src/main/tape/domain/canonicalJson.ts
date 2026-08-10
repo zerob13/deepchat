@@ -21,7 +21,15 @@ function normalizeForStableJson(value: unknown): unknown {
     }, {})
 }
 
-function normalizeJsonData(value: unknown, ancestors: Set<object>): unknown {
+export interface CanonicalJsonDataOptions {
+  omitUndefinedProperties?: boolean
+}
+
+function normalizeJsonData(
+  value: unknown,
+  ancestors: Set<object>,
+  options: CanonicalJsonDataOptions
+): unknown {
   if (
     value === null ||
     typeof value === 'string' ||
@@ -54,7 +62,7 @@ function normalizeJsonData(value: unknown, ancestors: Set<object>): unknown {
         if (!descriptor?.enumerable || !('value' in descriptor)) {
           throw new TypeError('Value contains a non-data array item.')
         }
-        normalized.push(normalizeJsonData(descriptor.value, ancestors))
+        normalized.push(normalizeJsonData(descriptor.value, ancestors, options))
       }
       return normalized
     }
@@ -72,7 +80,10 @@ function normalizeJsonData(value: unknown, ancestors: Set<object>): unknown {
       if (!descriptor?.enumerable || !('value' in descriptor)) {
         throw new TypeError('Value contains a non-data property.')
       }
-      normalized[key] = normalizeJsonData(descriptor.value, ancestors)
+      if (descriptor.value === undefined && options.omitUndefinedProperties) {
+        continue
+      }
+      normalized[key] = normalizeJsonData(descriptor.value, ancestors, options)
     }
     return normalized
   } finally {
@@ -88,12 +99,15 @@ export function hashJson(value: unknown): string {
   return createHash('sha256').update(stableJsonStringify(value)).digest('hex')
 }
 
-// ViewManifest hashes keep the legacy object accumulator; journal identities need a
+// Legacy ViewManifest hashes keep the old object accumulator. New persisted identities use a
 // null-prototype accumulator so JSON keys such as "__proto__" remain identity-bearing.
-export function canonicalJsonStringifyData(value: unknown): string {
-  return JSON.stringify(normalizeJsonData(value, new Set()))
+export function canonicalJsonStringifyData(
+  value: unknown,
+  options: CanonicalJsonDataOptions = {}
+): string {
+  return JSON.stringify(normalizeJsonData(value, new Set(), options))
 }
 
-export function hashJsonData(value: unknown): string {
-  return createHash('sha256').update(canonicalJsonStringifyData(value)).digest('hex')
+export function hashJsonData(value: unknown, options: CanonicalJsonDataOptions = {}): string {
+  return createHash('sha256').update(canonicalJsonStringifyData(value, options)).digest('hex')
 }

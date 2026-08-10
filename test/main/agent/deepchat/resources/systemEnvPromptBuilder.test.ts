@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import logger from '@shared/logger'
 import {
   buildCommandShellPromptLine,
-  buildSystemEnvPrompt
+  buildSystemEnvPrompt,
+  buildSystemEnvPromptAssembly
 } from '@/agent/deepchat/resources/systemEnvPromptBuilder'
 import {
   CMD_COMMAND_SHELL,
@@ -44,10 +45,45 @@ describe('buildSystemEnvPrompt', () => {
       '[SystemEnvPromptBuilder] Failed to read AGENTS.md',
       expect.anything()
     )
+
+    const assembly = await buildSystemEnvPromptAssembly({
+      workdir: '/tmp/deepchat-env-prompt-missing',
+      providerId: 'provider',
+      modelId: 'model',
+      commandShell: POSIX_COMMAND_SHELL,
+      now: new Date('2026-06-22T00:00:00Z')
+    })
+    expect(assembly.sections.find((section) => section.kind === 'agents_instructions')).toMatchObject(
+      {
+        inclusion: 'omitted',
+        freshness: 'missing',
+        degradationCodes: ['agents_file_missing']
+      }
+    )
   })
 
   it('includes instructions when AGENTS.md exists', async () => {
     vi.mocked(fs.promises.readFile).mockResolvedValue('Use concise answers.\n')
+
+    const freshAssembly = await buildSystemEnvPromptAssembly({
+      workdir: '/tmp/deepchat-env-prompt-present',
+      providerId: 'provider',
+      modelId: 'model',
+      commandShell: POSIX_COMMAND_SHELL,
+      now: new Date('2026-06-22T00:00:00Z')
+    })
+
+    expect(freshAssembly.prompt).toContain(
+      'Instructions from: /tmp/deepchat-env-prompt-present/AGENTS.md'
+    )
+    expect(freshAssembly.prompt).toContain('Use concise answers.')
+    expect(
+      freshAssembly.sections.find((section) => section.kind === 'agents_instructions')
+    ).toMatchObject({
+      inclusion: 'included',
+      freshness: 'fresh',
+      contentHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
 
     const prompt = await buildSystemEnvPrompt({
       workdir: '/tmp/deepchat-env-prompt-present',
@@ -56,9 +92,22 @@ describe('buildSystemEnvPrompt', () => {
       commandShell: POSIX_COMMAND_SHELL,
       now: new Date('2026-06-22T00:00:00Z')
     })
+    expect(prompt).toBe(freshAssembly.prompt)
 
-    expect(prompt).toContain('Instructions from: /tmp/deepchat-env-prompt-present/AGENTS.md')
-    expect(prompt).toContain('Use concise answers.')
+    const assembly = await buildSystemEnvPromptAssembly({
+      workdir: '/tmp/deepchat-env-prompt-present',
+      providerId: 'provider',
+      modelId: 'model',
+      commandShell: POSIX_COMMAND_SHELL,
+      now: new Date('2026-06-22T00:00:00Z')
+    })
+    expect(assembly.sections.find((section) => section.kind === 'agents_instructions')).toMatchObject(
+      {
+        inclusion: 'included',
+        freshness: 'cached',
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      }
+    )
   })
 
   it('logs lightweight metadata for real AGENTS.md read errors', async () => {
@@ -78,6 +127,21 @@ describe('buildSystemEnvPrompt', () => {
       code: 'EISDIR',
       message: 'EISDIR mock error'
     })
+
+    const assembly = await buildSystemEnvPromptAssembly({
+      workdir: '/tmp/deepchat-env-prompt-error',
+      providerId: 'provider',
+      modelId: 'model',
+      commandShell: POSIX_COMMAND_SHELL,
+      now: new Date('2026-06-22T00:00:00Z')
+    })
+    expect(assembly.sections.find((section) => section.kind === 'agents_instructions')).toMatchObject(
+      {
+        inclusion: 'omitted',
+        freshness: 'read_error',
+        degradationCodes: ['agents_file_read_error']
+      }
+    )
   })
 
   it('defers slow first reads and reuses the late cached result', async () => {
@@ -89,7 +153,7 @@ describe('buildSystemEnvPrompt', () => {
       }) as ReturnType<typeof fs.promises.readFile>
     )
 
-    const promptPromise = buildSystemEnvPrompt({
+    const promptPromise = buildSystemEnvPromptAssembly({
       workdir: '/tmp/deepchat-env-prompt-slow',
       providerId: 'provider',
       modelId: 'model',
@@ -98,9 +162,16 @@ describe('buildSystemEnvPrompt', () => {
     })
 
     await vi.advanceTimersByTimeAsync(200)
-    const prompt = await promptPromise
+    const promptAssembly = await promptPromise
 
-    expect(prompt).not.toContain('Instructions from:')
+    expect(promptAssembly.prompt).not.toContain('Instructions from:')
+    expect(
+      promptAssembly.sections.find((section) => section.kind === 'agents_instructions')
+    ).toMatchObject({
+      inclusion: 'omitted',
+      freshness: 'deferred',
+      degradationCodes: ['agents_file_deferred']
+    })
     expect(logger.warn).toHaveBeenCalledWith('[SystemEnvPromptBuilder] AGENTS.md read deferred', {
       sourcePath: '/tmp/deepchat-env-prompt-slow/AGENTS.md',
       budgetMs: 200
@@ -110,7 +181,7 @@ describe('buildSystemEnvPrompt', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    const cachedPrompt = await buildSystemEnvPrompt({
+    const cachedAssembly = await buildSystemEnvPromptAssembly({
       workdir: '/tmp/deepchat-env-prompt-slow',
       providerId: 'provider',
       modelId: 'model',
@@ -118,7 +189,13 @@ describe('buildSystemEnvPrompt', () => {
       now: new Date('2026-06-22T00:00:00Z')
     })
 
-    expect(cachedPrompt).toContain('Late instructions.')
+    expect(cachedAssembly.prompt).toContain('Late instructions.')
+    expect(
+      cachedAssembly.sections.find((section) => section.kind === 'agents_instructions')
+    ).toMatchObject({
+      inclusion: 'included',
+      freshness: 'cached'
+    })
     expect(fs.promises.readFile).toHaveBeenCalledTimes(1)
   })
 

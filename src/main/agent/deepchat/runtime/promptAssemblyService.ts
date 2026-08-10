@@ -1,4 +1,5 @@
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
+import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
@@ -8,6 +9,7 @@ import type {
   PostCompactionPromptAssembler
 } from '@/agent/deepchat/loop/ports'
 import {
+  buildSystemPromptAssemblyWithSkills,
   buildSystemPromptWithSkills,
   type SystemPromptBuilderDependencies
 } from '@/agent/deepchat/resources/systemPromptBuilder'
@@ -76,10 +78,38 @@ export class PromptAssemblyService {
     })
   }
 
+  async buildWithProvenance(
+    sessionId: string,
+    basePrompt: string,
+    toolDefinitions: MCPToolDefinition[],
+    commandShell: ResolvedCommandShell,
+    activeSkillNamesOverride?: string[],
+    resourceInstance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance
+  ): Promise<DeepChatPromptAssembly> {
+    return await buildSystemPromptAssemblyWithSkills(this.builderDependencies, {
+      sessionId,
+      basePrompt,
+      toolDefinitions,
+      activeSkillNamesOverride,
+      orchestrationPolicy: this.deps.orchestrationPolicy.resolveOrchestrationPolicy(sessionId),
+      commandShell,
+      resourceInstance
+    })
+  }
+
   createBasePromptAssembler(expectedInstance: DeepChatAgentInstance): BasePromptAssembler {
     return {
       assemble: async (input) =>
         await this.build(
+          input.sessionId,
+          input.configuredPrompt,
+          [...input.toolDefinitions],
+          input.commandShell,
+          [...input.activeSkillNames],
+          expectedInstance
+        ),
+      assembleWithProvenance: async (input) =>
+        await this.buildWithProvenance(
           input.sessionId,
           input.configuredPrompt,
           [...input.toolDefinitions],

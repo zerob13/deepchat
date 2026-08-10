@@ -63,6 +63,16 @@ export interface ConversationSessionInfo {
   status: SessionStatus
 }
 
+export interface ConversationExecutionAuthority {
+  sessionId: string
+  agentId: string
+  projectDir: string | null
+  sessionKind: SessionKind
+  disabledAgentTools: string[]
+  enabledMcpServerIds?: string[] | null
+  subagentCapability: DeepChatSubagentCapability
+}
+
 export interface CreateSubagentSessionInput {
   parentSessionId: string
   agentId: string
@@ -83,6 +93,9 @@ export interface CreateSubagentSessionInput {
 export interface AgentToolSessionPort {
   resolveConversationWorkdir(conversationId: string): Promise<string | null>
   resolveConversationSessionInfo(conversationId: string): Promise<ConversationSessionInfo | null>
+  resolveConversationExecutionAuthority(
+    conversationId: string
+  ): Promise<ConversationExecutionAuthority | null>
 }
 
 export interface AgentTapeToolPort {

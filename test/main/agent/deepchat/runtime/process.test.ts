@@ -16,7 +16,10 @@ import {
   createToolExecutionPort,
   createToolResultPort
 } from '@/agent/deepchat/runtime/toolAdapters'
-import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
+import {
+  bindActiveRequestContract,
+  createLoopRun
+} from '@/agent/deepchat/loop/loopRun'
 import type { DeepChatLoopNotification } from '@/agent/deepchat/loop/ports'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { resolveToolOffloadPath } from '@/agent/shared/storage/sessionPaths'
@@ -43,6 +46,11 @@ import {
   resolveProviderTerminalDecision
 } from '@/agent/deepchat/runtime/process'
 import { TRUNCATED_TOOL_CALL_ERROR } from '@/agent/deepchat/runtime/dispatch'
+import { createOpaquePromptAssembly } from '@/agent/deepchat/resources/promptAssembly'
+import {
+  buildExecutionContract,
+  buildExecutionContractBinding
+} from '@/tape/domain/executionContract'
 
 function expectDeepchatEvent(eventName: string, payload: Record<string, unknown>): void {
   expect(publishDeepchatEventMock).toHaveBeenCalledWith(eventName, expect.objectContaining(payload))
@@ -918,6 +926,125 @@ describe('processStream', () => {
       })
     })
 
+    it('carries the active request contract to tool dispatch by exact reference', async () => {
+      const tools = [makeTool('action')]
+      const run = createLoopRun({
+        runId: RUN_ID,
+        sessionId: toAppSessionId('s1'),
+        messageId: 'm1',
+        abortController: new AbortController(),
+        messages: [{ role: 'user', content: 'Hello' }],
+        streamState: createState(),
+        resources: {
+          toolDefinitions: tools,
+          activeSkillNames: [],
+          commandShell: POSIX_COMMAND_SHELL
+        },
+        initialRequestSeq: 1
+      })
+      const executionContract = {
+        request: {
+          sessionId: run.sessionId,
+          messageId: run.messageId,
+          runId: run.runId,
+          requestSeq: 1
+        }
+      } as any
+      bindActiveRequestContract(run, 1, executionContract)
+      const toolService = createMockToolService({ action: 'ok' })
+
+      await processStream(
+        createParams({
+          run,
+          coreStream: createToolThenCompleteStream('action'),
+          toolExecution: createToolExecutionPort(toolService),
+          tools
+        })
+      )
+
+      expect(toolService.callTool).toHaveBeenCalled()
+      expect((toolService.callTool as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({
+        runId: RUN_ID,
+        messageId: 'm1',
+        requestSeq: 1,
+        executionContract
+      })
+      expect(
+        (toolService.callTool as ReturnType<typeof vi.fn>).mock.calls[0][1].executionContract
+      ).toBe(executionContract)
+    })
+
+    it('keeps the exact request contract and a durable View binding across permission pause', async () => {
+      const tools = [{ ...makeTool('action'), source: 'agent' as const }]
+      const run = createLoopRun({
+        runId: RUN_ID,
+        sessionId: toAppSessionId('s1'),
+        messageId: 'm1',
+        abortController: new AbortController(),
+        messages: [{ role: 'user', content: 'Hello' }],
+        streamState: createState(),
+        resources: {
+          toolDefinitions: tools,
+          activeSkillNames: [],
+          commandShell: POSIX_COMMAND_SHELL
+        },
+        initialRequestSeq: 1
+      })
+      const promptAssembly = createOpaquePromptAssembly('System prompt')
+      const executionContract = buildExecutionContract({
+        request: {
+          sessionId: run.sessionId,
+          messageId: run.messageId,
+          runId: run.runId,
+          requestSeq: 1
+        },
+        promptAssembly,
+        providerMessages: [
+          { role: 'system', content: promptAssembly.prompt },
+          { role: 'user', content: 'Hello' }
+        ],
+        tools,
+        providerId: 'openai',
+        modelId: 'gpt-4',
+        modelConfig: {} as any,
+        temperature: 0.7,
+        maxTokens: 4096,
+        workspace: { kind: 'runtime_default' },
+        maxSubagentDepth: 0,
+        dynamicControlSnapshot: {
+          permissionMode: 'default',
+          requestAdmitted: true,
+          cancellationRequested: false
+        },
+        assemblerVersion: 'test-v1'
+      })
+      bindActiveRequestContract(run, 1, executionContract)
+
+      const result = await processStream(
+        createParams({
+          run,
+          coreStream: createToolRoundStream('action'),
+          toolExecution: createToolExecutionPort(createPostCallPermissionToolService()),
+          tools,
+          permissionMode: 'default'
+        })
+      )
+
+      expect(result.status).toBe('paused')
+      expect(result.toolBatchExecutionState?.executionContract).toBe(executionContract)
+      const finalPauseCall = messageStore.updateAssistantContent.mock.calls.findLast(
+        (call) => typeof call[2] === 'string'
+      )
+      expect(finalPauseCall).toBeDefined()
+      const permissionBlock = finalPauseCall?.[1].find(
+        (block) => block.action_type === 'tool_call_permission'
+      )
+      expect(permissionBlock).toBeDefined()
+      expect(JSON.parse(permissionBlock?.extra?.executionContractBinding as string)).toEqual(
+        buildExecutionContractBinding(executionContract)
+      )
+    })
+
     it('counts a post-call permission tool before persisting pause', async () => {
       const toolService = createPostCallPermissionToolService()
 
@@ -934,11 +1061,16 @@ describe('processStream', () => {
         status: 'paused',
         pendingInteractions: [expect.objectContaining({ origin: 'post-call-permission' })]
       })
+      expect(result.toolBatchExecutionState?.executionContract).toBeUndefined()
       expect(toolService.callTool).toHaveBeenCalledOnce()
       const finalPauseCall = messageStore.updateAssistantContent.mock.calls.findLast(
         (call) => typeof call[2] === 'string'
       )
       expect(finalPauseCall).toBeDefined()
+      const permissionBlock = finalPauseCall?.[1].find(
+        (block) => block.action_type === 'tool_call_permission'
+      )
+      expect(permissionBlock?.extra?.executionContractBinding).toBeUndefined()
       expect(JSON.parse(finalPauseCall?.[2])).toMatchObject({
         providerRounds: 1,
         toolCalls: 1,
@@ -2515,7 +2647,7 @@ describe('processStream', () => {
     const resolveTools = vi
       .fn()
       .mockResolvedValue([makeTool('skill_view'), makeTool('deepchat_settings_set_theme')])
-    const refreshSystemPrompt = vi.fn().mockResolvedValue('refreshed skill prompt')
+    const refreshSystemPrompt = vi.fn().mockResolvedValue('  refreshed skill prompt\n')
 
     const coreStream = vi.fn(
       function (messages, _modelId, _modelConfig, _temperature, _maxTokens, tools) {
@@ -2537,7 +2669,7 @@ describe('processStream', () => {
           })()
         }
         if (callCount === 2) {
-          expect(messages[0]).toEqual({ role: 'system', content: 'refreshed skill prompt' })
+          expect(messages[0]).toEqual({ role: 'system', content: '  refreshed skill prompt\n' })
           expect(tools.map((tool) => tool.function.name)).toEqual([
             'skill_view',
             'deepchat_settings_set_theme'
@@ -2595,6 +2727,15 @@ describe('processStream', () => {
     )
     expect(coreStream).toHaveBeenCalledTimes(3)
     expect(toolService.callTool).toHaveBeenCalledTimes(2)
+    expect(params.run.resources.promptAssembly).toMatchObject({
+      prompt: '  refreshed skill prompt\n',
+      sections: [
+        expect.objectContaining({
+          kind: 'effective_system_prompt',
+          degradationCodes: ['legacy_prompt_provenance']
+        })
+      ]
+    })
   })
 
   it('does not refresh tools after linked-file skill_view reads', async () => {

@@ -21,7 +21,13 @@ import {
   isExecutionJournalReservedName,
   type ExecutionJournalEventName
 } from '@/tape/domain/executionJournal'
+import {
+  CONTRACT_TAPE_EVENT_NAMES,
+  isContractTapeReservedName,
+  type ContractTapeEventName
+} from '@/tape/domain/contractFacts'
 import type {
+  ContractPersistenceStore,
   ExecutionJournalPersistenceStore,
   TapeBootstrapStore,
   TapeEntryStore,
@@ -368,7 +374,13 @@ const EFFECTIVE_TAPE_ROWS_CTE_SQL = `
       provenance_key, payload_json, meta_json, created_at
     FROM bounded_rows
     WHERE kind = 'event'
-      AND (name IS NULL OR name NOT IN (${DEFAULT_EXCLUDED_TAPE_EVENT_NAMES_SQL}))
+      AND (
+        name IS NULL
+        OR (
+          name NOT IN (${DEFAULT_EXCLUDED_TAPE_EVENT_NAMES_SQL})
+          AND name NOT GLOB 'contract/*'
+        )
+      )
     UNION ALL
     SELECT
       session_id, entry_id, kind, name, source_type, source_id, source_seq,
@@ -405,7 +417,10 @@ const EFFECTIVE_TAPE_SEARCH_ROW_PREDICATE_SQL = `
     candidate.kind = 'event'
     AND (
       candidate.name IS NULL
-      OR candidate.name NOT IN (${DEFAULT_EXCLUDED_TAPE_EVENT_NAMES_SQL})
+      OR (
+        candidate.name NOT IN (${DEFAULT_EXCLUDED_TAPE_EVENT_NAMES_SQL})
+        AND candidate.name NOT GLOB 'contract/*'
+      )
     )
   )
   OR (
@@ -545,17 +560,20 @@ export class DeepChatTapeEntriesTable
   }
 
   append(input: DeepChatTapeAppendInput): DeepChatTapeEntryRow {
-    return this.appendInternal(input, false)
+    return this.appendInternal(input, null)
   }
 
   protected appendInternal(
     input: DeepChatTapeAppendInput,
-    allowExecutionJournal: boolean
+    authorizedNamespace: 'execution' | 'contract' | null
   ): DeepChatTapeEntryRow {
-    if (!allowExecutionJournal && isExecutionJournalReservedName(input.name)) {
+    if (authorizedNamespace !== 'execution' && isExecutionJournalReservedName(input.name)) {
       throw new Error(
         'The execution/* namespace is reserved for the strict Execution Journal writer.'
       )
+    }
+    if (authorizedNamespace !== 'contract' && isContractTapeReservedName(input.name)) {
+      throw new Error('The contract/* namespace is reserved for the strict Contract writer.')
     }
     const append = this.db.transaction(() => {
       const provenanceKey = buildProvenanceKey(input)
@@ -1258,7 +1276,37 @@ export class DeepChatExecutionJournalStore
         createdAt: input.createdAt,
         idempotent: input.idempotent
       },
-      true
+      'execution'
+    )
+  }
+}
+
+export class DeepChatContractStore
+  extends DeepChatTapeEntriesTable
+  implements ContractPersistenceStore
+{
+  appendContractEvent(
+    input: TapeEventAppendInput & { name: ContractTapeEventName }
+  ): DeepChatTapeEntryRow {
+    if (!CONTRACT_TAPE_EVENT_NAMES.includes(input.name)) {
+      throw new Error(`Unsupported Contract event name: ${input.name}.`)
+    }
+    return this.appendInternal(
+      {
+        sessionId: input.sessionId,
+        kind: 'event',
+        name: input.name,
+        source: input.source,
+        provenanceKey: input.provenanceKey,
+        payload: {
+          name: input.name,
+          data: input.data
+        },
+        meta: input.meta,
+        createdAt: input.createdAt,
+        idempotent: input.idempotent
+      },
+      'contract'
     )
   }
 }

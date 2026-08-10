@@ -4,6 +4,9 @@ import {
   type DeferredToolExecutorDependencies
 } from '@/agent/deepchat/runtime/deferredToolExecutor'
 import { ExecutionJournalError } from '@/tape/domain/executionJournal'
+import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/core/mcp'
+import { createOpaquePromptAssembly } from '@/agent/deepchat/resources/promptAssembly'
+import { buildExecutionContract } from '@/tape/domain/executionContract'
 import {
   GIT_BASH_COMMAND_SHELL,
   POSIX_COMMAND_SHELL
@@ -17,6 +20,49 @@ const TOOL_CALL = {
   params: '{"path":"a.txt"}',
   response: '',
   server_name: 'agent-filesystem'
+}
+const CONTRACT_RUN_ID = '11111111-1111-4111-8111-111111111111'
+const TOOL_DEFINITION: MCPToolDefinition = {
+  type: 'function',
+  source: 'agent',
+  execution: TOOL_EXECUTION.write,
+  function: {
+    name: TOOL_CALL.name,
+    description: 'Write a file',
+    parameters: { type: 'object', properties: {} }
+  },
+  server: { name: 'agent-filesystem', icons: '', description: 'Agent filesystem' }
+}
+
+function buildContract() {
+  const promptAssembly = createOpaquePromptAssembly('System prompt')
+  return buildExecutionContract({
+    request: {
+      sessionId: SESSION_ID,
+      messageId: MESSAGE_ID,
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 3
+    },
+    promptAssembly,
+    providerMessages: [
+      { role: 'system', content: promptAssembly.prompt },
+      { role: 'user', content: 'Write a.txt' }
+    ],
+    tools: [TOOL_DEFINITION],
+    providerId: 'openai',
+    modelId: 'gpt-5',
+    modelConfig: {} as any,
+    temperature: 0.2,
+    maxTokens: 100,
+    workspace: { kind: 'path', path: '/workspace' },
+    maxSubagentDepth: 0,
+    dynamicControlSnapshot: {
+      permissionMode: 'default',
+      requestAdmitted: true,
+      cancellationRequested: false
+    },
+    assemblerVersion: 'test-v1'
+  })
 }
 
 type ToolExecutionOptions = Parameters<
@@ -94,14 +140,7 @@ function createHarness(
       fitBatch: vi.fn()
     },
     toolResolver: {
-      loadToolDefinitionsForSession: vi.fn(async () => [
-        {
-          type: 'function',
-          source: 'agent',
-          function: { name: 'write_file' },
-          server: { name: 'agent-filesystem' }
-        }
-      ]),
+      loadToolDefinitionsForSession: vi.fn(async () => [TOOL_DEFINITION]),
       getDisabledAgentTools: vi.fn(() => []),
       resolveAgentExtensionPolicy: vi.fn(async () => ({ enabledMcpServerIds: [] })),
       resolveActiveSkillNamesForToolProfile: vi.fn(async () => []),
@@ -142,6 +181,7 @@ function createHarness(
         MESSAGE_ID,
         TOOL_CALL,
         onToolCallStarted,
+        undefined,
         'posix'
       ),
     executionJournal,
@@ -202,6 +242,33 @@ describe('DeferredToolExecutor Execution Journal', () => {
     })
   })
 
+  it('uses the originating provider View identity while journaling a distinct deferred run', async () => {
+    const { dependencies, executionJournal, executor } = createHarness()
+    const executionContract = buildContract()
+
+    await executor.execute(
+      SESSION_ID,
+      MESSAGE_ID,
+      TOOL_CALL,
+      undefined,
+      executionContract,
+      'posix'
+    )
+
+    expect(dependencies.toolExecutionPort.execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        runId: CONTRACT_RUN_ID,
+        messageId: MESSAGE_ID,
+        requestSeq: 3,
+        executionContract
+      })
+    )
+    const deferredRunId = executionJournal.commitRunStarted.mock.calls[0][0].runId
+    expect(deferredRunId).not.toBe(CONTRACT_RUN_ID)
+    expect(executionJournal.commitDispatch.mock.calls[0][0].operation.runId).toBe(deferredRunId)
+  })
+
   it('resolves a stored shell profile instead of the current preference', async () => {
     const { dependencies, executor } = createHarness()
 
@@ -209,6 +276,7 @@ describe('DeferredToolExecutor Execution Journal', () => {
       SESSION_ID,
       MESSAGE_ID,
       TOOL_CALL,
+      undefined,
       undefined,
       'git-bash',
       'command-grant-deferred'
@@ -229,7 +297,14 @@ describe('DeferredToolExecutor Execution Journal', () => {
     const { dependencies, executor } = createHarness()
 
     await expect(
-      executor.execute(SESSION_ID, MESSAGE_ID, TOOL_CALL, undefined, 'unknown-shell' as never)
+      executor.execute(
+        SESSION_ID,
+        MESSAGE_ID,
+        TOOL_CALL,
+        undefined,
+        undefined,
+        'unknown-shell' as never
+      )
     ).resolves.toMatchObject({ isError: true, invoked: false })
 
     expect(dependencies.commandShell.resolveProfile).not.toHaveBeenCalled()
@@ -261,7 +336,7 @@ describe('DeferredToolExecutor Execution Journal', () => {
     const { server_name: _serverName, ...unboundToolCall } = TOOL_CALL
 
     await expect(
-      executor.execute(SESSION_ID, MESSAGE_ID, unboundToolCall, undefined, 'posix')
+      executor.execute(SESSION_ID, MESSAGE_ID, unboundToolCall, undefined, undefined, 'posix')
     ).resolves.toMatchObject({
       responseText: 'Deferred tool execution is missing its server identity.',
       isError: true,
@@ -306,6 +381,7 @@ describe('DeferredToolExecutor Execution Journal', () => {
         SESSION_ID,
         MESSAGE_ID,
         { ...TOOL_CALL, name: 'echo', server_name: 'mcp-server' },
+        undefined,
         undefined,
         undefined,
         'command-grant-without-profile'

@@ -1,5 +1,5 @@
 import type { LoopRun } from './loopRun'
-import { advanceRequestSequence, enterPhysicalAttempt } from './loopRun'
+import { advanceRequestSequence, bindActiveRequestContract, enterPhysicalAttempt } from './loopRun'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import {
   createStreamEvent,
@@ -10,6 +10,7 @@ import {
 } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import type {
   DeepChatProviderAttemptIdentity,
   DeepChatProviderAttemptOrigin,
@@ -141,6 +142,7 @@ export interface ProviderAttemptManifestInput<TSelection> {
   traceDebugEnabled: boolean
   contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
+  executionContract?: DeepChatExecutionContract
 }
 
 export interface ProviderAttemptManifestPort<TSelection> {
@@ -152,6 +154,22 @@ export interface ProviderAttemptManifestPort<TSelection> {
   }): { policy: DeepChatTapeViewPolicy; policyVersion: number | null }
   append(input: ProviderAttemptManifestInput<TSelection>): void
   onAppendError(error: unknown): void
+}
+
+export interface ProviderAttemptExecutionContractBuildInput {
+  requestSeq: number
+  messages: ChatMessage[]
+  modelId: string
+  modelConfig: ModelConfig
+  temperature: number
+  maxTokens: number
+  tools: MCPToolDefinition[]
+  contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
+}
+
+export interface ProviderAttemptExecutionContractPort {
+  build(input: ProviderAttemptExecutionContractBuildInput): DeepChatExecutionContract
+  onBuildError(error: unknown): void
 }
 
 export interface ProviderRateGatePort {
@@ -170,6 +188,7 @@ export interface ProviderAttemptStreamInput {
   temperature: number
   maxTokens: number
   tools: MCPToolDefinition[]
+  executionContract: DeepChatExecutionContract | null
   signal: AbortSignal
 }
 
@@ -432,6 +451,8 @@ export interface ProviderAttemptInput<TSelection> {
   budget: ProviderAttemptBudgetPort
   recovery: ProviderAttemptRecoveryPort
   manifest: ProviderAttemptManifestPort<TSelection>
+  executionContract?: ProviderAttemptExecutionContractPort
+  strictViewContract?: boolean
   rateGate: ProviderRateGatePort
   provider: ProviderAttemptStreamPort
   outcome: ProviderAttemptOutcomePort
@@ -507,6 +528,7 @@ export class DeepChatContextCoordinator {
       providerMessages: ChatMessage[]
       providerMaxTokens: number
       requestSeq: number
+      executionContract: DeepChatExecutionContract | null
     }> => {
       let providerMessages = input.requestMessages
       let providerMaxTokens = input.maxTokens
@@ -582,6 +604,7 @@ export class DeepChatContextCoordinator {
         throw new Error('Request was not sent because the prompt became empty.')
       }
 
+      input.run.abortController.signal.throwIfAborted()
       const requestSeq = advanceRequestSequence(input.run)
       const isInitialViewRequest =
         (options.requestOrigin === 'chat' || options.requestOrigin === 'resume') &&
@@ -593,6 +616,36 @@ export class DeepChatContextCoordinator {
         viewPolicy: input.viewContext?.policy,
         viewPolicyVersion: input.viewContext?.policyVersion
       })
+      const contextBuilderVersion = input.viewContext?.contextBuilderVersion ?? 'legacy-v1'
+      let executionContract: DeepChatExecutionContract | null = null
+      if (input.strictViewContract && !input.executionContract) {
+        throw new Error('Strict provider View requires an ExecutionContract builder.')
+      }
+      if (input.executionContract) {
+        try {
+          executionContract = input.executionContract.build({
+            requestSeq,
+            messages: providerMessages,
+            modelId: input.modelId,
+            modelConfig: input.modelConfig,
+            temperature: input.temperature,
+            maxTokens: providerMaxTokens,
+            tools: input.tools,
+            contextBuilderVersion
+          })
+        } catch (error) {
+          try {
+            input.executionContract.onBuildError(error)
+          } catch {}
+          if (input.strictViewContract) throw error
+        }
+      }
+
+      const reportManifestError = (error: unknown): void => {
+        try {
+          input.manifest.onAppendError(error)
+        } catch {}
+      }
       try {
         input.manifest.append({
           requestSeq,
@@ -616,14 +669,31 @@ export class DeepChatContextCoordinator {
           supportsVision: input.viewContext?.supportsVision ?? input.supportsVision,
           supportsAudioInput: input.viewContext?.supportsAudioInput ?? input.supportsAudioInput,
           traceDebugEnabled: input.viewContext?.traceDebugEnabled ?? input.traceDebugEnabled,
-          contextBuilderVersion: input.viewContext?.contextBuilderVersion ?? 'legacy-v1',
-          syntheticContributions: manifestSyntheticContributions
+          contextBuilderVersion,
+          syntheticContributions: manifestSyntheticContributions,
+          ...(executionContract ? { executionContract } : {})
         })
       } catch (error) {
-        input.manifest.onAppendError(error)
+        if (executionContract) {
+          if (input.strictViewContract) {
+            reportManifestError(error)
+            throw error
+          }
+          executionContract = null
+          const reason = error instanceof Error ? error.message : String(error)
+          reportManifestError(
+            new Error(
+              `ExecutionContract disabled for request ${requestSeq} because durable ViewManifest persistence could not be confirmed: ${reason}`,
+              { cause: error }
+            )
+          )
+        } else {
+          reportManifestError(error)
+        }
       }
+      bindActiveRequestContract(input.run, requestSeq, executionContract)
 
-      return { providerMessages, providerMaxTokens, requestSeq }
+      return { providerMessages, providerMaxTokens, requestSeq, executionContract }
     }
 
     const recoverProviderContextOverflow = async (
@@ -681,10 +751,11 @@ export class DeepChatContextCoordinator {
         const strictProviderOverflowRetry = strictProviderOverflowRetryPending
         strictProviderOverflowRetryPending = false
         const requestOrigin = nextRequestOrigin
-        const { providerMessages, providerMaxTokens, requestSeq } = await prepareProviderRequest({
-          requestOrigin,
-          strictProviderOverflowRetry
-        })
+        const { providerMessages, providerMaxTokens, requestSeq, executionContract } =
+          await prepareProviderRequest({
+            requestOrigin,
+            strictProviderOverflowRetry
+          })
         let pendingRetry: { retryNumber: number; delayMs: number } | null = null
 
         for (;;) {
@@ -736,6 +807,7 @@ export class DeepChatContextCoordinator {
                 temperature: input.temperature,
                 maxTokens: providerMaxTokens,
                 tools: input.tools,
+                executionContract,
                 signal: input.run.abortController.signal
               },
               observation,

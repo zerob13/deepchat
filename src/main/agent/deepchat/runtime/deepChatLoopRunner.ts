@@ -7,6 +7,9 @@ import type {
 } from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
+import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import type {
   ProviderExecutionPort,
   ModelConfig,
@@ -30,6 +33,10 @@ import type { SessionPendingInputs } from '@/session/data/pendingInputs'
 import {
   resolveEffectiveActiveSkillNames
 } from '@/agent/deepchat/resources/systemPromptBuilder'
+import {
+  createOpaquePromptAssembly,
+  reconcilePromptAssembly
+} from '@/agent/deepchat/resources/promptAssembly'
 import type { SessionPermissionPort } from '@/session/contracts'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import {
@@ -62,6 +69,7 @@ import {
   type TapeViewContextSelection
 } from '@/tape/domain/viewManifest'
 import type { DeepChatLoopTapePort } from '@/tape/ports/capabilities'
+import { buildExecutionContract } from '@/tape/domain/executionContract'
 import {
   ExecutionJournalCorruptionError,
   ExecutionJournalError,
@@ -107,6 +115,10 @@ import { throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
+import {
+  meetTaskContractToolDefinitions,
+  resolveExecutionContractSubagentDepth
+} from './taskContractCapability'
 import type { PromptAssemblyService } from './promptAssemblyService'
 import type { SessionIdentityService } from './sessionIdentityService'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
@@ -180,9 +192,11 @@ export type DeepChatLoopRunInput = {
   projectDir: string | null
   resourceInstance?: DeepChatAgentInstance
   providerModelFacts?: ProviderModelRuntimeFacts
+  taskContractContext: DeepChatTaskContractContext | null
   tools?: MCPToolDefinition[]
   commandShell: ResolvedCommandShell
   baseSystemPrompt?: string
+  basePromptAssembly?: DeepChatPromptAssembly
   contextContributions?: ContextRuntimeContributions
   initialBlocks?: AssistantMessageBlock[]
   initialAccounting?: MessageMetadata
@@ -194,7 +208,7 @@ export type DeepChatLoopRunInput = {
   refreshSystemPrompt?: (
     activeSkillNames: string[] | undefined,
     toolDefinitions: MCPToolDefinition[]
-  ) => Promise<string>
+  ) => Promise<DeepChatPromptAssembly | string>
   maxProviderRounds?: number
   onBeforeProviderStream?: () => void
   onRunRegistered?: (runId: string) => void
@@ -220,6 +234,7 @@ export interface AppendTapeViewManifestInput {
   traceDebugEnabled: boolean
   contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
+  executionContract?: DeepChatExecutionContract
 }
 
 export interface DeepChatLoopRunnerPorts {
@@ -245,7 +260,10 @@ export interface DeepChatLoopRunnerPorts {
   sessionSettings: Pick<SessionSettingsCoordinator, 'getEffectiveGenerationSettings'>
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
   runLifecycle: LoopRunLifecyclePort
-  identity: Pick<SessionIdentityService, 'getAgentId'>
+  identity: Pick<
+    SessionIdentityService,
+    'getAgentId' | 'getSessionKind' | 'isAcpBackedSubagentSession'
+  >
   sessionPermissionPort: SessionPermissionPort
   reviewToolPermission: ToolPermissionReviewer
   hookSink: Pick<RuntimeHookSink, 'scope'>
@@ -352,9 +370,11 @@ export class DeepChatLoopRunner {
       projectDir,
       resourceInstance: providedResourceInstance,
       providerModelFacts: providedProviderModelFacts,
+      taskContractContext,
       tools: providedTools,
       commandShell,
       baseSystemPrompt,
+      basePromptAssembly,
       contextContributions,
       initialBlocks,
       initialAccounting,
@@ -387,6 +407,13 @@ export class DeepChatLoopRunner {
     }
     if (messages.length === 0) {
       throw new Error('Request was not sent because the prompt is empty.')
+    }
+    const sessionKind = this.ports.identity.getSessionKind(sessionId)
+    const strictViewContract =
+      sessionKind === 'subagent' &&
+      !this.ports.identity.isAcpBackedSubagentSession(sessionId, state.providerId)
+    if (strictViewContract && !taskContractContext) {
+      throw new Error('Contract-bearing child run requires a TaskContract context.')
     }
 
     const providerModelFacts =
@@ -453,6 +480,17 @@ export class DeepChatLoopRunner {
     )
     const temperature = generationSettings.temperature
     const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
+    const effectiveSystemPrompt =
+      messages[0]?.role === 'system' && typeof messages[0].content === 'string'
+        ? messages[0].content
+        : ''
+    const declaredPromptAssembly =
+      basePromptAssembly ??
+      createOpaquePromptAssembly(baseSystemPrompt ?? effectiveSystemPrompt)
+    const initialPromptAssembly = reconcilePromptAssembly(
+      declaredPromptAssembly,
+      effectiveSystemPrompt
+    )
 
     const streamSessionActiveSkillNames = await awaitWithAbort(
       this.ports.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
@@ -466,11 +504,17 @@ export class DeepChatLoopRunner {
     resourceScope.assertCurrent()
     const getEffectiveRuntimeSkillNames = (baseSkillNames = streamSessionActiveSkillNames) =>
       resolveEffectiveActiveSkillNames(baseSkillNames, resourceInstance)
-    const toolCatalog = this.ports.toolResolver.createSessionToolCatalogPort(
+    const unconstrainedToolCatalog = this.ports.toolResolver.createSessionToolCatalogPort(
       sessionId,
       projectDir,
       resourceInstance
     )
+    const toolCatalog = {
+      resolve: async (request?: { activeSkillNames?: string[] }) => {
+        const resolved = await unconstrainedToolCatalog.resolve(request)
+        return meetTaskContractToolDefinitions(sessionId, resolved, taskContractContext)
+      }
+    }
     const tools =
       providedTools ??
       (await awaitWithAbort(
@@ -496,6 +540,7 @@ export class DeepChatLoopRunner {
       resources: {
         toolDefinitions: tools,
         activeSkillNames: getEffectiveRuntimeSkillNames(),
+        promptAssembly: initialPromptAssembly,
         commandShell
       },
       initialRequestSeq
@@ -591,18 +636,23 @@ export class DeepChatLoopRunner {
         toolCatalog,
         refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
           if (refreshSystemPrompt) {
-            return await refreshSystemPrompt(
+            const refreshed = await refreshSystemPrompt(
               getEffectiveRuntimeSkillNames(activeSkillNames),
               refreshedTools
             )
+            return typeof refreshed === 'string'
+              ? createOpaquePromptAssembly(refreshed)
+              : refreshed
           }
-          return await this.ports.promptAssembly.createBasePromptAssembler(resourceInstance).assemble({
-            sessionId: toAppSessionId(sessionId),
-            configuredPrompt: generationSettings.systemPrompt,
-            toolDefinitions: refreshedTools,
-            activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames),
-            commandShell: loopRun.resources.commandShell
-          })
+          return await this.ports.promptAssembly
+            .createBasePromptAssembler(resourceInstance)
+            .assembleWithProvenance({
+              sessionId: toAppSessionId(sessionId),
+              configuredPrompt: generationSettings.systemPrompt,
+              toolDefinitions: refreshedTools,
+              activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames),
+              commandShell: loopRun.resources.commandShell
+            })
         },
         toolExecution: this.ports.toolExecutionPort,
         toolResults: this.ports.toolResultPort,
@@ -685,6 +735,66 @@ export class DeepChatLoopRunner {
                   expectedInstance: resourceInstance
                 })
             },
+            executionContract: strictViewContract
+              ? {
+                  build: ({
+                    requestSeq,
+                    messages: providerMessages,
+                    modelId: contractModelId,
+                    modelConfig: contractModelConfig,
+                    temperature: contractTemperature,
+                    maxTokens: contractMaxTokens,
+                    tools: contractTools,
+                    contextBuilderVersion
+                  }) => {
+                    const effectiveSystemPrompt =
+                      providerMessages[0]?.role === 'system' &&
+                      typeof providerMessages[0].content === 'string'
+                        ? providerMessages[0].content
+                        : ''
+                    const promptAssembly = reconcilePromptAssembly(
+                      loopRun.resources.promptAssembly ??
+                        createOpaquePromptAssembly(effectiveSystemPrompt),
+                      effectiveSystemPrompt
+                    )
+                    const cancellationRequested = abortSignal.aborted
+                    return buildExecutionContract({
+                      request: {
+                        sessionId,
+                        messageId,
+                        runId: loopRun.runId,
+                        requestSeq
+                      },
+                      promptAssembly,
+                      providerMessages,
+                      tools: contractTools,
+                      providerId: state.providerId,
+                      modelId: contractModelId,
+                      modelConfig: contractModelConfig,
+                      temperature: contractTemperature,
+                      maxTokens: contractMaxTokens,
+                      workspace: projectDir
+                        ? { kind: 'path', path: projectDir }
+                        : { kind: 'runtime_default' },
+                      maxSubagentDepth: resolveExecutionContractSubagentDepth(contractTools),
+                      dynamicControlSnapshot: {
+                        permissionMode: state.permissionMode,
+                        requestAdmitted: !cancellationRequested,
+                        cancellationRequested
+                      },
+                      assemblerVersion: contextBuilderVersion,
+                      taskContractContext
+                    })
+                  },
+                  onBuildError: (error) =>
+                    logger.warn(
+                      `[DeepChatAgent] Failed to construct execution contract: ${
+                        error instanceof Error ? error.message : String(error)
+                      }`
+                    )
+                }
+              : undefined,
+            strictViewContract,
             manifest: {
               resolvePolicy: resolveTapeViewManifestPolicy,
               append: (manifest) =>
@@ -738,8 +848,17 @@ export class DeepChatLoopRunner {
                 temperature,
                 maxTokens,
                 tools,
+                executionContract,
                 signal
               }) => {
+                const activeRequestContract = loopRun.activeRequestContract
+                if (
+                  !activeRequestContract ||
+                  activeRequestContract.requestSeq !== identity.requestSeq ||
+                  activeRequestContract.executionContract !== executionContract
+                ) {
+                  throw new Error('Provider request lost its active ExecutionContract binding.')
+                }
                 const attemptModelConfig = traceEnabled
                   ? (Object.assign({}, modelConfig, {
                       requestTraceContext: {
@@ -982,7 +1101,8 @@ export class DeepChatLoopRunner {
       summaryCursorOrderSeq: params.summaryCursorOrderSeq,
       supportsVision: params.supportsVision,
       supportsAudioInput: params.supportsAudioInput,
-      traceDebugEnabled: params.traceDebugEnabled
+      traceDebugEnabled: params.traceDebugEnabled,
+      ...(params.executionContract ? { executionContract: params.executionContract } : {})
     })
     this.ports.tape.appendViewManifest(manifest)
   }

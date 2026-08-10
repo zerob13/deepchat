@@ -1,5 +1,12 @@
 import { z } from 'zod'
 import { OrchestrationEffectEvidenceSchema, OrchestrationEffectStateSchema } from './toolEffect'
+import {
+  DeepChatEvaluationRefSchema,
+  DeepChatStoredTaskEvaluationProjectionSchema,
+  DeepChatTaskEvaluationSummarySchema,
+  DeepChatTaskContractProjectionSchema,
+  DeepChatTaskContractRefSchema
+} from '../types/task-contract'
 
 export const LIVE_DELEGATION_SCHEMA_VERSION = 1
 export const LIVE_DELEGATION_MAX_TITLE_LENGTH = 160
@@ -133,6 +140,11 @@ const LiveDelegationTurnBaseSchema = z
     error: z.string().nullable(),
     resultRef: LiveDelegationResultRefSchema.nullable().default(null),
     tapeReceipt: LiveDelegationTapeReceiptSchema.nullable(),
+    taskContract: DeepChatTaskContractProjectionSchema.nullable().default(null),
+    taskContractRef: DeepChatTaskContractRefSchema.nullable().default(null),
+    inheritedTaskContractRef: DeepChatTaskContractRefSchema.nullable().default(null),
+    evaluation: DeepChatStoredTaskEvaluationProjectionSchema.nullable().default(null),
+    evaluationRef: DeepChatEvaluationRefSchema.nullable().default(null),
     effectState: OrchestrationEffectStateSchema,
     effectEvidence: OrchestrationEffectEvidenceSchema.nullable(),
     createdAt: z.number().int().nonnegative(),
@@ -143,10 +155,10 @@ const LiveDelegationTurnBaseSchema = z
   .strict()
 
 export const LiveDelegationTurnSchema = LiveDelegationTurnBaseSchema.superRefine(
-  validateLiveDelegationEffect
+  validateLiveDelegationTurn
 )
 
-export const LiveDelegationEventSchema = z
+const LiveDelegationEventBaseSchema = z
   .object({
     id: z.number().int().positive(),
     delegationId: LiveDelegationIdSchema,
@@ -156,9 +168,15 @@ export const LiveDelegationEventSchema = z
     content: z.string(),
     relatedTurnId: LiveDelegationIdSchema.nullable(),
     consumedByTurnId: LiveDelegationIdSchema.nullable(),
+    evaluation: DeepChatStoredTaskEvaluationProjectionSchema.nullable().default(null),
+    evaluationRef: DeepChatEvaluationRefSchema.nullable().default(null),
     createdAt: z.number().int().nonnegative()
   })
   .strict()
+
+export const LiveDelegationEventSchema = LiveDelegationEventBaseSchema.superRefine(
+  validateLiveDelegationEvent
+)
 
 export type LiveDelegationStatus = z.infer<typeof LiveDelegationStatusSchema>
 export type LiveDelegationOperation = z.infer<typeof LiveDelegationOperationSchema>
@@ -185,20 +203,31 @@ export const LiveDelegationSummarySchema = LiveDelegationSchema.omit({
 export const LiveDelegationTurnSummarySchema = LiveDelegationTurnBaseSchema.omit({
   prompt: true,
   resultSummary: true,
-  error: true
+  error: true,
+  taskContract: true,
+  taskContractRef: true,
+  inheritedTaskContractRef: true,
+  evaluation: true,
+  evaluationRef: true
 })
   .extend({
     promptPreview: z.string().max(LIVE_DELEGATION_MAX_PREVIEW_CHARACTERS),
     resultPreview: z.string().max(LIVE_DELEGATION_MAX_PREVIEW_CHARACTERS).nullable(),
-    errorPreview: z.string().max(LIVE_DELEGATION_MAX_PREVIEW_CHARACTERS).nullable()
+    errorPreview: z.string().max(LIVE_DELEGATION_MAX_PREVIEW_CHARACTERS).nullable(),
+    evaluation: DeepChatTaskEvaluationSummarySchema.nullable().default(null)
   })
   .strict()
   .superRefine(validateLiveDelegationEffect)
 
-export const LiveDelegationEventSummarySchema = LiveDelegationEventSchema.omit({ content: true })
+export const LiveDelegationEventSummarySchema = LiveDelegationEventBaseSchema.omit({
+  content: true,
+  evaluation: true,
+  evaluationRef: true
+})
   .extend({
     contentPreview: z.string().max(LIVE_DELEGATION_MAX_EVENT_PREVIEW_CHARACTERS),
-    contentTruncated: z.boolean()
+    contentTruncated: z.boolean(),
+    evaluation: DeepChatTaskEvaluationSummarySchema.nullable().default(null)
   })
   .strict()
 
@@ -213,6 +242,7 @@ export const LiveDelegationResultPageSchema = z
     answerSha256: z.string().regex(/^[0-9a-f]{64}$/u),
     answerBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     answerEstimatedTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    evaluation: DeepChatTaskEvaluationSummarySchema.nullable().default(null),
     text: z.string(),
     nextCursor: z.string().max(LIVE_DELEGATION_RESULT_CURSOR_MAX_LENGTH).nullable(),
     done: z.boolean()
@@ -260,6 +290,77 @@ function validateLiveDelegationEffect(
       code: 'custom',
       path: ['effectEvidence', 'classification'],
       message: 'Live delegation effect evidence classification must match its effect state'
+    })
+  }
+}
+
+function validateLiveDelegationTurn(
+  turn: z.infer<typeof LiveDelegationTurnBaseSchema>,
+  context: {
+    addIssue(issue: { code: 'custom'; path: PropertyKey[]; message: string }): void
+  }
+): void {
+  validateLiveDelegationEffect(turn, context)
+  if ((turn.evaluation === null) !== (turn.evaluationRef === null)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['evaluationRef'],
+      message: 'Live delegation evaluation and reference must be projected together'
+    })
+    return
+  }
+  if (!turn.evaluation || !turn.evaluationRef) return
+  if (
+    !turn.taskContract ||
+    turn.evaluation.turnId !== turn.id ||
+    turn.evaluation.taskContractHash !== turn.taskContract.contractHash ||
+    turn.evaluation.executionStatus !== turn.status ||
+    turn.evaluationRef.sessionId !== turn.taskContract.taskDescription.parentSessionId ||
+    turn.evaluationRef.tapeIdentity !== turn.taskContractRef?.tapeIdentity ||
+    turn.evaluationRef.evaluationHash !== turn.evaluation.evaluationHash
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['evaluation'],
+      message: 'Live delegation evaluation does not match its turn projection'
+    })
+  }
+}
+
+function validateLiveDelegationEvent(
+  event: z.infer<typeof LiveDelegationEventBaseSchema>,
+  context: {
+    addIssue(issue: { code: 'custom'; path: PropertyKey[]; message: string }): void
+  }
+): void {
+  if ((event.evaluation === null) !== (event.evaluationRef === null)) {
+    context.addIssue({
+      code: 'custom',
+      path: ['evaluationRef'],
+      message: 'Live delegation event evaluation and reference must be stored together'
+    })
+    return
+  }
+  if (!event.evaluation || !event.evaluationRef) return
+  const expectedKind =
+    event.evaluation.executionStatus === 'completed'
+      ? 'turn_completed'
+      : event.evaluation.executionStatus === 'failed'
+        ? 'turn_failed'
+        : event.evaluation.executionStatus === 'cancelled'
+          ? 'turn_cancelled'
+          : 'turn_interrupted'
+  if (
+    event.direction !== 'child_to_parent' ||
+    event.kind !== expectedKind ||
+    event.relatedTurnId !== event.evaluation.turnId ||
+    event.evaluationRef.sessionId !== event.parentSessionId ||
+    event.evaluationRef.evaluationHash !== event.evaluation.evaluationHash
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['evaluation'],
+      message: 'Live delegation event evaluation does not match its mailbox identity'
     })
   }
 }

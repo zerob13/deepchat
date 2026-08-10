@@ -59,6 +59,14 @@ describe('SessionIdentityService', () => {
     expect(missing.identity.isAcpBackedSubagentSession(SESSION_ID, 'acp')).toBe(false)
   })
 
+  it('reads the persisted Session kind without hydrating runtime state', () => {
+    const subagent = createHarness({ session_kind: 'subagent' })
+    expect(subagent.identity.getSessionKind(SESSION_ID)).toBe('subagent')
+    expect(subagent.runtime.getHydrated(toAppSessionId(SESSION_ID))).toBeUndefined()
+
+    expect(createHarness(undefined).identity.getSessionKind(SESSION_ID)).toBeNull()
+  })
+
   it('falls back to the hydrated runtime provider when no provider is supplied', () => {
     const { identity, runtime } = createHarness({ session_kind: 'subagent' })
     runtime.getOrHydrate(toAppSessionId(SESSION_ID)).setRuntimeState({

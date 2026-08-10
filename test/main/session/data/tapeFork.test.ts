@@ -12,6 +12,7 @@ import {
   createTapeTableMock,
   createRecord
 } from './tapeTestHarness'
+import { DeepChatContractStore } from '@/tape/infrastructure/sqlite/tapeEntryStore'
 
 describe('SessionTape forks', () => {
   it('keeps fork writes isolated until merge and discards fork entries on discard', () => {
@@ -398,11 +399,12 @@ describe('SessionTape forks', () => {
     }
   })
 
-  itIfSqlite('does not copy Execution Journal facts from a fork', () => {
+  itIfSqlite('does not copy strict audit facts from a fork', () => {
     const db = new DatabaseCtor(':memory:')
     try {
       const table = new DeepChatTapeEntriesTable(db)
       const journalStore = new DeepChatExecutionJournalStore(db)
+      const contractStore = new DeepChatContractStore(db)
       table.createTable()
       const service = new SessionTape({
         deepchatTapeEntriesTable: table,
@@ -416,15 +418,29 @@ describe('SessionTape forks', () => {
         name: 'execution/run_started',
         data: { marker: 'must-not-merge' }
       })
+      contractStore.appendContractEvent({
+        sessionId: fork.forkSessionId,
+        name: 'contract/task_frozen',
+        data: { marker: 'must-not-merge' }
+      })
       expect(
         table
           .getBySession(fork.forkSessionId)
           .some((entry) => entry.name === 'execution/run_started')
       ).toBe(true)
+      expect(
+        table
+          .getBySession(fork.forkSessionId)
+          .some((entry) => entry.name === 'contract/task_frozen')
+      ).toBe(true)
 
       expect(service.mergeFork('parent', 'journal-isolation')).toBe(0)
       expect(
-        table.getBySession('parent').filter((entry) => entry.name?.startsWith('execution/'))
+        table
+          .getBySession('parent')
+          .filter(
+            (entry) => entry.name?.startsWith('execution/') || entry.name?.startsWith('contract/')
+          )
       ).toEqual([])
     } finally {
       db.close()

@@ -38,12 +38,19 @@ import type {
   PermissionMode,
   SubagentTapeLinkReceipt
 } from '@shared/types/agent-interface'
+import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
+import { projectTaskEvaluationSummary } from '@/tape/domain/taskEvaluation'
 import type { SessionRuntimeUpdate } from '@/session/runtimeEvents'
 import type { SessionDeletionGatePort } from '@/session/deletionGate'
 import { classifyToolEffect } from '@/tool/effectClassification'
 import type { ToolEffectObservation } from '@/tool/effectObserver'
 import { resolveToolPermissionMode } from '@/tool/permission/permissionMode'
-import type { ActiveLiveDelegationTurn, LiveDelegationRepository } from './liveDelegationRepository'
+import {
+  LiveDelegationTaskContractError,
+  type ActiveLiveDelegationTurn,
+  type ActiveLiveDelegationTurnIdentity,
+  type LiveDelegationRepository
+} from './liveDelegationRepository'
 import type {
   LiveDelegationSafetyPort,
   LiveDelegationTurnExecutionSnapshot
@@ -53,13 +60,22 @@ import type {
   LiveDelegationConsentReceipt,
   LiveDelegationConsentVerifier
 } from './liveDelegationConsent'
+import {
+  createLegacyLiveDelegationTaskContractInput,
+  createLiveDelegationTaskContractInput,
+  LIVE_DELEGATION_REQUIRED_HANDOFF_SECTIONS
+} from './liveDelegationTaskContract'
+import { extractMarkdownLevelTwoSection } from '@shared/orchestration/liveDelegationMarkdown'
 
 const MAX_WAITERS = 32
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000
 const MAX_WAIT_TIMEOUT_MS = 60_000
 const MAX_MODEL_PREVIEW_BYTES = 2 * 1024
 const MAX_MODEL_EVENT_BYTES = 16 * 1024
-const MAX_MODEL_WAIT_BYTES = 32 * 1024
+const MAX_MODEL_WAIT_CONTENT_BYTES = 32 * 1024
+const MAX_MODEL_WAIT_RESPONSE_BYTES = 64 * 1024
+const MAX_MODEL_EVENT_EVALUATION_EVIDENCE = 2
+const MAX_MODEL_TURN_EVALUATION_EVIDENCE = 4
 const LIVE_DELEGATION_OWNER_LIMIT = 5
 const HANDOFF_TRUNCATION_NOTICE =
   '[Handoff truncated. Use deepchat_subagents read_result for the complete child answer.]'
@@ -160,6 +176,8 @@ type CapableParent = ConversationSessionInfo & {
 export class LiveDelegationService {
   private readonly activeTurns = new Map<string, ActiveTurn>()
   private readonly childToTurn = new Map<string, string>()
+  private readonly quarantinedTurns = new Set<string>()
+  private readonly quarantineCancellations = new Set<Promise<void>>()
   private readonly childSafetyTails = new Map<string, Promise<void>>()
   private readonly waiters = new Set<MailboxWaiter>()
   private unsubscribeRuntime: (() => void) | null = null
@@ -170,10 +188,12 @@ export class LiveDelegationService {
 
   start(): void {
     if (this.started) return
-    const activeRecords = this.options.repository.listActiveTurns()
+    const activeRecords = this.options.repository.listActiveTurnIdentities()
+    this.childToTurn.clear()
+    this.quarantinedTurns.clear()
     for (const record of activeRecords) {
-      if (record.delegation.childSessionId) {
-        this.childToTurn.set(record.delegation.childSessionId, record.turn.id)
+      if (record.childSessionId) {
+        this.childToTurn.set(record.childSessionId, record.turnId)
       }
     }
     this.started = true
@@ -187,6 +207,24 @@ export class LiveDelegationService {
     this.reconcilePromise = this.reconcileActiveTurns(activeRecords).catch((error) => {
       console.error('[LiveDelegationService] Failed to reconcile active turns:', error)
     })
+  }
+
+  prepareTaskContractContext(childSessionId: string): DeepChatTaskContractContext | null {
+    const admittedTurnId = this.childToTurn.get(childSessionId)
+    if (admittedTurnId && this.quarantinedTurns.has(admittedTurnId)) {
+      throw new LiveDelegationTaskContractError(
+        `Child Session ${childSessionId} is quarantined after TaskContract reconciliation failed.`
+      )
+    }
+    const context = this.options.repository.prepareActiveTaskContractContext(childSessionId)
+    if (context === null) {
+      if (admittedTurnId === undefined) return null
+    } else if (admittedTurnId === context.contract.taskDescription.turnId) {
+      return context
+    }
+    throw new LiveDelegationTaskContractError(
+      `Child Session ${childSessionId} has no admitted live-delegation runtime matching its TaskContract.`
+    )
   }
 
   async stop(): Promise<void> {
@@ -209,7 +247,11 @@ export class LiveDelegationService {
     const cancellationWork = active
       .filter((turn) => turn.childSessionId)
       .map((turn) => this.cancelActiveChild(turn, 'service stop'))
-    await Promise.allSettled([...cancellationWork, ...pendingChildWork])
+    await Promise.allSettled([
+      ...cancellationWork,
+      ...pendingChildWork,
+      ...this.quarantineCancellations
+    ])
     await Promise.allSettled(
       active.map((turn) =>
         this.settle(turn, {
@@ -219,7 +261,9 @@ export class LiveDelegationService {
       )
     )
     this.activeTurns.clear()
-    this.childToTurn.clear()
+    for (const [childSessionId, turnId] of this.childToTurn) {
+      if (!this.quarantinedTurns.has(turnId)) this.childToTurn.delete(childSessionId)
+    }
     this.childSafetyTails.clear()
     for (const waiter of this.waiters) waiter.resolve()
     this.waiters.clear()
@@ -256,6 +300,7 @@ export class LiveDelegationService {
     const delegationId = nanoid()
     const turnId = nanoid()
     const executionSnapshot = createTurnExecutionSnapshot(parent)
+    const projectDir = await this.resolveParentProjectDir(parent)
     const created = this.runAuthorizedStartMutation(parent, 'spawn', authorization, () =>
       this.options.repository.create(
         {
@@ -265,7 +310,8 @@ export class LiveDelegationService {
           slotId: slot.id,
           targetAgentId,
           title: input.title,
-          prompt: input.prompt
+          prompt: input.prompt,
+          taskContract: createLiveDelegationTaskContractInput(projectDir)
         },
         beforeMutation
       )
@@ -335,7 +381,7 @@ export class LiveDelegationService {
     return await this.options.deletionGate.runWithSessionOperation(
       discoveredChild.sessionId,
       async () => {
-        await this.resolveCurrentSafety(delegation)
+        const currentSafety = await this.resolveCurrentSafety(delegation)
         const child = await this.options.sessions.resolveConversationSessionInfo(
           discoveredChild.sessionId
         )
@@ -350,17 +396,17 @@ export class LiveDelegationService {
             `Cannot continue delegation ${delegation.id} while child session is ${child.status}.`
           )
         }
-        const currentParent = await this.requireCapableParent(parent.sessionId)
         const created = this.runAuthorizedStartMutation(
-          currentParent,
+          currentSafety.parent,
           'follow_up',
           authorization,
           () =>
             this.options.repository.createFollowUp(
-              currentParent.sessionId,
+              currentSafety.parent.sessionId,
               delegation.id,
               nanoid(),
               task,
+              createLiveDelegationTaskContractInput(currentSafety.projectDir),
               undefined,
               beforeMutation
             )
@@ -484,6 +530,10 @@ export class LiveDelegationService {
       answerSha256,
       answerBytes,
       answerEstimatedTokens: resultRef.answerEstimatedTokens,
+      evaluation:
+        turn.evaluation && turn.evaluationRef
+          ? projectTaskEvaluationSummary(turn.evaluation, turn.evaluationRef)
+          : null,
       text: page.text,
       nextCursor:
         page.nextOffset === null
@@ -510,12 +560,12 @@ export class LiveDelegationService {
     if (!this.started) return
 
     const delegationIds = new Set<string>()
-    for (const record of this.options.repository.listActiveTurns()) {
+    for (const record of this.options.repository.listActiveTurnIdentities()) {
       if (
-        record.delegation.parentSessionId === normalizedSessionId ||
-        record.delegation.childSessionId === normalizedSessionId
+        record.parentSessionId === normalizedSessionId ||
+        record.childSessionId === normalizedSessionId
       ) {
-        delegationIds.add(record.delegation.id)
+        delegationIds.add(record.delegationId)
       }
     }
     for (const active of this.activeTurns.values()) {
@@ -737,6 +787,7 @@ export class LiveDelegationService {
           })
           this.childToTurn.delete(childSessionId)
         }
+        this.quarantinedTurns.delete(turn.id)
       }
       return this.inspect(delegation.parentSessionId, delegation.id)
     }
@@ -775,6 +826,10 @@ export class LiveDelegationService {
       await active.admissionLease.resume()
       await task()
     } catch (error) {
+      if (error instanceof LiveDelegationTaskContractError) {
+        this.parkTaskContractBoundary(active, error)
+        return
+      }
       if (
         active.admissionLease.state === 'suspended' &&
         !active.controller.signal.aborted &&
@@ -787,6 +842,18 @@ export class LiveDelegationService {
         error: errorMessage(error)
       })
     }
+  }
+
+  private parkTaskContractBoundary(active: ActiveTurn, error: unknown): void {
+    console.error('[LiveDelegationService] TaskContract boundary remains recoverable:', {
+      delegationId: active.delegationId,
+      turnId: active.turnId,
+      error
+    })
+    active.admissionLease.release()
+    if (active.childSessionId) this.childToTurn.delete(active.childSessionId)
+    this.activeTurns.delete(active.turnId)
+    active.completion.resolve()
   }
 
   private createActiveTurn(delegation: LiveDelegation, turn: LiveDelegationTurn): ActiveTurn {
@@ -840,6 +907,7 @@ export class LiveDelegationService {
       bound,
       turn.kind === 'follow_up' ? executionSnapshot : null
     )
+    this.options.repository.ensureInheritedTaskContract(turn.id, child.sessionId)
     this.childToTurn.set(child.sessionId, active.turnId)
     active.controller.signal.throwIfAborted()
 
@@ -1099,11 +1167,21 @@ export class LiveDelegationService {
   ): Promise<ActiveTurn | null> {
     let turnId = this.childToTurn.get(childSessionId)
     if (!turnId) return null
+    if (this.quarantinedTurns.has(turnId)) {
+      throw new LiveDelegationTaskContractError(
+        `Child Session ${childSessionId} is quarantined after TaskContract reconciliation failed.`
+      )
+    }
     let active = this.activeTurns.get(turnId)
     if (!active && this.reconcilePromise) {
       await awaitWithAbort(this.reconcilePromise, signal)
       turnId = this.childToTurn.get(childSessionId)
       active = turnId ? this.activeTurns.get(turnId) : undefined
+    }
+    if (turnId && this.quarantinedTurns.has(turnId)) {
+      throw new LiveDelegationTaskContractError(
+        `Child Session ${childSessionId} is quarantined after TaskContract reconciliation failed.`
+      )
     }
     if (!active || active.settling) return null
     signal?.throwIfAborted()
@@ -1171,7 +1249,8 @@ export class LiveDelegationService {
         summary: summary || null,
         error,
         resultRef,
-        tapeReceipt
+        tapeReceipt,
+        candidateResult: persistedResult?.answerMarkdown.trim() || null
       })
       this.publishChanged(settled.delegation)
       this.notifyMailbox(settled.delegation.parentSessionId, settled.delegation.id)
@@ -1183,6 +1262,17 @@ export class LiveDelegationService {
       })
       try {
         const turn = this.options.repository.getTurn(active.turnId)
+        if (turn?.taskContract) {
+          console.error(
+            '[LiveDelegationService] Contract-bearing settlement remains recoverable:',
+            {
+              delegationId: active.delegationId,
+              turnId: active.turnId,
+              error
+            }
+          )
+          return
+        }
         if (turn && isActiveTurnStatus(turn.status)) {
           const settled = this.options.repository.finishTurn({
             turnId: active.turnId,
@@ -1273,11 +1363,14 @@ export class LiveDelegationService {
     }
   }
 
-  private async reconcileActiveTurns(records: ActiveLiveDelegationTurn[]): Promise<void> {
+  private async reconcileActiveTurns(records: ActiveLiveDelegationTurnIdentity[]): Promise<void> {
     for (const record of records) {
       if (!this.started) return
       try {
-        await this.reconcileActiveTurn(record)
+        await this.reconcileActiveTurn({
+          delegation: this.options.repository.require(record.delegationId),
+          turn: this.options.repository.requireTurn(record.turnId)
+        })
       } catch (error) {
         this.failReconciliation(record, error)
       }
@@ -1292,7 +1385,7 @@ export class LiveDelegationService {
           record.delegation.id
         )
     if (!this.started) return
-    const turn = this.options.repository.getTurn(record.turn.id)
+    let turn = this.options.repository.getTurn(record.turn.id)
     if (!turn || !isActiveTurnStatus(turn.status)) {
       if (record.delegation.childSessionId) {
         this.childToTurn.delete(record.delegation.childSessionId)
@@ -1315,6 +1408,20 @@ export class LiveDelegationService {
       return
     }
 
+    if (child.status === 'generating' || turn.startedAt !== null) {
+      if (!turn.taskContract) {
+        const projectDir = await this.options.sessions.resolveConversationWorkdir(
+          delegation.parentSessionId
+        )
+        if (!this.started) return
+        turn = this.options.repository.freezeLegacyTaskContract(
+          turn.id,
+          createLegacyLiveDelegationTaskContractInput(projectDir)
+        ).turn
+      }
+      this.options.repository.ensureInheritedTaskContract(turn.id, child.sessionId)
+    }
+
     const active = this.createActiveTurn(delegation, turn)
     active.childSessionId = child.sessionId
     active.started = turn.startedAt !== null || child.status === 'generating'
@@ -1329,6 +1436,11 @@ export class LiveDelegationService {
       return
     }
     if (turn.startedAt === null) {
+      if (turn.taskContract) {
+        active.runtimeStatus = null
+        this.scheduleTurn(delegation, turn, createTurnExecutionSnapshot(child))
+        return
+      }
       const settled = this.options.repository.finishTurn({
         turnId: turn.id,
         status: 'interrupted',
@@ -1347,18 +1459,54 @@ export class LiveDelegationService {
     })
   }
 
-  private failReconciliation(record: ActiveLiveDelegationTurn, error: unknown): void {
+  private failReconciliation(record: ActiveLiveDelegationTurnIdentity, error: unknown): void {
     console.error('[LiveDelegationService] Failed to reconcile child turn:', {
-      delegationId: record.delegation.id,
-      turnId: record.turn.id,
+      delegationId: record.delegationId,
+      turnId: record.turnId,
       error
     })
     if (!this.started) return
+    if (error instanceof LiveDelegationTaskContractError) {
+      let turnId = record.turnId
+      let childSessionId = record.childSessionId
+      try {
+        const current = this.options.repository.getTurn(record.turnId)
+        if (!current || !isActiveTurnStatus(current.status)) {
+          if (childSessionId) this.childToTurn.delete(childSessionId)
+          return
+        }
+        turnId = current.id
+        childSessionId =
+          this.options.repository.get(record.delegationId)?.childSessionId ?? childSessionId
+      } catch (lookupError) {
+        console.error('[LiveDelegationService] Failed to resolve reconciliation quarantine:', {
+          delegationId: record.delegationId,
+          turnId,
+          error: lookupError
+        })
+      }
+      this.quarantinedTurns.add(turnId)
+      if (childSessionId) {
+        this.childToTurn.set(childSessionId, turnId)
+        const cancellation = this.options.sessions
+          .cancelConversation(childSessionId)
+          .catch((cancelError) => {
+            console.warn('[LiveDelegationService] Failed to cancel quarantined child session:', {
+              childSessionId,
+              turnId,
+              error: cancelError
+            })
+          })
+          .finally(() => this.quarantineCancellations.delete(cancellation))
+        this.quarantineCancellations.add(cancellation)
+      }
+      return
+    }
     try {
-      const current = this.options.repository.getTurn(record.turn.id)
+      const current = this.options.repository.getTurn(record.turnId)
       if (!current || !isActiveTurnStatus(current.status)) {
-        if (record.delegation.childSessionId) {
-          this.childToTurn.delete(record.delegation.childSessionId)
+        if (record.childSessionId) {
+          this.childToTurn.delete(record.childSessionId)
         }
         return
       }
@@ -1370,15 +1518,15 @@ export class LiveDelegationService {
           LIVE_DELEGATION_MAX_HANDOFF_BYTES
         )
       })
-      if (record.delegation.childSessionId) {
-        this.childToTurn.delete(record.delegation.childSessionId)
+      if (record.childSessionId) {
+        this.childToTurn.delete(record.childSessionId)
       }
       this.publishChanged(settled.delegation)
       this.notifyMailbox(settled.delegation.parentSessionId, settled.delegation.id)
     } catch (settleError) {
       console.error('[LiveDelegationService] Failed to persist reconciliation error:', {
-        delegationId: record.delegation.id,
-        turnId: record.turn.id,
+        delegationId: record.delegationId,
+        turnId: record.turnId,
         error: settleError
       })
     }
@@ -1398,8 +1546,8 @@ export class LiveDelegationService {
       throw new Error(`Subagent slot target changed for delegation ${delegation.id}.`)
     }
     const projectDir =
-      (await this.options.sessions.resolveConversationWorkdir(parent.sessionId))?.trim() ||
-      parent.projectDir?.trim() ||
+      (await this.options.sessions.resolveConversationWorkdir(parent.sessionId)) ||
+      parent.projectDir ||
       null
     return { parent, projectDir }
   }
@@ -1477,6 +1625,11 @@ export class LiveDelegationService {
     return parent as CapableParent
   }
 
+  private async resolveParentProjectDir(parent: CapableParent): Promise<string | null> {
+    const runtimeWorkdir = await this.options.sessions.resolveConversationWorkdir(parent.sessionId)
+    return runtimeWorkdir || parent.projectDir || null
+  }
+
   private publishChanged(delegation: LiveDelegation): void {
     try {
       this.options.onChanged?.(delegation.parentSessionId, delegation.id)
@@ -1502,6 +1655,7 @@ export class LiveDelegationService {
 }
 
 function buildTurnHandoff(delegation: LiveDelegation, turn: LiveDelegationTurn): string {
+  const [handoffSection, ...remainingSections] = LIVE_DELEGATION_REQUIRED_HANDOFF_SECTIONS
   return [
     '# DeepChat Live Delegation',
     '',
@@ -1512,14 +1666,10 @@ function buildTurnHandoff(delegation: LiveDelegation, turn: LiveDelegationTurn):
     turn.prompt,
     '',
     'Return markdown with these sections in this order:',
-    '## Handoff',
+    `## ${handoffSection}`,
     'A self-contained conclusion for the parent Agent, limited to about 2,000 tokens. Include the',
     'decision, critical evidence, changed files, validation, and unresolved risks needed next.',
-    '## Result',
-    '## Evidence',
-    '## Changed Files',
-    '## Validation',
-    '## Unresolved',
+    ...remainingSections.map((section) => `## ${section}`),
     'Use `None` when a section has no entries.',
     '',
     'Rules:',
@@ -1585,8 +1735,10 @@ function buildResultHandoff(
   truncated: boolean
 } {
   const normalized = sanitizeDelegationText(answer.trim())
-  const handoffSection = extractMarkdownSection(normalized, 'Handoff')
-  const resultSection = handoffSection ? null : extractMarkdownSection(normalized, 'Result')
+  const handoff = extractMarkdownLevelTwoSection(normalized, 'Handoff')
+  const handoffSection = handoff?.body ? handoff.markdown : null
+  const result = handoffSection ? null : extractMarkdownLevelTwoSection(normalized, 'Result')
+  const resultSection = handoffSection ? null : result?.body ? result.markdown : null
   const source: LiveDelegationResultRef['handoffSource'] = handoffSection
     ? 'handoff_section'
     : resultSection
@@ -1600,52 +1752,6 @@ function buildResultHandoff(
     resultIsReferenced ? HANDOFF_TRUNCATION_NOTICE : UNREFERENCED_HANDOFF_TRUNCATION_NOTICE
   )
   return { text: bounded.text, source, truncated: bounded.truncated }
-}
-
-function extractMarkdownSection(markdown: string, title: string): string | null {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
-  const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-  const target = new RegExp(`^ {0,3}##\\s+${escapedTitle}\\s*#*\\s*$`, 'iu')
-  const nextSection = /^ {0,3}#{1,2}\s+\S/u
-  const fencePattern = /^ {0,3}(`{3,}|~{3,})/u
-  let fence: { marker: '`' | '~'; length: number } | null = null
-  let start = -1
-  let end = lines.length
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? ''
-    if (fence) {
-      if (isClosingFence(line, fence)) fence = null
-      continue
-    }
-    const fenceMatch = line.match(fencePattern)?.[1]
-    if (fenceMatch) {
-      const marker = fenceMatch[0] as '`' | '~'
-      fence = { marker, length: fenceMatch.length }
-      continue
-    }
-    if (start < 0) {
-      if (target.test(line)) start = index
-      continue
-    }
-    if (nextSection.test(line)) {
-      end = index
-      break
-    }
-  }
-  if (start < 0) return null
-  const body = lines
-    .slice(start + 1, end)
-    .join('\n')
-    .trim()
-  return body ? lines.slice(start, end).join('\n').trim() : null
-}
-
-function isClosingFence(line: string, fence: { marker: '`' | '~'; length: number }): boolean {
-  const candidate = line.replace(/^ {0,3}/u, '').trimEnd()
-  return (
-    candidate.length >= fence.length &&
-    [...candidate].every((character) => character === fence.marker)
-  )
 }
 
 function truncateToBudgets(
@@ -1814,11 +1920,24 @@ function createWaitResult(
 ): LiveDelegationWaitResult {
   const maxBytesPerEvent = Math.min(
     MAX_MODEL_EVENT_BYTES,
-    Math.max(1, Math.floor(MAX_MODEL_WAIT_BYTES / Math.max(1, events.length)))
+    Math.max(1, Math.floor(MAX_MODEL_WAIT_CONTENT_BYTES / Math.max(1, events.length)))
   )
+  const projected: LiveDelegationEventSummary[] = []
+  for (const event of events) {
+    const candidate = projectEventSummary(event, maxBytesPerEvent)
+    const next = [...projected, candidate]
+    if (
+      projected.length > 0 &&
+      Buffer.byteLength(JSON.stringify({ events: next, cursor: candidate.id, timedOut }), 'utf8') >
+        MAX_MODEL_WAIT_RESPONSE_BYTES
+    ) {
+      break
+    }
+    projected.push(candidate)
+  }
   return {
-    events: events.map((event) => projectEventSummary(event, maxBytesPerEvent)),
-    cursor: events.at(-1)?.id ?? priorCursor,
+    events: projected,
+    cursor: projected.at(-1)?.id ?? priorCursor,
     timedOut
   }
 }
@@ -1827,11 +1946,19 @@ function projectEventSummary(
   event: LiveDelegationEvent,
   maxBytes: number
 ): LiveDelegationEventSummary {
-  const { content, ...identity } = event
+  const { content, evaluation, evaluationRef, ...identity } = event
   return {
     ...identity,
     contentPreview: truncateUtf8(content, maxBytes),
-    contentTruncated: Buffer.byteLength(content, 'utf8') > maxBytes
+    contentTruncated: Buffer.byteLength(content, 'utf8') > maxBytes,
+    evaluation:
+      evaluation && evaluationRef
+        ? projectTaskEvaluationSummary(
+            evaluation,
+            evaluationRef,
+            MAX_MODEL_EVENT_EVALUATION_EVIDENCE
+          )
+        : null
   }
 }
 
@@ -1845,12 +1972,30 @@ function projectDelegationSummary(delegation: LiveDelegation): LiveDelegationSum
 }
 
 function projectTurnSummary(turn: LiveDelegationTurn): LiveDelegationTurnSummary {
-  const { prompt, resultSummary, error, ...identity } = turn
+  const {
+    prompt,
+    resultSummary,
+    error,
+    taskContract: _taskContract,
+    taskContractRef: _taskContractRef,
+    inheritedTaskContractRef: _inheritedTaskContractRef,
+    evaluation,
+    evaluationRef,
+    ...identity
+  } = turn
   return {
     ...identity,
     promptPreview: truncateUtf8(prompt, MAX_MODEL_PREVIEW_BYTES),
     resultPreview: resultSummary ? truncateUtf8(resultSummary, MAX_MODEL_PREVIEW_BYTES) : null,
-    errorPreview: error ? truncateUtf8(error, MAX_MODEL_PREVIEW_BYTES) : null
+    errorPreview: error ? truncateUtf8(error, MAX_MODEL_PREVIEW_BYTES) : null,
+    evaluation:
+      evaluation && evaluationRef
+        ? projectTaskEvaluationSummary(
+            evaluation,
+            evaluationRef,
+            MAX_MODEL_TURN_EVALUATION_EVIDENCE
+          )
+        : null
   }
 }
 

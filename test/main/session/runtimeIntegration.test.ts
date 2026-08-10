@@ -1,5 +1,5 @@
-import { AppSessionService } from '@/agent/shared/appSessionService'
 import * as fs from 'node:fs'
+import { AppSessionService } from '@/agent/shared/appSessionService'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createDeepChatAgentHarness, type DeepChatAgentHarness } from '@/agent/deepchat/harness'
 import { estimateMessagesTokens } from '@/agent/deepchat/runtime/contextBuilder'
@@ -45,7 +45,9 @@ vi.mock('@/events', async (importOriginal) => {
 })
 
 beforeEach(() => {
-  vi.mocked(fs.promises.readFile).mockResolvedValue('')
+  vi.mocked(fs.promises.readFile).mockRejectedValue(
+    Object.assign(new Error('AGENTS.md does not exist'), { code: 'ENOENT' })
+  )
 })
 
 afterEach(() => {
@@ -826,6 +828,9 @@ function createRuntimeDependencies() {
         content,
         summary: { status: 'ready' as const, issues: [], suggestedActions: [] }
       }))
+    },
+    taskContractContext: {
+      prepare: vi.fn().mockReturnValue(null)
     },
     commandShell: {
       resolveForTurn: vi.fn().mockResolvedValue(POSIX_COMMAND_SHELL),

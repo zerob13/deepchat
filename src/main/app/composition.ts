@@ -168,6 +168,8 @@ import { LiveDelegationRepository } from '@/orchestration/liveDelegationReposito
 import { LiveDelegationService } from '@/orchestration/liveDelegationService'
 import { LiveDelegationSafetyCoordinator } from '@/orchestration/liveDelegationSafety'
 import { LiveDelegationConsentAuthority } from '@/orchestration/liveDelegationConsent'
+import { TaskContractService } from '@/tape/application/taskContractService'
+import { TaskEvaluationService } from '@/tape/application/taskEvaluationService'
 import { createProjectRoutes } from '../project/routes'
 import { RemoteService } from '../remote'
 import type { RemoteServiceLike } from '../remote/ports'
@@ -188,6 +190,7 @@ import {
   normalizeDeepChatSubagentSlots,
   resolveDeepChatSubagentCapability
 } from '@shared/lib/deepchatSubagents'
+import { composeSubagentAuthority } from '@/session/subagentAuthority'
 import type {
   AcpAsLlmProviderPermissionPort,
   AcpAsLlmProviderSessionControlPort,
@@ -304,9 +307,6 @@ export async function createMainProcessControl(dependencies: {
   const databaseSecurityService = dependencies.databaseSecurityService
   const startupWorkloadCoordinator = dependencies.startupWorkloadCoordinator
   const mainDatabase = dependencies.database
-  const liveDelegationRepository = new LiveDelegationRepository(
-    new LiveDelegationDatabase(mainDatabase)
-  )
   const fileWatcherService = new FileWatcherService()
   let windowPresenter: IWindowPresenter
   let providerSettings: ProviderSettings
@@ -563,6 +563,17 @@ export async function createMainProcessControl(dependencies: {
           version: Date.now()
         })
     }
+  )
+  const taskContractService = new TaskContractService(
+    () => sessionData.database.deepchatContractStore
+  )
+  const taskEvaluationService = new TaskEvaluationService(
+    () => sessionData.database.deepchatContractStore
+  )
+  const liveDelegationRepository = new LiveDelegationRepository(
+    new LiveDelegationDatabase(mainDatabase),
+    taskContractService,
+    taskEvaluationService
   )
   const sessionRuntimeEvents = new SessionRuntimeEvents()
   const projectDatabase = new ProjectDatabase(mainDatabase)
@@ -1103,6 +1114,55 @@ export async function createMainProcessControl(dependencies: {
 
         return null
       },
+      resolveConversationExecutionAuthority: async (conversationId) => {
+        const session = await sessionQuery.getSession(conversationId)
+        if (!session) {
+          return null
+        }
+
+        const [agentType, persistedDisabledAgentTools, agentConfig] = await Promise.all([
+          agentSettings.getAgentType(session.agentId),
+          sessionAssignment.getSessionDisabledAgentTools(session.id),
+          agentSettings.resolveDeepChatAgentConfig(session.agentId)
+        ])
+        let authority = composeSubagentAuthority({
+          disabledAgentTools: persistedDisabledAgentTools,
+          enabledMcpServerIds: agentConfig.enabledMcpServerIds
+        })
+        if (session.sessionKind === 'subagent') {
+          const parentSessionId = session.parentSessionId?.trim()
+          const parent = parentSessionId ? await sessionQuery.getSession(parentSessionId) : null
+          if (!parent || parent.sessionKind !== 'regular') {
+            throw new Error(`Subagent Session ${session.id} has no resolvable parent tool policy.`)
+          }
+          const [parentDisabledAgentTools, parentConfig] = await Promise.all([
+            sessionAssignment.getSessionDisabledAgentTools(parent.id),
+            agentSettings.resolveDeepChatAgentConfig(parent.agentId)
+          ])
+          authority = composeSubagentAuthority(
+            { disabledAgentTools: persistedDisabledAgentTools },
+            { disabledAgentTools: parentDisabledAgentTools },
+            parentConfig,
+            agentConfig
+          )
+        }
+        const subagentCapability = resolveDeepChatSubagentCapability({
+          agentType,
+          sessionKind: session.sessionKind,
+          agentPolicyEnabled: agentConfig.subagentEnabled === true,
+          slots: normalizeDeepChatSubagentSlots(agentConfig.subagents)
+        })
+
+        return {
+          sessionId: session.id,
+          agentId: session.agentId,
+          projectDir: session.projectDir ?? null,
+          sessionKind: session.sessionKind,
+          disabledAgentTools: authority.disabledAgentTools,
+          enabledMcpServerIds: authority.enabledMcpServerIds,
+          subagentCapability
+        }
+      },
       resolveConversationSessionInfo: async (conversationId) => {
         const session = await sessionQuery.getSession(conversationId)
         if (!session) {
@@ -1414,6 +1474,9 @@ export async function createMainProcessControl(dependencies: {
       resume: async (sessionId, signal) =>
         await liveDelegationService.beforeInteractionContinuation(sessionId, signal),
       suspend: (sessionId) => liveDelegationService.suspendInteractionContinuation(sessionId)
+    },
+    taskContractContext: {
+      prepare: (sessionId) => liveDelegationService.prepareTaskContractContext(sessionId)
     }
   })
   const sessionTranscriptMutations = new SessionTranscriptMutations({

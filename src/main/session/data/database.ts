@@ -16,10 +16,15 @@ import { DeepChatSearchDocumentsTable } from './tables/deepchatSearchDocuments'
 import { DeepChatPendingInputsTable } from './tables/deepchatPendingInputs'
 import { DeepChatUsageStatsTable } from './tables/deepchatUsageStats'
 import {
+  DeepChatContractStore,
   DeepChatExecutionJournalStore,
   DeepChatTapeEntriesTable
 } from '@/tape/infrastructure/sqlite/tapeEntryStore'
-import type { ExecutionJournalPersistenceStore, TapeMutationProjection } from '@/tape/ports/storage'
+import type {
+  ContractPersistenceStore,
+  ExecutionJournalPersistenceStore,
+  TapeMutationProjection
+} from '@/tape/ports/storage'
 import { SqliteTapeLifecycleAdapter } from '@/tape/infrastructure/sqlite/tapeLifecycleAdapter'
 import { DeepChatTapeSearchProjectionTable } from '@/tape/infrastructure/sqlite/tapeSearchProjectionStore'
 import { DeepChatSessionMetadataTable } from './tables/deepchatSessionMetadata'
@@ -102,6 +107,10 @@ export class SessionDatabase {
 
   get deepchatExecutionJournalStore(): ExecutionJournalPersistenceStore {
     return new DeepChatExecutionJournalStore(this.getDatabase(), this.getTapeMutationProjection?.())
+  }
+
+  get deepchatContractStore(): ContractPersistenceStore {
+    return new DeepChatContractStore(this.getDatabase(), this.getTapeMutationProjection?.())
   }
 
   get tapeLifecycle() {

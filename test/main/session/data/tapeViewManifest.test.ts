@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { ModelType } from '@shared/model'
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import { TOOL_EXECUTION, type MCPToolDefinitionBase } from '@shared/types/core/mcp'
+import { hashJsonData } from '@/tape/domain/canonicalJson'
+import {
+  buildExecutionContract,
+  isDeepChatExecutionContract
+} from '@/tape/domain/executionContract'
 import {
   buildIncludedRefs,
   buildRequestRefs,
@@ -25,6 +31,75 @@ function createRecord(overrides: Partial<ChatMessageRecord>): ChatMessageRecord 
     createdAt: 100,
     updatedAt: 100,
     ...overrides
+  }
+}
+
+function createV5Fixture(permissionMode: 'default' | 'auto_approve' = 'default') {
+  const messages = [{ role: 'user' as const, content: 'hello' }]
+  const tools = []
+  const executionContract = buildExecutionContract({
+    request: {
+      sessionId: 's1',
+      messageId: 'a1',
+      runId: '11111111-1111-4111-8111-111111111111',
+      requestSeq: 1
+    },
+    promptAssembly: { prompt: '', sections: [] },
+    providerMessages: messages,
+    tools,
+    providerId: 'openai',
+    modelId: 'gpt-4o',
+    modelConfig: {
+      maxTokens: 100,
+      contextLength: 1000,
+      vision: false,
+      functionCall: true,
+      reasoning: false,
+      type: ModelType.Chat,
+      conversationId: 's1'
+    },
+    temperature: 0.2,
+    maxTokens: 100,
+    workspace: { kind: 'runtime_default' },
+    maxSubagentDepth: 0,
+    dynamicControlSnapshot: {
+      permissionMode,
+      requestAdmitted: true,
+      cancellationRequested: false
+    },
+    assemblerVersion: 'deepchat-view-v1'
+  })
+  return {
+    executionContract,
+    input: {
+      sessionId: 's1',
+      messageId: 'a1',
+      requestSeq: 1,
+      taskType: 'chat' as const,
+      policy: 'legacy_context_v1' as const,
+      policyVersion: 1,
+      messages,
+      tools,
+      latestEntryId: 7,
+      anchorEntryIds: [1],
+      included: [],
+      excluded: [],
+      tokenBudget: {
+        contextLength: 1000,
+        requestedMaxTokens: 100,
+        effectiveMaxTokens: 100,
+        reserveTokens: 100,
+        toolReserveTokens: 0
+      },
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      summaryCursorOrderSeq: 1,
+      supportsVision: false,
+      supportsAudioInput: false,
+      traceDebugEnabled: false,
+      executionContract,
+      assembledAt: 123
+    }
   }
 }
 
@@ -114,6 +189,120 @@ describe('tapeViewManifest', () => {
     expect(first.hashes.manifestHash).toHaveLength(64)
     expect(first.tokenBudget.estimatedPromptTokens).toBeGreaterThan(0)
     expect(JSON.stringify(first)).not.toContain('secret prompt content')
+  })
+
+  it('embeds a matching execution contract in a schema-v5 manifest', () => {
+    const { input, executionContract } = createV5Fixture()
+    const manifest = createTapeViewManifest(input)
+
+    expect(manifest.schemaVersion).toBe(5)
+    expect(manifest.hashVersion).toBe(3)
+    expect(manifest.executionContract).toBe(executionContract)
+    expect(manifest.hashes.promptHash).toBe(executionContract.provenance.promptHash)
+    expect(manifest.hashes.toolDefinitionsHash).toBe(
+      executionContract.provenance.providerVisibleToolDefinitionsHash
+    )
+    expect(verifyTapeViewManifestHash(manifest)).toBe('valid')
+    expect(verifyTapeViewManifestHash({ ...manifest, viewId: 'view_tampered' })).toBe('invalid')
+    expect(normalizeStoredTapeViewManifest(JSON.parse(JSON.stringify(manifest)), 's1')).toEqual(
+      manifest
+    )
+  })
+
+  it('rejects execution contracts that do not match the View request or provider payload', () => {
+    const { input, executionContract } = createV5Fixture()
+    const agentTool = {
+      source: 'agent' as const,
+      execution: TOOL_EXECUTION.read.parallel,
+      type: 'function' as const,
+      function: {
+        name: 'inspect',
+        description: 'Inspect a resource',
+        parameters: { type: 'object', properties: {} }
+      },
+      server: { name: 'agent-filesystem', icons: '', description: 'Agent tools' }
+    }
+
+    expect(() => createTapeViewManifest({ ...input, messageId: 'other-message' })).toThrow(
+      /request identity/
+    )
+    expect(() => createTapeViewManifest({ ...input, sessionId: 'other-session' })).toThrow(
+      /request identity/
+    )
+    expect(() => createTapeViewManifest({ ...input, requestSeq: 2 })).toThrow(/request identity/)
+    expect(() => createTapeViewManifest({ ...input, providerId: 'other-provider' })).toThrow(
+      /provider identity/
+    )
+    expect(() => createTapeViewManifest({ ...input, modelId: 'other-model' })).toThrow(
+      /provider identity/
+    )
+    expect(() =>
+      createTapeViewManifest({
+        ...input,
+        messages: [...input.messages, { role: 'user', content: 'changed' }]
+      })
+    ).toThrow(/provider-message hash/)
+    expect(() => createTapeViewManifest({ ...input, tools: [agentTool] })).toThrow(
+      /tool-definition hash/
+    )
+    expect(() =>
+      createTapeViewManifest({
+        ...input,
+        executionContract: { ...executionContract, contractHash: '0'.repeat(64) }
+      })
+    ).toThrow(/invalid hash/)
+    const mutableContract = JSON.parse(JSON.stringify(executionContract))
+    expect(isDeepChatExecutionContract(mutableContract)).toBe(true)
+    expect(() => createTapeViewManifest({ ...input, executionContract: mutableContract })).toThrow(
+      /immutable/
+    )
+  })
+
+  it('binds the execution contract into v5 identity but excludes assembledAt', () => {
+    const first = createV5Fixture('default')
+    const changedControl = createV5Fixture('auto_approve')
+    const early = createTapeViewManifest(first.input)
+    const late = createTapeViewManifest({ ...first.input, assembledAt: 999 })
+    const changedContract = createTapeViewManifest(changedControl.input)
+
+    expect(early.hashes.manifestHash).toBe(late.hashes.manifestHash)
+    expect(early.viewId).toBe(late.viewId)
+    expect(early.hashes.manifestHash).not.toBe(changedContract.hashes.manifestHash)
+    expect(early.viewId).not.toBe(changedContract.viewId)
+  })
+
+  it('rejects malformed v5 contracts even when their contract hash is self-consistent', () => {
+    const { input, executionContract } = createV5Fixture()
+    const malformed = JSON.parse(JSON.stringify(executionContract))
+    malformed.provenance.promptSections = [
+      {
+        kind: 'configured_prompt',
+        sourceRef: 'test:prompt',
+        inclusion: 'included',
+        contentHash: 'a'.repeat(64),
+        degradationCodes: []
+      }
+    ]
+    const { contractHash: _, ...draft } = malformed
+    malformed.contractHash = hashJsonData(draft)
+
+    expect(isDeepChatExecutionContract(malformed)).toBe(false)
+    expect(
+      normalizeStoredTapeViewManifest(
+        { ...createTapeViewManifest(input), executionContract: malformed },
+        's1'
+      )
+    ).toBeNull()
+  })
+
+  it('rejects missing v5 contracts without changing legacy manifest reads', () => {
+    const { input } = createV5Fixture()
+    const v5 = createTapeViewManifest(input)
+    const withoutContract = { ...v5 } as Record<string, unknown>
+    delete withoutContract.executionContract
+
+    expect(normalizeStoredTapeViewManifest(withoutContract, 's1')).toBeNull()
+    expect(createTapeViewManifest({ ...input, executionContract: undefined }).schemaVersion).toBe(4)
   })
 
   it('keeps execution metadata out of provider-view tool hashes', () => {

@@ -29,6 +29,7 @@ import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { SessionStateResolver } from './sessionStateResolver'
 import { toolContentToText } from './toolAdapters'
 import { isUserConfigurableAgentTool } from '@shared/agentTools'
+import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import { CommandShellProfileSchema, type CommandShellProfile } from '@shared/commandShell'
 import type { CommandShellService } from '@/agent/shared/process/commandShellService'
 
@@ -102,6 +103,7 @@ export class DeferredToolExecutor {
     messageId: string,
     toolCall: NonNullable<AssistantMessageBlock['tool_call']>,
     onToolCallStarted?: () => void,
+    executionContract?: DeepChatExecutionContract,
     commandShellProfile?: CommandShellProfile,
     oneShotCommandGrantId?: string
   ): Promise<DeferredToolExecutionResult> {
@@ -401,6 +403,14 @@ export class DeferredToolExecutor {
       invoked = true
       onToolCallStarted?.()
       const result = await this.dependencies.toolExecutionPort.execute(request, {
+        ...(executionContract
+          ? {
+              runId: executionContract.request.runId,
+              messageId,
+              requestSeq: executionContract.request.requestSeq,
+              executionContract
+            }
+          : {}),
         agentId: this.dependencies.identity.getAgentId(sessionId) ?? 'deepchat',
         permissionMode: sessionState.permissionMode,
         activeSkillNames: deferredActiveSkillNames,

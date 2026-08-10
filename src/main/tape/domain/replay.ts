@@ -4,6 +4,7 @@ import type {
   DeepChatTapeViewManifest
 } from '@shared/types/tape-view-manifest'
 import type { DeepChatTapeReplaySlice } from '@shared/types/tape-replay'
+import { isDeepChatExecutionContract } from './executionContract'
 import { hashJson } from './viewManifest'
 
 const VIEW_POLICIES = new Set([
@@ -137,6 +138,34 @@ function isViewManifestMeta(value: unknown): value is DeepChatTapeViewManifest['
   )
 }
 
+function hasExecutionContractForSchema(
+  value: Record<string, unknown>,
+  schemaVersion: DeepChatTapeViewManifest['schemaVersion']
+): boolean {
+  if (schemaVersion !== 5) return value.executionContract === undefined
+  if (
+    value.hashVersion !== 3 ||
+    !isDeepChatExecutionContract(value.executionContract) ||
+    !isRecordObject(value.meta) ||
+    !isRecordObject(value.hashes)
+  ) {
+    return false
+  }
+
+  const contract = value.executionContract
+  return (
+    contract.request.sessionId === value.sessionId &&
+    contract.request.messageId === value.messageId &&
+    contract.request.requestSeq === value.requestSeq &&
+    contract.provenance.providerId === value.meta.providerId &&
+    contract.provenance.modelId === value.meta.modelId &&
+    contract.provenance.promptHash === value.hashes.promptHash &&
+    contract.provenance.providerVisibleToolDefinitionsHash === value.hashes.toolDefinitionsHash &&
+    typeof value.hashes.manifestHash === 'string' &&
+    value.viewId === `view_${value.hashes.manifestHash.slice(0, 16)}`
+  )
+}
+
 export function isTapeViewManifest(
   value: unknown,
   sessionId: string
@@ -146,7 +175,8 @@ export function isTapeViewManifest(
     value.schemaVersion === 1 ||
     value.schemaVersion === 2 ||
     value.schemaVersion === 3 ||
-    value.schemaVersion === 4
+    value.schemaVersion === 4 ||
+    value.schemaVersion === 5
       ? value.schemaVersion
       : null
   if (schemaVersion === null) return false
@@ -185,6 +215,7 @@ export function isTapeViewManifest(
     ]) &&
     hasStringFields(value.hashes, ['promptHash', 'toolDefinitionsHash', 'manifestHash']) &&
     isViewManifestMeta(value.meta) &&
+    hasExecutionContractForSchema(value, schemaVersion) &&
     typeof value.assembledAt === 'number'
   )
 }

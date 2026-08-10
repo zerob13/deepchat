@@ -12,6 +12,7 @@ import type {
 } from '@shared/types/agent-interface'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
+import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { ToolServicePort } from '@shared/types/tool'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
@@ -30,6 +31,11 @@ import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCo
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { PostCompactionPromptAssembler } from '@/agent/deepchat/loop/ports'
 import { resolveEffectiveActiveSkillNames } from '@/agent/deepchat/resources/systemPromptBuilder'
+import {
+  appendPromptAssemblySection,
+  createPromptAssemblySection,
+  recordPromptAssemblyObservation
+} from '@/agent/deepchat/resources/promptAssembly'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import {
   capAgentRequestMaxTokens,
@@ -82,6 +88,9 @@ import {
 import { PENDING_INPUT_ABORT_REASON, throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { RuntimeHookSink } from './runtimeHookSink'
+import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
+import type { SessionIdentityService } from './sessionIdentityService'
+import { meetTaskContractToolDefinitions } from './taskContractCapability'
 import type {
   ClaimedPendingInputHandle,
   TurnCompletion
@@ -146,6 +155,8 @@ export interface TurnCoordinatorPorts {
     'resolveProjectDir' | 'getEffectiveGenerationSettings'
   >
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
+  identity: Pick<SessionIdentityService, 'getSessionKind' | 'isAcpBackedSubagentSession'>
+  taskContractContext: DeepChatTaskContractContextPort
   commandShell: Pick<CommandShellService, 'resolveForTurn'>
   loopRunner: Pick<DeepChatLoopRunner, 'run'>
   messageProjection: Pick<MessageProjectionService, 'refresh'>
@@ -231,7 +242,7 @@ export class TurnCoordinator {
     )
     this.ports.runLifecycle.assertCurrentInstance(sessionId, instance)
     const activeSkillNames = resolveEffectiveActiveSkillNames(sessionActiveSkillNames, instance)
-    const tools = await this.runPreStreamStep(
+    const resolvedTools = await this.runPreStreamStep(
       { sessionId, messageId, step: 'tool-definitions', signal },
       () =>
         awaitWithAbort(
@@ -244,6 +255,13 @@ export class TurnCoordinator {
           signal
         )
     )
+    const strictDeepChatChild =
+      this.ports.identity.getSessionKind(sessionId) === 'subagent' &&
+      !this.ports.identity.isAcpBackedSubagentSession(sessionId, state.providerId)
+    const taskContractContext = strictDeepChatChild
+      ? this.ports.taskContractContext.prepare(sessionId)
+      : null
+    const tools = meetTaskContractToolDefinitions(sessionId, resolvedTools, taskContractContext)
     const toolReserveTokens = estimateToolReserveTokens(tools)
     throwIfAbortRequested(signal)
     const commandShell = await this.runPreStreamStep(
@@ -252,11 +270,11 @@ export class TurnCoordinator {
     )
     throwIfAbortRequested(signal)
     const basePromptAssembler = this.ports.promptAssembly.createBasePromptAssembler(instance)
-    const baseSystemPrompt = await this.runPreStreamStep(
+    const basePromptAssembly = await this.runPreStreamStep(
       { sessionId, messageId, step: 'system-prompt', signal },
       () =>
         awaitWithAbort(
-          basePromptAssembler.assemble({
+          basePromptAssembler.assembleWithProvenance({
             sessionId: toAppSessionId(sessionId),
             configuredPrompt: generationSettings.systemPrompt,
             toolDefinitions: tools,
@@ -275,11 +293,13 @@ export class TurnCoordinator {
       contextBudgetLength,
       maxTokens,
       activeSkillNames,
+      taskContractContext,
       tools,
       toolReserveTokens,
       commandShell,
       basePromptAssembler,
-      baseSystemPrompt
+      basePromptAssembly,
+      baseSystemPrompt: basePromptAssembly.prompt
     }
   }
 
@@ -507,11 +527,12 @@ export class TurnCoordinator {
         contextBudgetLength,
         maxTokens,
         activeSkillNames: effectiveActiveSkillNames,
+        taskContractContext,
         tools,
         toolReserveTokens,
         commandShell,
         basePromptAssembler,
-        baseSystemPrompt: unguardedBaseSystemPrompt
+        basePromptAssembly: unguardedBasePromptAssembly
       } = await this.prepareTurnResources({
         sessionId,
         messageId: userMessageId,
@@ -525,9 +546,10 @@ export class TurnCoordinator {
       // history/compaction preparation so those stages observe the replacement transcript.
       context?.beforeHistoryPreparation?.()
       let shouldGuardAttachmentText = content.files?.some(hasUntrustedAttachmentText)
-      let baseSystemPrompt = shouldGuardAttachmentText
-        ? appendAttachmentTextSafetyRule(unguardedBaseSystemPrompt)
-        : unguardedBaseSystemPrompt
+      let basePromptAssembly = shouldGuardAttachmentText
+        ? appendAttachmentTextSafetySection(unguardedBasePromptAssembly)
+        : unguardedBasePromptAssembly
+      let baseSystemPrompt = basePromptAssembly.prompt
       const userContent: UserMessageContent = {
         text: content.text,
         files: content.files || [],
@@ -550,7 +572,8 @@ export class TurnCoordinator {
       const prepareCompactionIntent = async (historyRecords: ChatMessageRecord[]) => {
         if (!shouldGuardAttachmentText && historyContainsUntrustedAttachmentText(historyRecords)) {
           shouldGuardAttachmentText = true
-          baseSystemPrompt = appendAttachmentTextSafetyRule(unguardedBaseSystemPrompt)
+          basePromptAssembly = appendAttachmentTextSafetySection(unguardedBasePromptAssembly)
+          baseSystemPrompt = basePromptAssembly.prompt
         }
         if (!useContextBudget) {
           return null
@@ -831,14 +854,16 @@ export class TurnCoordinator {
           tools,
           commandShell,
           baseSystemPrompt,
+          basePromptAssembly,
           contextContributions,
           resourceInstance: instance,
           providerModelFacts,
+          taskContractContext,
           providerReplayProjector,
           abortController: preStreamAbortController,
           maxProviderRounds: context?.maxProviderRounds,
           refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
-            const refreshedBasePrompt = await basePromptAssembler.assemble({
+            const refreshedBasePrompt = await basePromptAssembler.assembleWithProvenance({
               sessionId: toAppSessionId(sessionId),
               configuredPrompt: generationSettings.systemPrompt,
               toolDefinitions: refreshedTools,
@@ -846,7 +871,7 @@ export class TurnCoordinator {
               commandShell
             })
             return shouldGuardAttachmentText
-              ? appendAttachmentTextSafetyRule(refreshedBasePrompt)
+              ? appendAttachmentTextSafetySection(refreshedBasePrompt)
               : refreshedBasePrompt
           },
           interleavedReasoning,
@@ -1231,11 +1256,12 @@ export class TurnCoordinator {
         contextBudgetLength,
         maxTokens,
         activeSkillNames: effectiveActiveSkillNames,
+        taskContractContext,
         tools,
         toolReserveTokens,
         commandShell,
         basePromptAssembler,
-        baseSystemPrompt: unguardedBaseSystemPrompt
+        basePromptAssembly: unguardedBasePromptAssembly
       } = await this.prepareTurnResources({
         sessionId,
         messageId,
@@ -1244,7 +1270,8 @@ export class TurnCoordinator {
         projectDir,
         providerModelFacts
       })
-      let baseSystemPrompt = unguardedBaseSystemPrompt
+      let basePromptAssembly = unguardedBasePromptAssembly
+      let baseSystemPrompt = basePromptAssembly.prompt
       let shouldGuardAttachmentText = false
       let resumeTargetOrderSeq: number | undefined
       const preparedInput = await this.ports.inputPreparationCoordinator.prepareExisting({
@@ -1273,7 +1300,8 @@ export class TurnCoordinator {
         prepareIntent: async (historyRecords) => {
           if (historyContainsUntrustedAttachmentText(historyRecords)) {
             shouldGuardAttachmentText = true
-            baseSystemPrompt = appendAttachmentTextSafetyRule(unguardedBaseSystemPrompt)
+            basePromptAssembly = appendAttachmentTextSafetySection(unguardedBasePromptAssembly)
+            baseSystemPrompt = basePromptAssembly.prompt
           }
           resumeTargetOrderSeq =
             historyRecords.find((record) => record.id === messageId)?.orderSeq ??
@@ -1488,10 +1516,12 @@ export class TurnCoordinator {
           projectDir,
           resourceInstance: instance,
           providerModelFacts,
+          taskContractContext,
           abortController: preStreamAbortController,
           tools,
           commandShell,
           baseSystemPrompt,
+          basePromptAssembly,
           contextContributions,
           initialBlocks,
           initialAccounting: resumeAccounting,
@@ -1499,7 +1529,7 @@ export class TurnCoordinator {
           maxProviderRounds: resumeAccounting.maxProviderRounds,
           search,
           refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
-            const refreshedBasePrompt = await basePromptAssembler.assemble({
+            const refreshedBasePrompt = await basePromptAssembler.assembleWithProvenance({
               sessionId: toAppSessionId(sessionId),
               configuredPrompt: generationSettings.systemPrompt,
               toolDefinitions: refreshedTools,
@@ -1507,7 +1537,7 @@ export class TurnCoordinator {
               commandShell
             })
             return shouldGuardAttachmentText
-              ? appendAttachmentTextSafetyRule(refreshedBasePrompt)
+              ? appendAttachmentTextSafetySection(refreshedBasePrompt)
               : refreshedBasePrompt
           },
           interleavedReasoning,
@@ -1728,12 +1758,24 @@ function resolveAssistantTurnSearchIntent(
   return user?.role === 'user' && extractUserMessageInput(user.content).search === true
 }
 
-function appendAttachmentTextSafetyRule(prompt: string): string {
-  if (prompt.includes(ATTACHMENT_TEXT_SAFETY_RULE)) return prompt
-  const trimmedPrompt = prompt.trimEnd()
-  return trimmedPrompt
-    ? `${trimmedPrompt}\n\n${ATTACHMENT_TEXT_SAFETY_RULE}`
-    : ATTACHMENT_TEXT_SAFETY_RULE
+function appendAttachmentTextSafetySection(
+  assembly: DeepChatPromptAssembly
+): DeepChatPromptAssembly {
+  const section = createPromptAssemblySection({
+    kind: 'attachment_safety',
+    sourceRef: 'runtime:attachment-text-safety',
+    content: ATTACHMENT_TEXT_SAFETY_RULE
+  })
+  const alreadyRecorded = assembly.sections.some(
+    (candidate) =>
+      candidate.kind === section.kind &&
+      candidate.sourceRef === section.sourceRef &&
+      candidate.contentHash === section.contentHash
+  )
+  if (alreadyRecorded) return assembly
+  return assembly.prompt.includes(ATTACHMENT_TEXT_SAFETY_RULE)
+    ? recordPromptAssemblyObservation(assembly, section)
+    : appendPromptAssemblySection(assembly, section)
 }
 
 function historyContainsUntrustedAttachmentText(
