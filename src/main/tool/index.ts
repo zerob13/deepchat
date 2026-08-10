@@ -58,6 +58,7 @@ import {
   assertActiveToolSurfaceExecutionContext,
   type ToolSurfaceExecutionContext
 } from '@/agent/deepchat/runtime/toolSurface'
+import { buildToolSearchDefinition } from './agentTools/toolSearchTool'
 
 type MainProcessToolCallOptions = ToolCallOptions & {
   readonly toolSurfaceContext?: ToolSurfaceExecutionContext
@@ -541,7 +542,8 @@ export class ToolService implements ToolServicePort {
           commandShell: options?.commandShell,
           oneShotCommandGrantId: options?.oneShotCommandGrantId,
           liveDelegationAuthorization,
-          commitDispatch: options?.commitDispatch
+          commitDispatch: options?.commitDispatch,
+          registerOutcomeProjection: options?.registerOutcomeProjection
         }
       )
       const resolvedResponse = this.resolveAgentToolResponse(response)
@@ -808,7 +810,7 @@ export class ToolService implements ToolServicePort {
   private async assertExecutionContractDispatchAllowed(
     request: MCPToolCall,
     expectedSource: ToolSource,
-    options?: ToolCallOptions
+    options?: MainProcessToolCallOptions
   ): Promise<void> {
     const contract = options?.executionContract
     if (!contract) return
@@ -1086,6 +1088,9 @@ export class ToolService implements ToolServicePort {
     toolName: string,
     conversationId?: string
   ): MCPToolDefinition | undefined {
+    if (toolName === TOOL_SEARCH_AGENT_TOOL_NAME) {
+      return buildToolSearchDefinition()
+    }
     const normalizedConversationId = conversationId?.trim()
     if (normalizedConversationId) {
       const definitions = this.conversationAgentDefinitions.get(normalizedConversationId)
@@ -1183,6 +1188,9 @@ export class ToolService implements ToolServicePort {
   }
 
   private getToolSource(toolName: string, conversationId?: string): ToolSource | undefined {
+    if (toolName === TOOL_SEARCH_AGENT_TOOL_NAME) {
+      return 'agent'
+    }
     const normalizedConversationId = conversationId?.trim()
     if (normalizedConversationId) {
       const mapper = this.conversationMappers.get(normalizedConversationId)

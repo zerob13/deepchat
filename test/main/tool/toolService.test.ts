@@ -32,6 +32,7 @@ import {
   revokeToolSurfaceExecutionEligibility,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
+import { buildToolSearchDefinition } from '@/tool/agentTools/toolSearchTool'
 
 vi.mock('electron', () => ({
   app: {
@@ -138,7 +139,7 @@ function buildToolSurfaceExecutionContext(stale = false) {
     server: { name: 'deepchat', icons: '', description: 'DeepChat' }
   })
   const hidden = agentTool('hidden')
-  const toolSearch = agentTool(TOOL_SEARCH_AGENT_TOOL_NAME)
+  const toolSearch = buildToolSearchDefinition()
   const policy: ToolSurfaceShadowPolicy = {
     policyVersion: 'tool-service-test-v1',
     enterToolCount: 1,
@@ -328,6 +329,65 @@ describe('ToolService', () => {
     expect(resolveConversationExecutionAuthority).not.toHaveBeenCalled()
     expect(effectObserver.beforeToolAuthorization).not.toHaveBeenCalled()
     expect(effectObserver.beforeToolExecution).not.toHaveBeenCalled()
+    active.batch.discard()
+  })
+
+  it('rechecks ToolSearch context liveness after asynchronous authorization', async () => {
+    const active = buildToolSurfaceExecutionContext()
+    let resolveAuthorization!: (value: null) => void
+    const beforeToolAuthorization = vi.fn(
+      () =>
+        new Promise<null>((resolve) => {
+          resolveAuthorization = resolve
+        })
+    )
+    const commitDispatch = vi.fn()
+    const registerOutcomeProjection = vi.fn()
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: {
+        getAllToolDefinitions: vi.fn().mockResolvedValue([]),
+        callTool: vi.fn()
+      } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock(),
+      effectObserver: { beforeToolAuthorization, beforeToolExecution: vi.fn() }
+    })
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      agentWorkspacePath: 'C:\\\\workspace',
+      conversationId: active.request.sessionId
+    })
+
+    const pending = toolService.callTool(
+      {
+        id: 'tool-search-authorization-race',
+        type: 'function',
+        function: {
+          name: TOOL_SEARCH_AGENT_TOOL_NAME,
+          arguments: JSON.stringify({ query: 'hidden' })
+        },
+        conversationId: active.request.sessionId
+      },
+      {
+        messageId: active.request.messageId,
+        runId: active.request.runId,
+        requestSeq: active.request.requestSeq,
+        toolSurfaceContext: active.context,
+        commitDispatch,
+        registerOutcomeProjection
+      }
+    )
+    await vi.waitFor(() => expect(beforeToolAuthorization).toHaveBeenCalledOnce())
+    revokeToolSurfaceExecutionEligibility(active.context.snapshot)
+    resolveAuthorization(null)
+
+    await expect(pending).rejects.toThrow(/no longer active|stale/)
+    expect(commitDispatch).not.toHaveBeenCalled()
+    expect(registerOutcomeProjection).not.toHaveBeenCalled()
     active.batch.discard()
   })
 
@@ -751,6 +811,18 @@ describe('ToolService', () => {
         .mockResolvedValue([buildToolDefinition(TOOL_SEARCH_AGENT_TOOL_NAME, 'mcp-search')]),
       callTool: vi.fn()
     } as any
+    const resolveConversationExecutionAuthority = vi.fn(async (sessionId: string) => ({
+      sessionId,
+      agentId: 'agent-1',
+      projectDir: '/workspace',
+      sessionKind: 'regular',
+      disabledAgentTools: [],
+      subagentCapability: {
+        available: false,
+        reason: 'policy_disabled',
+        cacheKey: 'unavailable'
+      }
+    }))
     const toolService = new ToolService({
       skillSettings: { isEnabled: () => false } as any,
       mcpService,
@@ -758,7 +830,7 @@ describe('ToolService', () => {
       providerSettings: { getModelConfig: vi.fn() } as any,
       settings: { get: vi.fn() },
       commandPermissionHandler: new CommandPermissionService(),
-      agentTools: buildAgentToolRuntimeMock()
+      agentTools: buildAgentToolRuntimeMock({ resolveConversationExecutionAuthority })
     })
 
     const definitions = await toolService.getAllToolDefinitions({
@@ -770,25 +842,82 @@ describe('ToolService', () => {
       definitions.filter((definition) => definition.function.name === TOOL_SEARCH_AGENT_TOOL_NAME)
     ).toEqual([])
 
-    const active = buildToolSurfaceExecutionContext()
+    const missingProjection = buildToolSurfaceExecutionContext()
+    const missingProjectionCommit = vi.fn()
     await expect(
       toolService.callTool(
         {
-          id: 'tool-search-1',
+          id: 'tool-search-missing-projection',
           type: 'function',
-          function: { name: TOOL_SEARCH_AGENT_TOOL_NAME, arguments: '{}' },
-          conversationId: active.request.sessionId
+          function: {
+            name: TOOL_SEARCH_AGENT_TOOL_NAME,
+            arguments: JSON.stringify({ query: 'hidden' })
+          },
+          conversationId: missingProjection.request.sessionId
         },
         {
-          messageId: active.request.messageId,
-          runId: active.request.runId,
-          requestSeq: active.request.requestSeq,
-          toolSurfaceContext: active.context
+          messageId: missingProjection.request.messageId,
+          runId: missingProjection.request.runId,
+          requestSeq: missingProjection.request.requestSeq,
+          toolSurfaceContext: missingProjection.context,
+          commitDispatch: missingProjectionCommit
         }
       )
-    ).rejects.toThrow(/not found in any source/)
+    ).rejects.toThrow(/dispatch and outcome projection capabilities/)
+    expect(missingProjectionCommit).not.toHaveBeenCalled()
+    missingProjection.batch.discard()
+
+    const active = buildToolSurfaceExecutionContext()
+    const order: string[] = []
+    const commitDispatch = vi.fn(() => order.push('dispatch'))
+    let projectOutcome: (() => void) | undefined
+    const executionContract = buildToolExecutionContract(buildToolSearchDefinition())
+    expect(
+      executionContract.ceilings.tools.map((ceiling) => ceiling.target.providerVisibleName)
+    ).toEqual([TOOL_SEARCH_AGENT_TOOL_NAME])
+    const result = await toolService.callTool(
+      {
+        id: 'tool-search-1',
+        type: 'function',
+        function: {
+          name: TOOL_SEARCH_AGENT_TOOL_NAME,
+          arguments: JSON.stringify({ query: 'hidden' })
+        },
+        conversationId: active.request.sessionId
+      },
+      {
+        messageId: active.request.messageId,
+        runId: active.request.runId,
+        requestSeq: active.request.requestSeq,
+        toolSurfaceContext: active.context,
+        executionContract,
+        commitDispatch,
+        registerOutcomeProjection: (projection) => {
+          order.push('projection-registration')
+          projectOutcome = projection
+        }
+      }
+    )
+    expect(JSON.parse(String(result.content))).toEqual({
+      results: [expect.objectContaining({ name: 'hidden', state: 'pending' })]
+    })
+    expect(commitDispatch).toHaveBeenCalledWith({
+      toolName: TOOL_SEARCH_AGENT_TOOL_NAME,
+      toolSource: 'agent',
+      normalizedArguments: { query: 'hidden', limit: 5 },
+      target: {
+        serverName: 'agent-tool-surface',
+        originalName: TOOL_SEARCH_AGENT_TOOL_NAME
+      }
+    })
+    expect(projectOutcome).toBeTypeOf('function')
+    expect(order).toEqual(['dispatch', 'projection-registration'])
+    projectOutcome?.()
+    active.batch.acceptToolCallCandidates(0)
+    expect(active.batch.seal()).toEqual([
+      expect.objectContaining({ requestSeq: active.request.requestSeq, resultRank: 0 })
+    ])
     expect(mcpService.callTool).not.toHaveBeenCalled()
-    active.batch.discard()
   })
 
   it('keeps every Tape capability name reserved against same-name MCP tools', async () => {

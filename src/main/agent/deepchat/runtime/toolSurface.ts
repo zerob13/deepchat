@@ -33,6 +33,7 @@ export const MAX_TOOL_SURFACE_OVERLAP_IDENTITIES = MAX_TOOL_SURFACE_DEFINITIONS
 export const MAX_TOOL_SURFACE_HINT_INPUT_BYTES = MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES
 export const MAX_TOOL_SURFACE_CANDIDATE_BATCHES = 1_024
 export const MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES = 4_096
+export const MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH = 8
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_TOOL_SURFACE_REQUEST_ID_BYTES = 1_024
@@ -354,6 +355,12 @@ export function createToolSurfaceExecutionBatch(input: {
       throw new ToolSurfaceError(
         'Tool Surface execution context was already issued for this tool call.',
         'invalid_definition'
+      )
+    }
+    if (candidateBatchesByToolCall.size >= MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH) {
+      throw new ToolSurfaceError(
+        `Tool Surface batch has more than ${MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH} ToolSearch calls.`,
+        'limit_exceeded'
       )
     }
     const candidateBatches: (readonly ToolSurfaceActivationCandidate[])[] = []

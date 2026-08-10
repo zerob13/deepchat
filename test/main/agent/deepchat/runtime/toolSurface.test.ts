@@ -11,6 +11,7 @@ import {
   MAX_TOOL_SURFACE_DEFINITION_BYTES,
   MAX_TOOL_SURFACE_DEFINITION_DEPTH,
   MAX_TOOL_SURFACE_OVERLAP_IDENTITIES,
+  MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH,
   MAX_TOOL_SURFACE_SELECTION_HINTS,
   MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES,
   ToolSurfaceError,
@@ -2296,9 +2297,23 @@ describe('Tool Surface production selection', () => {
     )
     boundedBatch.discard()
 
-    const abandonedSnapshot = harness.build(4)
+    const searchBoundedSnapshot = harness.build(4)
+    harness.selected.controller.admit(searchBoundedSnapshot)
+    const searchBoundedBatch = createToolSurfaceExecutionBatch({
+      snapshot: searchBoundedSnapshot
+    })
+    for (let index = 0; index < MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH; index += 1) {
+      searchBoundedBatch.createContext(index)
+    }
+    expectSurfaceError(
+      () => searchBoundedBatch.createContext(MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH),
+      'limit_exceeded'
+    )
+    searchBoundedBatch.discard()
+
+    const abandonedSnapshot = harness.build(5)
     harness.selected.controller.admit(abandonedSnapshot)
-    const replacementSnapshot = harness.build(5)
+    const replacementSnapshot = harness.build(6)
     harness.selected.controller.admit(replacementSnapshot)
     expectSurfaceError(
       () => createToolSurfaceExecutionBatch({ snapshot: abandonedSnapshot }),
@@ -2306,11 +2321,11 @@ describe('Tool Surface production selection', () => {
     )
     createToolSurfaceExecutionBatch({ snapshot: replacementSnapshot }).discard()
 
-    const activeSnapshot = harness.build(6)
+    const activeSnapshot = harness.build(7)
     harness.selected.controller.admit(activeSnapshot)
     const activeBatch = createToolSurfaceExecutionBatch({ snapshot: activeSnapshot })
     const activeContext = activeBatch.createContext(0)
-    const nextSnapshot = harness.build(7)
+    const nextSnapshot = harness.build(8)
     harness.selected.controller.admit(nextSnapshot)
     expect(() => activeContext.submitActivationCandidates([])).toThrow(/no longer active/)
     expect(() =>

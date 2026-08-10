@@ -1,5 +1,10 @@
 import type { ProviderSettingsPort } from '@/provider/settings'
-import { TOOL_EXECUTION, type MCPToolDefinition, type ToolDispatchCommit } from '@shared/types/mcp'
+import {
+  TOOL_EXECUTION,
+  type MCPToolDefinition,
+  type ToolDispatchCommit,
+  type ToolOutcomeProjectionRegistrar
+} from '@shared/types/mcp'
 import type { AgentSettingsPort } from '@/agent/settings'
 import type { SettingsStore } from '@/config/settingsStore'
 import type { AgentToolProgressUpdate } from '@shared/types/tool'
@@ -48,11 +53,15 @@ import {
 import { AgentPlanTool, UPDATE_PLAN_TOOL_NAME } from './agentPlanTool'
 import { AgentTapeToolHandler } from './agentTapeTools'
 import { AGENT_MEMORY_TOOL_SERVER_NAME, AgentMemoryToolHandler } from './agentMemoryTools'
-import { createAgentToolErrorResult } from '@shared/lib/agentToolResultEnvelope'
+import {
+  createAgentToolErrorResult,
+  createAgentToolSuccessResult
+} from '@shared/lib/agentToolResultEnvelope'
 import {
   CRON_JOB_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
   assertAgentToolExposure,
   isTapeToolName,
   type AgentToolExposure
@@ -70,7 +79,15 @@ import { LiveDelegationAgentTool } from './liveDelegationTool'
 import { normalizeOrchestrationPolicy } from '@shared/orchestration/policy'
 import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 import { resolveAgentOutputLimits, type AgentOutputLimits } from '@shared/lib/agentOutputLimits'
-import type { ToolSurfaceExecutionContext } from '@/agent/deepchat/runtime/toolSurface'
+import {
+  assertActiveToolSurfaceExecutionContext,
+  type ToolSurfaceExecutionContext
+} from '@/agent/deepchat/runtime/toolSurface'
+import {
+  TOOL_SEARCH_TOOL_SERVER_NAME,
+  parseToolSearchInput,
+  searchToolSurfaceSnapshot
+} from './toolSearchTool'
 
 // Consider moving to a shared handlers location in future refactoring
 import {
@@ -138,6 +155,7 @@ interface AgentToolExecutionOptions {
   allowExternalFileAccess?: boolean
   activeSkillNames?: string[]
   toolSurfaceContext?: ToolSurfaceExecutionContext
+  registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
   liveDelegationAuthorization?: LiveDelegationStartAuthorization
   commitDispatch?: ToolDispatchCommit
   commandShell?: ResolvedCommandShell
@@ -667,6 +685,46 @@ export class AgentToolManager {
           content: 'question_requested',
           isError: false,
           toolResult: parsedQuestion.data
+        }
+      }
+    }
+
+    if (toolName === TOOL_SEARCH_AGENT_TOOL_NAME) {
+      const parsed = parseToolSearchInput(args)
+      if (!parsed.success) {
+        throw new Error(parsed.error)
+      }
+      const context = options?.toolSurfaceContext
+      if (!context) {
+        throw new Error('ToolSearch requires an active Tool Surface execution context.')
+      }
+      assertActiveToolSurfaceExecutionContext(context, context.snapshot.request)
+      const commitDispatch = this.createAgentDispatchCommit(
+        toolName,
+        TOOL_SEARCH_TOOL_SERVER_NAME,
+        parsed.data,
+        options
+      )
+      if (!commitDispatch || !options?.registerOutcomeProjection) {
+        throw new Error('ToolSearch requires dispatch and outcome projection capabilities.')
+      }
+      options.signal?.throwIfAborted()
+      commitDispatch(parsed.data)
+      const execution = searchToolSurfaceSnapshot(parsed.data, context)
+      options.registerOutcomeProjection(() =>
+        context.submitActivationCandidates(execution.candidates)
+      )
+      const content = JSON.stringify(execution.result, null, 2)
+      return {
+        content,
+        rawData: {
+          content,
+          isError: false,
+          toolResult: createAgentToolSuccessResult(TOOL_SEARCH_AGENT_TOOL_NAME, execution.result, {
+            summary: `Found ${execution.result.results.length} discoverable tool candidate${execution.result.results.length === 1 ? '' : 's'}.`,
+            data: execution.result,
+            meta: { resultCount: execution.result.results.length }
+          })
         }
       }
     }

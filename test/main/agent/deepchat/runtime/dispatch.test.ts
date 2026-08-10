@@ -45,6 +45,7 @@ import { ExecutionJournalError } from '@/tape/domain/executionJournal'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
 import {
+  MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH,
   assertIssuedToolSurfaceExecutionContext,
   buildCanonicalToolCatalog,
   createPolicySelectedToolSurfaceRun,
@@ -501,6 +502,84 @@ describe('dispatch', () => {
           }
         ])
       ).toThrow(/no longer active/)
+    })
+
+    it('bounds parallel ToolSearch work while preserving earliest candidate order', async () => {
+      const definitions = [makeAgentTool('hidden', TOOL_EXECUTION.read.parallel)]
+      const { tools, binding, catalog } = createDispatchToolSurfaceBinding(definitions, [])
+      const hiddenEntry = catalog.entries.find(
+        (entry) => entry.target.providerVisibleName === 'hidden'
+      )!
+      const toolService = createMockToolService()
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions
+        const context = executionOptions.toolSurfaceContext!
+        executionOptions.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'test-server', originalName: request.function.name }
+        })
+        executionOptions.registerOutcomeProjection?.(() =>
+          context.submitActivationCandidates([
+            {
+              ...binding.snapshot.request,
+              stableTargetKey: hiddenEntry.stableTargetKey,
+              canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
+              toolCallOrdinalWithinBatch: context.toolCallOrdinalWithinBatch,
+              resultRank: 0
+            }
+          ])
+        )
+        return {
+          content: 'found',
+          rawData: { toolCallId: request.id, content: 'found', isError: false }
+        }
+      })
+      const toolCallCount = MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH + 1
+      for (let index = 0; index < toolCallCount; index += 1) {
+        state.blocks.push({
+          type: 'tool_call',
+          content: '',
+          status: 'pending',
+          timestamp: Date.now(),
+          tool_call: {
+            id: `search-${index}`,
+            name: TOOL_SEARCH_AGENT_TOOL_NAME,
+            params: '{}',
+            response: ''
+          }
+        })
+        state.completedToolCalls.push({
+          id: `search-${index}`,
+          name: TOOL_SEARCH_AGENT_TOOL_NAME,
+          arguments: '{}'
+        })
+      }
+
+      const settled = await settleToolBatch(
+        state,
+        [{ role: 'user', content: 'Find a tool' }],
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32_000,
+        1_024,
+        { toolSurface: binding },
+        'openai'
+      )
+
+      expect(toolService.callTool).toHaveBeenCalledTimes(MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH)
+      expect(state.blocks.at(-1)?.tool_call?.response).toContain(
+        `more than ${MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH} ToolSearch calls`
+      )
+      expect(settled.toolSurfaceActivationCandidates).toEqual([
+        expect.objectContaining({ toolCallOrdinalWithinBatch: 0, resultRank: 0 })
+      ])
     })
 
     it('revokes ToolSearch contexts and discards candidates when settlement fails', async () => {
