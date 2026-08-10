@@ -377,6 +377,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     toolService,
     sessionStore,
     messageStore,
+    pendingInputs: pendingInputCoordinator,
     tapeReconciliation: tapeService,
     toolResolver,
     compactionService,
@@ -501,16 +502,6 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
 
   const pendingInputRecovery = pendingInputCoordinator.recoverInputsAfterRestart()
   pendingInputPump.holdRestartedQueueInputs(pendingInputRecovery.heldQueueInputIds)
-  for (const [
-    sessionId,
-    recoveredMessageIds
-  ] of pendingInputRecovery.forceRecoverMessagesBySession) {
-    const forcedMessageIds = forceRecoverMessagesBySession.get(sessionId) ?? new Set<string>()
-    for (const messageId of recoveredMessageIds) {
-      forcedMessageIds.add(messageId)
-    }
-    forceRecoverMessagesBySession.set(sessionId, forcedMessageIds)
-  }
   if (pendingInputRecovery.affectedSessionIds.size > 0) {
     logger.info(
       `DeepChatAgent: reconciled ${pendingInputRecovery.affectedSessionIds.size} sessions with pending inputs`

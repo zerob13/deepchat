@@ -208,6 +208,7 @@ export class PendingInputPump {
   private readonly launchedDrains = new Map<string, LaunchedPendingInputDrain>()
   private readonly deferredWakeups = new Map<string, PendingInputWakeReason>()
   private readonly restartHeldQueueInputIds = new Set<string>()
+  private readonly manuallyResumedQueueInputIds = new Set<string>()
 
   constructor(private readonly ports: PendingInputPumpPorts) {}
 
@@ -219,16 +220,29 @@ export class PendingInputPump {
 
   releaseRestartHoldForInput(itemId: string): void {
     this.restartHeldQueueInputIds.delete(itemId)
+    this.manuallyResumedQueueInputIds.delete(itemId)
   }
 
   releaseRestartHoldForSession(sessionId: string): boolean {
-    let released = false
-    for (const input of this.ports.pendingInputs.listPendingInputs(sessionId)) {
-      if (input.mode === 'queue' && this.restartHeldQueueInputIds.delete(input.id)) {
-        released = true
-      }
+    const heldQueueInputs = this.ports.pendingInputs
+      .listPendingInputs(sessionId)
+      .filter((input) => input.mode === 'queue' && this.restartHeldQueueInputIds.has(input.id))
+      .sort((left, right) => (left.queueOrder ?? 0) - (right.queueOrder ?? 0))
+    const resumedHead = heldQueueInputs[0]
+    if (!resumedHead) {
+      return false
     }
-    return released
+    for (const input of heldQueueInputs) {
+      this.restartHeldQueueInputIds.delete(input.id)
+    }
+    this.manuallyResumedQueueInputIds.add(resumedHead.id)
+    return true
+  }
+
+  hasRestartHeldQueueInputs(sessionId: string): boolean {
+    return this.ports.pendingInputs
+      .listPendingInputs(sessionId)
+      .some((input) => input.mode === 'queue' && this.restartHeldQueueInputIds.has(input.id))
   }
 
   hasOnlyRestartHeldQueueInputs(sessionId: string): boolean {
@@ -482,7 +496,8 @@ export class PendingInputPump {
       turn = this.ports.turnStarter.start(claimedInput.sessionId, claimedInput.payload, {
         projectDir,
         claimedInput: claim,
-        consumeClaimBeforeProviderStream: reason === 'manual' && claim.source === 'queue'
+        consumeClaimBeforeProviderStream:
+          claim.source === 'queue' && this.manuallyResumedQueueInputIds.has(claimedInput.id)
       })
     } catch (error) {
       turn = Promise.reject(error)
@@ -512,6 +527,9 @@ export class PendingInputPump {
             'unsettled-claim',
             new Error(`Turn left pending input ${claimedInput.id} unsettled.`)
           )
+        }
+        if (claim.disposition?.kind === 'consume') {
+          this.manuallyResumedQueueInputIds.delete(claimedInput.id)
         }
         this.clearLaunchedDrain(claimedInput.sessionId, scope.instance, drainLease)
         scope.instance.releasePendingQueueDrain(drainLease)

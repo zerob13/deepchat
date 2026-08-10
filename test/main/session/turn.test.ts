@@ -94,6 +94,7 @@ function createHarness(
       state: { status: 'idle', cursorOrderSeq: 4, summaryUpdatedAt: 200 }
     })
   }
+  const isPendingQueueResumeAvailable = vi.fn().mockResolvedValue(true)
   const resumePendingQueue = vi.fn().mockResolvedValue(true)
   const runtimeSession =
     options.kind === 'acp'
@@ -106,6 +107,7 @@ function createHarness(
           cancel,
           snapshot,
           compaction,
+          isPendingQueueResumeAvailable,
           resumePendingQueue
         } as const)
   const resolveSession = vi.fn(() => runtimeSession)
@@ -160,6 +162,7 @@ function createHarness(
     cancel,
     snapshot,
     compaction,
+    isPendingQueueResumeAvailable,
     resumePendingQueue,
     transcript,
     workdir,
@@ -168,6 +171,17 @@ function createHarness(
 }
 
 describe('SessionTurn', () => {
+  it('projects Queue resume availability only for DeepChat sessions', async () => {
+    const deepchat = createHarness()
+    const acp = createHarness({ kind: 'acp' })
+
+    await expect(deepchat.coordinator.isPendingQueueResumeAvailable('s1')).resolves.toBe(true)
+    await expect(acp.coordinator.isPendingQueueResumeAvailable('s1')).resolves.toBe(false)
+    await expect(deepchat.coordinator.isPendingQueueResumeAvailable('missing')).resolves.toBe(false)
+
+    expect(deepchat.isPendingQueueResumeAvailable).toHaveBeenCalledOnce()
+  })
+
   it('resumes a DeepChat Queue under the Session operation gate', async () => {
     const harness = createHarness()
 

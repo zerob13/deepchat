@@ -468,7 +468,7 @@ It receives no `Unread` / `Read` receipt.
 | Previous DeepChat turn errors | Open the safe boundary and drain the durable Steer unless an interaction blocks it |
 | Previous ACP turn cancellation fails | Keep Steer `Unread`; do not claim until the old operation is terminal |
 | Runtime fails after claim | Keep user messages `Read`; settle a new assistant error row; do not delete or retry silently |
-| App restarts before claim | Consume the Steer row, recover its linked user messages as `error`, hide the receipt, and leave the standard toolbar Retry action available |
+| App restarts before claim | Atomically fail linked user messages, append Tape replacements, consume the Steer row, hide the receipt, and leave the standard toolbar Retry action available |
 | App restarts after claim | Restore the persisted `Read` receipt and settlement facts; never duplicate user rows |
 | App restarts with Queue drafts | Keep rows in Queue and hold them from automatic drain until explicit `Resume queue`; once the manually resumed head enters the provider Run, consume it so a provider error cannot restore it to Queue |
 | Session is switched | Keep lifecycle in main; active renderer derives the state when restored |
@@ -492,6 +492,10 @@ It receives no `Unread` / `Read` receipt.
 10. Event delivery is a cache update, never the source of truth.
 11. Pre-stream acceptance materializes and links the current claimed Queue user fact in the same
     transaction as the Steer, before assigning the Steer's `orderSeq`.
+12. Normal claimed Queue materialization also creates the user fact and links its pending row in one
+    transaction.
+13. Restart terminalization changes every unread Steer message to `error`, appends its Tape
+    replacement, and consumes the Steer row in one transaction.
 
 ## Acceptance Criteria
 
@@ -514,9 +518,9 @@ It receives no `Unread` / `Read` receipt.
 - Queue promotion creates a visible `Unread` Steer only after successful preparation.
 - Normal Queue drain creates no receipt.
 - Queue drafts retained across cold restart do not drain from hydration or lifecycle wakes and expose
-  `Resume queue` while the Session is idle.
+  `Resume queue` only when the backend reports an actual restart hold while the Session is idle.
 - A manually resumed Queue head is consumed before its provider Run and does not return to Queue
-  after a provider error.
+  after a provider error, including after attachment Retry or Send without image content.
 
 ### Reliability
 

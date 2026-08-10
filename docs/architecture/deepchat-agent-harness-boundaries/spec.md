@@ -129,8 +129,9 @@ mapped losslessly from the internal completion.
 ### Pending Input Restart Boundary
 
 Harness construction reconciles active pending inputs before transcript recovery and before any
-Session scope is hydrated. `SessionPendingInputs` returns the affected Session IDs, Queue input IDs
-that must be held, and pending Steer message IDs that require forced transcript recovery.
+Session scope is hydrated. `SessionPendingInputs` returns the affected Session IDs and Queue input
+IDs that must be held. It terminalizes unread Steer messages, their Tape replacements, and their
+pending rows atomically instead of handing them to a later global recovery phase.
 
 The pump installs Queue IDs in a process-local hold set. Automatic `enqueue` and `completed` wakes
 stop at a held Queue FIFO head; pending-input listing and Session hydration never schedule a drain.
@@ -138,15 +139,18 @@ An explicit composer Send may start without releasing historical drafts. The typ
 `sessions.resumePendingQueue` operation validates normal Session gates, releases the Session hold,
 and drains with a `manual` wake reason. Before that manually resumed turn enters the provider Run,
 the pump consumes its Queue claim; a returned provider error therefore cannot restore the same item
-to Queue. Failures before this boundary still release safely. Durable Queue rows remain the only
-ordering and content source, and a later restart derives a new hold from whatever rows remain.
+to Queue. Manual intent is tracked by Queue item ID, so attachment block and resolution cannot erase
+that boundary. The pending-input list projects authoritative resume availability, and Resume returns
+`false` without draining when no hold exists. Failures before the provider boundary still release
+safely. Durable Queue rows remain the only ordering and content source, and a later restart derives
+a new hold from whatever rows remain.
 
-An unclaimed Steer belongs to the previous process's interrupted delivery attempt. Startup consumes
-its pending row and merges its linked user IDs into forced pending-message recovery, producing a
-retryable `error` transcript message. The renderer hides its receipt and adds no recovery-specific
-action; the standard message toolbar remains unchanged. A claimed Steer keeps its sent user message
-and exposes the interruption through the assistant error. Neither path adds a persisted recovery
-marker, age policy, schema migration, or hydration-triggered execution.
+An unclaimed Steer belongs to the previous process's interrupted delivery attempt. Startup changes
+its linked messages to retryable `error`, appends their Tape replacements, and consumes its pending
+row in one transaction. The renderer hides its receipt and adds no recovery-specific action; the
+standard message toolbar remains unchanged. A claimed Steer keeps its sent user message and exposes
+the interruption through the assistant error. Neither path adds a persisted recovery marker, age
+policy, schema migration, or hydration-triggered execution.
 
 ### Test Boundary
 

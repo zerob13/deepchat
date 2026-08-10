@@ -72,6 +72,7 @@ export interface PendingInputAdmissionPumpPort {
   ): ClaimedPendingInputHandle
   releaseRestartHoldForInput(itemId: string): void
   releaseRestartHoldForSession(sessionId: string): boolean
+  hasRestartHeldQueueInputs(sessionId: string): boolean
   hasOnlyRestartHeldQueueInputs(sessionId: string): boolean
 }
 
@@ -93,6 +94,10 @@ export class PendingInputAdmissionCoordinator {
 
   list(sessionId: string): PendingSessionInputRecord[] {
     return this.ports.pendingInputs.listPendingInputs(sessionId)
+  }
+
+  isPendingQueueResumeAvailable(sessionId: string): boolean {
+    return this.ports.pump.hasRestartHeldQueueInputs(sessionId)
   }
 
   async queue(
@@ -438,7 +443,9 @@ export class PendingInputAdmissionCoordinator {
     if (!this.ports.pump.canDrain(sessionId, state.status, 'manual')) {
       return false
     }
-    this.ports.pump.releaseRestartHoldForSession(sessionId)
+    if (!this.ports.pump.releaseRestartHoldForSession(sessionId)) {
+      return false
+    }
     return await this.ports.pump.drain(sessionId, 'manual')
   }
 

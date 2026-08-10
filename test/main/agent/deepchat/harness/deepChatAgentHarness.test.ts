@@ -2629,7 +2629,7 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
-    it('forces an unclaimed Steer message into transcript recovery without executing it', () => {
+    it('terminalizes an unclaimed Steer without delegating it to global recovery', () => {
       const pendingSteer = {
         id: 'pending-steer',
         session_id: 's1',
@@ -2659,6 +2659,9 @@ describe('DeepChatAgentHarness', () => {
       const recoverPendingMessages = vi
         .spyOn(recoverySessionData.transcript, 'recoverPendingMessages')
         .mockReturnValue(1)
+      const failPendingSteerMessages = vi
+        .spyOn(recoverySessionData.transcript, 'failPendingSteerMessages')
+        .mockReturnValue([])
 
       createDeepChatAgentHarness({
         ...createRuntimeDependencies({ skillService: getSkillServiceMock() }),
@@ -2675,8 +2678,9 @@ describe('DeepChatAgentHarness', () => {
         pendingSteer.id,
         expect.objectContaining({ state: 'consumed' })
       )
+      expect(failPendingSteerMessages).toHaveBeenCalledWith(['steer-user'])
       expect(recoverPendingMessages).toHaveBeenCalledWith({
-        forceRecoverMessagesBySession: new Map([['s1', new Set(['steer-user'])]])
+        forceRecoverMessagesBySession: new Map()
       })
       expect(processStream).not.toHaveBeenCalled()
     })
@@ -8200,100 +8204,130 @@ describe('DeepChatAgentHarness', () => {
       }
     })
 
-    it('consumes a manually resumed restart Queue item before a returned provider error', async () => {
-      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      vi.mocked(nanoid).mockReturnValueOnce('restart-queue')
-      const queued = sessionData.pendingInputs.queuePendingInput('s1', {
-        text: 'Resume once after restart',
-        files: []
-      })
-      sqlitePresenter.deepchatSessionsTable.get.mockReturnValue({
-        id: 's1',
-        provider_id: 'openai',
-        model_id: 'gpt-4',
-        permission_mode: 'default'
-      })
-      const restartedSessionData = createSessionDataFromDatabase(sqlitePresenter as never, {
-        publishPendingInputsChanged: vi.fn(),
-        publishMessagesChanged: vi.fn()
-      })
-      const restartedAgent = createDeepChatAgentHarness({
-        ...runtimeDependencies,
-        providerRuntime: llmProvider,
-        providerSettings,
-        agentSettings: providerSettings,
-        database: sqlitePresenter,
-        sessionData: restartedSessionData,
-        toolService,
-        hookObserver: noopHookObserver
-      })
-      const rows: any[] = []
-      sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
-        rows.push({
-          id: row.id,
-          session_id: row.sessionId,
-          order_seq: row.orderSeq,
-          role: row.role,
-          content: row.content,
-          status: row.status,
-          is_context_edge: 0,
-          metadata: row.metadata ?? '{}',
-          created_at: Date.now(),
-          updated_at: Date.now()
+    it.each(['retry', 'send_without_image_content'] as const)(
+      'keeps manual Queue consumption after attachment %s',
+      async (attachmentAction) => {
+        await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+        vi.mocked(nanoid).mockReturnValueOnce('restart-queue')
+        const queued = sessionData.pendingInputs.queuePendingInput('s1', {
+          text: 'Resume once after restart',
+          files: [{ name: 'scan.png', path: '/tmp/scan.png', mimeType: 'image/png' }]
         })
-      })
-      sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
-        rows.find((row) => row.id === id)
-      )
-      sqlitePresenter.deepchatMessagesTable.getBySession.mockImplementation((sessionId: string) =>
-        rows.filter((row) => row.session_id === sessionId)
-      )
-      sqlitePresenter.deepchatMessagesTable.getLastUserMessageBeforeOrAtOrderSeq.mockImplementation(
-        (sessionId: string, orderSeq: number) =>
-          [...rows]
-            .reverse()
-            .find(
-              (row) =>
-                row.session_id === sessionId && row.role === 'user' && row.order_seq <= orderSeq
-            )
-      )
-      sqlitePresenter.deepchatMessagesTable.getMaxOrderSeq.mockImplementation((sessionId: string) =>
-        rows.reduce(
-          (maxOrderSeq, row) =>
-            row.session_id === sessionId ? Math.max(maxOrderSeq, row.order_seq) : maxOrderSeq,
-          0
+        const prepare = vi
+          .fn(async ({ content }) => ({
+            content,
+            summary: { status: 'ready' as const, issues: [], suggestedActions: [] }
+          }))
+          .mockResolvedValueOnce({
+            content: queued.payload,
+            summary: {
+              status: 'needs_user_action' as const,
+              issues: [{ attachmentIndex: 0, reason: 'ocr_failed' as const }],
+              suggestedActions: ['retry' as const, 'send_without_image_content' as const]
+            }
+          })
+        runtimeDependencies.attachmentRouter.prepare = prepare
+        sqlitePresenter.deepchatSessionsTable.get.mockReturnValue({
+          id: 's1',
+          provider_id: 'openai',
+          model_id: 'gpt-4',
+          permission_mode: 'default'
+        })
+        const restartedSessionData = createSessionDataFromDatabase(sqlitePresenter as never, {
+          publishPendingInputsChanged: vi.fn(),
+          publishMessagesChanged: vi.fn()
+        })
+        const restartedAgent = createDeepChatAgentHarness({
+          ...runtimeDependencies,
+          providerRuntime: llmProvider,
+          providerSettings,
+          agentSettings: providerSettings,
+          database: sqlitePresenter,
+          sessionData: restartedSessionData,
+          toolService,
+          hookObserver: noopHookObserver
+        })
+        const rows: any[] = []
+        sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
+          rows.push({
+            id: row.id,
+            session_id: row.sessionId,
+            order_seq: row.orderSeq,
+            role: row.role,
+            content: row.content,
+            status: row.status,
+            is_context_edge: 0,
+            metadata: row.metadata ?? '{}',
+            created_at: Date.now(),
+            updated_at: Date.now()
+          })
+        })
+        sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
+          rows.find((row) => row.id === id)
         )
-      )
-      vi.mocked(nanoid).mockReturnValueOnce('resumed-user').mockReturnValueOnce('resumed-assistant')
-      const provider = llmProvider.getProviderInstance('openai')
-      provider.coreStream.mockImplementationOnce(() => {
-        expect(sqlitePresenter.deepchatPendingInputsTable.get(queued.id)).toBeUndefined()
-        return (async function* () {
-          yield { type: 'stop', stop_reason: 'provider_error' }
-        })()
-      })
-      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params: any) => {
-        for await (const _event of params.coreStream(
-          params.run.messages,
-          params.modelId,
-          params.modelConfig,
-          params.temperature,
-          params.maxTokens,
-          params.run.resources.toolDefinitions
-        )) {
-        }
-        return { status: 'error', stopReason: 'provider_error' }
-      })
+        sqlitePresenter.deepchatMessagesTable.getBySession.mockImplementation((sessionId: string) =>
+          rows.filter((row) => row.session_id === sessionId)
+        )
+        sqlitePresenter.deepchatMessagesTable.getLastUserMessageBeforeOrAtOrderSeq.mockImplementation(
+          (sessionId: string, orderSeq: number) =>
+            [...rows]
+              .reverse()
+              .find(
+                (row) =>
+                  row.session_id === sessionId && row.role === 'user' && row.order_seq <= orderSeq
+              )
+        )
+        sqlitePresenter.deepchatMessagesTable.getMaxOrderSeq.mockImplementation(
+          (sessionId: string) =>
+            rows.reduce(
+              (maxOrderSeq, row) =>
+                row.session_id === sessionId ? Math.max(maxOrderSeq, row.order_seq) : maxOrderSeq,
+              0
+            )
+        )
+        vi.mocked(nanoid)
+          .mockReturnValueOnce('resumed-user')
+          .mockReturnValueOnce('resumed-assistant')
+        const provider = llmProvider.getProviderInstance('openai')
+        provider.coreStream.mockImplementationOnce(() => {
+          expect(sqlitePresenter.deepchatPendingInputsTable.get(queued.id)).toBeUndefined()
+          return (async function* () {
+            yield { type: 'stop', stop_reason: 'provider_error' }
+          })()
+        })
+        ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params: any) => {
+          for await (const _event of params.coreStream(
+            params.run.messages,
+            params.modelId,
+            params.modelConfig,
+            params.temperature,
+            params.maxTokens,
+            params.run.resources.toolDefinitions
+          )) {
+          }
+          return { status: 'error', stopReason: 'provider_error' }
+        })
 
-      await expect(restartedAgent.resumePendingQueue('s1')).resolves.toBe(true)
+        await expect(restartedAgent.resumePendingQueue('s1')).resolves.toBe(true)
 
-      await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
-      await vi.waitFor(() =>
-        expect(sqlitePresenter.deepchatPendingInputsTable.get(queued.id)).toBeUndefined()
-      )
-      expect(await restartedAgent.listPendingInputs('s1')).toEqual([])
-      expect(sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq).not.toHaveBeenCalled()
-    })
+        await vi.waitFor(() =>
+          expect(sqlitePresenter.deepchatPendingInputsTable.get(queued.id)).toMatchObject({
+            state: 'blocked'
+          })
+        )
+        expect(processStream).not.toHaveBeenCalled()
+
+        await restartedAgent.resolveBlockedPendingInput('s1', queued.id, attachmentAction)
+
+        await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
+        await vi.waitFor(() =>
+          expect(sqlitePresenter.deepchatPendingInputsTable.get(queued.id)).toBeUndefined()
+        )
+        expect(await restartedAgent.listPendingInputs('s1')).toEqual([])
+        expect(sqlitePresenter.deepchatMessagesTable.deleteFromOrderSeq).not.toHaveBeenCalled()
+        expect(prepare).toHaveBeenCalledTimes(2)
+      }
+    )
 
     it('releases a partially claimed queue item when claim publication throws', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
@@ -8498,6 +8532,22 @@ describe('DeepChatAgentHarness', () => {
         expect.objectContaining({ workdir: '/tmp/workspace', promptPreview: 'Hello' })
       )
       expect(await agent.listPendingInputs('s1')).toEqual([])
+    })
+
+    it('materializes claimed Queue user facts through the atomic pending-input boundary', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const materialize = vi.spyOn(sessionData.pendingInputs, 'createClaimedQueueUserMessage')
+
+      const queued = await agent.queuePendingInput('s1', 'Atomic Queue fact', {
+        source: 'queue'
+      })
+
+      await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
+      expect(materialize).toHaveBeenCalledWith(
+        's1',
+        queued.id,
+        expect.objectContaining({ text: 'Atomic Queue fact' })
+      )
     })
 
     it('keeps queue-origin inputs pending while waiting for a tool follow-up', async () => {

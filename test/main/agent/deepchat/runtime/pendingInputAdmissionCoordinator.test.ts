@@ -187,6 +187,7 @@ function createHarness(onDrain?: (harness: HarnessState) => void) {
     }),
     releaseRestartHoldForInput: vi.fn(),
     releaseRestartHoldForSession: vi.fn(() => true),
+    hasRestartHeldQueueInputs: vi.fn(() => true),
     hasOnlyRestartHeldQueueInputs: vi.fn(() => false)
   }
 
@@ -278,6 +279,22 @@ describe('PendingInputAdmissionCoordinator', () => {
 
     expect(test.pump.releaseRestartHoldForSession).toHaveBeenCalledWith(SESSION_ID)
     expect(test.pump.drain).toHaveBeenCalledWith(SESSION_ID, 'manual')
+  })
+
+  it('reports resume availability from the restart hold owner', () => {
+    const test = createHarness()
+
+    expect(test.coordinator.isPendingQueueResumeAvailable(SESSION_ID)).toBe(true)
+    expect(test.pump.hasRestartHeldQueueInputs).toHaveBeenCalledWith(SESSION_ID)
+  })
+
+  it('does not drain when no restart hold was released', async () => {
+    const test = createHarness()
+    vi.mocked(test.pump.releaseRestartHoldForSession).mockReturnValueOnce(false)
+
+    await expect(test.coordinator.resumePendingQueue(SESSION_ID)).resolves.toBe(false)
+
+    expect(test.pump.drain).not.toHaveBeenCalled()
   })
 
   it('allows retry mutation only when every active input is a restart-held Queue draft', () => {

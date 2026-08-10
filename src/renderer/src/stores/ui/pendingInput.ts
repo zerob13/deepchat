@@ -10,6 +10,7 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
 
   const currentSessionId = ref<string | null>(null)
   const items = ref<PendingSessionInputRecord[]>([])
+  const resumeAvailable = ref(false)
   const loading = ref(false)
   const resumingSessionId = ref<string | null>(null)
   const error = ref<string | null>(null)
@@ -27,15 +28,20 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
   async function loadPendingInputs(sessionId: string): Promise<void> {
     const requestedId = sessionId
     const requestId = ++latestLoadRequestId
+    if (currentSessionId.value !== requestedId) {
+      items.value = []
+      resumeAvailable.value = false
+    }
     currentSessionId.value = requestedId
     loading.value = true
     error.value = null
     try {
-      const loadedItems = await sessionClient.listPendingInputs(requestedId)
+      const result = await sessionClient.listPendingInputs(requestedId)
       if (requestId !== latestLoadRequestId || requestedId !== currentSessionId.value) {
         return
       }
-      items.value = loadedItems
+      items.value = result.items
+      resumeAvailable.value = result.resumeAvailable
     } catch (e) {
       if (requestId !== latestLoadRequestId || requestedId !== currentSessionId.value) {
         return
@@ -152,6 +158,7 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
     latestLoadRequestId += 1
     currentSessionId.value = null
     items.value = []
+    resumeAvailable.value = false
     loading.value = false
     resumingSessionId.value = null
     error.value = null
@@ -170,6 +177,7 @@ export const usePendingInputStore = defineStore('pendingInput', () => {
   return {
     currentSessionId,
     items,
+    resumeAvailable,
     loading,
     resumingQueue,
     error,

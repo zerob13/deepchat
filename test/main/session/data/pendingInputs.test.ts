@@ -167,7 +167,7 @@ function createRecoveryCoordinator(initialRecords: PendingSessionInputRecord[]) 
       replace(itemId, { state: 'consumed', consumedAt: 2 })
     ),
     releaseClaimedQueueInput: vi.fn((itemId: string) =>
-      replace(itemId, { state: 'pending', claimedAt: null })
+      replace(itemId, { state: 'pending', claimedAt: null, messageIds: [] })
     ),
     releaseClaimedInput: vi.fn((itemId: string) =>
       replace(itemId, { state: 'pending', claimedAt: null })
@@ -181,6 +181,16 @@ function createRecoveryCoordinator(initialRecords: PendingSessionInputRecord[]) 
   }
   const transcript = {
     settleSteerMessages: vi.fn(() => []),
+    failPendingSteerMessages: vi.fn(() => []),
+    getMessage: vi.fn((messageId: string) =>
+      messageId === 'user-1'
+        ? {
+            id: messageId,
+            sessionId: 'session-1',
+            role: 'user'
+          }
+        : null
+    ),
     getNextOrderSeq: vi.fn(() => 1),
     createUserMessage: vi.fn(() => `recovered-${++createdMessage}`)
   }
@@ -202,17 +212,25 @@ describe('SessionPendingInputs restart reconciliation', () => {
       ...createRecord('queue-materialized', 'session-1', 'queue'),
       messageIds: ['user-1']
     }
+    const dangling = {
+      ...createRecord('queue-dangling', 'session-1', 'queue'),
+      messageIds: ['missing-user']
+    }
     const { coordinator, records, store } = createRecoveryCoordinator([
       pending,
       claimed,
-      materialized
+      materialized,
+      dangling
     ])
 
     const recovery = coordinator.recoverInputsAfterRestart()
 
-    expect(recovery.heldQueueInputIds).toEqual(new Set(['queue-pending', 'queue-claimed']))
+    expect(recovery.heldQueueInputIds).toEqual(
+      new Set(['queue-pending', 'queue-claimed', 'queue-dangling'])
+    )
     expect(recovery.affectedSessionIds).toEqual(new Set(['session-1']))
     expect(records.get('queue-claimed')?.state).toBe('pending')
+    expect(records.get('queue-dangling')).toMatchObject({ state: 'pending', messageIds: [] })
     expect(records.has('queue-materialized')).toBe(false)
     expect(store.consumeQueueInput).toHaveBeenCalledWith('queue-materialized')
   })
@@ -238,11 +256,10 @@ describe('SessionPendingInputs restart reconciliation', () => {
       claimed
     ])
 
-    const recovery = coordinator.recoverInputsAfterRestart()
+    coordinator.recoverInputsAfterRestart()
 
-    expect(recovery.forceRecoverMessagesBySession.get('session-1')).toEqual(
-      new Set(['user-1', 'user-2', 'recovered-1'])
-    )
+    expect(transcript.failPendingSteerMessages).toHaveBeenNthCalledWith(1, ['user-1', 'user-2'])
+    expect(transcript.failPendingSteerMessages).toHaveBeenNthCalledWith(2, ['recovered-1'])
     expect(transcript.settleSteerMessages).toHaveBeenCalledWith(['user-read'])
     expect(store.linkSteerMessage).toHaveBeenCalledWith('steer-missing', 'recovered-1')
     expect(records.get('steer-pending')?.state).toBe('consumed')

@@ -221,7 +221,8 @@ export const sessionsListPendingInputsRoute = defineRouteContract({
     sessionId: EntityIdSchema
   }),
   output: z.object({
-    items: z.array(PendingSessionInputRecordSchema)
+    items: z.array(PendingSessionInputRecordSchema),
+    resumeAvailable: z.boolean()
   })
 })
 

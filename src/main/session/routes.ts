@@ -246,8 +246,13 @@ export function createSessionRoutes(deps: {
       sessionsListPendingInputsRoute.name,
       async (rawInput) => {
         const input = sessionsListPendingInputsRoute.input.parse(rawInput)
+        const [items, resumeAvailable] = await Promise.all([
+          deps.turn.listPendingInputs(input.sessionId),
+          deps.turn.isPendingQueueResumeAvailable(input.sessionId)
+        ])
         return sessionsListPendingInputsRoute.output.parse({
-          items: await deps.turn.listPendingInputs(input.sessionId)
+          items,
+          resumeAvailable
         })
       }
     ],

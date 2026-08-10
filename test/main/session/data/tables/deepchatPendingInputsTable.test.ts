@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { SessionPendingInputStore } from '@/session/data/pendingInputStore'
 import { DeepChatPendingInputsTable } from '@/session/data/tables/deepchatPendingInputs'
@@ -282,6 +282,119 @@ describeIfNativeSqlite('SessionPendingInputStore blocked queue', () => {
 })
 
 describeIfNativeSqlite('Steer message lifecycle', () => {
+  it('rolls back claimed Queue message materialization when linking fails', () => {
+    const connection = new MainDatabase(':memory:')
+    const data = createSessionData(connection, undefined, {
+      publishPendingInputsChanged: () => {},
+      publishMessagesChanged: () => {}
+    })
+
+    try {
+      data.settings.create('s1', 'openai', 'gpt-4o', 'full_access')
+      const queue = data.pendingInputs.queuePendingInput(
+        's1',
+        { text: 'atomic queue', files: [] },
+        { state: 'claimed' }
+      )
+      const originalUpdate = connection.deepchatPendingInputsTable.update.bind(
+        connection.deepchatPendingInputsTable
+      )
+      const update = vi
+        .spyOn(connection.deepchatPendingInputsTable, 'update')
+        .mockImplementation((itemId, fields) => {
+          if (fields.message_ids_json) {
+            throw new Error('link failed')
+          }
+          return originalUpdate(itemId, fields)
+        })
+
+      expect(() =>
+        data.pendingInputs.createClaimedQueueUserMessage('s1', queue.id, {
+          text: 'atomic queue',
+          files: [],
+          links: [],
+          search: false,
+          think: false
+        })
+      ).toThrow('link failed')
+      expect(data.transcript.getMessages('s1')).toEqual([])
+      expect(data.pendingInputs.getInput('s1', queue.id)?.messageIds).toEqual([])
+
+      update.mockRestore()
+      const messageId = data.pendingInputs.createClaimedQueueUserMessage('s1', queue.id, {
+        text: 'atomic queue',
+        files: [],
+        links: [],
+        search: false,
+        think: false
+      })
+      expect(data.pendingInputs.getInput('s1', queue.id)?.messageIds).toEqual([messageId])
+      expect(data.transcript.getMessages('s1').map((message) => message.id)).toEqual([messageId])
+    } finally {
+      connection.close()
+    }
+  })
+
+  it('rolls back every unread Steer transition when terminalization fails', () => {
+    const connection = new MainDatabase(':memory:')
+    const data = createSessionData(connection, undefined, {
+      publishPendingInputsChanged: () => {},
+      publishMessagesChanged: () => {}
+    })
+
+    try {
+      data.settings.create('s1', 'openai', 'gpt-4o', 'full_access')
+      const first = data.pendingInputs.acceptSteerMessage('s1', {
+        text: 'first',
+        files: []
+      })
+      const second = data.pendingInputs.acceptSteerMessage(
+        's1',
+        { text: 'second', files: [] },
+        { mergeItemId: first.pendingInput.id }
+      )
+      const tapeCountBeforeRecovery = connection.deepchatTapeEntriesTable.getBySession('s1').length
+      const originalUpdateStatus = connection.deepchatMessagesTable.updateStatus.bind(
+        connection.deepchatMessagesTable
+      )
+      let failedStatusUpdates = 0
+      const updateStatus = vi
+        .spyOn(connection.deepchatMessagesTable, 'updateStatus')
+        .mockImplementation((messageId, status) => {
+          originalUpdateStatus(messageId, status)
+          if (status === 'error' && ++failedStatusUpdates === 1) {
+            throw new Error('terminalization failed')
+          }
+        })
+
+      expect(() => data.pendingInputs.recoverInputsAfterRestart()).toThrow('terminalization failed')
+      expect(data.transcript.getMessages('s1').map((message) => message.status)).toEqual([
+        'pending',
+        'pending'
+      ])
+      expect(data.pendingInputs.getInput('s1', first.pendingInput.id)?.state).toBe('pending')
+      expect(data.pendingInputs.listPendingInputs('s1')).toHaveLength(1)
+      expect(connection.deepchatTapeEntriesTable.getBySession('s1')).toHaveLength(
+        tapeCountBeforeRecovery
+      )
+
+      updateStatus.mockRestore()
+      data.pendingInputs.recoverInputsAfterRestart()
+      expect(data.transcript.getMessages('s1').map((message) => message.status)).toEqual([
+        'error',
+        'error'
+      ])
+      expect(data.pendingInputs.getInput('s1', first.pendingInput.id)?.state).toBe('consumed')
+      expect(data.pendingInputs.listPendingInputs('s1')).toEqual([])
+      expect(connection.deepchatTapeEntriesTable.getBySession('s1')).toHaveLength(
+        tapeCountBeforeRecovery + 2
+      )
+      expect(second.pendingInput.messageIds).toEqual([first.message.id, second.message.id])
+    } finally {
+      connection.close()
+    }
+  })
+
   it('persists separate user messages and one read-boundary assistant row', () => {
     const connection = new MainDatabase(':memory:')
     const publishedMessages: string[][] = []

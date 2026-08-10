@@ -88,6 +88,7 @@ import type {
 } from './pendingInputContracts'
 import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
 import type { CommandShellService } from '@/agent/shared/process/commandShellService'
+import type { SessionPendingInputs } from '@/session/data/pendingInputs'
 
 type TurnRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
@@ -129,6 +130,7 @@ export interface TurnCoordinatorPorts {
   toolService: Pick<ToolServicePort, 'clearAgentPlanState'>
   sessionStore: SessionSettingsStore
   messageStore: SessionTranscript
+  pendingInputs: Pick<SessionPendingInputs, 'createClaimedQueueUserMessage'>
   tapeReconciliation: TapeReconciliationPort
   toolResolver: DeepChatToolResolver
   compactionService: CompactionService
@@ -658,11 +660,17 @@ export class TurnCoordinator {
               sessionId,
               'user-message-create',
               () =>
-                this.ports.messageStore.createUserMessage(
-                  sessionId,
-                  this.ports.messageStore.getNextOrderSeq(sessionId),
-                  userContent
-                )
+                claimedInput && claimedInput.source !== 'steer'
+                  ? this.ports.pendingInputs.createClaimedQueueUserMessage(
+                      sessionId,
+                      claimedInput.id,
+                      userContent
+                    )
+                  : this.ports.messageStore.createUserMessage(
+                      sessionId,
+                      this.ports.messageStore.getNextOrderSeq(sessionId),
+                      userContent
+                    )
             )
             userMessageId = createdUserMessageId
             instance.setPreStreamTranscriptAnchorId(createdUserMessageId)

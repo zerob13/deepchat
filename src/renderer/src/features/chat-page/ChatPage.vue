@@ -1300,7 +1300,8 @@ const showPendingQueueResume = computed(() => {
     activeSession.providerId !== 'acp' &&
     isSessionViewCommitted.value &&
     !isGenerating.value &&
-    pendingInputStore.queueItems.some((item) => item.state === 'pending')
+    pendingInputStore.currentSessionId === props.sessionId &&
+    pendingInputStore.resumeAvailable
   )
 })
 const disablePendingQueueResume = computed(

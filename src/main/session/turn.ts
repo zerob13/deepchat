@@ -210,6 +210,12 @@ export class SessionTurn implements SessionTurnPort, SessionInitialTurnPort {
     return await this.dependencies.runtime.resolveSession(toAppSessionId(sessionId)).pending.list()
   }
 
+  async isPendingQueueResumeAvailable(sessionId: string): Promise<boolean> {
+    if (!this.dependencies.sessions.get(sessionId)) return false
+    const runtime = this.dependencies.runtime.resolveSession(toAppSessionId(sessionId))
+    return runtime.kind === 'deepchat' && (await runtime.isPendingQueueResumeAvailable())
+  }
+
   async resumePendingQueue(sessionId: string): Promise<boolean> {
     return await this.dependencies.workdir.runWithSessionOperationGate(sessionId, async () => {
       this.requireSession(sessionId)

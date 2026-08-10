@@ -48,7 +48,7 @@ createDeepChatRuntimeServices()
   -> bind PendingInputWakeup to PendingInputPump
   -> recoverInputsAfterRestart()
   -> install process-local Queue holds
-  -> merge unclaimed Steer message IDs into forced transcript recovery
+  -> atomically fail unread Steer messages and consume their pending rows
   -> recoverPendingMessages()
   -> return runtime services
 
@@ -117,6 +117,12 @@ The distinction is semantic:
    and one turn.
 9. Diagnostics contain no message text, attachment paths, serialized payloads, or other user
    content.
+10. Materializing a claimed Queue user message and linking that message to its pending-input row
+    commit or roll back together.
+11. Failing unread Steer messages, recording their Tape replacements, and consuming the Steer row
+    commit or roll back together.
+12. Manual-resume intent belongs to the resumed Queue item, not to a transient pump wake reason; it
+    survives attachment block and resolution until that item is consumed or explicitly removed.
 
 ## Fix Design
 
@@ -129,15 +135,17 @@ For Queue:
 
 - keep `pending` rows unchanged;
 - release `claimed` rows without a materialized user message back to `pending`;
+- treat a linked but missing or foreign user message as a dangling rollback association, clear the
+  link while releasing the row, and keep the Queue draft;
 - preserve the existing terminal recovery for `claimed` rows that already materialized a user
   message;
 - record the IDs of retained/released Queue rows in a process-local `restartHeldQueueInputIds` set.
 
 For Steer:
 
-- for each `pending` Steer, ensure its linked user message exists, add those message IDs to forced
-  pending-message recovery, and mark the Steer row `consumed`;
-- `recoverPendingMessages()` then changes those user messages from `pending` to `error`;
+- for each `pending` Steer, ensure its linked user message exists, change every linked message from
+  `pending` to `error`, append the corresponding Tape replacements, and mark the Steer row
+  `consumed` in one SQLite transaction;
 - for `claimed` Steer, retain the existing behavior: settle linked user messages, consume the row,
   and let pending assistant recovery create the interrupted error response;
 - preserve the existing attachment-blocked conversion and resolution path.
@@ -163,6 +171,11 @@ The hold has narrow behavior:
 - once no held IDs remain, the overlay disappears naturally;
 - another process restart derives a new hold from whatever Queue rows remain.
 
+Queue transcript materialization also closes its crash window: creating the claimed Queue's user
+message and linking that message ID back to the claimed row use one transaction. Startup can then
+distinguish an unstarted draft from a turn whose transcript fact already exists without guessing
+from timing.
+
 Keep the set inside the existing pending-input runtime owner. Do not add a new service, database
 column, timer, or global event bus.
 
@@ -175,6 +188,10 @@ existing Session operation gate:
 2. reject active interactions, attachment blockers, claimed inputs, or an owned drain lease;
 3. release the Session's startup Queue hold;
 4. request the existing pump to drain with a new explicit `manual` reason.
+
+The list response exposes whether that Session actually has a restart-held Queue row. The renderer
+uses this authoritative value instead of inferring recovery state from the presence of an ordinary
+pending Queue item, and Resume returns `false` without starting a drain when no hold was released.
 
 The action resumes the existing Steer-before-Queue and Queue FIFO rules. One click means “continue
 this Queue”; after the first item completes, later Queue items may continue normally. Reorder or
@@ -189,6 +206,11 @@ Once the manually resumed head has persisted its user and assistant facts and is
 provider Run, its Queue claim is consumed like an explicit Send. A returned provider error therefore
 stays in the transcript and cannot put the same item back into Queue. Failures before that boundary
 still release the claim so no accepted draft is lost.
+
+If attachment preparation blocks the resumed head, the process-local manual marker remains attached
+to that item ID. Retrying or degrading the attachment can wake the pump with the ordinary `enqueue`
+reason without losing manual-resume semantics. The marker is cleared only after consumption or an
+explicit delete/Steer conversion.
 
 ### 4. Terminalize pending Steer as a retryable failure
 
@@ -288,16 +310,34 @@ Restored Session
 Nothing executes merely because the Session was opened.
 ```
 
+Resume availability correction:
+
+```text
+BEFORE — ordinary live Queue
++--------------------------------------------------+
+| Queue (1)                         [Resume queue]  |
+|  1. Follow up after this turn                    |
++--------------------------------------------------+
+
+AFTER — ordinary live Queue
++--------------------------------------------------+
+| Queue (1)                                        |
+|  1. Follow up after this turn                    |
++--------------------------------------------------+
+
+The action is projected only for a real restart-held Queue.
+```
+
 ## Data and Contract Changes
 
 | Boundary | Change |
 | --- | --- |
 | SQLite | No schema or migration change. |
-| Pending-input store | Return restart reconciliation results and retain current durable Queue/Steer transitions. |
-| Pump | Track startup-held Queue IDs; add explicit `manual` resume; skip held FIFO heads; consume a manually resumed head at the provider boundary. |
+| Pending-input store | Atomically link claimed Queue messages and terminalize unread Steer messages with their rows. |
+| Pump | Track startup-held Queue IDs and manually resumed item IDs; skip held FIFO heads; consume a manually resumed head at the provider boundary. |
 | Admission | Make `list()` pure and expose Queue resume validation. |
-| Session route/client | Add `sessions.resumePendingQueue`. |
-| Transcript recovery | Force pending Steer user messages to `error` before consuming their active row. |
+| Session route/client | Add `sessions.resumePendingQueue` and authoritative `resumeAvailable` projection. |
+| Transcript recovery | Persist unread Steer `error` status and Tape replacements inside reconciliation. |
 | Renderer | Add the Queue resume action and suppress recovery-specific Steer receipt chrome. |
 
 No provider, model request, permission, attachment-preparation, Session summary, or sidebar contract
@@ -382,7 +422,7 @@ this design.
 
 - [x] Extend startup pending-input reconciliation to collect held Queue IDs and terminalize pending
       Steer rows.
-- [x] Merge pending Steer message IDs into forced pending-message recovery.
+- [x] Atomically fail unread Steer messages, append Tape replacements, and consume their rows.
 - [x] Add the process-local startup Queue hold to `PendingInputPump` selection and cleanup paths.
 - [x] Remove the scheduling side effect from `PendingInputAdmissionCoordinator.list()`.
 - [x] Add the typed `sessions.resumePendingQueue` route/client and Session operation-gate handling.
@@ -394,6 +434,10 @@ this design.
       `docs/architecture/deepchat-agent-harness-boundaries/spec.md` with the implemented contract.
 - [x] Add focused reconciliation, pump, admission, retry, store, and component tests.
 - [x] Run format, i18n, lint, typecheck, and focused main/renderer suites.
+- [x] Atomically create and link claimed Queue user messages.
+- [x] Preserve manual-resume semantics across attachment block and resolution.
+- [x] Project authoritative Queue resume availability and reject no-hold Resume calls.
+- [x] Add crash-window and attachment-resolution regressions, then rerun validation.
 
 ## Validation Plan
 
@@ -401,9 +445,12 @@ this design.
 
 - A pending Queue survives restart unchanged and is added to the process-local hold.
 - A claimed Queue without a user message is released and held.
+- A claimed Queue with only a dangling message ID is released, unlinked, and held.
 - A claimed Queue with a user message follows existing interrupted-turn recovery.
 - A pending Steer with one or multiple linked messages consumes its row and marks every linked user
   message `error`.
+- Injecting a failure during multi-message Steer terminalization rolls back every message, Tape
+  replacement, and the pending-row transition; the next reconciliation succeeds once.
 - A claimed Steer keeps read user messages sent and recovers its assistant response to error.
 - Repeating startup reconciliation changes no already-terminal Steer row and safely rebuilds Queue
   holds.
@@ -420,8 +467,12 @@ this design.
 ### Explicit Queue resume
 
 - Resume Queue starts the FIFO head exactly once.
+- An ordinary live Queue does not expose Resume, and calling Resume without a restart hold returns
+  `false` without draining.
 - Once the manually resumed head reaches the provider boundary, it is consumed and cannot reappear
   after a returned provider error.
+- Attachment Retry and Send without image content preserve that same consumption boundary for the
+  manually resumed item even though resolution wakes the pump as `enqueue`.
 - Later Queue items follow the existing completion/FIFO contract after explicit resume.
 - Duplicate Resume calls, a held drain lease, stale instance, active interaction, attachment block,
   or concurrent lifecycle wake cannot create a duplicate claim or turn.

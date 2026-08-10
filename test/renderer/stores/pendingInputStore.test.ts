@@ -29,6 +29,11 @@ const createPendingItem = (id: string, sessionId: string, mode: 'queue' | 'steer
   updatedAt: 1
 })
 
+const createPendingResult = (
+  items: ReturnType<typeof createPendingItem>[],
+  resumeAvailable = false
+) => ({ items, resumeAvailable })
+
 const setupStore = async () => {
   vi.resetModules()
   vi.doUnmock('pinia')
@@ -66,8 +71,8 @@ describe('pendingInput store', () => {
     const { store, sessionClient } = await setupStore()
     const resume = createDeferred<{ started: boolean }>()
     sessionClient.listPendingInputs
-      .mockResolvedValueOnce([createPendingItem('q1', 's1')])
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(createPendingResult([createPendingItem('q1', 's1')], true))
+      .mockResolvedValueOnce(createPendingResult([]))
     sessionClient.resumePendingQueue.mockReturnValueOnce(resume.promise)
     await store.loadPendingInputs('s1')
 
@@ -79,12 +84,13 @@ describe('pendingInput store', () => {
     expect(sessionClient.resumePendingQueue).toHaveBeenCalledWith('s1')
     expect(store.resumingQueue).toBe(false)
     expect(store.items).toEqual([])
+    expect(store.resumeAvailable).toBe(false)
   })
 
   it('ignores stale load results after the active session changes', async () => {
     const { store, sessionClient } = await setupStore()
-    const firstLoad = createDeferred<ReturnType<typeof createPendingItem>[]>()
-    const secondLoad = createDeferred<ReturnType<typeof createPendingItem>[]>()
+    const firstLoad = createDeferred<ReturnType<typeof createPendingResult>>()
+    const secondLoad = createDeferred<ReturnType<typeof createPendingResult>>()
 
     sessionClient.listPendingInputs
       .mockReturnValueOnce(firstLoad.promise)
@@ -93,28 +99,48 @@ describe('pendingInput store', () => {
     const firstPromise = store.loadPendingInputs('s1')
     const secondPromise = store.loadPendingInputs('s2')
 
-    secondLoad.resolve([createPendingItem('p2', 's2')])
+    secondLoad.resolve(createPendingResult([createPendingItem('p2', 's2')], true))
     await secondPromise
 
     expect(store.currentSessionId).toBe('s2')
     expect(store.items).toEqual([createPendingItem('p2', 's2')])
+    expect(store.resumeAvailable).toBe(true)
     expect(store.loading).toBe(false)
     expect(store.error).toBeNull()
 
-    firstLoad.resolve([createPendingItem('p1', 's1')])
+    firstLoad.resolve(createPendingResult([createPendingItem('p1', 's1')]))
     await firstPromise
 
     expect(store.currentSessionId).toBe('s2')
     expect(store.items).toEqual([createPendingItem('p2', 's2')])
+    expect(store.resumeAvailable).toBe(true)
     expect(store.loading).toBe(false)
     expect(store.error).toBeNull()
   })
 
+  it('clears resume availability while switching to another session', async () => {
+    const { store, sessionClient } = await setupStore()
+    sessionClient.listPendingInputs.mockResolvedValueOnce(
+      createPendingResult([createPendingItem('p1', 's1')], true)
+    )
+    await store.loadPendingInputs('s1')
+    const nextLoad = createDeferred<ReturnType<typeof createPendingResult>>()
+    sessionClient.listPendingInputs.mockReturnValueOnce(nextLoad.promise)
+
+    const operation = store.loadPendingInputs('s2')
+
+    expect(store.currentSessionId).toBe('s2')
+    expect(store.items).toEqual([])
+    expect(store.resumeAvailable).toBe(false)
+    nextLoad.resolve(createPendingResult([]))
+    await operation
+  })
+
   it('rejects an old load after a rapid A-B-A session cycle', async () => {
     const { store, sessionClient } = await setupStore()
-    const firstA = createDeferred<ReturnType<typeof createPendingItem>[]>()
-    const sessionB = createDeferred<ReturnType<typeof createPendingItem>[]>()
-    const secondA = createDeferred<ReturnType<typeof createPendingItem>[]>()
+    const firstA = createDeferred<ReturnType<typeof createPendingResult>>()
+    const sessionB = createDeferred<ReturnType<typeof createPendingResult>>()
+    const secondA = createDeferred<ReturnType<typeof createPendingResult>>()
     sessionClient.listPendingInputs
       .mockReturnValueOnce(firstA.promise)
       .mockReturnValueOnce(sessionB.promise)
@@ -124,14 +150,15 @@ describe('pendingInput store', () => {
     const sessionBPromise = store.loadPendingInputs('s2')
     const secondAPromise = store.loadPendingInputs('s1')
 
-    secondA.resolve([createPendingItem('a-latest', 's1')])
+    secondA.resolve(createPendingResult([createPendingItem('a-latest', 's1')], true))
     await secondAPromise
-    firstA.resolve([createPendingItem('a-stale', 's1')])
-    sessionB.resolve([createPendingItem('b-stale', 's2')])
+    firstA.resolve(createPendingResult([createPendingItem('a-stale', 's1')]))
+    sessionB.resolve(createPendingResult([createPendingItem('b-stale', 's2')]))
     await Promise.all([firstAPromise, sessionBPromise])
 
     expect(store.currentSessionId).toBe('s1')
     expect(store.items).toEqual([createPendingItem('a-latest', 's1')])
+    expect(store.resumeAvailable).toBe(true)
     expect(store.loading).toBe(false)
   })
 
@@ -139,8 +166,8 @@ describe('pendingInput store', () => {
     const { store, sessionClient } = await setupStore()
     const reorderedSessionOne = createDeferred<ReturnType<typeof createPendingItem>[]>()
     sessionClient.listPendingInputs
-      .mockResolvedValueOnce([createPendingItem('a-1', 's1')])
-      .mockResolvedValueOnce([createPendingItem('b-1', 's2')])
+      .mockResolvedValueOnce(createPendingResult([createPendingItem('a-1', 's1')]))
+      .mockResolvedValueOnce(createPendingResult([createPendingItem('b-1', 's2')]))
     sessionClient.moveQueuedInput.mockReturnValueOnce(reorderedSessionOne.promise)
 
     await store.loadPendingInputs('s1')
@@ -155,7 +182,7 @@ describe('pendingInput store', () => {
 
   it('preserves clear state when an in-flight load later fails', async () => {
     const { store, sessionClient } = await setupStore()
-    const load = createDeferred<ReturnType<typeof createPendingItem>[]>()
+    const load = createDeferred<ReturnType<typeof createPendingResult>>()
 
     sessionClient.listPendingInputs.mockReturnValueOnce(load.promise)
 
@@ -167,6 +194,7 @@ describe('pendingInput store', () => {
 
     expect(store.currentSessionId).toBeNull()
     expect(store.items).toEqual([])
+    expect(store.resumeAvailable).toBe(false)
     expect(store.loading).toBe(false)
     expect(store.error).toBeNull()
 
@@ -191,10 +219,12 @@ describe('pendingInput store', () => {
 
   it('keeps steer inputs out of the queue lane and capacity count', async () => {
     const { store, sessionClient } = await setupStore()
-    sessionClient.listPendingInputs.mockResolvedValueOnce([
-      createPendingItem('q1', 's1'),
-      createPendingItem('steer1', 's1', 'steer')
-    ])
+    sessionClient.listPendingInputs.mockResolvedValueOnce(
+      createPendingResult([
+        createPendingItem('q1', 's1'),
+        createPendingItem('steer1', 's1', 'steer')
+      ])
+    )
 
     await store.loadPendingInputs('s1')
 
@@ -206,12 +236,14 @@ describe('pendingInput store', () => {
 
   it('steers a queued input through the session client and reloads', async () => {
     const { store, sessionClient } = await setupStore()
-    sessionClient.listPendingInputs.mockResolvedValueOnce([createPendingItem('q1', 's1')])
+    sessionClient.listPendingInputs.mockResolvedValueOnce(
+      createPendingResult([createPendingItem('q1', 's1')])
+    )
     await store.loadPendingInputs('s1')
 
     const steered = createPendingItem('q1', 's1', 'steer')
     sessionClient.steerPendingInput.mockResolvedValue(steered)
-    sessionClient.listPendingInputs.mockResolvedValueOnce([steered])
+    sessionClient.listPendingInputs.mockResolvedValueOnce(createPendingResult([steered]))
 
     await store.steerPendingInput('s1', 'q1')
 
@@ -223,7 +255,9 @@ describe('pendingInput store', () => {
 
   it('rethrows and records an error when steering a queued input fails', async () => {
     const { store, sessionClient } = await setupStore()
-    sessionClient.listPendingInputs.mockResolvedValueOnce([createPendingItem('q1', 's1')])
+    sessionClient.listPendingInputs.mockResolvedValueOnce(
+      createPendingResult([createPendingItem('q1', 's1')])
+    )
     await store.loadPendingInputs('s1')
 
     sessionClient.steerPendingInput.mockRejectedValue(new Error('boom'))

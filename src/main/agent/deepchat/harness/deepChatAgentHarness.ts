@@ -114,6 +114,10 @@ export class DeepChatAgentHarness
     return this.services.pendingInputAdmission.list(sessionId)
   }
 
+  async isPendingQueueResumeAvailable(sessionId: string): Promise<boolean> {
+    return this.services.pendingInputAdmission.isPendingQueueResumeAvailable(sessionId)
+  }
+
   async resumePendingQueue(sessionId: string): Promise<boolean> {
     return await this.services.pendingInputAdmission.resumePendingQueue(sessionId)
   }

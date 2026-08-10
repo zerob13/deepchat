@@ -477,6 +477,8 @@ function createRuntime() {
       }
     }),
     listPendingInputs: vi.fn().mockResolvedValue([]),
+    isPendingQueueResumeAvailable: vi.fn().mockResolvedValue(false),
+    resumePendingQueue: vi.fn().mockResolvedValue(false),
     queuePendingInput: vi.fn().mockResolvedValue({}),
     updateQueuedInput: vi.fn().mockResolvedValue({}),
     moveQueuedInput: vi.fn().mockResolvedValue([]),
@@ -4387,6 +4389,15 @@ describe('dispatchDeepchatRoute', () => {
         id: 'session-1'
       })
     })
+
+    const pendingResult = await dispatchDeepchatRoute(
+      runtime,
+      'sessions.listPendingInputs',
+      { sessionId: 'session-1' },
+      createRendererRouteContext(88, 3)
+    )
+    expect(pendingResult).toEqual({ items: [], resumeAvailable: false })
+    expect(sessionTurnPort.isPendingQueueResumeAvailable).toHaveBeenCalledWith('session-1')
 
     await dispatchDeepchatRoute(
       runtime,

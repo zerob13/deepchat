@@ -338,7 +338,17 @@ export class SessionPendingInputStore {
     if (row.mode !== 'queue') {
       throw new Error(`Pending input ${itemId} is not a queue item.`)
     }
-    return this.releaseClaimedInput(itemId, row)
+    if (row.state !== 'claimed') {
+      return this.toRecord(row)
+    }
+
+    this.database.deepchatPendingInputsTable.update(itemId, {
+      state: 'pending',
+      claimed_at: null,
+      blocking_json: null,
+      message_ids_json: '[]'
+    })
+    return this.toRecord(this.requireRow(itemId, row.session_id))
   }
 
   releaseClaimedInput(

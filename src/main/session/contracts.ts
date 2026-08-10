@@ -241,6 +241,7 @@ export type SessionTurnRuntimeSession =
         getState(): Promise<SessionCompactionState>
         compact(): Promise<{ compacted: boolean; state: SessionCompactionState }>
       }
+      isPendingQueueResumeAvailable(): Promise<boolean>
       resumePendingQueue(): Promise<boolean>
     })
   | (SessionTurnRuntimeBase & { readonly kind: 'acp' })
@@ -290,6 +291,7 @@ export interface SessionTurnPort {
     options?: { signal?: AbortSignal }
   ): Promise<MessageStartResult>
   listPendingInputs(sessionId: string): Promise<PendingSessionInputRecord[]>
+  isPendingQueueResumeAvailable(sessionId: string): Promise<boolean>
   resumePendingQueue(sessionId: string): Promise<boolean>
   queuePendingInput(
     sessionId: string,

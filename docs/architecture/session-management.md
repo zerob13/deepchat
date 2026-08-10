@@ -78,10 +78,14 @@ Steer: user message (Unread) -> claim (Read) -> new assistant message
   process-local restart hold；Session 打开、hydrate、消息查询和 pending-input list 都不会释放 hold
   或触发执行。用户通过 Queue lane 的 `Resume queue` 显式释放当前 Session 的 hold，之后继续沿用
   Steer-first 与 Queue FIFO drain 规则。手动恢复的 Queue head 在写入 user/assistant fact 并进入
-  provider Run 前消费；此后的 provider error 只保留在 transcript，不会把同一条目放回 Queue。
+  provider Run 前消费；manual 标记绑定 Queue item ID，附件 block 后的 retry/degrade 不会丢失该语义。
+  此后的 provider error 只保留在 transcript，不会把同一条目放回 Queue。pending-input list 同时返回
+  后端计算的 resume availability；普通 live Queue 不显示该操作，无 hold 的 Resume 不触发 drain。
 - 重启前尚未 claim 的 Steer 不再自动 drain：reconciliation 消费对应 pending row，并把 linked
-  pending user message 加入 transcript forced recovery，最终内部状态为 `error`，UI 不显示 receipt。
-  用户通过普通消息工具栏 Retry 时走普通 turn，且不会释放同 Session 的历史 Queue hold。
+  pending user message、Tape replacement 与 row 消费在同一事务内终结为 `error`，UI 不显示
+  receipt。用户通过普通消息工具栏 Retry 时走普通 turn，且不会释放同 Session 的历史 Queue hold。
+- claimed Queue 创建 user message 时会在同一事务内回写 pending row 的 message ID，使冷启动可以
+  明确区分尚未开始的 draft 与已物化的 transcript fact。
 - restart hold 仅由现有 active Queue ID 派生，不持久化、不改变 Queue 排序和容量，也不新增 schema；
   再次重启会从剩余 durable row 重建。pending-input list 是纯读。
 - DeepChat harness 构造时在 pending-input 与 transcript recovery 之前分类 Execution Journal。存在
