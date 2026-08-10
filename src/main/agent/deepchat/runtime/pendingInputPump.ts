@@ -585,7 +585,10 @@ export class PendingInputPump {
       enqueue: 1,
       manual: 2
     }
-    this.deferredWakeups.set(sessionId, !current || priority[reason] > priority[current] ? reason : current)
+    this.deferredWakeups.set(
+      sessionId,
+      !current || priority[reason] > priority[current] ? reason : current
+    )
   }
 
   private flushDeferredWakeup(sessionId: string): void {

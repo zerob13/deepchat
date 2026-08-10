@@ -2678,6 +2678,7 @@ describe('DeepChatAgentHarness', () => {
       expect(recoverPendingMessages).toHaveBeenCalledWith({
         forceRecoverMessagesBySession: new Map([['s1', new Set(['steer-user'])]])
       })
+      expect(processStream).not.toHaveBeenCalled()
     })
   })
 
@@ -8265,8 +8266,11 @@ describe('DeepChatAgentHarness', () => {
       )
       vi.mocked(nanoid).mockReturnValueOnce('resumed-user').mockReturnValueOnce('resumed-assistant')
       const provider = llmProvider.getProviderInstance('openai')
-      provider.coreStream.mockImplementationOnce(async function* () {
-        yield { type: 'stop', stop_reason: 'provider_error' }
+      provider.coreStream.mockImplementationOnce(() => {
+        expect(sqlitePresenter.deepchatPendingInputsTable.get(queued.id)).toBeUndefined()
+        return (async function* () {
+          yield { type: 'stop', stop_reason: 'provider_error' }
+        })()
       })
       ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params: any) => {
         for await (const _event of params.coreStream(
