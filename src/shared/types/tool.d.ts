@@ -97,6 +97,11 @@ export interface ToolServicePort {
   getAllToolDefinitions(context: ToolDefinitionContext): Promise<MCPToolDefinition[]>
 
   /**
+   * Resolve the owned definition universe without publishing runtime dispatch mappings.
+   */
+  getToolDefinitionUniverse(context: ToolDefinitionContext): Promise<MCPToolDefinition[]>
+
+  /**
    * Get only Agent tools that users may enable or disable.
    */
   getConfigurableAgentToolDefinitions(context: ToolDefinitionContext): Promise<MCPToolDefinition[]>

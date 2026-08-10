@@ -180,19 +180,55 @@ export class ToolService implements ToolServicePort {
    * Returns unified MCP-format tool definitions
    */
   async getAllToolDefinitions(context: ToolDefinitionContext): Promise<MCPToolDefinition[]> {
-    const defs: MCPToolDefinition[] = []
-    const mapper = new ToolMapper()
-
-    const chatMode = context.chatMode || 'agent'
-    const supportsVision = context.supportsVision || false
     const agentWorkspacePath = context.agentWorkspacePath || null
     this.rememberConversationMcpAccessContext(context.conversationId, {
       agentId: context.agentId,
       enabledMcpServerIds: context.enabledMcpServerIds,
       sessionKind: context.sessionKind
     })
-    // 1. Get MCP tools
-    const mcpDefs = withToolSource(
+    const resolved = await this.collectToolDefinitions(
+      context,
+      this.ensureAgentToolManager(agentWorkspacePath),
+      {
+        reportRuntimeDiagnostics: true,
+        onMcpDefinitions: (definitions) =>
+          this.rememberMcpDefinitions(context.conversationId, definitions)
+      }
+    )
+    this.publishMapper(context.conversationId, resolved.mapper, resolved.definitions)
+    return resolved.definitions
+  }
+
+  /**
+   * Resolve the full owned definition universe without changing runtime dispatch state.
+   */
+  async getToolDefinitionUniverse(context: ToolDefinitionContext): Promise<MCPToolDefinition[]> {
+    const agentWorkspacePath = context.agentWorkspacePath || null
+    const resolved = await this.collectToolDefinitions(
+      context,
+      this.createAgentToolManager(agentWorkspacePath),
+      { reportRuntimeDiagnostics: false }
+    )
+    return resolved.definitions
+  }
+
+  private async collectToolDefinitions(
+    context: ToolDefinitionContext,
+    agentToolManager: AgentToolManager,
+    options: {
+      reportRuntimeDiagnostics: boolean
+      onMcpDefinitions?: (definitions: MCPToolDefinition[]) => void
+    }
+  ): Promise<{
+    definitions: MCPToolDefinition[]
+    mapper: ToolMapper
+  }> {
+    const definitions: MCPToolDefinition[] = []
+    const mapper = new ToolMapper()
+    const chatMode = context.chatMode || 'agent'
+    const supportsVision = context.supportsVision || false
+    const agentWorkspacePath = context.agentWorkspacePath || null
+    const mcpDefinitions = withToolSource(
       (
         await this.options.mcpService.getAllToolDefinitions({
           enabledTools: context.enabledMcpTools,
@@ -203,15 +239,12 @@ export class ToolService implements ToolServicePort {
       ).filter((tool) => !RESERVED_AGENT_TOOL_NAMES.has(tool.function.name)),
       'mcp'
     )
-    defs.push(...mcpDefs)
-    mapper.registerTools(mcpDefs, 'mcp')
-    this.rememberMcpDefinitions(context.conversationId, mcpDefs)
-
-    // 2. Get Agent tools (always load in agent or acp agent mode)
-    const agentToolManager = this.ensureAgentToolManager(agentWorkspacePath)
+    definitions.push(...mcpDefinitions)
+    mapper.registerTools(mcpDefinitions, 'mcp')
+    options.onMcpDefinitions?.(mcpDefinitions)
 
     try {
-      const agentDefs = withToolSource(
+      const agentDefinitions = withToolSource(
         await agentToolManager.getAllToolDefinitions({
           chatMode,
           supportsVision,
@@ -223,24 +256,29 @@ export class ToolService implements ToolServicePort {
         'agent'
       )
       const disabledAgentToolSet = new Set(normalizeToolNames(context.disabledAgentTools))
-      const dedupedAgentDefs = agentDefs.filter((tool) => {
-        if (!mapper.hasTool(tool.function.name)) return true
-        console.warn(`[Tool] Tool name conflict for '${tool.function.name}', preferring MCP tool.`)
-        return false
-      })
-      const filteredAgentDefs = dedupedAgentDefs.filter(
-        (tool) =>
-          !isUserConfigurableAgentTool(tool.function.name) ||
-          !disabledAgentToolSet.has(tool.function.name)
-      )
-      defs.push(...filteredAgentDefs)
-      mapper.registerTools(filteredAgentDefs, 'agent')
+      const filteredAgentDefinitions = agentDefinitions
+        .filter((tool) => {
+          if (!mapper.hasTool(tool.function.name)) return true
+          if (options.reportRuntimeDiagnostics) {
+            console.warn(
+              `[Tool] Tool name conflict for '${tool.function.name}', preferring MCP tool.`
+            )
+          }
+          return false
+        })
+        .filter(
+          (tool) =>
+            !isUserConfigurableAgentTool(tool.function.name) ||
+            !disabledAgentToolSet.has(tool.function.name)
+        )
+      definitions.push(...filteredAgentDefinitions)
+      mapper.registerTools(filteredAgentDefinitions, 'agent')
     } catch (error) {
+      if (!options.reportRuntimeDiagnostics) throw error
       console.warn('[Tool] Failed to load Agent tool definitions', error)
     }
 
-    this.publishMapper(context.conversationId, mapper, defs)
-    return defs
+    return { definitions, mapper }
   }
 
   /**

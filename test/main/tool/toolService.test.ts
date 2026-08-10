@@ -879,6 +879,69 @@ describe('ToolService', () => {
     expect(defs.some((tool) => tool.function.name === 'ls')).toBe(false)
   })
 
+  it('resolves an owned definition universe without replacing runtime dispatch state', async () => {
+    const publishedDefinition = buildToolDefinition('published_tool', 'published-server')
+    const universeDefinition = buildToolDefinition('universe_tool', 'universe-server')
+    const conflictingUniverseDefinition = buildToolDefinition('read', 'universe-server')
+    const mcpService = {
+      getAllToolDefinitions: vi
+        .fn()
+        .mockResolvedValueOnce([publishedDefinition])
+        .mockResolvedValueOnce([universeDefinition, conflictingUniverseDefinition]),
+      callTool: vi.fn()
+    } as any
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+    const context = {
+      chatMode: 'agent' as const,
+      conversationId: 'conv-universe',
+      agentWorkspacePath: 'C:\\\\workspace',
+      enabledMcpServerIds: ['published-server']
+    }
+
+    await toolService.getAllToolDefinitions(context)
+    const publishedAgentManager = (toolService as any).agentToolManager
+    const publishedMapper = (toolService as any).conversationMappers.get('conv-universe')
+    const publishedMcpDefinitions = (toolService as any).conversationMcpDefinitions.get(
+      'conv-universe'
+    )
+    const publishedAccess = (toolService as any).conversationMcpAccessContexts.get('conv-universe')
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const universe = await toolService.getToolDefinitionUniverse({
+      ...context,
+      enabledMcpServerIds: ['universe-server']
+    })
+
+    expect(universe.some((definition) => definition.function.name === 'universe_tool')).toBe(true)
+    expect(universe.some((definition) => definition.function.name === 'published_tool')).toBe(false)
+    expect(
+      universe.filter(
+        (definition) => definition.function.name === 'read' && definition.source === 'mcp'
+      )
+    ).toHaveLength(1)
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('Tool name conflict'))
+    expect((toolService as any).agentToolManager).toBe(publishedAgentManager)
+    expect((toolService as any).conversationMappers.get('conv-universe')).toBe(publishedMapper)
+    expect((toolService as any).conversationMcpDefinitions.get('conv-universe')).toBe(
+      publishedMcpDefinitions
+    )
+    expect((toolService as any).conversationMcpAccessContexts.get('conv-universe')).toBe(
+      publishedAccess
+    )
+    expect(publishedMapper.getToolSource('published_tool')).toBe('mcp')
+    expect(publishedMapper.getToolSource('universe_tool')).toBeUndefined()
+    expect([...publishedMcpDefinitions.keys()]).toEqual(['published_tool'])
+    warnSpy.mockRestore()
+  })
+
   it('uses one exposure policy for Tape tools and defaults existing tools to configurable', () => {
     expect(getAgentToolExposure(TAPE_TOOL_NAMES.search)).toBe('system-model')
     expect(getAgentToolExposure(TAPE_TOOL_NAMES.context)).toBe('system-model')
