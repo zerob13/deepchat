@@ -771,10 +771,7 @@ export function appendToolSurfaceActivationBatch(
     ...copyDefinitionIdentity(entry),
     activationOrdinal: entry.activationOrdinal
   }))
-  const orderedAdditions = [...pendingByTarget.values()].sort((left, right) =>
-    compareCodePoints(left.stableTargetKey, right.stableTargetKey)
-  )
-  for (const identity of orderedAdditions) {
+  for (const identity of pendingByTarget.values()) {
     entries.push({ ...copyDefinitionIdentity(identity), activationOrdinal: entries.length })
   }
   return freezeActivationLedger(entries)

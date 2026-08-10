@@ -432,7 +432,7 @@ describe('canonical Tool Surface catalog', () => {
 })
 
 describe('Tool Surface provider ordering', () => {
-  it('preserves initial order and appends each activation batch deterministically', () => {
+  it('preserves initial and deterministic candidate-merge order across activation batches', () => {
     const initial = createToolSurfaceActivationLedger([
       definitionIdentity('target-b'),
       definitionIdentity('target-a')
@@ -446,8 +446,8 @@ describe('Tool Surface provider ordering', () => {
     expect(appended.entries).toEqual([
       { ...definitionIdentity('target-b'), activationOrdinal: 0 },
       { ...definitionIdentity('target-a'), activationOrdinal: 1 },
-      { ...definitionIdentity('target-c'), activationOrdinal: 2 },
-      { ...definitionIdentity('target-d'), activationOrdinal: 3 }
+      { ...definitionIdentity('target-d'), activationOrdinal: 2 },
+      { ...definitionIdentity('target-c'), activationOrdinal: 3 }
     ])
     expect(initial.entries).toHaveLength(2)
     expect(Object.isFrozen(appended)).toBe(true)
@@ -479,7 +479,7 @@ describe('Tool Surface provider ordering', () => {
       ]).map((entry) => [entry.stableTargetKey, entry.activationOrdinal])
     ).toEqual([
       ['target-a', 1],
-      ['target-d', 3]
+      ['target-d', 2]
     ])
     expect(
       projectToolSurfaceActiveEntries(ledger, [
@@ -491,8 +491,8 @@ describe('Tool Surface provider ordering', () => {
     ).toEqual([
       ['target-b', 0],
       ['target-a', 1],
-      ['target-c', 2],
-      ['target-d', 3]
+      ['target-d', 2],
+      ['target-c', 3]
     ])
   })
 
@@ -1021,6 +1021,11 @@ describe('Tool Surface activation candidate merge', () => {
       'target-b',
       'target-z'
     ])
+    expect(
+      appendToolSurfaceActivationBatch(createToolSurfaceActivationLedger([]), merged).entries.map(
+        (entry) => entry.stableTargetKey
+      )
+    ).toEqual(['target-c', 'target-a', 'target-b', 'target-z'])
     expect(merged.find((candidate) => candidate.stableTargetKey === 'target-c')).toMatchObject({
       requestSeq: 1,
       toolCallOrdinalWithinBatch: 0,
