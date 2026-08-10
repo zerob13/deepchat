@@ -16,9 +16,12 @@ import {
   ToolSurfaceError,
   appendToolSurfaceActivationBatch,
   buildCanonicalToolCatalog,
+  buildToolSurfaceRunCeiling,
   computeToolSurfaceShadowDecision,
   computeToolSurfaceStaticDefinitionOverlap,
+  createProviderOrderedToolSurfaceActivationLedger,
   createToolSurfaceActivationLedger,
+  createToolSurfaceSnapshot,
   mergeToolSurfaceActivationCandidates,
   projectToolSurfaceActiveEntries,
   type ToolSurfaceActivationCandidate,
@@ -561,6 +564,284 @@ describe('Tool Surface provider ordering', () => {
     )
     expectSurfaceError(
       () => createToolSurfaceActivationLedger([definitionIdentity('target-a', 'not-a-hash')]),
+      'invalid_definition'
+    )
+  })
+})
+
+describe('Run Tool Ceiling and Tool Surface snapshots', () => {
+  it('detaches and deeply freezes the bounded Run ceiling', () => {
+    const original = agentTool('read', {
+      function: {
+        name: 'read',
+        description: 'Read a file',
+        parameters: {
+          type: 'object',
+          properties: { path: { type: 'string' } },
+          required: ['path']
+        }
+      }
+    })
+
+    const ceiling = buildToolSurfaceRunCeiling([original])
+    const frozenDefinition = ceiling.entries[0].definition
+    original.function.description = 'mutated after freeze'
+    ;(original.function.parameters.properties.path as { type: string }).type = 'number'
+
+    expect(frozenDefinition.function.description).toBe('Read a file')
+    expect(frozenDefinition.function.parameters.properties.path).toEqual({ type: 'string' })
+    expect(Object.isFrozen(ceiling)).toBe(true)
+    expect(Object.isFrozen(ceiling.entries)).toBe(true)
+    expect(Object.isFrozen(frozenDefinition)).toBe(true)
+    expect(Object.isFrozen(frozenDefinition.function)).toBe(true)
+    expect(Object.isFrozen(frozenDefinition.function.parameters.properties.path)).toBe(true)
+  })
+
+  it('preserves provider order while projecting current revocation into an immutable View', () => {
+    const write = agentTool('write')
+    const read = agentTool('read')
+    const search = agentTool('search')
+    const ceiling = buildToolSurfaceRunCeiling([read, search, write])
+    const ledger = createProviderOrderedToolSurfaceActivationLedger([write, read, search])
+
+    const revoked = createToolSurfaceSnapshot({
+      request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 1 },
+      policyVersion: 'full-v1',
+      virtualizationTriggered: false,
+      ceiling,
+      eligibleDefinitions: [read, write],
+      activationLedger: ledger
+    })
+    const restored = createToolSurfaceSnapshot({
+      request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 2 },
+      policyVersion: 'full-v1',
+      virtualizationTriggered: false,
+      ceiling,
+      eligibleDefinitions: [search, write, read],
+      activationLedger: ledger
+    })
+
+    expect(revoked.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'write',
+      'read'
+    ])
+    expect(revoked.activeEntries.map((entry) => entry.activationOrdinal)).toEqual([0, 1])
+    expect(restored.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'write',
+      'read',
+      'search'
+    ])
+    expect(restored.activeEntries.map((entry) => entry.activationOrdinal)).toEqual([0, 1, 2])
+    expect(Object.isFrozen(restored)).toBe(true)
+    expect(Object.isFrozen(restored.request)).toBe(true)
+    expect(Object.isFrozen(restored.activeEntries)).toBe(true)
+    expect(Object.isFrozen(restored.toolDefinitions)).toBe(true)
+    expect(Object.isFrozen(restored.toolDefinitions[0].function.parameters)).toBe(true)
+  })
+
+  it('keeps catalog identity canonical while provider activation order follows each input', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+    const firstCeiling = buildToolSurfaceRunCeiling([write, read])
+    const secondCeiling = buildToolSurfaceRunCeiling([read, write])
+    const firstLedger = createProviderOrderedToolSurfaceActivationLedger([write, read, read])
+    const secondLedger = createProviderOrderedToolSurfaceActivationLedger([read, write])
+
+    expect(firstCeiling.catalog.fullCatalogHash).toBe(
+      buildCanonicalToolCatalog([read, write]).fullCatalogHash
+    )
+    expect(firstCeiling.catalog.fullCatalogHash).toBe(secondCeiling.catalog.fullCatalogHash)
+    expect(firstLedger.entries.map((entry) => entry.stableTargetKey)).toEqual([
+      firstCeiling.catalog.entries.find((entry) => entry.target.providerVisibleName === 'write')!
+        .stableTargetKey,
+      firstCeiling.catalog.entries.find((entry) => entry.target.providerVisibleName === 'read')!
+        .stableTargetKey
+    ])
+    expect(secondLedger.entries.map((entry) => entry.stableTargetKey)).toEqual([
+      secondCeiling.catalog.entries.find((entry) => entry.target.providerVisibleName === 'read')!
+        .stableTargetKey,
+      secondCeiling.catalog.entries.find((entry) => entry.target.providerVisibleName === 'write')!
+        .stableTargetKey
+    ])
+  })
+
+  it('supports a virtualized subset with explicit stable selection reasons', () => {
+    const definitions = [agentTool('read'), agentTool('write')]
+    const ceiling = buildToolSurfaceRunCeiling(definitions)
+    const readEntry = ceiling.catalog.entries.find(
+      (entry) => entry.target.providerVisibleName === 'read'
+    )!
+    const ledger = createToolSurfaceActivationLedger([readEntry])
+
+    const snapshot = createToolSurfaceSnapshot({
+      request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 1 },
+      policyVersion: 'virtual-v1',
+      virtualizationTriggered: true,
+      ceiling,
+      eligibleDefinitions: definitions,
+      activationLedger: ledger,
+      selectionReasons: [{ stableTargetKey: readEntry.stableTargetKey, reason: 'core' }]
+    })
+
+    expect(snapshot.activeEntries).toHaveLength(1)
+    expect(snapshot.activeEntries[0]).toMatchObject({ reason: 'core', activationOrdinal: 0 })
+    expect(snapshot.toolDefinitions[0].function.name).toBe('read')
+  })
+
+  it('rejects expansion, definition drift, and an incomplete full surface', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+    const ceiling = buildToolSurfaceRunCeiling([read])
+    const ledger = createProviderOrderedToolSurfaceActivationLedger([read])
+    const request = { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 1 }
+
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          request,
+          policyVersion: 'full-v1',
+          virtualizationTriggered: false,
+          ceiling,
+          eligibleDefinitions: [read, write],
+          activationLedger: ledger
+        }),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          request,
+          policyVersion: 'full-v1',
+          virtualizationTriggered: false,
+          ceiling,
+          eligibleDefinitions: [agentTool('read', { function: { ...read.function, description: 'drift' } })],
+          activationLedger: ledger
+        }),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          request,
+          policyVersion: 'full-v1',
+          virtualizationTriggered: false,
+          ceiling: buildToolSurfaceRunCeiling([read, write]),
+          eligibleDefinitions: [read, write],
+          activationLedger: ledger
+        }),
+      'invalid_definition'
+    )
+  })
+
+  it('rejects mutable ceilings and selection provenance outside the active View', () => {
+    const definitions = [agentTool('read'), agentTool('write')]
+    const ceiling = buildToolSurfaceRunCeiling(definitions)
+    const readEntry = ceiling.catalog.entries.find(
+      (entry) => entry.target.providerVisibleName === 'read'
+    )!
+    const ledger = createToolSurfaceActivationLedger([readEntry])
+    const baseInput = {
+      request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 1 },
+      policyVersion: 'virtual-v1',
+      virtualizationTriggered: true,
+      ceiling,
+      eligibleDefinitions: definitions,
+      activationLedger: ledger
+    } as const
+
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...baseInput,
+          ceiling: { catalog: ceiling.catalog, entries: [...ceiling.entries] },
+          selectionReasons: [{ stableTargetKey: readEntry.stableTargetKey, reason: 'core' }]
+        }),
+      'invalid_definition'
+    )
+    const writeEntry = ceiling.catalog.entries.find(
+      (entry) => entry.target.providerVisibleName === 'write'
+    )!
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...baseInput,
+          selectionReasons: [{ stableTargetKey: writeEntry.stableTargetKey, reason: 'recent' }]
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () => createToolSurfaceSnapshot({ ...baseInput, selectionReasons: [] }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...baseInput,
+          virtualizationTriggered: 'yes' as unknown as boolean,
+          selectionReasons: [{ stableTargetKey: readEntry.stableTargetKey, reason: 'core' }]
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...baseInput,
+          selectionReasons: [
+            {
+              stableTargetKey: readEntry.stableTargetKey,
+              reason: 'unknown' as 'core'
+            }
+          ]
+        }),
+      'invalid_definition'
+    )
+  })
+
+  it('rejects malformed runtime shapes and frozen structural ceiling forgeries', () => {
+    const read = agentTool('read')
+    const ceiling = buildToolSurfaceRunCeiling([read])
+    const ledger = createProviderOrderedToolSurfaceActivationLedger([read])
+    const validInput = {
+      request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 1 },
+      policyVersion: 'full-v1',
+      virtualizationTriggered: false,
+      ceiling,
+      eligibleDefinitions: [read],
+      activationLedger: ledger
+    }
+    const cyclicForgery: Record<string, unknown> = {
+      catalog: ceiling.catalog,
+      entries: ceiling.entries
+    }
+    cyclicForgery.self = cyclicForgery
+    Object.freeze(cyclicForgery)
+
+    expectSurfaceError(
+      () => createToolSurfaceSnapshot(undefined as never),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...validInput,
+          request: { ...validInput.request, sessionId: 42 as unknown as string }
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...validInput,
+          selectionReasons: {} as never
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createToolSurfaceSnapshot({
+          ...validInput,
+          ceiling: cyclicForgery as unknown as typeof ceiling
+        }),
       'invalid_definition'
     )
   })

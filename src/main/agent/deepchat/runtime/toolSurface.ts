@@ -17,6 +17,7 @@ import {
 import { estimateToolDefinitionTokens } from './contextBuilder'
 
 export const TOOL_SURFACE_CATALOG_SCHEMA_VERSION = 1
+export const TOOL_SURFACE_SNAPSHOT_SCHEMA_VERSION = 1
 export const TOOL_SURFACE_CANONICALIZATION_VERSION = 'deepchat-tool-definition-v1'
 export const TOOL_SURFACE_ORDERING_VERSION = 'activation-ordinal-v1'
 export const MAX_TOOL_SURFACE_DEFINITIONS = 1_024
@@ -34,6 +35,15 @@ export const MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES = 4_096
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_TOOL_SURFACE_REQUEST_ID_BYTES = 1_024
+const TOOL_SURFACE_SELECTION_REASONS = Object.freeze([
+  'full-catalog',
+  'policy-required',
+  'core',
+  'active-skill',
+  'recent'
+] as const)
+// Run ceilings are process-live immutable capabilities, not serializable authority or latest state.
+const issuedRunToolCeilings = new WeakSet<ToolSurfaceRunCeiling>()
 
 export type ToolSurfaceErrorCode =
   | 'conflicting_tool'
@@ -68,6 +78,16 @@ export interface CanonicalToolCatalog {
   readonly entries: readonly CanonicalToolCatalogEntry[]
   readonly definitionTokens: number
   readonly canonicalDefinitionBytes: number
+}
+
+export interface ToolSurfaceRunCeilingEntry {
+  readonly catalogEntry: CanonicalToolCatalogEntry
+  readonly definition: MCPToolDefinition
+}
+
+export interface ToolSurfaceRunCeiling {
+  readonly catalog: CanonicalToolCatalog
+  readonly entries: readonly ToolSurfaceRunCeilingEntry[]
 }
 
 export type ToolSurfaceSelectionReason =
@@ -124,6 +144,31 @@ export interface ToolSurfaceActivationOrderEntry extends ToolSurfaceDefinitionId
 export interface ToolSurfaceActivationLedger {
   readonly orderingVersion: typeof TOOL_SURFACE_ORDERING_VERSION
   readonly entries: readonly ToolSurfaceActivationOrderEntry[]
+}
+
+export interface ToolSurfaceRequestIdentity {
+  readonly sessionId: string
+  readonly messageId: string
+  readonly runId: string
+  readonly requestSeq: number
+}
+
+export interface ToolSurfaceSnapshotActiveEntry extends ToolSurfaceActivationOrderEntry {
+  readonly reason: ToolSurfaceSelectionReason
+  readonly definition: MCPToolDefinition
+}
+
+export interface ToolSurfaceSnapshot {
+  readonly schemaVersion: typeof TOOL_SURFACE_SNAPSHOT_SCHEMA_VERSION
+  readonly canonicalizationVersion: typeof TOOL_SURFACE_CANONICALIZATION_VERSION
+  readonly orderingVersion: typeof TOOL_SURFACE_ORDERING_VERSION
+  readonly request: ToolSurfaceRequestIdentity
+  readonly policyVersion: string
+  readonly virtualizationTriggered: boolean
+  readonly ceiling: ToolSurfaceRunCeiling
+  readonly eligibleCatalog: CanonicalToolCatalog
+  readonly activeEntries: readonly ToolSurfaceSnapshotActiveEntry[]
+  readonly toolDefinitions: readonly MCPToolDefinition[]
 }
 
 export interface ToolSurfaceCandidateScope {
@@ -189,7 +234,13 @@ interface CanonicalInputMeasurement {
 
 interface BuiltCatalogEntry {
   readonly entry: CanonicalToolCatalogEntry
+  readonly definition: MCPToolDefinition
   readonly input: CanonicalInputMeasurement
+}
+
+interface BuiltCanonicalToolCatalog {
+  readonly catalog: CanonicalToolCatalog
+  readonly definitionByStableTarget: ReadonlyMap<string, MCPToolDefinition>
 }
 
 function failInvalidDefinition(message: string): never {
@@ -380,6 +431,7 @@ function buildCatalogEntry(
         definitionTokens: estimateToolDefinitionTokens([detachedDefinition]),
         canonicalDefinitionBytes
       },
+      definition: detachedDefinition,
       input
     }
   } catch (error) {
@@ -531,8 +583,9 @@ function hasCanonicalDefinitionIdentity(identity: ToolSurfaceDefinitionIdentity)
   )
 }
 
-function isBoundedRequestIdentity(value: string): boolean {
+function isBoundedRequestIdentity(value: unknown): value is string {
   return (
+    typeof value === 'string' &&
     value.length > 0 &&
     value === value.trim() &&
     !value.includes('\0') &&
@@ -1095,9 +1148,28 @@ function freezeCatalog(catalog: CanonicalToolCatalog): CanonicalToolCatalog {
   return Object.freeze(catalog)
 }
 
-export function buildCanonicalToolCatalog(
-  definitions: readonly MCPToolDefinition[]
-): CanonicalToolCatalog {
+function deepFreezeToolDefinition(definition: MCPToolDefinition): MCPToolDefinition {
+  const pending: object[] = [definition]
+  const visited = new Set<object>()
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (!current || visited.has(current)) continue
+    visited.add(current)
+    for (const key of Object.getOwnPropertyNames(current)) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)
+      if (!descriptor || !('value' in descriptor)) continue
+      const value = descriptor.value
+      if (value && typeof value === 'object') pending.push(value)
+    }
+    Object.freeze(current)
+  }
+  return definition
+}
+
+function buildCanonicalToolCatalogArtifacts(
+  definitions: readonly MCPToolDefinition[],
+  options: { readonly freezeDefinitions?: boolean } = {}
+): BuiltCanonicalToolCatalog {
   if (definitions.length > MAX_TOOL_SURFACE_DEFINITIONS) {
     throw new ToolSurfaceError(
       `Tool catalog has more than ${MAX_TOOL_SURFACE_DEFINITIONS} definitions.`,
@@ -1106,6 +1178,7 @@ export function buildCanonicalToolCatalog(
   }
 
   const entryByTarget = new Map<string, CanonicalToolCatalogEntry>()
+  const definitionByStableTarget = new Map<string, MCPToolDefinition>()
   const targetByVisibleName = new Map<string, string>()
   let canonicalDefinitionBytes = 0
   let inputBytes = 0
@@ -1153,6 +1226,10 @@ export function buildCanonicalToolCatalog(
       )
     }
     entryByTarget.set(entry.stableTargetKey, entry)
+    definitionByStableTarget.set(
+      entry.stableTargetKey,
+      options.freezeDefinitions ? deepFreezeToolDefinition(built.definition) : built.definition
+    )
   })
 
   const entries = [...entryByTarget.values()].sort((left, right) =>
@@ -1172,13 +1249,246 @@ export function buildCanonicalToolCatalog(
     CANONICAL_JSON_OPTIONS
   )
 
-  return freezeCatalog({
-    schemaVersion: TOOL_SURFACE_CATALOG_SCHEMA_VERSION,
+  return Object.freeze({
+    catalog: freezeCatalog({
+      schemaVersion: TOOL_SURFACE_CATALOG_SCHEMA_VERSION,
+      canonicalizationVersion: TOOL_SURFACE_CANONICALIZATION_VERSION,
+      fullCatalogHash,
+      entries,
+      definitionTokens: entries.reduce((total, entry) => total + entry.definitionTokens, 0),
+      canonicalDefinitionBytes
+    }),
+    definitionByStableTarget
+  })
+}
+
+export function buildCanonicalToolCatalog(
+  definitions: readonly MCPToolDefinition[]
+): CanonicalToolCatalog {
+  return buildCanonicalToolCatalogArtifacts(definitions).catalog
+}
+
+export function buildToolSurfaceRunCeiling(
+  definitions: readonly MCPToolDefinition[]
+): ToolSurfaceRunCeiling {
+  const built = buildCanonicalToolCatalogArtifacts(definitions, { freezeDefinitions: true })
+  const entries = built.catalog.entries.map((catalogEntry) => {
+    const definition = built.definitionByStableTarget.get(catalogEntry.stableTargetKey)
+    if (!definition) {
+      throw new ToolSurfaceError(
+        'Run Tool Ceiling lost a canonical definition.',
+        'invalid_definition'
+      )
+    }
+    return Object.freeze({ catalogEntry, definition })
+  })
+  const ceiling = Object.freeze({
+    catalog: built.catalog,
+    entries: Object.freeze(entries)
+  })
+  issuedRunToolCeilings.add(ceiling)
+  return ceiling
+}
+
+export function createProviderOrderedToolSurfaceActivationLedger(
+  definitions: readonly MCPToolDefinition[]
+): ToolSurfaceActivationLedger {
+  const built = buildCanonicalToolCatalogArtifacts(definitions)
+  const entryByVisibleName = new Map(
+    built.catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+  )
+  const emittedTargets = new Set<string>()
+  const identities: ToolSurfaceDefinitionIdentity[] = []
+  for (const definition of definitions) {
+    const entry = entryByVisibleName.get(definition.function.name)
+    if (!entry || emittedTargets.has(entry.stableTargetKey)) continue
+    emittedTargets.add(entry.stableTargetKey)
+    identities.push(copyDefinitionIdentity(entry))
+  }
+  return createToolSurfaceActivationLedger(identities)
+}
+
+function validateToolSurfaceRunCeiling(ceiling: ToolSurfaceRunCeiling): void {
+  if (
+    !ceiling ||
+    typeof ceiling !== 'object' ||
+    !issuedRunToolCeilings.has(ceiling)
+  ) {
+    throw new ToolSurfaceError(
+      'Run Tool Ceiling was not issued by the canonical builder.',
+      'invalid_definition'
+    )
+  }
+}
+
+function isToolSurfaceSelectionReason(value: unknown): value is ToolSurfaceSelectionReason {
+  return (
+    typeof value === 'string' &&
+    (TOOL_SURFACE_SELECTION_REASONS as readonly string[]).includes(value)
+  )
+}
+
+function catalogEntryMatches(
+  left: CanonicalToolCatalogEntry,
+  right: CanonicalToolCatalogEntry
+): boolean {
+  return (
+    left.canonicalToolDefinitionHash === right.canonicalToolDefinitionHash &&
+    left.exposure === right.exposure &&
+    canonicalJsonStringifyData(left.execution) === canonicalJsonStringifyData(right.execution)
+  )
+}
+
+export function createToolSurfaceSnapshot(input: {
+  readonly request: ToolSurfaceRequestIdentity
+  readonly policyVersion: string
+  readonly virtualizationTriggered: boolean
+  readonly ceiling: ToolSurfaceRunCeiling
+  readonly eligibleDefinitions: readonly MCPToolDefinition[]
+  readonly activationLedger: ToolSurfaceActivationLedger
+  readonly selectionReasons?: readonly {
+    readonly stableTargetKey: string
+    readonly reason: ToolSurfaceSelectionReason
+  }[]
+}): ToolSurfaceSnapshot {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    !input.request ||
+    typeof input.request !== 'object' ||
+    !Array.isArray(input.eligibleDefinitions) ||
+    !input.activationLedger ||
+    typeof input.activationLedger !== 'object' ||
+    !Array.isArray(input.activationLedger.entries) ||
+    (input.selectionReasons !== undefined && !Array.isArray(input.selectionReasons))
+  ) {
+    throw new ToolSurfaceError('Tool Surface snapshot input is invalid.', 'invalid_definition')
+  }
+  const { request } = input
+  if (
+    !isBoundedRequestIdentity(request.sessionId) ||
+    !isBoundedRequestIdentity(request.messageId) ||
+    !isBoundedRequestIdentity(request.runId) ||
+    !Number.isSafeInteger(request.requestSeq) ||
+    request.requestSeq <= 0 ||
+    !isBoundedRequestIdentity(input.policyVersion) ||
+    typeof input.virtualizationTriggered !== 'boolean'
+  ) {
+    throw new ToolSurfaceError('Tool Surface snapshot identity is invalid.', 'invalid_definition')
+  }
+  validateToolSurfaceRunCeiling(input.ceiling)
+
+  const ceilingEntryByTarget = new Map(
+    input.ceiling.catalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  const activeHashByTarget = validateActivationLedger(input.activationLedger)
+  for (const ledgerEntry of input.activationLedger.entries) {
+    const ceilingEntry = ceilingEntryByTarget.get(ledgerEntry.stableTargetKey)
+    if (
+      !ceilingEntry ||
+      ceilingEntry.canonicalToolDefinitionHash !== ledgerEntry.canonicalToolDefinitionHash
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation order is outside the Run Tool Ceiling.',
+        'conflicting_tool'
+      )
+    }
+  }
+
+  const eligible = buildCanonicalToolCatalogArtifacts(input.eligibleDefinitions, {
+    freezeDefinitions: true
+  })
+  for (const eligibleEntry of eligible.catalog.entries) {
+    const ceilingEntry = ceilingEntryByTarget.get(eligibleEntry.stableTargetKey)
+    if (!ceilingEntry || !catalogEntryMatches(ceilingEntry, eligibleEntry)) {
+      throw new ToolSurfaceError(
+        'Eligible Tool Surface is outside the Run Tool Ceiling.',
+        'conflicting_tool'
+      )
+    }
+  }
+
+  const reasonByTarget = new Map<string, ToolSurfaceSelectionReason>()
+  const selectionReasons = input.selectionReasons ?? []
+  if (selectionReasons.length > MAX_TOOL_SURFACE_DEFINITIONS) {
+    throw new ToolSurfaceError('Tool Surface selection reasons exceed their limit.', 'limit_exceeded')
+  }
+  for (const selection of selectionReasons) {
+    if (
+      !selection ||
+      typeof selection !== 'object' ||
+      typeof selection.stableTargetKey !== 'string' ||
+      !ceilingEntryByTarget.has(selection.stableTargetKey) ||
+      !isToolSurfaceSelectionReason(selection.reason)
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface selection reason is invalid.',
+        'invalid_definition'
+      )
+    }
+    const previous = reasonByTarget.get(selection.stableTargetKey)
+    if (previous && previous !== selection.reason) {
+      throw new ToolSurfaceError(
+        'Tool Surface selection reasons conflict for one target.',
+        'conflicting_tool'
+      )
+    }
+    reasonByTarget.set(selection.stableTargetKey, selection.reason)
+  }
+
+  const projected = projectToolSurfaceActiveEntries(
+    input.activationLedger,
+    eligible.catalog.entries
+  )
+  if (!input.virtualizationTriggered && projected.length !== eligible.catalog.entries.length) {
+    throw new ToolSurfaceError(
+      'A non-virtualized Tool Surface must expose every eligible target.',
+      'invalid_definition'
+    )
+  }
+  const projectedTargets = new Set(projected.map((entry) => entry.stableTargetKey))
+  if (selectionReasons.some((selection) => !projectedTargets.has(selection.stableTargetKey))) {
+    throw new ToolSurfaceError(
+      'Tool Surface selection reason does not describe an active target.',
+      'invalid_definition'
+    )
+  }
+  if (
+    input.virtualizationTriggered &&
+    projected.some((entry) => !reasonByTarget.has(entry.stableTargetKey))
+  ) {
+    throw new ToolSurfaceError(
+      'A virtualized Tool Surface requires a reason for every active target.',
+      'invalid_definition'
+    )
+  }
+
+  const activeEntries = projected.map((entry): ToolSurfaceSnapshotActiveEntry => {
+    const definition = eligible.definitionByStableTarget.get(entry.stableTargetKey)
+    if (!definition || activeHashByTarget.get(entry.stableTargetKey) !== entry.canonicalToolDefinitionHash) {
+      throw new ToolSurfaceError(
+        'Tool Surface snapshot lost an active definition.',
+        'invalid_definition'
+      )
+    }
+    return Object.freeze({
+      ...entry,
+      reason: reasonByTarget.get(entry.stableTargetKey) ?? 'full-catalog',
+      definition
+    })
+  })
+  const toolDefinitions = Object.freeze(activeEntries.map((entry) => entry.definition))
+  return Object.freeze({
+    schemaVersion: TOOL_SURFACE_SNAPSHOT_SCHEMA_VERSION,
     canonicalizationVersion: TOOL_SURFACE_CANONICALIZATION_VERSION,
-    fullCatalogHash,
-    entries,
-    definitionTokens: entries.reduce((total, entry) => total + entry.definitionTokens, 0),
-    canonicalDefinitionBytes
+    orderingVersion: TOOL_SURFACE_ORDERING_VERSION,
+    request: Object.freeze({ ...request }),
+    policyVersion: input.policyVersion,
+    virtualizationTriggered: input.virtualizationTriggered,
+    ceiling: input.ceiling,
+    eligibleCatalog: eligible.catalog,
+    activeEntries: Object.freeze(activeEntries),
+    toolDefinitions
   })
 }
 
