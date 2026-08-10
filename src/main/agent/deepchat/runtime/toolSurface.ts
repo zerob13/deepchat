@@ -25,6 +25,9 @@ export const MAX_TOOL_SURFACE_DEFINITION_DEPTH = 64
 export const MAX_TOOL_SURFACE_DEFINITION_NODES = 100_000
 export const MAX_TOOL_SURFACE_TOTAL_INPUT_NODES = 500_000
 export const MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES = 4 * 1_024 * 1_024
+export const MAX_TOOL_SURFACE_SELECTION_HINTS = MAX_TOOL_SURFACE_DEFINITIONS
+export const MAX_TOOL_SURFACE_OVERLAP_IDENTITIES = MAX_TOOL_SURFACE_DEFINITIONS
+export const MAX_TOOL_SURFACE_HINT_INPUT_BYTES = MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 
@@ -61,6 +64,80 @@ export interface CanonicalToolCatalog {
   readonly entries: readonly CanonicalToolCatalogEntry[]
   readonly definitionTokens: number
   readonly canonicalDefinitionBytes: number
+}
+
+export type ToolSurfaceSelectionReason =
+  | 'full-catalog'
+  | 'policy-required'
+  | 'core'
+  | 'active-skill'
+  | 'recent'
+
+export type ToolSurfaceShadowTriggerReason =
+  | 'none'
+  | 'tool-count'
+  | 'estimated-input-tokens'
+  | 'tool-count-and-estimated-input-tokens'
+  | 'hysteresis'
+
+export type ToolSurfaceShadowDegradationCode =
+  | 'invalid-policy'
+  | 'eligible-catalog-invalid'
+  | 'selection-input-limit-exceeded'
+  | 'mandatory-target-missing'
+  | 'mandatory-budget-exceeded'
+
+export interface ToolSurfaceShadowPolicy {
+  readonly policyVersion: string
+  readonly enterToolCount: number
+  readonly exitToolCount: number
+  readonly enterEstimatedInputTokens: number
+  readonly exitEstimatedInputTokens: number
+  readonly maxInitialToolCount: number
+  readonly maxInitialDefinitionTokens: number
+  readonly activationReserveToolCount: number
+  readonly activationReserveDefinitionTokens: number
+  readonly toolSearchDefinitionTokens: number
+  readonly toolSearchPromptTokens: number
+}
+
+export interface ToolSurfaceShadowSelectionEntry {
+  readonly stableTargetKey: string
+  readonly definitionTokens: number
+  readonly reason: ToolSurfaceSelectionReason
+  readonly required: boolean
+}
+
+export interface ToolSurfaceDefinitionIdentity {
+  readonly stableTargetKey: string
+  readonly canonicalToolDefinitionHash: string
+}
+
+export interface ToolSurfaceShadowDecision {
+  readonly policyVersion: string
+  readonly virtualizationTriggered: boolean
+  readonly triggerReason: ToolSurfaceShadowTriggerReason
+  readonly ceilingToolCount: number
+  readonly ceilingDefinitionTokens: number
+  readonly eligibleToolCount: number
+  readonly eligibleDefinitionTokens: number
+  readonly hypotheticalActiveToolCount: number
+  readonly hypotheticalActiveDefinitionTokens: number
+  readonly hypotheticalAdditionalPromptTokens: number
+  /** Signed schema-and-prompt estimate; not provider cache savings or billed cost. */
+  readonly estimatedNetInputTokenReduction: number
+  readonly toolSearchIncluded: boolean
+  readonly initialBudgetFits: boolean
+  readonly selectedEntries: readonly ToolSurfaceShadowSelectionEntry[]
+  readonly degradationCodes: readonly ToolSurfaceShadowDegradationCode[]
+}
+
+export interface ToolSurfaceStaticDefinitionOverlap {
+  readonly previousCount: number
+  readonly currentCount: number
+  readonly retainedCount: number
+  readonly unionCount: number
+  readonly jaccardRatio: number
 }
 
 type JsonTraversalItem =
@@ -285,6 +362,387 @@ function buildCatalogEntry(
 
 function compareCodePoints(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
+}
+
+function isNonNegativeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function isSafeSumAtMost(left: number, right: number, maximum: number): boolean {
+  const sum = left + right
+  return Number.isSafeInteger(sum) && sum <= maximum
+}
+
+function isValidShadowPolicy(policy: ToolSurfaceShadowPolicy): boolean {
+  return (
+    policy.policyVersion.trim().length > 0 &&
+    isNonNegativeInteger(policy.enterToolCount) &&
+    isNonNegativeInteger(policy.exitToolCount) &&
+    policy.exitToolCount < policy.enterToolCount &&
+    isNonNegativeInteger(policy.enterEstimatedInputTokens) &&
+    isNonNegativeInteger(policy.exitEstimatedInputTokens) &&
+    policy.exitEstimatedInputTokens < policy.enterEstimatedInputTokens &&
+    isNonNegativeInteger(policy.maxInitialToolCount) &&
+    isNonNegativeInteger(policy.maxInitialDefinitionTokens) &&
+    isNonNegativeInteger(policy.activationReserveToolCount) &&
+    policy.activationReserveToolCount <= policy.maxInitialToolCount &&
+    isNonNegativeInteger(policy.activationReserveDefinitionTokens) &&
+    policy.activationReserveDefinitionTokens <= policy.maxInitialDefinitionTokens &&
+    isNonNegativeInteger(policy.toolSearchDefinitionTokens) &&
+    isNonNegativeInteger(policy.toolSearchPromptTokens) &&
+    isSafeSumAtMost(
+      policy.toolSearchDefinitionTokens,
+      policy.toolSearchPromptTokens,
+      Number.MAX_SAFE_INTEGER
+    ) &&
+    isSafeSumAtMost(1, policy.activationReserveToolCount, policy.maxInitialToolCount) &&
+    isSafeSumAtMost(
+      policy.toolSearchDefinitionTokens,
+      policy.activationReserveDefinitionTokens,
+      policy.maxInitialDefinitionTokens
+    )
+  )
+}
+
+function resolveShadowTrigger(
+  policy: ToolSurfaceShadowPolicy,
+  ceilingToolCount: number,
+  ceilingDefinitionTokens: number,
+  previouslyVirtualized: boolean
+): {
+  virtualizationTriggered: boolean
+  triggerReason: ToolSurfaceShadowTriggerReason
+} {
+  const measuredToolCount = ceilingToolCount + 1
+  const measuredDefinitionTokens =
+    ceilingDefinitionTokens + policy.toolSearchDefinitionTokens + policy.toolSearchPromptTokens
+  const countExceeded = measuredToolCount > policy.enterToolCount
+  const tokensExceeded = measuredDefinitionTokens > policy.enterEstimatedInputTokens
+
+  if (countExceeded || tokensExceeded) {
+    return {
+      virtualizationTriggered: true,
+      triggerReason:
+        countExceeded && tokensExceeded
+          ? 'tool-count-and-estimated-input-tokens'
+          : countExceeded
+            ? 'tool-count'
+            : 'estimated-input-tokens'
+    }
+  }
+
+  if (
+    previouslyVirtualized &&
+    (measuredToolCount > policy.exitToolCount ||
+      measuredDefinitionTokens > policy.exitEstimatedInputTokens)
+  ) {
+    return { virtualizationTriggered: true, triggerReason: 'hysteresis' }
+  }
+
+  return { virtualizationTriggered: false, triggerReason: 'none' }
+}
+
+function sortedUniqueKeys(keys: readonly string[]): string[] | null {
+  if (keys.length > MAX_TOOL_SURFACE_SELECTION_HINTS) return null
+  const unique = new Set<string>()
+  let inputBytes = 0
+  for (const key of keys) {
+    if (key.length > MAX_TOOL_SURFACE_DEFINITION_BYTES) return null
+    if (key.trim().length === 0) continue
+    inputBytes += Buffer.byteLength(key, 'utf8')
+    if (inputBytes > MAX_TOOL_SURFACE_HINT_INPUT_BYTES) return null
+    unique.add(key)
+  }
+  return [...unique].sort(compareCodePoints)
+}
+
+function hasBoundedDefinitionIdentities(
+  identities: readonly ToolSurfaceDefinitionIdentity[]
+): boolean {
+  let inputBytes = 0
+  for (const identity of identities) {
+    if (
+      identity.stableTargetKey.length > MAX_TOOL_SURFACE_DEFINITION_BYTES ||
+      identity.canonicalToolDefinitionHash.length > 256
+    ) {
+      return false
+    }
+    inputBytes +=
+      Buffer.byteLength(identity.stableTargetKey, 'utf8') +
+      Buffer.byteLength(identity.canonicalToolDefinitionHash, 'utf8')
+    if (inputBytes > MAX_TOOL_SURFACE_HINT_INPUT_BYTES) return false
+  }
+  return true
+}
+
+function freezeShadowDecision(decision: ToolSurfaceShadowDecision): ToolSurfaceShadowDecision {
+  for (const entry of decision.selectedEntries) Object.freeze(entry)
+  Object.freeze(decision.selectedEntries)
+  Object.freeze(decision.degradationCodes)
+  return Object.freeze(decision)
+}
+
+export function computeToolSurfaceShadowDecision(input: {
+  readonly ceilingCatalog: CanonicalToolCatalog
+  readonly eligibleCatalog: CanonicalToolCatalog
+  readonly policy: ToolSurfaceShadowPolicy
+  readonly previouslyVirtualized?: boolean
+  readonly policyRequiredStableTargetKeys?: readonly string[]
+  readonly coreStableTargetKeys?: readonly string[]
+  readonly activeSkillRequiredStableTargetKeys?: readonly string[]
+  readonly recentHints?: readonly ToolSurfaceDefinitionIdentity[]
+}): ToolSurfaceShadowDecision {
+  const { ceilingCatalog, eligibleCatalog, policy } = input
+  const fallback = (degradationCode: ToolSurfaceShadowDegradationCode): ToolSurfaceShadowDecision =>
+    freezeShadowDecision({
+      policyVersion: policy.policyVersion,
+      virtualizationTriggered: false,
+      triggerReason: 'none',
+      ceilingToolCount: ceilingCatalog.entries.length,
+      ceilingDefinitionTokens: ceilingCatalog.definitionTokens,
+      eligibleToolCount: eligibleCatalog.entries.length,
+      eligibleDefinitionTokens: eligibleCatalog.definitionTokens,
+      hypotheticalActiveToolCount: eligibleCatalog.entries.length,
+      hypotheticalActiveDefinitionTokens: eligibleCatalog.definitionTokens,
+      hypotheticalAdditionalPromptTokens: 0,
+      estimatedNetInputTokenReduction: 0,
+      toolSearchIncluded: false,
+      initialBudgetFits: false,
+      selectedEntries: eligibleCatalog.entries.map((entry) => ({
+        stableTargetKey: entry.stableTargetKey,
+        definitionTokens: entry.definitionTokens,
+        reason: 'full-catalog',
+        required: false
+      })),
+      degradationCodes: [degradationCode]
+    })
+
+  if (!isValidShadowPolicy(policy)) {
+    return fallback('invalid-policy')
+  }
+
+  const ceilingEntryByTarget = new Map(
+    ceilingCatalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  const eligibleIsWithinCeiling = eligibleCatalog.entries.every((entry) => {
+    const ceilingEntry = ceilingEntryByTarget.get(entry.stableTargetKey)
+    return (
+      ceilingEntry?.canonicalToolDefinitionHash === entry.canonicalToolDefinitionHash &&
+      ceilingEntry.exposure === entry.exposure &&
+      canonicalJsonStringifyData(ceilingEntry.execution) ===
+        canonicalJsonStringifyData(entry.execution)
+    )
+  })
+  if (!eligibleIsWithinCeiling) {
+    return fallback('eligible-catalog-invalid')
+  }
+
+  const entryByTarget = new Map(
+    eligibleCatalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  const policyRequiredKeys = sortedUniqueKeys(input.policyRequiredStableTargetKeys ?? [])
+  const activeSkillRequiredKeys = sortedUniqueKeys(input.activeSkillRequiredStableTargetKeys ?? [])
+  if (policyRequiredKeys === null || activeSkillRequiredKeys === null) {
+    return fallback('selection-input-limit-exceeded')
+  }
+  const requiredKeys = new Set([...policyRequiredKeys, ...activeSkillRequiredKeys])
+  const hasMissingMandatoryTarget = [...requiredKeys].some((key) => !entryByTarget.has(key))
+
+  if (
+    !Number.isSafeInteger(
+      ceilingCatalog.definitionTokens +
+        policy.toolSearchDefinitionTokens +
+        policy.toolSearchPromptTokens
+    )
+  ) {
+    return fallback('invalid-policy')
+  }
+  const trigger = resolveShadowTrigger(
+    policy,
+    ceilingCatalog.entries.length,
+    ceilingCatalog.definitionTokens,
+    input.previouslyVirtualized === true
+  )
+  if (!trigger.virtualizationTriggered) {
+    return freezeShadowDecision({
+      policyVersion: policy.policyVersion,
+      ...trigger,
+      ceilingToolCount: ceilingCatalog.entries.length,
+      ceilingDefinitionTokens: ceilingCatalog.definitionTokens,
+      eligibleToolCount: eligibleCatalog.entries.length,
+      eligibleDefinitionTokens: eligibleCatalog.definitionTokens,
+      hypotheticalActiveToolCount: eligibleCatalog.entries.length,
+      hypotheticalActiveDefinitionTokens: eligibleCatalog.definitionTokens,
+      hypotheticalAdditionalPromptTokens: 0,
+      estimatedNetInputTokenReduction: 0,
+      toolSearchIncluded: false,
+      initialBudgetFits: !hasMissingMandatoryTarget,
+      selectedEntries: eligibleCatalog.entries.map((entry) => ({
+        stableTargetKey: entry.stableTargetKey,
+        definitionTokens: entry.definitionTokens,
+        reason: 'full-catalog',
+        required: requiredKeys.has(entry.stableTargetKey)
+      })),
+      degradationCodes: hasMissingMandatoryTarget ? ['mandatory-target-missing'] : []
+    })
+  }
+
+  const coreKeys = sortedUniqueKeys(input.coreStableTargetKeys ?? [])
+  const recentHints = input.recentHints ?? []
+  if (
+    coreKeys === null ||
+    recentHints.length > MAX_TOOL_SURFACE_SELECTION_HINTS ||
+    !hasBoundedDefinitionIdentities(recentHints)
+  ) {
+    return fallback('selection-input-limit-exceeded')
+  }
+
+  const recentKeys = sortedUniqueKeys(
+    recentHints
+      .filter((hint) => {
+        const entry = entryByTarget.get(hint.stableTargetKey)
+        return entry?.canonicalToolDefinitionHash === hint.canonicalToolDefinitionHash
+      })
+      .map((hint) => hint.stableTargetKey)
+  )
+  if (recentKeys === null) return fallback('selection-input-limit-exceeded')
+
+  const selectedKeys = new Set<string>()
+  const degradationCodes = new Set<ToolSurfaceShadowDegradationCode>()
+  const maxSelectedToolCount = Math.max(
+    0,
+    policy.maxInitialToolCount - policy.activationReserveToolCount - 1
+  )
+  const maxSelectedDefinitionTokens = Math.max(
+    0,
+    policy.maxInitialDefinitionTokens -
+      policy.activationReserveDefinitionTokens -
+      policy.toolSearchDefinitionTokens
+  )
+  let selectedDefinitionTokens = 0
+
+  for (const stableTargetKey of requiredKeys) {
+    const entry = entryByTarget.get(stableTargetKey)
+    if (!entry) {
+      degradationCodes.add('mandatory-target-missing')
+      continue
+    }
+    selectedKeys.add(stableTargetKey)
+    selectedDefinitionTokens += entry.definitionTokens
+  }
+  if (
+    selectedKeys.size > maxSelectedToolCount ||
+    selectedDefinitionTokens > maxSelectedDefinitionTokens
+  ) {
+    degradationCodes.add('mandatory-budget-exceeded')
+  }
+
+  const appendOptional = (keys: readonly string[]): void => {
+    for (const stableTargetKey of keys) {
+      if (selectedKeys.has(stableTargetKey)) continue
+      const entry = entryByTarget.get(stableTargetKey)
+      if (!entry) continue
+      const wouldFit =
+        selectedKeys.size < maxSelectedToolCount &&
+        selectedDefinitionTokens + entry.definitionTokens <= maxSelectedDefinitionTokens
+      if (!wouldFit) continue
+      selectedKeys.add(stableTargetKey)
+      selectedDefinitionTokens += entry.definitionTokens
+    }
+  }
+
+  appendOptional(coreKeys)
+  appendOptional(recentKeys)
+
+  const selectedEntries: ToolSurfaceShadowSelectionEntry[] = []
+  const emitted = new Set<string>()
+  const emit = (
+    keys: readonly string[],
+    reason: Exclude<ToolSurfaceSelectionReason, 'full-catalog'>
+  ): void => {
+    for (const stableTargetKey of keys) {
+      if (!selectedKeys.has(stableTargetKey) || emitted.has(stableTargetKey)) continue
+      const entry = entryByTarget.get(stableTargetKey)
+      if (!entry) continue
+      emitted.add(stableTargetKey)
+      selectedEntries.push({
+        stableTargetKey,
+        definitionTokens: entry.definitionTokens,
+        reason,
+        required: requiredKeys.has(stableTargetKey)
+      })
+    }
+  }
+  emit(policyRequiredKeys, 'policy-required')
+  emit(coreKeys, 'core')
+  emit(activeSkillRequiredKeys, 'active-skill')
+  emit(recentKeys, 'recent')
+
+  const hypotheticalActiveDefinitionTokens =
+    selectedDefinitionTokens + policy.toolSearchDefinitionTokens
+  const hypotheticalActiveToolCount = selectedEntries.length + 1
+  const estimatedNetInputTokenReduction =
+    eligibleCatalog.definitionTokens -
+    hypotheticalActiveDefinitionTokens -
+    policy.toolSearchPromptTokens
+
+  return freezeShadowDecision({
+    policyVersion: policy.policyVersion,
+    ...trigger,
+    ceilingToolCount: ceilingCatalog.entries.length,
+    ceilingDefinitionTokens: ceilingCatalog.definitionTokens,
+    eligibleToolCount: eligibleCatalog.entries.length,
+    eligibleDefinitionTokens: eligibleCatalog.definitionTokens,
+    hypotheticalActiveToolCount,
+    hypotheticalActiveDefinitionTokens,
+    hypotheticalAdditionalPromptTokens: policy.toolSearchPromptTokens,
+    estimatedNetInputTokenReduction,
+    toolSearchIncluded: true,
+    initialBudgetFits:
+      !degradationCodes.has('mandatory-target-missing') &&
+      !degradationCodes.has('mandatory-budget-exceeded') &&
+      hypotheticalActiveToolCount + policy.activationReserveToolCount <=
+        policy.maxInitialToolCount &&
+      hypotheticalActiveDefinitionTokens + policy.activationReserveDefinitionTokens <=
+        policy.maxInitialDefinitionTokens,
+    selectedEntries,
+    degradationCodes: [...degradationCodes].sort(compareCodePoints)
+  })
+}
+
+function definitionIdentityKey(identity: ToolSurfaceDefinitionIdentity): string {
+  return JSON.stringify([identity.stableTargetKey, identity.canonicalToolDefinitionHash])
+}
+
+export function computeToolSurfaceStaticDefinitionOverlap(
+  previousIdentities: readonly ToolSurfaceDefinitionIdentity[],
+  currentIdentities: readonly ToolSurfaceDefinitionIdentity[]
+): ToolSurfaceStaticDefinitionOverlap {
+  if (
+    previousIdentities.length > MAX_TOOL_SURFACE_OVERLAP_IDENTITIES ||
+    currentIdentities.length > MAX_TOOL_SURFACE_OVERLAP_IDENTITIES ||
+    !hasBoundedDefinitionIdentities(previousIdentities) ||
+    !hasBoundedDefinitionIdentities(currentIdentities)
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface overlap input exceeds its bounded limit.',
+      'limit_exceeded'
+    )
+  }
+  const previous = new Set(previousIdentities.map(definitionIdentityKey))
+  const current = new Set(currentIdentities.map(definitionIdentityKey))
+  let retainedCount = 0
+  for (const key of previous) {
+    if (current.has(key)) retainedCount += 1
+  }
+  const unionCount = previous.size + current.size - retainedCount
+  return Object.freeze({
+    previousCount: previous.size,
+    currentCount: current.size,
+    retainedCount,
+    unionCount,
+    jaccardRatio: unionCount === 0 ? 1 : retainedCount / unionCount
+  })
 }
 
 function freezeCatalog(catalog: CanonicalToolCatalog): CanonicalToolCatalog {

@@ -8,9 +8,14 @@ import {
 import {
   MAX_TOOL_SURFACE_DEFINITION_BYTES,
   MAX_TOOL_SURFACE_DEFINITION_DEPTH,
+  MAX_TOOL_SURFACE_OVERLAP_IDENTITIES,
+  MAX_TOOL_SURFACE_SELECTION_HINTS,
   MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES,
   ToolSurfaceError,
-  buildCanonicalToolCatalog
+  buildCanonicalToolCatalog,
+  computeToolSurfaceShadowDecision,
+  computeToolSurfaceStaticDefinitionOverlap,
+  type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
 import { buildProviderVisibleToolDefinitionsHash } from '@/tape/domain/executionContract'
 
@@ -82,6 +87,20 @@ function expectSurfaceError(run: () => unknown, code: ToolSurfaceError['code']):
     expect(error).toBeInstanceOf(ToolSurfaceError)
     expect((error as ToolSurfaceError).code).toBe(code)
   }
+}
+
+const SHADOW_POLICY: ToolSurfaceShadowPolicy = {
+  policyVersion: 'shadow-test-v1',
+  enterToolCount: 4,
+  exitToolCount: 2,
+  enterEstimatedInputTokens: 10_000,
+  exitEstimatedInputTokens: 8_000,
+  maxInitialToolCount: 4,
+  maxInitialDefinitionTokens: 10_000,
+  activationReserveToolCount: 1,
+  activationReserveDefinitionTokens: 100,
+  toolSearchDefinitionTokens: 50,
+  toolSearchPromptTokens: 25
 }
 
 describe('canonical Tool Surface catalog', () => {
@@ -369,6 +388,364 @@ describe('canonical Tool Surface catalog', () => {
 
     expect(buildCanonicalToolCatalog([left]).definitionTokens).toBe(
       buildCanonicalToolCatalog([right]).definitionTokens
+    )
+  })
+})
+
+describe('Tool Surface shadow selection', () => {
+  it('keeps a small catalog fully active without adding ToolSearch', () => {
+    const catalog = buildCanonicalToolCatalog([agentTool('read'), agentTool('write')])
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: SHADOW_POLICY
+    })
+
+    expect(decision).toMatchObject({
+      virtualizationTriggered: false,
+      triggerReason: 'none',
+      ceilingToolCount: 2,
+      eligibleToolCount: 2,
+      hypotheticalActiveToolCount: 2,
+      estimatedNetInputTokenReduction: 0,
+      toolSearchIncluded: false,
+      initialBudgetFits: true,
+      degradationCodes: []
+    })
+    expect(decision.selectedEntries.every((entry) => entry.reason === 'full-catalog')).toBe(true)
+    expect(Object.isFrozen(decision)).toBe(true)
+    expect(Object.isFrozen(decision.selectedEntries)).toBe(true)
+  })
+
+  it('reports an unavailable mandatory target even when virtualization is not triggered', () => {
+    const catalog = buildCanonicalToolCatalog([agentTool('read')])
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: SHADOW_POLICY,
+      activeSkillRequiredStableTargetKeys: ['missing-target']
+    })
+
+    expect(decision.virtualizationTriggered).toBe(false)
+    expect(decision.initialBudgetFits).toBe(false)
+    expect(decision.degradationCodes).toEqual(['mandatory-target-missing'])
+  })
+
+  it('triggers from the Run ceiling but selects only from current eligibility', () => {
+    const definitions = [
+      agentTool('alpha'),
+      agentTool('beta'),
+      agentTool('gamma'),
+      agentTool('delta')
+    ]
+    const ceilingCatalog = buildCanonicalToolCatalog(definitions)
+    const eligibleCatalog = buildCanonicalToolCatalog([definitions[0]])
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog,
+      eligibleCatalog,
+      policy: SHADOW_POLICY,
+      coreStableTargetKeys: [eligibleCatalog.entries[0].stableTargetKey]
+    })
+
+    expect(decision).toMatchObject({
+      virtualizationTriggered: true,
+      triggerReason: 'tool-count',
+      ceilingToolCount: 4,
+      eligibleToolCount: 1,
+      hypotheticalActiveToolCount: 2
+    })
+    expect(decision.selectedEntries.map((entry) => entry.stableTargetKey)).toEqual([
+      eligibleCatalog.entries[0].stableTargetKey
+    ])
+  })
+
+  it('orders policy, core, active Skill, and definition-bound recent selections', () => {
+    const catalog = buildCanonicalToolCatalog([
+      agentTool('recent'),
+      agentTool('skill_required'),
+      agentTool('core'),
+      agentTool('policy_required')
+    ])
+    const byName = new Map(
+      catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+    )
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: {
+        ...SHADOW_POLICY,
+        maxInitialToolCount: 6,
+        activationReserveToolCount: 1
+      },
+      policyRequiredStableTargetKeys: [byName.get('policy_required')!.stableTargetKey],
+      coreStableTargetKeys: [byName.get('core')!.stableTargetKey],
+      activeSkillRequiredStableTargetKeys: [byName.get('skill_required')!.stableTargetKey],
+      recentHints: [
+        {
+          stableTargetKey: byName.get('recent')!.stableTargetKey,
+          canonicalToolDefinitionHash: byName.get('recent')!.canonicalToolDefinitionHash
+        }
+      ]
+    })
+
+    expect(decision).toMatchObject({
+      virtualizationTriggered: true,
+      triggerReason: 'tool-count',
+      hypotheticalActiveToolCount: 5,
+      toolSearchIncluded: true,
+      initialBudgetFits: true,
+      degradationCodes: []
+    })
+    expect(decision.selectedEntries.map((entry) => entry.reason)).toEqual([
+      'policy-required',
+      'core',
+      'active-skill',
+      'recent'
+    ])
+    expect(decision.eligibleDefinitionTokens - decision.hypotheticalActiveDefinitionTokens).toBe(
+      decision.estimatedNetInputTokenReduction + SHADOW_POLICY.toolSearchPromptTokens
+    )
+  })
+
+  it('accounts for ToolSearch overhead at threshold boundaries', () => {
+    const catalog = buildCanonicalToolCatalog([agentTool('read')])
+    const policy = {
+      ...SHADOW_POLICY,
+      enterToolCount: 1,
+      exitToolCount: 0,
+      enterEstimatedInputTokens: Number.MAX_SAFE_INTEGER,
+      exitEstimatedInputTokens: Number.MAX_SAFE_INTEGER - 1
+    }
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy
+    })
+
+    expect(decision.virtualizationTriggered).toBe(true)
+    expect(decision.triggerReason).toBe('tool-count')
+  })
+
+  it('holds the virtualized mode inside the cross-Run exit band', () => {
+    const catalog = buildCanonicalToolCatalog([agentTool('read'), agentTool('write')])
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: { ...SHADOW_POLICY, enterToolCount: 10, exitToolCount: 2 },
+      previouslyVirtualized: true
+    })
+
+    expect(decision.virtualizationTriggered).toBe(true)
+    expect(decision.triggerReason).toBe('hysteresis')
+  })
+
+  it('reports missing or over-budget mandatory targets without silently dropping them', () => {
+    const catalog = buildCanonicalToolCatalog([agentTool('skill_required')])
+    const mandatoryKey = catalog.entries[0].stableTargetKey
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: {
+        ...SHADOW_POLICY,
+        enterToolCount: 1,
+        exitToolCount: 0,
+        maxInitialToolCount: 2,
+        activationReserveToolCount: 0,
+        activationReserveDefinitionTokens: 0,
+        maxInitialDefinitionTokens: SHADOW_POLICY.toolSearchDefinitionTokens
+      },
+      activeSkillRequiredStableTargetKeys: [mandatoryKey, 'missing-target']
+    })
+
+    expect(decision.initialBudgetFits).toBe(false)
+    expect(decision.selectedEntries).toEqual([
+      expect.objectContaining({ stableTargetKey: mandatoryKey, reason: 'active-skill' })
+    ])
+    expect(decision.degradationCodes).toEqual([
+      'mandatory-budget-exceeded',
+      'mandatory-target-missing'
+    ])
+  })
+
+  it('fails open to a full hypothetical surface when shadow policy is invalid', () => {
+    const catalog = buildCanonicalToolCatalog([agentTool('read'), agentTool('write')])
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: { ...SHADOW_POLICY, exitToolCount: SHADOW_POLICY.enterToolCount }
+    })
+
+    expect(decision).toMatchObject({
+      virtualizationTriggered: false,
+      toolSearchIncluded: false,
+      initialBudgetFits: false,
+      degradationCodes: ['invalid-policy']
+    })
+    expect(decision.selectedEntries).toHaveLength(2)
+  })
+
+  it.each([
+    {
+      name: 'ToolSearch plus count reserve',
+      policy: { ...SHADOW_POLICY, maxInitialToolCount: 1, activationReserveToolCount: 1 }
+    },
+    {
+      name: 'ToolSearch plus token reserve',
+      policy: {
+        ...SHADOW_POLICY,
+        maxInitialDefinitionTokens: 100,
+        toolSearchDefinitionTokens: 50,
+        activationReserveDefinitionTokens: 51
+      }
+    },
+    {
+      name: 'safe-integer overflow',
+      policy: {
+        ...SHADOW_POLICY,
+        maxInitialDefinitionTokens: Number.MAX_SAFE_INTEGER,
+        toolSearchDefinitionTokens: Number.MAX_SAFE_INTEGER,
+        activationReserveDefinitionTokens: 1
+      }
+    }
+  ])('rejects an impossible $name policy', ({ policy }) => {
+    const catalog = buildCanonicalToolCatalog([agentTool('read')])
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy
+    })
+
+    expect(decision.degradationCodes).toEqual(['invalid-policy'])
+    expect(decision.initialBudgetFits).toBe(false)
+  })
+
+  it('does not carry a recent hint across definition drift', () => {
+    const priorCatalog = buildCanonicalToolCatalog([agentTool('recent')])
+    const currentCatalog = buildCanonicalToolCatalog([
+      agentTool('recent', {
+        function: {
+          name: 'recent',
+          description: 'Definition changed',
+          parameters: { type: 'object', properties: {} }
+        }
+      })
+    ])
+    const prior = priorCatalog.entries[0]
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: currentCatalog,
+      eligibleCatalog: currentCatalog,
+      policy: { ...SHADOW_POLICY, enterToolCount: 1, exitToolCount: 0 },
+      recentHints: [
+        {
+          stableTargetKey: prior.stableTargetKey,
+          canonicalToolDefinitionHash: prior.canonicalToolDefinitionHash
+        }
+      ]
+    })
+
+    expect(decision.selectedEntries).toEqual([])
+    expect(decision.hypotheticalActiveToolCount).toBe(1)
+  })
+
+  it('fails open when current eligibility is not a definition-bound ceiling subset', () => {
+    const ceilingCatalog = buildCanonicalToolCatalog([agentTool('read')])
+    const eligibleCatalog = buildCanonicalToolCatalog([agentTool('write')])
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog,
+      eligibleCatalog,
+      policy: SHADOW_POLICY
+    })
+
+    expect(decision.degradationCodes).toEqual(['eligible-catalog-invalid'])
+    expect(decision.virtualizationTriggered).toBe(false)
+    expect(decision.selectedEntries[0].stableTargetKey).toBe(
+      eligibleCatalog.entries[0].stableTargetKey
+    )
+  })
+
+  it('reports a signed estimate when ToolSearch overhead exceeds schema reduction', () => {
+    const catalog = buildCanonicalToolCatalog([agentTool('read')])
+
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: { ...SHADOW_POLICY, enterToolCount: 1, exitToolCount: 0 }
+    })
+
+    expect(decision.estimatedNetInputTokenReduction).toBeLessThan(0)
+    expect(decision.hypotheticalAdditionalPromptTokens).toBe(SHADOW_POLICY.toolSearchPromptTokens)
+  })
+
+  it('computes bounded overlap from definition-bound identities', () => {
+    expect(
+      computeToolSurfaceStaticDefinitionOverlap(
+        [
+          { stableTargetKey: 'a', canonicalToolDefinitionHash: '1' },
+          { stableTargetKey: 'a', canonicalToolDefinitionHash: '1' },
+          { stableTargetKey: 'b', canonicalToolDefinitionHash: '1' }
+        ],
+        [
+          { stableTargetKey: 'b', canonicalToolDefinitionHash: '2' },
+          { stableTargetKey: 'c', canonicalToolDefinitionHash: '1' }
+        ]
+      )
+    ).toEqual({
+      previousCount: 2,
+      currentCount: 2,
+      retainedCount: 0,
+      unionCount: 4,
+      jaccardRatio: 0
+    })
+    expect(computeToolSurfaceStaticDefinitionOverlap([], []).jaccardRatio).toBe(1)
+  })
+
+  it('bounds selection hints and overlap work', () => {
+    const catalog = buildCanonicalToolCatalog([
+      agentTool('alpha'),
+      agentTool('beta'),
+      agentTool('gamma'),
+      agentTool('delta')
+    ])
+    const decision = computeToolSurfaceShadowDecision({
+      ceilingCatalog: catalog,
+      eligibleCatalog: catalog,
+      policy: SHADOW_POLICY,
+      coreStableTargetKeys: Array.from(
+        { length: MAX_TOOL_SURFACE_SELECTION_HINTS + 1 },
+        (_, index) => String(index)
+      )
+    })
+
+    expect(decision.degradationCodes).toEqual(['selection-input-limit-exceeded'])
+    expect(
+      computeToolSurfaceShadowDecision({
+        ceilingCatalog: catalog,
+        eligibleCatalog: catalog,
+        policy: SHADOW_POLICY,
+        coreStableTargetKeys: ['x'.repeat(MAX_TOOL_SURFACE_DEFINITION_BYTES + 1)]
+      }).degradationCodes
+    ).toEqual(['selection-input-limit-exceeded'])
+    expectSurfaceError(
+      () =>
+        computeToolSurfaceStaticDefinitionOverlap(
+          Array.from({ length: MAX_TOOL_SURFACE_OVERLAP_IDENTITIES + 1 }, (_, index) => ({
+            stableTargetKey: String(index),
+            canonicalToolDefinitionHash: 'hash'
+          })),
+          []
+        ),
+      'limit_exceeded'
     )
   })
 })
