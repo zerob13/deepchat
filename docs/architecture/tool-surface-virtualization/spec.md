@@ -398,7 +398,7 @@ Within one Tape incarnation, this fact is idempotently keyed by `fullCatalogHash
 - `fullCatalogHash` over every canonical catalog entry;
 - `catalogProjectionHash` over the retained bounded projection;
 - retained stable target identities and canonical Tool definition hashes;
-- retained exposure classes and reviewed effect classes;
+- retained exposure classes and reviewed execution effect/mode;
 - total and retained counts;
 - bounded truncation/degradation codes.
 
@@ -551,6 +551,10 @@ an explicit accepted threshold.
 Canonical Tool definition hashes may use a bounded process cache only when the source exposes an
 immutable definition revision or binding identity. Request-scoped membership and current authority
 are always rebuilt. A cache key that cannot prove definition identity is forbidden.
+
+The full catalog hash binds the reviewed execution effect/mode separately from the canonical Tool
+definition hash, which intentionally excludes execution policy to remain at the existing
+`toolDefinitionsHash` semantic layer.
 
 ## Required Invariants
 
