@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 import { zipSync } from 'fflate'
 import { readCuaToolCatalog } from './cua-tool-catalog-contract.mjs'
 import { CUA_DARWIN_ALLOWED_ENTITLEMENTS } from './cua-macos-contract.mjs'
@@ -14,7 +15,7 @@ const CUA_PLUGIN_ID = 'com.deepchat.plugins.cua'
 const CUA_INTEGRITY_DESCRIPTOR_NAME = 'integrity.json'
 const CUA_EMBEDDED_ADAPTER_CONTRACT = Object.freeze({
   hostBundleId: 'com.wefonk.deepchat',
-  driverVersion: '0.17.0',
+  driverVersion: '0.19.2',
   contractVersion: '0.6.0',
   toolsListSchemaVersion: '1',
   capabilityVersion: '1',
@@ -654,6 +655,60 @@ export function createCuaRuntimeIntegrityDescriptor(files, manifest, args) {
   }
 }
 
+export function writeCuaRuntimeIntegrityDescriptor(pluginDir, args) {
+  const sourceManifest = readManifest(pluginDir)
+  const manifest = createPackageManifest(sourceManifest, {
+    version: sourceManifest.version,
+    releaseVersionFromRoot: false,
+    targetPlatform: args.targetPlatform,
+    targetArch: args.targetArch
+  })
+  const files = collectFiles(pluginDir, pluginDir, {}, manifest, args)
+  const descriptor = createCuaRuntimeIntegrityDescriptor(files, manifest, args)
+  const descriptorRelativePath = assertSafeRelativePath(
+    manifest.runtime.integrityDescriptor,
+    'CUA runtime integrity descriptor'
+  )
+  const descriptorPath = path.join(pluginDir, ...descriptorRelativePath.split('/'))
+  const temporaryPath = path.join(
+    path.dirname(descriptorPath),
+    `.${path.basename(descriptorPath)}-${randomUUID()}.tmp`
+  )
+  const backupPath = `${temporaryPath}.backup`
+  fs.mkdirSync(path.dirname(descriptorPath), { recursive: true })
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(descriptor, null, 2)}\n`, { flag: 'wx' })
+    try {
+      fs.renameSync(temporaryPath, descriptorPath)
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !['EEXIST', 'EPERM'].includes(error.code)
+      ) {
+        throw error
+      }
+      fs.renameSync(descriptorPath, backupPath)
+      try {
+        fs.renameSync(temporaryPath, descriptorPath)
+      } catch (replacementError) {
+        try {
+          fs.renameSync(backupPath, descriptorPath)
+        } catch (restoreError) {
+          throw new AggregateError(
+            [replacementError, restoreError],
+            'CUA runtime integrity descriptor replacement and rollback failed'
+          )
+        }
+        throw replacementError
+      }
+      fs.rmSync(backupPath, { force: true })
+    }
+  } finally {
+    fs.rmSync(temporaryPath, { force: true })
+  }
+  return { descriptor, descriptorPath }
+}
+
 function packagePlugin(pluginDir, outDir, manifest, args) {
   const files = collectFiles(pluginDir, pluginDir, {}, manifest, args)
   files['plugin.json'] = {
@@ -686,22 +741,30 @@ function packagePlugin(pluginDir, outDir, manifest, args) {
   return outPath
 }
 
-try {
-  const args = parseArgs(process.argv.slice(2))
-  const sourceManifest = readManifest(args.pluginDir)
-  const manifest = createPackageManifest(sourceManifest, args)
-  validateManifest(args.pluginDir, manifest)
-  if (!isManifestTargetSupported(manifest, args.targetPlatform, args.targetArch)) {
-    throw new Error(`Plugin ${manifest.id} does not support ${targetKey(args.targetPlatform, args.targetArch)}`)
+function main() {
+  try {
+    const args = parseArgs(process.argv.slice(2))
+    const sourceManifest = readManifest(args.pluginDir)
+    const manifest = createPackageManifest(sourceManifest, args)
+    validateManifest(args.pluginDir, manifest)
+    if (!isManifestTargetSupported(manifest, args.targetPlatform, args.targetArch)) {
+      throw new Error(
+        `Plugin ${manifest.id} does not support ${targetKey(args.targetPlatform, args.targetArch)}`
+      )
+    }
+    scopeCuaToolPolicyToTarget(args.pluginDir, manifest, args)
+    validateCuaRuntime(args.pluginDir, manifest, args)
+    if (args.validateOnly) {
+      console.log(`Plugin ${manifest.id}@${manifest.version} is valid`)
+    } else {
+      const outPath = packagePlugin(args.pluginDir, args.outDir, manifest, args)
+      console.log(`Packaged ${manifest.id}@${manifest.version}: ${outPath}`)
+    }
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error))
   }
-  scopeCuaToolPolicyToTarget(args.pluginDir, manifest, args)
-  validateCuaRuntime(args.pluginDir, manifest, args)
-  if (args.validateOnly) {
-    console.log(`Plugin ${manifest.id}@${manifest.version} is valid`)
-  } else {
-    const outPath = packagePlugin(args.pluginDir, args.outDir, manifest, args)
-    console.log(`Packaged ${manifest.id}@${manifest.version}: ${outPath}`)
-  }
-} catch (error) {
-  fail(error instanceof Error ? error.message : String(error))
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
 }

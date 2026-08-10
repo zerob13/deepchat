@@ -1,11 +1,17 @@
 import { spawnSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import fs from 'node:fs'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { unzipSync } from 'fflate'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { parseCuaRuntimeIntegrityDescriptor } from '@/plugin/cuaRuntimeIntegrity'
+
+vi.unmock('fs')
+vi.unmock('node:fs')
+vi.unmock('path')
+vi.unmock('node:path')
 
 const ROOT = process.cwd()
 const tempRoots: string[] = []
@@ -64,7 +70,7 @@ async function createCuaPluginFixture() {
       integrityDescriptor: 'runtime/${target.platform}/${arch}/integrity.json',
       adapterContract: {
         hostBundleId: 'com.wefonk.deepchat',
-        driverVersion: '0.17.0',
+        driverVersion: '0.19.2',
         contractVersion: '0.6.0',
         toolsListSchemaVersion: '1',
         capabilityVersion: '1',
@@ -101,7 +107,7 @@ async function createCuaPluginFixture() {
   }
   const toolCatalog = `${JSON.stringify(
     {
-      version: '0.17.0',
+      version: '0.19.2',
       tools: [
         {
           name: 'check_permissions',
@@ -186,6 +192,18 @@ function runPackagePlugin(
   )
 }
 
+async function loadPackagePlugin() {
+  return (await import('../../../scripts/package-plugin.mjs')) as {
+    writeCuaRuntimeIntegrityDescriptor: (
+      pluginDir: string,
+      args: { targetPlatform: string; targetArch: string; purpose?: string }
+    ) => {
+      descriptor: Record<string, unknown>
+      descriptorPath: string
+    }
+  }
+}
+
 describe('package-plugin', () => {
   afterEach(async () => {
     await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
@@ -220,7 +238,7 @@ describe('package-plugin', () => {
       schemaVersion: 1,
       pluginId: 'com.deepchat.plugins.cua',
       runtimeId: 'cua-driver',
-      runtimeVersion: '0.17.0',
+      runtimeVersion: '0.19.2',
       target: 'win32/arm64',
       runtimeRoot: 'runtime/win32/arm64',
       binaryPath: 'cua-driver.exe',
@@ -367,6 +385,78 @@ describe('package-plugin', () => {
       Buffer.from(files['runtime/win32/x64/integrity.json']).toString('utf8')
     )
     expect(integrity.files).not.toHaveProperty('integrity.json')
+  })
+
+  it('writes the integrity descriptor required by directory development', async () => {
+    const fixture = await createCuaPluginFixture()
+    const { writeCuaRuntimeIntegrityDescriptor } = await loadPackagePlugin()
+    const integrityPath = path.join(
+      fixture.pluginDir,
+      'runtime',
+      'win32',
+      'x64',
+      'integrity.json'
+    )
+    await writeFile(integrityPath, 'stale descriptor')
+
+    const { descriptor, descriptorPath } = writeCuaRuntimeIntegrityDescriptor(
+      fixture.pluginDir,
+      {
+        targetPlatform: 'win32',
+        targetArch: 'x64'
+      }
+    )
+
+    expect(descriptorPath).toBe(integrityPath)
+    expect(JSON.parse(await readFile(descriptorPath, 'utf8'))).toEqual(descriptor)
+    expect(descriptor).toMatchObject({
+      runtimeVersion: '0.19.2',
+      target: 'win32/x64',
+      runtimeRoot: 'runtime/win32/x64'
+    })
+    expect((descriptor.files as Record<string, string>)).not.toHaveProperty('integrity.json')
+    expect(() =>
+      parseCuaRuntimeIntegrityDescriptor(descriptor, 'directory development fixture')
+    ).not.toThrow()
+  })
+
+  it('restores the previous descriptor when replacement fails', async () => {
+    const fixture = await createCuaPluginFixture()
+    const { writeCuaRuntimeIntegrityDescriptor } = await loadPackagePlugin()
+    const runtimeDir = path.join(fixture.pluginDir, 'runtime', 'win32', 'x64')
+    const integrityPath = path.join(runtimeDir, 'integrity.json')
+    const previousDescriptor = 'previous descriptor'
+    await writeFile(integrityPath, previousDescriptor)
+
+    const renameSync = fs.renameSync.bind(fs)
+    let replacementAttempts = 0
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation((source, destination) => {
+      if (String(source).endsWith('.tmp') && String(destination) === integrityPath) {
+        replacementAttempts += 1
+        throw Object.assign(
+          new Error(replacementAttempts === 1 ? 'target exists' : 'replacement failed'),
+          { code: replacementAttempts === 1 ? 'EEXIST' : 'EIO' }
+        )
+      }
+      renameSync(source, destination)
+    })
+
+    try {
+      expect(() =>
+        writeCuaRuntimeIntegrityDescriptor(fixture.pluginDir, {
+          targetPlatform: 'win32',
+          targetArch: 'x64'
+        })
+      ).toThrow('replacement failed')
+    } finally {
+      renameSpy.mockRestore()
+    }
+
+    expect(replacementAttempts).toBe(2)
+    expect(await readFile(integrityPath, 'utf8')).toBe(previousDescriptor)
+    expect(
+      (await readdir(runtimeDir)).filter((name) => name.startsWith('.integrity.json-'))
+    ).toEqual([])
   })
 
   it('records the explicit macOS distribution identity in the integrity descriptor', async () => {
