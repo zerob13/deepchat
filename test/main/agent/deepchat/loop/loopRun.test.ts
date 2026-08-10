@@ -3,10 +3,16 @@ import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import {
   advanceRequestSequence,
   bindActiveRequestContract,
+  bindActiveRequestToolSurface,
   createLoopRun,
   enterLogicalRound,
   enterPhysicalAttempt
 } from '@/agent/deepchat/loop/loopRun'
+import {
+  buildToolSurfaceRunCeiling,
+  createProviderOrderedToolSurfaceActivationLedger,
+  createToolSurfaceSnapshot
+} from '@/agent/deepchat/runtime/toolSurface'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
 function createRun(sessionId: string, initialRequestSeq = 0) {
@@ -138,6 +144,72 @@ describe('LoopRun', () => {
     expect(() => bindActiveRequestContract(run, requestSeq, contract({ runId: 'other' }))).toThrow(
       /Loop Run/
     )
+  })
+
+  it('retains one exact Tool Surface through retries and clears it before the next View', () => {
+    const run = createRun('session')
+    const requestSeq = advanceRequestSequence(run)
+    const snapshot = createToolSurfaceSnapshot({
+      request: {
+        sessionId: run.sessionId,
+        messageId: run.messageId,
+        runId: run.runId,
+        requestSeq
+      },
+      policyVersion: 'full-v1',
+      virtualizationTriggered: false,
+      ceiling: buildToolSurfaceRunCeiling([]),
+      eligibleDefinitions: [],
+      activationLedger: createProviderOrderedToolSurfaceActivationLedger([])
+    })
+
+    const binding = bindActiveRequestToolSurface(run, requestSeq, snapshot)
+
+    expect(binding.snapshot).toBe(snapshot)
+    expect(run.activeRequestToolSurface).toBe(binding)
+    expect(Object.isFrozen(binding)).toBe(true)
+    enterPhysicalAttempt(run)
+    enterPhysicalAttempt(run)
+    expect(run.activeRequestToolSurface?.snapshot).toBe(snapshot)
+    advanceRequestSequence(run)
+    expect(run.activeRequestToolSurface).toBeNull()
+  })
+
+  it('rejects stale or cross-run Tool Surface bindings', () => {
+    const run = createRun('session')
+    const requestSeq = advanceRequestSequence(run)
+    const snapshot = (overrides: Record<string, unknown> = {}) =>
+      createToolSurfaceSnapshot({
+        request: {
+          sessionId: run.sessionId,
+          messageId: run.messageId,
+          runId: run.runId,
+          requestSeq,
+          ...overrides
+        },
+        policyVersion: 'full-v1',
+        virtualizationTriggered: false,
+        ceiling: buildToolSurfaceRunCeiling([]),
+        eligibleDefinitions: [],
+        activationLedger: createProviderOrderedToolSurfaceActivationLedger([])
+      })
+
+    expect(() => bindActiveRequestToolSurface(run, requestSeq + 1, snapshot())).toThrow(
+      /request sequence/
+    )
+    expect(() =>
+      bindActiveRequestToolSurface(run, requestSeq, snapshot({ messageId: 'other' }))
+    ).toThrow(/Loop Run/)
+    expect(() =>
+      bindActiveRequestToolSurface(run, requestSeq, {
+        request: {
+          sessionId: run.sessionId,
+          messageId: run.messageId,
+          runId: run.runId,
+          requestSeq
+        }
+      } as any)
+    ).toThrow(/canonical builder/)
   })
 
   it('restores only valid persisted logical rounds', () => {

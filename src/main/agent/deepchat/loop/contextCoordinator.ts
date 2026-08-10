@@ -1,5 +1,10 @@
 import type { LoopRun } from './loopRun'
-import { advanceRequestSequence, bindActiveRequestContract, enterPhysicalAttempt } from './loopRun'
+import {
+  advanceRequestSequence,
+  bindActiveRequestContract,
+  bindActiveRequestToolSurface,
+  enterPhysicalAttempt
+} from './loopRun'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import {
   createStreamEvent,
@@ -38,6 +43,10 @@ import {
   type ProviderFailureAssessment,
   type ProviderRetryObserver
 } from './providerRetryPolicy'
+import {
+  assertIssuedToolSurfaceSnapshot,
+  type ToolSurfaceSnapshot
+} from '@/agent/deepchat/runtime/toolSurface'
 
 export interface ContextAssembly<TContributions, TView> {
   assembleContributions(): Promise<TContributions>
@@ -172,6 +181,10 @@ export interface ProviderAttemptExecutionContractPort {
   onBuildError(error: unknown): void
 }
 
+export interface ProviderAttemptToolSurfacePort {
+  build(input: { requestSeq: number; tools: readonly MCPToolDefinition[] }): ToolSurfaceSnapshot
+}
+
 export interface ProviderRateGatePort {
   beforeWait(): void
   wait(signal: AbortSignal): Promise<void>
@@ -189,6 +202,7 @@ export interface ProviderAttemptStreamInput {
   maxTokens: number
   tools: MCPToolDefinition[]
   executionContract: DeepChatExecutionContract | null
+  toolSurfaceSnapshot: ToolSurfaceSnapshot | null
   signal: AbortSignal
 }
 
@@ -452,6 +466,7 @@ export interface ProviderAttemptInput<TSelection> {
   recovery: ProviderAttemptRecoveryPort
   manifest: ProviderAttemptManifestPort<TSelection>
   executionContract?: ProviderAttemptExecutionContractPort
+  toolSurface?: ProviderAttemptToolSurfacePort
   strictViewContract?: boolean
   rateGate: ProviderRateGatePort
   provider: ProviderAttemptStreamPort
@@ -519,7 +534,7 @@ export class DeepChatContextCoordinator {
         : 'tool_loop'
     let manifestSummaryCursorOrderSeq = input.viewContext?.summaryCursorOrderSeq ?? 1
     let manifestSyntheticContributions = input.viewContext?.syntheticContributions
-    const effectiveRequestToolReserveTokens = input.budget.estimateToolReserveTokens(input.tools)
+    const legacyRequestToolReserveTokens = input.budget.estimateToolReserveTokens(input.tools)
 
     const prepareProviderRequest = async (options: {
       requestOrigin: DeepChatProviderRequestOrigin
@@ -529,7 +544,40 @@ export class DeepChatContextCoordinator {
       providerMaxTokens: number
       requestSeq: number
       executionContract: DeepChatExecutionContract | null
+      toolSurfaceSnapshot: ToolSurfaceSnapshot | null
+      tools: MCPToolDefinition[]
     }> => {
+      const anticipatedRequestSeq = input.run.requestSeq + 1
+      if (!Number.isSafeInteger(anticipatedRequestSeq) || anticipatedRequestSeq <= 0) {
+        throw new Error('Provider request sequence is exhausted.')
+      }
+      let toolSurfaceSnapshot: ToolSurfaceSnapshot | null = null
+      if (input.toolSurface) {
+        input.run.abortController.signal.throwIfAborted()
+        const builtSnapshot: unknown = input.toolSurface.build({
+          requestSeq: anticipatedRequestSeq,
+          tools: input.tools
+        })
+        assertIssuedToolSurfaceSnapshot(builtSnapshot)
+        toolSurfaceSnapshot = builtSnapshot
+      }
+      if (
+        toolSurfaceSnapshot &&
+        (toolSurfaceSnapshot.request.sessionId !== input.run.sessionId ||
+          toolSurfaceSnapshot.request.messageId !== input.run.messageId ||
+          toolSurfaceSnapshot.request.runId !== input.run.runId ||
+          toolSurfaceSnapshot.request.requestSeq !== anticipatedRequestSeq)
+      ) {
+        throw new Error('Tool Surface identity does not match the provider View being assembled.')
+      }
+      // Snapshot definitions are deeply frozen. The cast is confined to legacy ports whose
+      // mutable array signatures predate Tool Surface Views; every consumer receives this value.
+      const requestTools = toolSurfaceSnapshot
+        ? (toolSurfaceSnapshot.toolDefinitions as MCPToolDefinition[])
+        : input.tools
+      const effectiveRequestToolReserveTokens = toolSurfaceSnapshot
+        ? input.budget.estimateToolReserveTokens(requestTools)
+        : legacyRequestToolReserveTokens
       let providerMessages = input.requestMessages
       let providerMaxTokens = input.maxTokens
       let manifestRequestedMaxTokens = input.maxTokens
@@ -557,7 +605,7 @@ export class DeepChatContextCoordinator {
 
         let requestPreflight = input.budget.preflight({
           messages: input.requestMessages,
-          tools: input.tools,
+          tools: requestTools,
           requestedMaxTokens
         })
         if (
@@ -571,7 +619,7 @@ export class DeepChatContextCoordinator {
             const recovered = await input.recovery.recover({
               requestMessages: requestPreflight.messages,
               requestedMaxTokens: requestPreflight.requestedMaxTokens,
-              tools: input.tools
+              tools: requestTools
             })
             if (recovered.summaryCursorOrderSeq !== undefined) {
               manifestSummaryCursorOrderSeq = recovered.summaryCursorOrderSeq
@@ -582,7 +630,7 @@ export class DeepChatContextCoordinator {
             input.requestMessages.splice(0, input.requestMessages.length, ...recovered.messages)
             requestPreflight = input.budget.preflight({
               messages: input.requestMessages,
-              tools: input.tools,
+              tools: requestTools,
               requestedMaxTokens
             })
             input.requestMessages.splice(
@@ -605,7 +653,13 @@ export class DeepChatContextCoordinator {
       }
 
       input.run.abortController.signal.throwIfAborted()
+      if (input.run.requestSeq !== anticipatedRequestSeq - 1) {
+        throw new Error('Provider request sequence changed during View assembly.')
+      }
       const requestSeq = advanceRequestSequence(input.run)
+      if (requestSeq !== anticipatedRequestSeq) {
+        throw new Error('Provider request sequence changed during View assembly.')
+      }
       const isInitialViewRequest =
         (options.requestOrigin === 'chat' || options.requestOrigin === 'resume') &&
         requestSeq === input.run.initialRequestSeq + 1 &&
@@ -630,7 +684,7 @@ export class DeepChatContextCoordinator {
             modelConfig: input.modelConfig,
             temperature: input.temperature,
             maxTokens: providerMaxTokens,
-            tools: input.tools,
+            tools: requestTools,
             contextBuilderVersion
           })
         } catch (error) {
@@ -653,7 +707,7 @@ export class DeepChatContextCoordinator {
           policy: manifestPolicy.policy,
           policyVersion: manifestPolicy.policyVersion,
           messages: providerMessages,
-          tools: input.tools,
+          tools: requestTools,
           tokenBudget: {
             contextLength: input.modelConfig.contextLength ?? input.fallbackContextLength,
             requestedMaxTokens: manifestRequestedMaxTokens,
@@ -692,20 +746,31 @@ export class DeepChatContextCoordinator {
         }
       }
       bindActiveRequestContract(input.run, requestSeq, executionContract)
+      if (toolSurfaceSnapshot) {
+        bindActiveRequestToolSurface(input.run, requestSeq, toolSurfaceSnapshot)
+      }
 
-      return { providerMessages, providerMaxTokens, requestSeq, executionContract }
+      return {
+        providerMessages,
+        providerMaxTokens,
+        requestSeq,
+        executionContract,
+        toolSurfaceSnapshot,
+        tools: requestTools
+      }
     }
 
     const recoverProviderContextOverflow = async (
       providerMessages: ChatMessage[],
-      providerMaxTokens: number
+      providerMaxTokens: number,
+      tools: MCPToolDefinition[]
     ): Promise<void> => {
       input.run.providerRecovery.contextOverflowHandoffAttempted = true
       providerOverflowRecoveryAttempted = true
       const recovered = await input.recovery.recover({
         requestMessages: providerMessages,
         requestedMaxTokens: providerMaxTokens,
-        tools: input.tools
+        tools
       })
       if (recovered.summaryCursorOrderSeq !== undefined) {
         manifestSummaryCursorOrderSeq = recovered.summaryCursorOrderSeq
@@ -720,11 +785,12 @@ export class DeepChatContextCoordinator {
 
     const buildProviderOverflowRetryFailure = (
       providerMessages: ChatMessage[],
-      providerMaxTokens: number
+      providerMaxTokens: number,
+      tools: MCPToolDefinition[]
     ): Error => {
       const retryPreflight = input.budget.preflight({
         messages: providerMessages,
-        tools: input.tools,
+        tools,
         requestedMaxTokens: providerMaxTokens
       })
       return retryPreflight.fitsWithinContext
@@ -751,11 +817,17 @@ export class DeepChatContextCoordinator {
         const strictProviderOverflowRetry = strictProviderOverflowRetryPending
         strictProviderOverflowRetryPending = false
         const requestOrigin = nextRequestOrigin
-        const { providerMessages, providerMaxTokens, requestSeq, executionContract } =
-          await prepareProviderRequest({
-            requestOrigin,
-            strictProviderOverflowRetry
-          })
+        const {
+          providerMessages,
+          providerMaxTokens,
+          requestSeq,
+          executionContract,
+          toolSurfaceSnapshot,
+          tools
+        } = await prepareProviderRequest({
+          requestOrigin,
+          strictProviderOverflowRetry
+        })
         let pendingRetry: { retryNumber: number; delayMs: number } | null = null
 
         for (;;) {
@@ -806,8 +878,9 @@ export class DeepChatContextCoordinator {
                 modelConfig: input.modelConfig,
                 temperature: input.temperature,
                 maxTokens: providerMaxTokens,
-                tools: input.tools,
+                tools,
                 executionContract,
+                toolSurfaceSnapshot,
                 signal: input.run.abortController.signal
               },
               observation,
@@ -923,12 +996,12 @@ export class DeepChatContextCoordinator {
 
             if (contextRecoveryAction) {
               if (contextRecoveryAction === 'fail') {
-                throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
+                throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens, tools)
               }
               if (contextRecoveryAction === 'strict_retry') {
                 strictProviderOverflowRetryPending = true
               } else {
-                await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
+                await recoverProviderContextOverflow(providerMessages, providerMaxTokens, tools)
               }
               nextRequestOrigin = 'context_recovery'
               continue providerRequestLoop

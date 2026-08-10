@@ -4,6 +4,10 @@ import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
+import {
+  assertIssuedToolSurfaceSnapshot,
+  type ToolSurfaceSnapshot
+} from '@/agent/deepchat/runtime/toolSurface'
 
 export interface LoopRunResources {
   toolDefinitions: MCPToolDefinition[]
@@ -22,6 +26,11 @@ export interface LoopRunRequestContractBinding {
   readonly executionContract: DeepChatExecutionContract | null
 }
 
+export interface LoopRunRequestToolSurfaceBinding {
+  readonly requestSeq: number
+  readonly snapshot: ToolSurfaceSnapshot
+}
+
 export interface LoopRun<TStreamState> {
   readonly runId: string
   readonly sessionId: AppSessionId
@@ -37,6 +46,7 @@ export interface LoopRun<TStreamState> {
   resources: LoopRunResources
   providerRecovery: LoopRunProviderRecovery
   activeRequestContract: LoopRunRequestContractBinding | null
+  activeRequestToolSurface: LoopRunRequestToolSurfaceBinding | null
 }
 
 export interface CreateLoopRunInput<TStreamState> {
@@ -92,7 +102,8 @@ export function createLoopRun<TStreamState>(
       contextOverflowHandoffAttempted: false,
       strictProviderOverflowRetryUsed: false
     },
-    activeRequestContract: null
+    activeRequestContract: null,
+    activeRequestToolSurface: null
   }
 }
 
@@ -113,6 +124,7 @@ export function advanceRequestSequence(run: LoopRun<unknown>): number {
   run.requestSeq = nextRequestSeq
   run.physicalAttempt = 0
   run.activeRequestContract = null
+  run.activeRequestToolSurface = null
   return nextRequestSeq
 }
 
@@ -135,6 +147,28 @@ export function bindActiveRequestContract(
   }
   const binding = Object.freeze({ requestSeq, executionContract })
   run.activeRequestContract = binding
+  return binding
+}
+
+export function bindActiveRequestToolSurface(
+  run: LoopRun<unknown>,
+  requestSeq: number,
+  snapshot: ToolSurfaceSnapshot
+): LoopRunRequestToolSurfaceBinding {
+  if (requestSeq !== run.requestSeq) {
+    throw new Error('Tool Surface request sequence does not match the active request.')
+  }
+  assertIssuedToolSurfaceSnapshot(snapshot)
+  if (
+    snapshot.request.sessionId !== run.sessionId ||
+    snapshot.request.messageId !== run.messageId ||
+    snapshot.request.runId !== run.runId ||
+    snapshot.request.requestSeq !== requestSeq
+  ) {
+    throw new Error('Tool Surface identity does not match the active Loop Run.')
+  }
+  const binding = Object.freeze({ requestSeq, snapshot })
+  run.activeRequestToolSurface = binding
   return binding
 }
 

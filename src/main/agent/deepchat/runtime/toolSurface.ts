@@ -44,6 +44,8 @@ const TOOL_SURFACE_SELECTION_REASONS = Object.freeze([
 ] as const)
 // Run ceilings are process-live immutable capabilities, not serializable authority or latest state.
 const issuedRunToolCeilings = new WeakSet<ToolSurfaceRunCeiling>()
+// View snapshots follow the same process-live provenance discipline as their Run ceilings.
+const issuedToolSurfaceSnapshots = new WeakSet<ToolSurfaceSnapshot>()
 
 export type ToolSurfaceErrorCode =
   | 'conflicting_tool'
@@ -169,6 +171,21 @@ export interface ToolSurfaceSnapshot {
   readonly eligibleCatalog: CanonicalToolCatalog
   readonly activeEntries: readonly ToolSurfaceSnapshotActiveEntry[]
   readonly toolDefinitions: readonly MCPToolDefinition[]
+}
+
+export function assertIssuedToolSurfaceSnapshot(
+  snapshot: unknown
+): asserts snapshot is ToolSurfaceSnapshot {
+  if (
+    !snapshot ||
+    typeof snapshot !== 'object' ||
+    !issuedToolSurfaceSnapshots.has(snapshot as ToolSurfaceSnapshot)
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface snapshot was not issued by the canonical builder.',
+      'invalid_definition'
+    )
+  }
 }
 
 export interface ToolSurfaceCandidateScope {
@@ -1478,7 +1495,7 @@ export function createToolSurfaceSnapshot(input: {
     })
   })
   const toolDefinitions = Object.freeze(activeEntries.map((entry) => entry.definition))
-  return Object.freeze({
+  const snapshot = Object.freeze({
     schemaVersion: TOOL_SURFACE_SNAPSHOT_SCHEMA_VERSION,
     canonicalizationVersion: TOOL_SURFACE_CANONICALIZATION_VERSION,
     orderingVersion: TOOL_SURFACE_ORDERING_VERSION,
@@ -1490,6 +1507,8 @@ export function createToolSurfaceSnapshot(input: {
     activeEntries: Object.freeze(activeEntries),
     toolDefinitions
   })
+  issuedToolSurfaceSnapshots.add(snapshot)
+  return snapshot
 }
 
 function labelFor(index: number): string {

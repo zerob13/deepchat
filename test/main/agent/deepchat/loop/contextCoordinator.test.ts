@@ -1,9 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
+import {
+  DeepChatContextCoordinator,
+  type ProviderAttemptToolSurfacePort
+} from '@/agent/deepchat/loop/contextCoordinator'
 import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
+import {
+  buildToolSurfaceRunCeiling,
+  createProviderOrderedToolSurfaceActivationLedger,
+  createToolSurfaceSnapshot,
+  type ToolSurfaceSnapshot
+} from '@/agent/deepchat/runtime/toolSurface'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
+import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
@@ -18,6 +28,54 @@ function createRun(messages: ChatMessage[] = [{ role: 'user', content: 'hello' }
     resources: { toolDefinitions: [], activeSkillNames: [], commandShell: POSIX_COMMAND_SHELL },
     initialLogicalRound: 1
   })
+}
+
+function agentTool(name: string): MCPToolDefinition {
+  return {
+    source: 'agent',
+    execution: TOOL_EXECUTION.read.parallel,
+    type: 'function',
+    function: {
+      name,
+      description: `${name} description`,
+      parameters: { type: 'object', properties: {} }
+    },
+    server: {
+      name: 'agent-tools',
+      icons: '',
+      description: 'Agent tools'
+    }
+  }
+}
+
+function createFullToolSurfacePort(definitions: readonly MCPToolDefinition[]): {
+  port: ProviderAttemptToolSurfacePort
+  build: ReturnType<typeof vi.fn<ProviderAttemptToolSurfacePort['build']>>
+  snapshots: ToolSurfaceSnapshot[]
+} {
+  const ceiling = buildToolSurfaceRunCeiling(definitions)
+  const activationLedger = createProviderOrderedToolSurfaceActivationLedger(
+    [...definitions].reverse()
+  )
+  const snapshots: ToolSurfaceSnapshot[] = []
+  const build = vi.fn<ProviderAttemptToolSurfacePort['build']>(({ requestSeq, tools }) => {
+    const snapshot = createToolSurfaceSnapshot({
+      request: {
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        runId: 'run-1',
+        requestSeq
+      },
+      policyVersion: 'full-test-v1',
+      virtualizationTriggered: false,
+      ceiling,
+      eligibleDefinitions: tools,
+      activationLedger
+    })
+    snapshots.push(snapshot)
+    return snapshot
+  })
+  return { port: { build }, build, snapshots }
 }
 
 function expectedAttemptOutcome(overrides: Record<string, unknown> = {}) {
@@ -76,6 +134,8 @@ function createAttemptInput(options?: {
   providerAttempts?: Array<{ events?: LLMCoreStreamEvent[]; error?: unknown }>
   appendManifest?: (manifest: any) => void
   buildExecutionContract?: (input: any) => any
+  tools?: MCPToolDefinition[]
+  toolSurface?: ProviderAttemptToolSurfacePort
   viewContext?: false
   strictViewContract?: boolean
 }) {
@@ -84,8 +144,12 @@ function createAttemptInput(options?: {
   const manifests: any[] = []
   const providerRequests: any[] = []
   const manifestContractRefs: any[] = []
+  const manifestToolRefs: any[] = []
   const providerContractRefs: any[] = []
+  const providerToolSurfaceRefs: any[] = []
+  const providerToolRefs: any[] = []
   const contractBuildInputs: any[] = []
+  const contractToolRefs: any[] = []
   const executionContractErrors: unknown[] = []
   const manifestErrors: unknown[] = []
   const outcomes: any[] = []
@@ -110,8 +174,12 @@ function createAttemptInput(options?: {
     manifests,
     providerRequests,
     manifestContractRefs,
+    manifestToolRefs,
     providerContractRefs,
+    providerToolSurfaceRefs,
+    providerToolRefs,
     contractBuildInputs,
+    contractToolRefs,
     executionContractErrors,
     manifestErrors,
     outcomes,
@@ -124,7 +192,8 @@ function createAttemptInput(options?: {
       modelConfig: { contextLength: 1_000 } as ModelConfig,
       temperature: 0.4,
       maxTokens: 100,
-      tools: [],
+      tools: options?.tools ?? [],
+      ...(options?.toolSurface ? { toolSurface: options.toolSurface } : {}),
       allowTransientRetry: true,
       bypassContextBudget: false,
       fallbackContextLength: 1_000,
@@ -171,6 +240,7 @@ function createAttemptInput(options?: {
       },
       executionContract: {
         build: (input: any) => {
+          contractToolRefs.push(input.tools)
           contractBuildInputs.push(structuredClone(input))
           return (
             options?.buildExecutionContract?.(input) ?? {
@@ -195,6 +265,7 @@ function createAttemptInput(options?: {
         append: (manifest: any) => {
           order.push(`manifest:${manifest.requestSeq}`)
           manifestContractRefs.push(manifest.executionContract)
+          manifestToolRefs.push(manifest.tools)
           manifests.push(structuredClone(manifest))
           options?.appendManifest?.(manifest)
         },
@@ -217,6 +288,8 @@ function createAttemptInput(options?: {
         stream: async function* (request: any) {
           order.push('provider')
           providerContractRefs.push(request.executionContract)
+          providerToolSurfaceRefs.push(request.toolSurfaceSnapshot)
+          providerToolRefs.push(request.tools)
           const { signal, ...serializableRequest } = request
           providerRequests.push({ ...structuredClone(serializableRequest), signal })
           const attempt = providerAttempts[providerAttempt++] ?? { events: [] }
@@ -379,10 +452,15 @@ describe('DeepChatContextCoordinator', () => {
     ])
     expect(fixture.manifests[0].messages).toEqual(fixture.providerRequests[0].messages)
     expect(fixture.manifestContractRefs[0]).toBe(fixture.providerContractRefs[0])
+    expect(fixture.manifestToolRefs[0]).toBe(fixture.input.tools)
+    expect(fixture.contractToolRefs[0]).toBe(fixture.input.tools)
+    expect(fixture.providerToolRefs[0]).toBe(fixture.input.tools)
+    expect(fixture.providerToolSurfaceRefs).toEqual([null])
     expect(fixture.run.activeRequestContract).toEqual({
       requestSeq: 1,
       executionContract: fixture.providerContractRefs[0]
     })
+    expect(fixture.run.activeRequestToolSurface).toBeNull()
     expect(fixture.providerRequests[0]).toMatchObject({
       identity: { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
       requestOrigin: 'chat',
@@ -400,6 +478,51 @@ describe('DeepChatContextCoordinator', () => {
     })
     expect(fixture.run.requestSeq).toBe(1)
     expect(fixture.actualRateClears).toEqual(['clear'])
+  })
+
+  it('binds one immutable Tool Surface across a manifested View and its transient retries', async () => {
+    const tools = [agentTool('read'), agentTool('write')]
+    const surface = createFullToolSurfacePort(tools)
+    const transientError = Object.assign(new Error('fetch failed'), {
+      code: 'ECONNRESET',
+      headers: { 'retry-after-ms': '0' }
+    })
+    const fixture = createAttemptInput({
+      tools,
+      toolSurface: surface.port,
+      providerAttempts: [
+        { error: transientError },
+        {
+          events: [
+            { type: 'text', content: 'recovered' },
+            { type: 'stop', stop_reason: 'complete' }
+          ]
+        }
+      ]
+    })
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(surface.build).toHaveBeenCalledOnce()
+    expect(surface.build).toHaveBeenCalledWith({ requestSeq: 1, tools })
+    expect(surface.snapshots).toHaveLength(1)
+    const [snapshot] = surface.snapshots
+    expect(snapshot.toolDefinitions.map((tool) => tool.function.name)).toEqual(['write', 'read'])
+    expect(fixture.manifestToolRefs[0]).toBe(snapshot.toolDefinitions)
+    expect(Object.isFrozen(fixture.manifestToolRefs[0])).toBe(true)
+    expect(fixture.manifestToolRefs).toEqual([fixture.contractToolRefs[0]])
+    expect(fixture.providerToolRefs[0]).toBe(fixture.contractToolRefs[0])
+    expect(fixture.providerToolRefs[1]).toBe(fixture.contractToolRefs[0])
+    expect(
+      fixture.providerToolRefs[0].map((tool: MCPToolDefinition) => tool.function.name)
+    ).toEqual(['write', 'read'])
+    expect(fixture.providerToolSurfaceRefs).toEqual([snapshot, snapshot])
+    expect(fixture.run.activeRequestToolSurface).toEqual({ requestSeq: 1, snapshot })
+    expect(fixture.run.activeRequestToolSurface?.snapshot).toBe(snapshot)
+    expect(fixture.providerRequests.map((request) => request.identity)).toEqual([
+      { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
+      { logicalRound: 1, requestSeq: 1, physicalAttempt: 2 }
+    ])
   })
 
   it('uses fallback capabilities without a ViewManifest context', async () => {
@@ -572,6 +695,107 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.manifests).toHaveLength(scenario.manifestAttempts)
   })
 
+  it('fails before starting a View when Tool Surface construction fails', async () => {
+    const surfaceError = new Error('tool surface unavailable')
+    const build = vi.fn<ProviderAttemptToolSurfacePort['build']>(() => {
+      throw surfaceError
+    })
+    const fixture = createAttemptInput({ toolSurface: { build } })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toBe(surfaceError)
+
+    expect(build).toHaveBeenCalledWith({ requestSeq: 1, tools: fixture.input.tools })
+    expect(fixture.run.requestSeq).toBe(0)
+    expect(fixture.run.activeRequestContract).toBeNull()
+    expect(fixture.run.activeRequestToolSurface).toBeNull()
+    expect(fixture.manifests).toHaveLength(0)
+    expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.order).not.toContain('rate')
+  })
+
+  it('rejects a mismatched Tool Surface identity before manifesting a View', async () => {
+    const tools = [agentTool('read')]
+    const surface = createFullToolSurfacePort(tools)
+    const fixture = createAttemptInput({
+      tools,
+      toolSurface: {
+        build: ({ requestSeq, tools: requestTools }) =>
+          surface.port.build({ requestSeq: requestSeq + 1, tools: requestTools })
+      }
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow(/identity does not match/)
+
+    expect(fixture.run.requestSeq).toBe(0)
+    expect(fixture.run.activeRequestContract).toBeNull()
+    expect(fixture.run.activeRequestToolSurface).toBeNull()
+    expect(fixture.manifests).toHaveLength(0)
+    expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.order).not.toContain('rate')
+  })
+
+  it('rejects an unsigned Tool Surface before manifesting a View', async () => {
+    const fixture = createAttemptInput({
+      toolSurface: {
+        build: ({ requestSeq }) =>
+          ({
+            request: {
+              sessionId: 'session-1',
+              messageId: 'message-1',
+              runId: 'run-1',
+              requestSeq
+            },
+            toolDefinitions: []
+          }) as ToolSurfaceSnapshot
+      }
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toMatchObject({ code: 'invalid_definition' })
+
+    expect(fixture.run.requestSeq).toBe(0)
+    expect(fixture.manifests).toHaveLength(0)
+    expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.order).not.toContain('rate')
+  })
+
+  it('does not fall back to legacy tools when a Tool Surface port returns no snapshot', async () => {
+    const fixture = createAttemptInput({
+      toolSurface: {
+        build: () => null as unknown as ToolSurfaceSnapshot
+      }
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toMatchObject({ code: 'invalid_definition' })
+
+    expect(fixture.run.requestSeq).toBe(0)
+    expect(fixture.manifests).toHaveLength(0)
+    expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.order).not.toContain('rate')
+  })
+
+  it('does not build a Tool Surface after the Run is canceled', async () => {
+    const build = vi.fn<ProviderAttemptToolSurfacePort['build']>()
+    const fixture = createAttemptInput({ toolSurface: { build } })
+    fixture.run.abortController.abort()
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(build).not.toHaveBeenCalled()
+    expect(fixture.run.requestSeq).toBe(0)
+    expect(fixture.manifests).toHaveLength(0)
+    expect(fixture.providerRequests).toHaveLength(0)
+  })
+
   it('keeps generation fail-open when provider outcome persistence throws', async () => {
     const fixture = createAttemptInput()
     const persistenceError = new Error('outcome unavailable')
@@ -589,7 +813,11 @@ describe('DeepChatContextCoordinator', () => {
   })
 
   it('keeps strict overflow recovery in one round while advancing requestSeq per request', async () => {
+    const tools = [agentTool('read'), agentTool('write')]
+    const surface = createFullToolSurfacePort(tools)
     const fixture = createAttemptInput({
+      tools,
+      toolSurface: surface.port,
       providerEvents: [
         [{ type: 'error', error_message: 'context overflow' }],
         [
@@ -642,6 +870,14 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.run.activeRequestContract?.executionContract).toBe(
       fixture.providerContractRefs[1]
     )
+    expect(surface.build.mock.calls.map(([input]) => input.requestSeq)).toEqual([1, 2])
+    expect(surface.snapshots).toHaveLength(2)
+    expect(surface.snapshots[0]).not.toBe(surface.snapshots[1])
+    expect(fixture.providerToolSurfaceRefs).toEqual(surface.snapshots)
+    expect(fixture.run.activeRequestToolSurface).toEqual({
+      requestSeq: 2,
+      snapshot: surface.snapshots[1]
+    })
     expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
   })
 
