@@ -935,7 +935,11 @@ describe('processStream', () => {
         abortController: new AbortController(),
         messages: [{ role: 'user', content: 'Hello' }],
         streamState: createState(),
-        resources: { toolDefinitions: tools, activeSkillNames: [] },
+        resources: {
+          toolDefinitions: tools,
+          activeSkillNames: [],
+          commandShell: POSIX_COMMAND_SHELL
+        },
         initialRequestSeq: 1
       })
       const executionContract = {
@@ -979,7 +983,11 @@ describe('processStream', () => {
         abortController: new AbortController(),
         messages: [{ role: 'user', content: 'Hello' }],
         streamState: createState(),
-        resources: { toolDefinitions: tools, activeSkillNames: [] },
+        resources: {
+          toolDefinitions: tools,
+          activeSkillNames: [],
+          commandShell: POSIX_COMMAND_SHELL
+        },
         initialRequestSeq: 1
       })
       const promptAssembly = createOpaquePromptAssembly('System prompt')
