@@ -4629,6 +4629,21 @@ describe('dispatchDeepchatRoute', () => {
     ).resolves.toEqual({ cancelled: false })
   })
 
+  it('dispatches pending Queue resume requests', async () => {
+    const { runtime, sessionTurnPort } = createRuntime()
+    sessionTurnPort.resumePendingQueue.mockResolvedValueOnce(true)
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'sessions.resumePendingQueue',
+        { sessionId: 'session-1' },
+        createRendererRouteContext(88, 3)
+      )
+    ).resolves.toEqual({ started: true })
+    expect(sessionTurnPort.resumePendingQueue).toHaveBeenCalledWith('session-1')
+  })
+
   it('dispatches session generation settings routes without dropping timeout', async () => {
     const { runtime, sessionAssignmentPort } = createRuntime()
 

@@ -8289,8 +8289,9 @@ describe('DeepChatAgentHarness', () => {
           .mockReturnValueOnce('resumed-user')
           .mockReturnValueOnce('resumed-assistant')
         const provider = llmProvider.getProviderInstance('openai')
+        let pendingRowAtProviderStart: unknown = 'not-observed'
         provider.coreStream.mockImplementationOnce(() => {
-          expect(sqlitePresenter.deepchatPendingInputsTable.get(queued.id)).toBeUndefined()
+          pendingRowAtProviderStart = sqlitePresenter.deepchatPendingInputsTable.get(queued.id)
           return (async function* () {
             yield { type: 'stop', stop_reason: 'provider_error' }
           })()
@@ -8320,6 +8321,7 @@ describe('DeepChatAgentHarness', () => {
         await restartedAgent.resolveBlockedPendingInput('s1', queued.id, attachmentAction)
 
         await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
+        expect(pendingRowAtProviderStart).toBeUndefined()
         await vi.waitFor(() =>
           expect(sqlitePresenter.deepchatPendingInputsTable.get(queued.id)).toBeUndefined()
         )
