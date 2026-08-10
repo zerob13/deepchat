@@ -21,7 +21,7 @@ import type { WorkspaceServicePort } from '@shared/types/workspace'
 import type { ToolServicePort } from '@shared/types/tool'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import { projectFinalAssistantAnswer } from '@shared/lib/assistantDeliverySegments'
-import type { SkillServicePort } from '@shared/types/skill'
+import type { SkillMetadataSnapshotPort, SkillServicePort } from '@shared/types/skill'
 import type { SkillSyncServicePort } from '@shared/types/skillSync'
 import type { IConversationExporter } from '../exporter/interface'
 import type {
@@ -334,7 +334,7 @@ export async function createMainProcessControl(dependencies: {
   let computerUsePreviewPresenter: ComputerUsePreviewPresenter
   let agentPreviewCoordinator: AgentPreviewCoordinator
   let dialogService: DialogServicePort
-  let skillService: SkillServicePort
+  let skillService: SkillServicePort & SkillMetadataSnapshotPort
   let skillSyncService: SkillSyncServicePort
   let sessionQuery: SessionQuery
   let desktopSessionBinding: DesktopSessionBinding

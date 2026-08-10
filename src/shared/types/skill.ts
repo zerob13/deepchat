@@ -265,6 +265,18 @@ export interface SkillManageResult {
 
 export type SkillDraftUserAction = 'view' | 'install' | 'discard'
 
+export type SkillMetadataCatalogSnapshot =
+  | { readonly state: 'ready'; readonly skills: readonly SkillMetadata[] }
+  | { readonly state: 'overflow'; readonly minimumItemCount: number }
+  | { readonly state: 'unavailable' }
+
+export interface SkillMetadataSnapshotPort {
+  snapshotCachedMetadataList(
+    agentId: string,
+    options: { readonly maxItems: number }
+  ): SkillMetadataCatalogSnapshot
+}
+
 export interface SkillDraftActionResult {
   success: boolean
   action: SkillDraftUserAction

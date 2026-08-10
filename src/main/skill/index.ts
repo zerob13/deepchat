@@ -39,6 +39,7 @@ import {
   SkillManageRequest,
   SkillManageResult,
   SkillDraftActionResult,
+  SkillMetadataCatalogSnapshot,
   SkillRuntimePolicy,
   SkillScriptDescriptor,
   SkillScriptRuntime,
@@ -68,6 +69,7 @@ import {
 
 const execFileAsync = promisify(execFile)
 const READ_ONLY_BUNDLED_SKILL_NAMES = new Set(['deepchat-cli'])
+const MAX_METADATA_SNAPSHOT_ITEMS = 4_096
 
 /**
  * Skill system configuration constants
@@ -1092,6 +1094,43 @@ export class SkillService implements SkillServicePort {
     const normalizedAgentId = await this.requireAgentScope(agentId)
     await this.ensureAgentCatalogDiscovered(normalizedAgentId)
     return this.getVisibleMetadataFromCache(normalizedAgentId)
+  }
+
+  /**
+   * Snapshot an already-discovered catalog without starting discovery or publishing catalog events.
+   */
+  snapshotCachedMetadataList(
+    agentId: string,
+    options: { readonly maxItems: number }
+  ): SkillMetadataCatalogSnapshot {
+    const normalizedAgentId = assertSafeSkillAgentId(agentId)
+    if (
+      !Number.isSafeInteger(options.maxItems) ||
+      options.maxItems <= 0 ||
+      options.maxItems > MAX_METADATA_SNAPSHOT_ITEMS
+    ) {
+      throw new Error('Skill metadata snapshot maxItems is invalid.')
+    }
+    if (normalizedAgentId === BUILTIN_SKILL_AGENT_ID) {
+      if (!this.builtinCatalogDiscovered && this.metadataCache.size === 0) {
+        return { state: 'unavailable' }
+      }
+    } else {
+      const catalog = this.scopedCatalogs.get(normalizedAgentId)
+      if (!catalog?.discovered) return { state: 'unavailable' }
+    }
+    const visibleSkills: SkillMetadata[] = []
+    for (const skill of this.getMetadataCacheForAgent(normalizedAgentId).values()) {
+      if (!this.isSkillVisible(skill, normalizedAgentId)) continue
+      visibleSkills.push(skill)
+      if (visibleSkills.length > options.maxItems) {
+        return { state: 'overflow', minimumItemCount: visibleSkills.length }
+      }
+    }
+    return {
+      state: 'ready',
+      skills: structuredClone(this.sortSkillMetadata(visibleSkills))
+    }
   }
 
   private getVisibleMetadataFromCache(agentId: string): SkillMetadata[] {

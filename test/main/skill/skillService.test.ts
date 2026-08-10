@@ -830,6 +830,41 @@ describe('SkillService', () => {
   })
 
   describe('getMetadataList', () => {
+    it('snapshots only an already-discovered detached catalog', async () => {
+      expect(skillService.snapshotCachedMetadataList('deepchat', { maxItems: 10 })).toEqual({
+        state: 'unavailable'
+      })
+      expect(discoveryWorkerMock.discoverSkillMetadataInWorker).not.toHaveBeenCalled()
+
+      mockSkillTree(['test'])
+      ;(fs.existsSync as Mock).mockReturnValue(true)
+      ;(fs.readFileSync as Mock).mockReturnValue('test')
+      ;(matter as unknown as Mock).mockReturnValue({
+        data: { name: 'test', description: 'Test' },
+        content: ''
+      })
+      await skillService.getMetadataList()
+
+      const first = skillService.snapshotCachedMetadataList('deepchat', { maxItems: 10 })
+      expect(first).toMatchObject({
+        state: 'ready',
+        skills: [expect.objectContaining({ name: 'test', description: 'Test' })]
+      })
+      if (first.state === 'ready') {
+        ;(first.skills[0] as { description: string }).description = 'mutated snapshot'
+      }
+      expect(skillService.snapshotCachedMetadataList('deepchat', { maxItems: 10 })).toMatchObject({
+        state: 'ready',
+        skills: [expect.objectContaining({ name: 'test', description: 'Test' })]
+      })
+
+      ;(skillService as any).metadataCache.set('second', createSkillMetadata('second', 'second'))
+      expect(skillService.snapshotCachedMetadataList('deepchat', { maxItems: 1 })).toEqual({
+        state: 'overflow',
+        minimumItemCount: 2
+      })
+    })
+
     it('should return cached metadata', async () => {
       mockSkillTree(['test'])
       ;(fs.existsSync as Mock).mockReturnValue(true)
