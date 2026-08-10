@@ -5,9 +5,7 @@ import {
 } from '@/agent/deepchat/loop/contextCoordinator'
 import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
 import {
-  buildToolSurfaceRunCeiling,
-  createProviderOrderedToolSurfaceActivationLedger,
-  createToolSurfaceSnapshot,
+  createFullToolSurfaceRunController,
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
@@ -51,31 +49,32 @@ function agentTool(name: string): MCPToolDefinition {
 function createFullToolSurfacePort(definitions: readonly MCPToolDefinition[]): {
   port: ProviderAttemptToolSurfacePort
   build: ReturnType<typeof vi.fn<ProviderAttemptToolSurfacePort['build']>>
+  admit: ReturnType<typeof vi.fn<ProviderAttemptToolSurfacePort['admit']>>
   snapshots: ToolSurfaceSnapshot[]
 } {
-  const ceiling = buildToolSurfaceRunCeiling(definitions)
-  const activationLedger = createProviderOrderedToolSurfaceActivationLedger(
-    [...definitions].reverse()
-  )
+  const controller = createFullToolSurfaceRunController({
+    ceilingDefinitions: definitions,
+    initialActiveDefinitions: [...definitions].reverse(),
+    policyVersion: 'full-test-v1'
+  })
   const snapshots: ToolSurfaceSnapshot[] = []
   const build = vi.fn<ProviderAttemptToolSurfacePort['build']>(({ requestSeq, tools }) => {
-    const snapshot = createToolSurfaceSnapshot({
+    const snapshot = controller.build({
       request: {
         sessionId: 'session-1',
         messageId: 'message-1',
         runId: 'run-1',
         requestSeq
       },
-      policyVersion: 'full-test-v1',
-      virtualizationTriggered: false,
-      ceiling,
-      eligibleDefinitions: tools,
-      activationLedger
+      eligibleDefinitions: tools
     })
     snapshots.push(snapshot)
     return snapshot
   })
-  return { port: { build }, build, snapshots }
+  const admit = vi.fn<ProviderAttemptToolSurfacePort['admit']>(({ snapshot }) => {
+    controller.admit(snapshot)
+  })
+  return { port: { build, admit }, build, admit, snapshots }
 }
 
 function expectedAttemptOutcome(overrides: Record<string, unknown> = {}) {
@@ -507,6 +506,8 @@ describe('DeepChatContextCoordinator', () => {
     expect(surface.build).toHaveBeenCalledWith({ requestSeq: 1, tools })
     expect(surface.snapshots).toHaveLength(1)
     const [snapshot] = surface.snapshots
+    expect(surface.admit).toHaveBeenCalledOnce()
+    expect(surface.admit).toHaveBeenCalledWith({ requestSeq: 1, snapshot })
     expect(snapshot.toolDefinitions.map((tool) => tool.function.name)).toEqual(['write', 'read'])
     expect(fixture.manifestToolRefs[0]).toBe(snapshot.toolDefinitions)
     expect(Object.isFrozen(fixture.manifestToolRefs[0])).toBe(true)
@@ -695,18 +696,79 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.manifests).toHaveLength(scenario.manifestAttempts)
   })
 
+  it('does not admit a Tool Surface when strict manifest persistence fails', async () => {
+    const tools = [agentTool('read')]
+    const surface = createFullToolSurfacePort(tools)
+    const fixture = createAttemptInput({
+      tools,
+      toolSurface: surface.port,
+      strictViewContract: true,
+      appendManifest: () => {
+        throw new Error('manifest unavailable')
+      }
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow('manifest unavailable')
+
+    expect(surface.build).toHaveBeenCalledOnce()
+    expect(surface.admit).not.toHaveBeenCalled()
+    expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.order).not.toContain('rate')
+  })
+
+  it('does not admit a prepared Tool Surface when rate admission is canceled', async () => {
+    const tools = [agentTool('read')]
+    const surface = createFullToolSurfacePort(tools)
+    const fixture = createAttemptInput({ tools, toolSurface: surface.port })
+    fixture.input.rateGate.wait = async () => {
+      fixture.run.abortController.abort()
+    }
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(surface.build).toHaveBeenCalledOnce()
+    expect(surface.admit).not.toHaveBeenCalled()
+    expect(fixture.manifests).toHaveLength(1)
+    expect(fixture.providerRequests).toHaveLength(0)
+  })
+
+  it('does not start a physical attempt when Tool Surface admission cancels the Run', async () => {
+    const tools = [agentTool('read')]
+    const surface = createFullToolSurfacePort(tools)
+    const fixture = createAttemptInput({ tools, toolSurface: surface.port })
+    const admit = surface.port.admit
+    surface.port.admit = (input) => {
+      admit(input)
+      fixture.run.abortController.abort()
+    }
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(surface.admit).toHaveBeenCalledOnce()
+    expect(fixture.run.physicalAttempt).toBe(0)
+    expect(fixture.providerRequests).toHaveLength(0)
+  })
+
   it('fails before starting a View when Tool Surface construction fails', async () => {
     const surfaceError = new Error('tool surface unavailable')
     const build = vi.fn<ProviderAttemptToolSurfacePort['build']>(() => {
       throw surfaceError
     })
-    const fixture = createAttemptInput({ toolSurface: { build } })
+    const admit = vi.fn<ProviderAttemptToolSurfacePort['admit']>()
+    const fixture = createAttemptInput({ toolSurface: { build, admit } })
 
     await expect(
       collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
     ).rejects.toBe(surfaceError)
 
     expect(build).toHaveBeenCalledWith({ requestSeq: 1, tools: fixture.input.tools })
+    expect(admit).not.toHaveBeenCalled()
     expect(fixture.run.requestSeq).toBe(0)
     expect(fixture.run.activeRequestContract).toBeNull()
     expect(fixture.run.activeRequestToolSurface).toBeNull()
@@ -722,7 +784,8 @@ describe('DeepChatContextCoordinator', () => {
       tools,
       toolSurface: {
         build: ({ requestSeq, tools: requestTools }) =>
-          surface.port.build({ requestSeq: requestSeq + 1, tools: requestTools })
+          surface.port.build({ requestSeq: requestSeq + 1, tools: requestTools }),
+        admit: surface.port.admit
       }
     })
 
@@ -750,7 +813,8 @@ describe('DeepChatContextCoordinator', () => {
               requestSeq
             },
             toolDefinitions: []
-          }) as ToolSurfaceSnapshot
+          }) as ToolSurfaceSnapshot,
+        admit: vi.fn()
       }
     })
 
@@ -767,7 +831,8 @@ describe('DeepChatContextCoordinator', () => {
   it('does not fall back to legacy tools when a Tool Surface port returns no snapshot', async () => {
     const fixture = createAttemptInput({
       toolSurface: {
-        build: () => null as unknown as ToolSurfaceSnapshot
+        build: () => null as unknown as ToolSurfaceSnapshot,
+        admit: vi.fn()
       }
     })
 
@@ -783,7 +848,8 @@ describe('DeepChatContextCoordinator', () => {
 
   it('does not build a Tool Surface after the Run is canceled', async () => {
     const build = vi.fn<ProviderAttemptToolSurfacePort['build']>()
-    const fixture = createAttemptInput({ toolSurface: { build } })
+    const admit = vi.fn<ProviderAttemptToolSurfacePort['admit']>()
+    const fixture = createAttemptInput({ toolSurface: { build, admit } })
     fixture.run.abortController.abort()
 
     await expect(
@@ -791,6 +857,7 @@ describe('DeepChatContextCoordinator', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
 
     expect(build).not.toHaveBeenCalled()
+    expect(admit).not.toHaveBeenCalled()
     expect(fixture.run.requestSeq).toBe(0)
     expect(fixture.manifests).toHaveLength(0)
     expect(fixture.providerRequests).toHaveLength(0)
@@ -871,6 +938,7 @@ describe('DeepChatContextCoordinator', () => {
       fixture.providerContractRefs[1]
     )
     expect(surface.build.mock.calls.map(([input]) => input.requestSeq)).toEqual([1, 2])
+    expect(surface.admit.mock.calls.map(([input]) => input.requestSeq)).toEqual([1, 2])
     expect(surface.snapshots).toHaveLength(2)
     expect(surface.snapshots[0]).not.toBe(surface.snapshots[1])
     expect(fixture.providerToolSurfaceRefs).toEqual(surface.snapshots)

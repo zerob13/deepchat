@@ -173,6 +173,16 @@ export interface ToolSurfaceSnapshot {
   readonly toolDefinitions: readonly MCPToolDefinition[]
 }
 
+export interface FullToolSurfaceRunController {
+  readonly ceiling: ToolSurfaceRunCeiling
+  readonly policyVersion: string
+  build(input: {
+    readonly request: ToolSurfaceRequestIdentity
+    readonly eligibleDefinitions: readonly MCPToolDefinition[]
+  }): ToolSurfaceSnapshot
+  admit(snapshot: ToolSurfaceSnapshot): void
+}
+
 export function assertIssuedToolSurfaceSnapshot(
   snapshot: unknown
 ): asserts snapshot is ToolSurfaceSnapshot {
@@ -1307,12 +1317,12 @@ export function buildToolSurfaceRunCeiling(
   return ceiling
 }
 
-export function createProviderOrderedToolSurfaceActivationLedger(
+function createProviderOrderedActivationLedgerFromCatalog(
+  catalog: CanonicalToolCatalog,
   definitions: readonly MCPToolDefinition[]
 ): ToolSurfaceActivationLedger {
-  const built = buildCanonicalToolCatalogArtifacts(definitions)
   const entryByVisibleName = new Map(
-    built.catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+    catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
   )
   const emittedTargets = new Set<string>()
   const identities: ToolSurfaceDefinitionIdentity[] = []
@@ -1323,6 +1333,13 @@ export function createProviderOrderedToolSurfaceActivationLedger(
     identities.push(copyDefinitionIdentity(entry))
   }
   return createToolSurfaceActivationLedger(identities)
+}
+
+export function createProviderOrderedToolSurfaceActivationLedger(
+  definitions: readonly MCPToolDefinition[]
+): ToolSurfaceActivationLedger {
+  const built = buildCanonicalToolCatalogArtifacts(definitions)
+  return createProviderOrderedActivationLedgerFromCatalog(built.catalog, definitions)
 }
 
 function validateToolSurfaceRunCeiling(ceiling: ToolSurfaceRunCeiling): void {
@@ -1509,6 +1526,91 @@ export function createToolSurfaceSnapshot(input: {
   })
   issuedToolSurfaceSnapshots.add(snapshot)
   return snapshot
+}
+
+export function createFullToolSurfaceRunController(input: {
+  readonly ceilingDefinitions: readonly MCPToolDefinition[]
+  readonly initialActiveDefinitions: readonly MCPToolDefinition[]
+  readonly policyVersion: string
+}): FullToolSurfaceRunController {
+  const ceiling = buildToolSurfaceRunCeiling(input.ceilingDefinitions)
+  const initialCatalog = buildCanonicalToolCatalog(input.initialActiveDefinitions)
+  const ceilingEntryByTarget = new Map(
+    ceiling.catalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  for (const entry of initialCatalog.entries) {
+    const ceilingEntry = ceilingEntryByTarget.get(entry.stableTargetKey)
+    if (!ceilingEntry || !catalogEntryMatches(ceilingEntry, entry)) {
+      throw new ToolSurfaceError(
+        'Initial Active Surface is outside the Run Tool Ceiling.',
+        'conflicting_tool'
+      )
+    }
+  }
+  let admittedLedger = createProviderOrderedActivationLedgerFromCatalog(
+    initialCatalog,
+    input.initialActiveDefinitions
+  )
+  const ceilingEntryByVisibleName = new Map(
+    ceiling.catalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+  )
+  const proposals = new WeakMap<
+    ToolSurfaceSnapshot,
+    {
+      readonly baseLedger: ToolSurfaceActivationLedger
+      readonly nextLedger: ToolSurfaceActivationLedger
+    }
+  >()
+  const admittedSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+
+  const controller: FullToolSurfaceRunController = {
+    ceiling,
+    policyVersion: input.policyVersion,
+    build: ({ request, eligibleDefinitions }) => {
+      const eligibleIdentities = eligibleDefinitions.map((definition) => {
+        const ceilingEntry = ceilingEntryByVisibleName.get(definition.function.name)
+        if (!ceilingEntry) {
+          throw new ToolSurfaceError(
+            'Eligible Tool Surface is outside the Run Tool Ceiling.',
+            'conflicting_tool'
+          )
+        }
+        return copyDefinitionIdentity(ceilingEntry)
+      })
+      const nextLedger = appendToolSurfaceActivationBatch(admittedLedger, eligibleIdentities)
+      const snapshot = createToolSurfaceSnapshot({
+        request,
+        policyVersion: input.policyVersion,
+        virtualizationTriggered: false,
+        ceiling,
+        eligibleDefinitions,
+        activationLedger: nextLedger
+      })
+      proposals.set(snapshot, { baseLedger: admittedLedger, nextLedger })
+      return snapshot
+    },
+    admit: (snapshot) => {
+      assertIssuedToolSurfaceSnapshot(snapshot)
+      if (admittedSnapshots.has(snapshot)) return
+      const proposal = proposals.get(snapshot)
+      if (!proposal) {
+        throw new ToolSurfaceError(
+          'Tool Surface snapshot was not prepared by this Run controller.',
+          'invalid_definition'
+        )
+      }
+      if (proposal.baseLedger !== admittedLedger) {
+        throw new ToolSurfaceError(
+          'Tool Surface snapshot was prepared from a stale activation ledger.',
+          'conflicting_tool'
+        )
+      }
+      admittedLedger = proposal.nextLedger
+      proposals.delete(snapshot)
+      admittedSnapshots.add(snapshot)
+    }
+  }
+  return Object.freeze(controller)
 }
 
 function labelFor(index: number): string {

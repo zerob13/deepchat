@@ -19,6 +19,7 @@ import {
   buildToolSurfaceRunCeiling,
   computeToolSurfaceShadowDecision,
   computeToolSurfaceStaticDefinitionOverlap,
+  createFullToolSurfaceRunController,
   createProviderOrderedToolSurfaceActivationLedger,
   createToolSurfaceActivationLedger,
   createToolSurfaceSnapshot,
@@ -637,6 +638,155 @@ describe('Run Tool Ceiling and Tool Surface snapshots', () => {
     expect(Object.isFrozen(restored.activeEntries)).toBe(true)
     expect(Object.isFrozen(restored.toolDefinitions)).toBe(true)
     expect(Object.isFrozen(restored.toolDefinitions[0].function.parameters)).toBe(true)
+  })
+
+  it('commits append order only when a full Tool Surface View is admitted', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+    const search = agentTool('search')
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read, write, search],
+      initialActiveDefinitions: [write, read],
+      policyVersion: 'full-v1'
+    })
+    const request = (requestSeq: number) => ({
+      sessionId: 's1',
+      messageId: 'm1',
+      runId: 'r1',
+      requestSeq
+    })
+
+    const initial = controller.build({
+      request: request(1),
+      eligibleDefinitions: [read, write]
+    })
+    expect(initial.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'write',
+      'read'
+    ])
+    controller.admit(initial)
+
+    const expanded = controller.build({
+      request: request(2),
+      eligibleDefinitions: [search, read, write]
+    })
+    expect(expanded.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'write',
+      'read',
+      'search'
+    ])
+    controller.admit(expanded)
+
+    const revoked = controller.build({
+      request: request(3),
+      eligibleDefinitions: [search, write]
+    })
+    expect(revoked.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'write',
+      'search'
+    ])
+    controller.admit(revoked)
+
+    const restored = controller.build({
+      request: request(4),
+      eligibleDefinitions: [read, search, write]
+    })
+    expect(restored.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'write',
+      'read',
+      'search'
+    ])
+    expect(restored.activeEntries.map((entry) => entry.activationOrdinal)).toEqual([0, 1, 2])
+  })
+
+  it('rejects stale or foreign admission without mutating the committed ledger', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+    const search = agentTool('search')
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read, write, search],
+      initialActiveDefinitions: [read],
+      policyVersion: 'full-v1'
+    })
+    const request = (requestSeq: number) => ({
+      sessionId: 's1',
+      messageId: 'm1',
+      runId: 'r1',
+      requestSeq
+    })
+    const firstProposal = controller.build({
+      request: request(1),
+      eligibleDefinitions: [read, write]
+    })
+    const competingProposal = controller.build({
+      request: request(2),
+      eligibleDefinitions: [read, search]
+    })
+
+    controller.admit(firstProposal)
+    expect(() => controller.admit(firstProposal)).not.toThrow()
+    expectSurfaceError(() => controller.admit(competingProposal), 'conflicting_tool')
+
+    const afterAdmission = controller.build({
+      request: request(3),
+      eligibleDefinitions: [read, search, write]
+    })
+    expect(afterAdmission.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'read',
+      'write',
+      'search'
+    ])
+
+    const otherController = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read],
+      initialActiveDefinitions: [read],
+      policyVersion: 'full-v1'
+    })
+    const foreign = otherController.build({
+      request: request(4),
+      eligibleDefinitions: [read]
+    })
+    expectSurfaceError(() => controller.admit(foreign), 'invalid_definition')
+  })
+
+  it('rejects full Run state outside its frozen ceiling or with definition drift', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+
+    expectSurfaceError(
+      () =>
+        createFullToolSurfaceRunController({
+          ceilingDefinitions: [read],
+          initialActiveDefinitions: [write],
+          policyVersion: 'full-v1'
+        }),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        createFullToolSurfaceRunController({
+          ceilingDefinitions: [read],
+          initialActiveDefinitions: [{ ...read, execution: TOOL_EXECUTION.write }],
+          policyVersion: 'full-v1'
+        }),
+      'conflicting_tool'
+    )
+
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read],
+      initialActiveDefinitions: [read],
+      policyVersion: 'full-v1'
+    })
+    expectSurfaceError(
+      () =>
+        controller.build({
+          request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 1 },
+          eligibleDefinitions: [
+            agentTool('read', { function: { ...read.function, description: 'drifted' } })
+          ]
+        }),
+      'conflicting_tool'
+    )
   })
 
   it('keeps catalog identity canonical while provider activation order follows each input', () => {

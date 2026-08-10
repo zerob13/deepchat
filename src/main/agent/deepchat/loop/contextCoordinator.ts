@@ -183,6 +183,8 @@ export interface ProviderAttemptExecutionContractPort {
 
 export interface ProviderAttemptToolSurfacePort {
   build(input: { requestSeq: number; tools: readonly MCPToolDefinition[] }): ToolSurfaceSnapshot
+  /** Commits only the prepared in-memory Run ordering; it must not perform I/O or cancel the Run. */
+  admit(input: { requestSeq: number; snapshot: ToolSurfaceSnapshot }): void
 }
 
 export interface ProviderRateGatePort {
@@ -828,6 +830,7 @@ export class DeepChatContextCoordinator {
           requestOrigin,
           strictProviderOverflowRetry
         })
+        let toolSurfaceAdmitted = toolSurfaceSnapshot === null
         let pendingRetry: { retryNumber: number; delayMs: number } | null = null
 
         for (;;) {
@@ -840,6 +843,17 @@ export class DeepChatContextCoordinator {
             await input.rateGate.wait(input.run.abortController.signal)
           } finally {
             input.rateGate.clearWaiting()
+          }
+          if (input.run.abortController.signal.aborted) {
+            throw input.createAbortError()
+          }
+
+          if (!toolSurfaceAdmitted) {
+            if (!input.toolSurface || !toolSurfaceSnapshot) {
+              throw new Error('Provider View lost its Tool Surface admission port.')
+            }
+            input.toolSurface.admit({ requestSeq, snapshot: toolSurfaceSnapshot })
+            toolSurfaceAdmitted = true
           }
           if (input.run.abortController.signal.aborted) {
             throw input.createAbortError()
