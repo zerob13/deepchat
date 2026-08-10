@@ -100,7 +100,10 @@ import type {
 } from '@/provider/requestTrace'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
-import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
+import {
+  createLoopRun,
+  type LoopRunToolSurfaceMode
+} from '@/agent/deepchat/loop/loopRun'
 import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import {
   buildContextCheckpoint,
@@ -111,7 +114,8 @@ import {
 import {
   resolveDeepChatContextBudgetLength,
   shouldBypassDeepChatContextBudget,
-  shouldObserveToolSurfaceShadow
+  shouldObserveToolSurfaceShadow,
+  shouldUseNativeToolSurface
 } from './contextBudgetPolicy'
 import { resolveProviderInputCapabilities } from './providerInputCapabilities'
 import {
@@ -123,6 +127,11 @@ import { throwIfAbortRequested } from './abortErrors'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
+import {
+  createFullToolSurfaceRunController,
+  FULL_TOOL_SURFACE_POLICY_VERSION,
+  type FullToolSurfaceRunController
+} from './toolSurface'
 import {
   meetTaskContractToolDefinitions,
   resolveExecutionContractSubagentDepth
@@ -176,6 +185,14 @@ type LoopRunLifecyclePort = Pick<
   | 'registerRun'
   | 'scopeFor'
 >
+
+export interface ToolSurfaceRunModePort {
+  resolve(input: {
+    readonly sessionId: string
+    readonly providerId: string
+    readonly modelId: string
+  }): LoopRunToolSurfaceMode
+}
 
 const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
@@ -261,6 +278,7 @@ export interface DeepChatLoopRunnerPorts {
   compactionService: CompactionService
   inputPreparationCoordinator: InputPreparationCoordinator
   contextCoordinator: DeepChatContextCoordinator
+  toolSurfaceRunMode?: ToolSurfaceRunModePort
   toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistryPort
   memoryIngestionObserver: MemoryIngestionObserver
   toolExecutionPort: ToolExecutionPort
@@ -448,6 +466,9 @@ export class DeepChatLoopRunner {
     const observeToolSurfaceShadow =
       !acpBackedSubagent &&
       shouldObserveToolSurfaceShadow(state.providerId, baseModelConfig, state.modelId)
+    const nativeToolSurfaceEligible =
+      !acpBackedSubagent &&
+      shouldUseNativeToolSurface(state.providerId, baseModelConfig, state.modelId)
     const capabilitySnapshot = providerModelFacts.capabilitySnapshot
     const interleavedReasoning =
       providedInterleavedReasoning ??
@@ -539,6 +560,51 @@ export class DeepChatLoopRunner {
     resourceScope.assertCurrent()
     const initialRunSkillNames = getEffectiveRuntimeSkillNames()
     const initialToolProfileRevisionToken = resourceInstance.getToolProfileRevisionToken()
+    const toolSurfaceMode =
+      this.ports.toolSurfaceRunMode?.resolve({
+        sessionId,
+        providerId: state.providerId,
+        modelId: state.modelId
+      }) ?? 'legacy'
+    if (toolSurfaceMode !== 'legacy' && toolSurfaceMode !== 'full') {
+      throw new Error('Tool Surface assignment returned an unsupported Run mode.')
+    }
+    if (toolSurfaceMode === 'full' && !nativeToolSurfaceEligible) {
+      throw new Error(
+        'Full Tool Surface mode requires a native chat model with provider-native function calling.'
+      )
+    }
+    let fullToolSurfaceController: FullToolSurfaceRunController | null = null
+    if (toolSurfaceMode === 'full') {
+      const universe = await awaitWithAbort(
+        this.ports.toolResolver.resolveRunToolDefinitionUniverse(
+          sessionId,
+          projectDir,
+          initialRunSkillNames,
+          resourceInstance,
+          abortSignal
+        ),
+        abortSignal
+      )
+      resourceScope.assertCurrent()
+      if (
+        universe.status !== 'resolved' ||
+        !universe.complete ||
+        universe.mandatoryAdmissionBlocked
+      ) {
+        throw new Error('Full Tool Surface mode requires a complete Run tool universe.')
+      }
+      fullToolSurfaceController = createFullToolSurfaceRunController({
+        ceilingDefinitions: meetTaskContractToolDefinitions(
+          sessionId,
+          universe.definitions,
+          taskContractContext
+        ),
+        initialActiveDefinitions: tools,
+        policyVersion: FULL_TOOL_SURFACE_POLICY_VERSION
+      })
+    }
+    const collectToolSurfaceShadow = observeToolSurfaceShadow && toolSurfaceMode === 'legacy'
     const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
       this.ports.providerSettings,
       state.providerId,
@@ -547,6 +613,7 @@ export class DeepChatLoopRunner {
     )
 
     abortController.signal.throwIfAborted()
+    resourceScope.assertCurrent()
     const loopRun = createLoopRun<StreamState>({
       runId: randomUUID(),
       sessionId: toAppSessionId(sessionId),
@@ -558,7 +625,8 @@ export class DeepChatLoopRunner {
         toolDefinitions: tools,
         activeSkillNames: initialRunSkillNames,
         promptAssembly: initialPromptAssembly,
-        commandShell
+        commandShell,
+        toolSurfaceMode
       },
       initialRequestSeq
     })
@@ -708,6 +776,26 @@ export class DeepChatLoopRunner {
             supportsAudioInput,
             traceDebugEnabled: traceEnabled,
             viewContext,
+            ...(fullToolSurfaceController
+              ? {
+                  toolSurface: {
+                    build: ({ requestSeq, tools: eligibleDefinitions }) =>
+                      fullToolSurfaceController.build({
+                        request: {
+                          sessionId: loopRun.sessionId,
+                          messageId: loopRun.messageId,
+                          runId: loopRun.runId,
+                          requestSeq
+                        },
+                        eligibleDefinitions
+                      }),
+                    admit: ({ snapshot }) => {
+                      resourceScope.assertCurrent()
+                      fullToolSurfaceController.admit(snapshot)
+                    }
+                  }
+                }
+              : {}),
             budget: {
               estimateToolReserveTokens,
               preflight: ({ messages, tools, requestedMaxTokens }) =>
@@ -868,6 +956,7 @@ export class DeepChatLoopRunner {
                 maxTokens,
                 tools,
                 executionContract,
+                toolSurfaceSnapshot,
                 signal
               }) => {
                 const activeRequestContract = loopRun.activeRequestContract
@@ -877,6 +966,21 @@ export class DeepChatLoopRunner {
                   activeRequestContract.executionContract !== executionContract
                 ) {
                   throw new Error('Provider request lost its active ExecutionContract binding.')
+                }
+                if (fullToolSurfaceController) {
+                  resourceScope.assertCurrent()
+                  const activeRequestToolSurface = loopRun.activeRequestToolSurface
+                  if (
+                    !toolSurfaceSnapshot ||
+                    !activeRequestToolSurface ||
+                    activeRequestToolSurface.requestSeq !== identity.requestSeq ||
+                    activeRequestToolSurface.snapshot !== toolSurfaceSnapshot ||
+                    tools !== toolSurfaceSnapshot.toolDefinitions
+                  ) {
+                    throw new Error('Provider request lost its active Tool Surface binding.')
+                  }
+                } else if (toolSurfaceSnapshot) {
+                  throw new Error('Legacy provider request received an unexpected Tool Surface.')
                 }
                 const attemptModelConfig = traceEnabled
                   ? (Object.assign({}, modelConfig, {
@@ -912,6 +1016,9 @@ export class DeepChatLoopRunner {
                 )
               },
               beforeStream: () => {
+                if (fullToolSurfaceController) {
+                  resourceScope.assertCurrent()
+                }
                 crossPreStreamBoundary()
               }
             },
@@ -928,7 +1035,7 @@ export class DeepChatLoopRunner {
                 } finally {
                   try {
                     if (
-                      observeToolSurfaceShadow &&
+                      collectToolSurfaceShadow &&
                       toolSurfaceShadowProviderAttempts.length <
                         MAX_TOOL_SURFACE_SHADOW_PROVIDER_ATTEMPTS
                     ) {
@@ -1106,7 +1213,7 @@ export class DeepChatLoopRunner {
       throw errorToPropagate
     } finally {
       if (
-        observeToolSurfaceShadow &&
+        collectToolSurfaceShadow &&
         toolSurfaceShadowProviderAttempts.length > 0 &&
         !abortSignal.aborted &&
         resourceScope.isCurrent()

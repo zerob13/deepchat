@@ -9,11 +9,14 @@ import {
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
 
+export type LoopRunToolSurfaceMode = 'legacy' | 'full'
+
 export interface LoopRunResources {
   toolDefinitions: MCPToolDefinition[]
   activeSkillNames: string[]
   promptAssembly?: DeepChatPromptAssembly
   commandShell: ResolvedCommandShell
+  readonly toolSurfaceMode: LoopRunToolSurfaceMode
 }
 
 export interface LoopRunProviderRecovery {
@@ -61,6 +64,7 @@ export interface CreateLoopRunInput<TStreamState> {
     activeSkillNames: readonly string[]
     promptAssembly?: DeepChatPromptAssembly
     commandShell: ResolvedCommandShell
+    toolSurfaceMode?: LoopRunToolSurfaceMode
   }
   initialRequestSeq?: number
   initialLogicalRound?: number
@@ -80,6 +84,19 @@ export function createLoopRun<TStreamState>(
     ...parsedCommandShell,
     args: Object.freeze([...parsedCommandShell.args])
   }) as ResolvedCommandShell
+  const resources: LoopRunResources = {
+    toolDefinitions: [...input.resources.toolDefinitions],
+    activeSkillNames: [...input.resources.activeSkillNames],
+    ...(input.resources.promptAssembly ? { promptAssembly: input.resources.promptAssembly } : {}),
+    commandShell,
+    toolSurfaceMode: input.resources.toolSurfaceMode ?? 'legacy'
+  }
+  Object.defineProperty(resources, 'toolSurfaceMode', {
+    configurable: false,
+    enumerable: true,
+    writable: false,
+    value: resources.toolSurfaceMode
+  })
   return {
     runId: input.runId,
     sessionId: input.sessionId,
@@ -92,12 +109,7 @@ export function createLoopRun<TStreamState>(
     physicalAttempt: 0,
     messages: [...input.messages],
     streamState: input.streamState,
-    resources: {
-      toolDefinitions: [...input.resources.toolDefinitions],
-      activeSkillNames: [...input.resources.activeSkillNames],
-      ...(input.resources.promptAssembly ? { promptAssembly: input.resources.promptAssembly } : {}),
-      commandShell
-    },
+    resources,
     providerRecovery: {
       contextOverflowHandoffAttempted: false,
       strictProviderOverflowRetryUsed: false

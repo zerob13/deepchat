@@ -360,6 +360,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     inputPreparationCoordinator,
     contextCoordinator,
     toolSurfaceDiagnostics,
+    toolSurfaceRunMode: deps.toolSurfaceRunMode,
     memoryIngestionObserver: memory,
     toolExecutionPort,
     toolResultPort,

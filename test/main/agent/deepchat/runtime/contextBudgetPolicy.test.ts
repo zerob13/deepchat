@@ -4,6 +4,7 @@ import {
   resolveDeepChatContextBudgetLength,
   shouldBypassDeepChatContextBudget,
   shouldObserveToolSurfaceShadow,
+  shouldUseNativeToolSurface,
   shouldUseDeepChatContextBudget,
   type ContextBudgetModelConfig
 } from '@/agent/deepchat/runtime/contextBudgetPolicy'
@@ -113,5 +114,25 @@ describe('DeepChat context budget policy', () => {
     expect(resolveDeepChatContextBudgetLength('openai', 16_384, CHAT_MODEL, 'gpt-5')).toBe(
       16_384
     )
+  })
+
+  it('admits production Tool Surfaces only for native function-calling chat models', () => {
+    expect(
+      shouldUseNativeToolSurface(
+        'openai',
+        { ...CHAT_MODEL, functionCall: true },
+        'gpt-5'
+      )
+    ).toBe(true)
+    expect(
+      shouldUseNativeToolSurface(
+        'openai',
+        { ...CHAT_MODEL, functionCall: false },
+        'gpt-5'
+      )
+    ).toBe(false)
+    expect(
+      shouldUseNativeToolSurface('acp', { ...CHAT_MODEL, functionCall: true }, 'agent')
+    ).toBe(false)
   })
 })

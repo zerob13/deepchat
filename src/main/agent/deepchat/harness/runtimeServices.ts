@@ -36,6 +36,7 @@ import type {
 } from '@/agent/deepchat/runtime/types'
 import type { ToolSurfaceShadowDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
+import type { ToolSurfaceRunModePort } from '@/agent/deepchat/runtime/deepChatLoopRunner'
 
 export type DeepChatHarnessSkillPort = Pick<
   SkillServicePort,
@@ -78,6 +79,8 @@ export interface DeepChatHarnessDependencies {
   interactionContinuationAdmission: InteractionContinuationAdmissionPort
   taskContractContext: DeepChatTaskContractContextPort
   commandShell: Pick<CommandShellService, 'resolveForTurn' | 'resolveProfile'>
+  /** Internal rollout seam. Production remains on the legacy path unless explicitly assigned. */
+  toolSurfaceRunMode?: ToolSurfaceRunModePort
 }
 
 /**

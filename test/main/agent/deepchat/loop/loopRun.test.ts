@@ -76,6 +76,7 @@ describe('LoopRun', () => {
     expect(second.messages).toEqual([{ role: 'user', content: 'second' }])
     expect(second.streamState.blocks).toEqual([])
     expect(second.resources.activeSkillNames).toEqual(['second-skill'])
+    expect(second.resources.toolSurfaceMode).toBe('legacy')
     expect(second.providerRecovery).toEqual({
       contextOverflowHandoffAttempted: false,
       strictProviderOverflowRetryUsed: false
@@ -84,6 +85,30 @@ describe('LoopRun', () => {
     expect(second.logicalRound).toBe(0)
     expect(second.requestSeq).toBe(0)
     expect(second.physicalAttempt).toBe(0)
+  })
+
+  it('freezes the selected Tool Surface mode into Run resources', () => {
+    const run = createLoopRun({
+      runId: 'full:1',
+      sessionId: toAppSessionId('full'),
+      messageId: 'full-message',
+      abortController: new AbortController(),
+      messages: [],
+      streamState: {},
+      resources: {
+        toolDefinitions: [],
+        activeSkillNames: [],
+        commandShell: POSIX_COMMAND_SHELL,
+        toolSurfaceMode: 'full'
+      }
+    })
+
+    expect(run.resources.toolSurfaceMode).toBe('full')
+    expect(Object.getOwnPropertyDescriptor(run.resources, 'toolSurfaceMode')).toMatchObject({
+      configurable: false,
+      enumerable: true,
+      writable: false
+    })
   })
 
   it('advances request and physical attempts independently from logical rounds', () => {

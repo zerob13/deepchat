@@ -60,6 +60,18 @@ export function shouldObserveToolSurfaceShadow(
   return shouldUseDeepChatContextBudget(providerId, modelConfig, modelId)
 }
 
+/** Production Tool Surface Views require provider-native function calling, not prompt emulation. */
+export function shouldUseNativeToolSurface(
+  providerId?: string | null,
+  modelConfig?: (ContextBudgetModelConfig & Pick<ModelConfig, 'functionCall'>) | null,
+  modelId?: string | null
+): boolean {
+  return (
+    modelConfig?.functionCall === true &&
+    shouldObserveToolSurfaceShadow(providerId, modelConfig, modelId)
+  )
+}
+
 export function resolveDeepChatContextBudgetLength(
   providerId: string | null | undefined,
   contextLength: number,
