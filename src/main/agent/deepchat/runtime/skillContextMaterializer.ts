@@ -48,6 +48,16 @@ export interface MaterializedSkillProjection {
   readonly ref: TapeSkillMaterializationRef
 }
 
+export interface SkillProjectionBodies {
+  readonly sessionSkillBodies: readonly Readonly<{ name: string; content: string }>[]
+  readonly messageActiveTurnContext: string | null
+}
+
+export interface RecoveredSkillContextBatch {
+  readonly foundSkillManifest: boolean
+  readonly projections: readonly MaterializedSkillProjection[]
+}
+
 type SkillResolver = Pick<SkillServicePort, 'resolveFreshEffectiveSkillContents'>
 type FreshTapePort = TapeIncarnationReader
 type MaterializationTapePort = TapeSkillMaterializationWriter &
@@ -149,6 +159,25 @@ export function renderMessageActiveTurnSkillContext(
     '',
     skills.map(renderMessageActiveTurnSkillBody).join('\n\n')
   ].join('\n')
+}
+
+function freezeProjectionBodies(
+  items: readonly Readonly<{
+    scope: MaterializedSkillScope
+    name: string
+    content: string
+  }>[]
+): SkillProjectionBodies {
+  const sessionSkillBodies = items
+    .filter(({ scope }) => scope === 'session')
+    .map(({ name, content }) => Object.freeze({ name, content }))
+  const messageSkills = items
+    .filter(({ scope }) => scope === 'message')
+    .map(({ name, content }) => ({ name, content }))
+  return Object.freeze({
+    sessionSkillBodies: Object.freeze(sessionSkillBodies),
+    messageActiveTurnContext: renderMessageActiveTurnSkillContext(messageSkills)
+  })
 }
 
 function project(
@@ -260,6 +289,49 @@ export class SkillContextMaterializer {
     return prepared
   }
 
+  preview(prepared: PreparedSkillContextBatch): SkillProjectionBodies {
+    if (!this.preparedBatches.has(prepared)) {
+      throw new Error('Skill context batch was not prepared by this materializer.')
+    }
+    return freezeProjectionBodies(
+      prepared.items.map(({ scope, materializationInput }) => ({
+        scope,
+        name: materializationInput.skillName,
+        content: materializationInput.effectiveContent
+      }))
+    )
+  }
+
+  projectBodies(
+    projections: readonly MaterializedSkillProjection[]
+  ): SkillProjectionBodies {
+    for (const projection of projections) {
+      const expectedFragment =
+        projection.scope === 'message'
+          ? renderMessageActiveTurnSkillBody({
+              name: projection.context.skillName,
+              content: projection.effectiveContent
+            })
+          : renderSessionSkillBody({
+              name: projection.context.skillName,
+              content: projection.effectiveContent
+            })
+      if (
+        projection.context.activationScope !== projection.scope ||
+        projection.completeBodyFragment !== expectedFragment
+      ) {
+        throw new Error('Materialized Skill projection cannot be rendered because it drifted.')
+      }
+    }
+    return freezeProjectionBodies(
+      projections.map((projection) => ({
+        scope: projection.scope,
+        name: projection.context.skillName,
+        content: projection.effectiveContent
+      }))
+    )
+  }
+
   materialize(
     prepared: PreparedSkillContextBatch,
     triggeringUserMessageId: string
@@ -329,7 +401,7 @@ export class SkillContextMaterializer {
     sessionId: string
     previousRunId: string
     assistantMessageId: string
-  }): readonly MaterializedSkillProjection[] {
+  }): RecoveredSkillContextBatch {
     const sessionId = requireId(input.sessionId, 'sessionId')
     const previousRunId = requireId(input.previousRunId, 'previousRunId')
     const assistantMessageId = requireId(input.assistantMessageId, 'assistantMessageId')
@@ -338,7 +410,9 @@ export class SkillContextMaterializer {
       .filter(
         (record) => record.manifest.schemaVersion === 6 && record.manifest.runId === previousRunId
       )
-    if (records.length === 0) return Object.freeze([])
+    if (records.length === 0) {
+      return Object.freeze({ foundSkillManifest: false, projections: Object.freeze([]) })
+    }
     const requestSeq = Math.max(...records.map((record) => record.requestSeq))
     const exact = this.dependencies.tape.getViewManifestByExecutionBinding({
       sessionId,
@@ -348,7 +422,10 @@ export class SkillContextMaterializer {
     if (!exact || exact.messageId !== assistantMessageId) {
       throw new Error('Exact prior-run Skill ViewManifest could not be recovered.')
     }
-    return this.recoverManifestMaterializations(exact)
+    return Object.freeze({
+      foundSkillManifest: true,
+      projections: this.recoverManifestMaterializations(exact)
+    })
   }
 
   private recoverManifestMaterializations(

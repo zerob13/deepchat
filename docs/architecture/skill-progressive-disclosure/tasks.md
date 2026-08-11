@@ -60,15 +60,15 @@
 
 ## P0b: Message And Session Projection
 
-- [ ] Separate message Skill refs from Session active Skills in runtime APIs.
+- [x] Separate message Skill refs from Session active Skills in runtime APIs.
 - [ ] Add count/byte limits, conservative cheap guard, shared dry preflight, and two-phase
       materialization flow.
-- [ ] Build active-turn and stable-system projections only from verified facts.
-- [ ] Carry exact refs through tool rounds, retries, recovery, and in-process pause/resume; preserve
+- [x] Build active-turn and stable-system projections only from verified facts.
+- [x] Carry exact refs through tool rounds, retries, recovery, and in-process pause/resume; preserve
       existing parked restart behavior.
-- [ ] Record Skill-context refs and projection hashes in strict Skill-bearing ViewManifests.
-- [ ] Leave bounded historical markers without persisting full bodies in transcript history.
-- [ ] Enforce one complete body per Skill per request.
+- [x] Record Skill-context refs and projection hashes in strict Skill-bearing ViewManifests.
+- [x] Leave bounded historical markers without persisting full bodies in transcript history.
+- [x] Enforce one complete body per Skill per request.
 - [ ] Stop first-message selection from becoming Session active state.
 - [ ] Remove the dormant persistent mention fallback.
 - [ ] Add continuation/new-execution, source drift, deduplication, recovery, and semantic tests.

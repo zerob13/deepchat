@@ -24,6 +24,7 @@ import { SessionLifecycleCoordinator } from '@/agent/deepchat/runtime/sessionLif
 import { SessionSettingsCoordinator } from '@/agent/deepchat/runtime/sessionSettingsCoordinator'
 import { SessionStateResolver } from '@/agent/deepchat/runtime/sessionStateResolver'
 import { SessionStatusPublisher } from '@/agent/deepchat/runtime/sessionStatusPublisher'
+import { SkillContextMaterializer } from '@/agent/deepchat/runtime/skillContextMaterializer'
 import {
   createToolExecutionPort,
   createToolResultPort
@@ -341,6 +342,10 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
   })
   const inputPreparationCoordinator = new InputPreparationCoordinator()
   const contextCoordinator = new DeepChatContextCoordinator()
+  const skillContextMaterializer = new SkillContextMaterializer({
+    skills: deps.skillService,
+    tape: tapeService
+  })
   const loopRunner = new DeepChatLoopRunner({
     publishEvent,
     publishSessionUpdate,
@@ -394,6 +399,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     sessionSettings,
     promptAssembly,
     identity,
+    skillContextMaterializer,
     taskContractContext: deps.taskContractContext,
     commandShell,
     loopRunner,

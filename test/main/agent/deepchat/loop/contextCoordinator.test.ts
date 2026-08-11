@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
-import { createLoopRun, registerRuntimeSkillContext } from '@/agent/deepchat/loop/loopRun'
+import {
+  createLoopRun,
+  registerMaterializedSkillContext,
+  registerRuntimeSkillContext
+} from '@/agent/deepchat/loop/loopRun'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { hashSkillEffectiveContent } from '@/tape/domain/skillMaterialization'
 import type { ChatMessage } from '@shared/types/core/chat-message'
@@ -448,6 +452,63 @@ describe('DeepChatContextCoordinator', () => {
       ]
     })
     expect(fixture.manifests[0].messages).toEqual(fixture.providerRequests[0].messages)
+  })
+
+  it('durably binds a materialized message Skill to the exact provider projection', async () => {
+    const fixture = createAttemptInput()
+    const effectiveContent = 'Follow only this turn instruction.'
+    const completeBodyFragment = `### skill-1\n${effectiveContent}`
+    const contentHash = hashSkillEffectiveContent(effectiveContent)
+    fixture.run.resources.tapeIncarnationId = 'incarnation-1'
+    fixture.run.messages[0] = {
+      role: 'user',
+      content: `## Skills Selected for This Turn\n\n${completeBodyFragment}\n\nhello`
+    }
+    registerMaterializedSkillContext(fixture.run, {
+      tapeIncarnationId: 'incarnation-1',
+      effectiveContent,
+      completeBodyFragment,
+      context: {
+        activationScope: 'message',
+        agentId: 'agent-1',
+        sourceType: 'created',
+        sourceId: '/skills/skill-1',
+        skillName: 'skill-1',
+        authoritativeRef: {
+          kind: 'context',
+          entryId: 13,
+          provenanceKey: 'skill-materialization:v1:test',
+          payloadHash: 'a'.repeat(64)
+        },
+        providerRole: 'user',
+        sourceEntryIds: [7],
+        projectedContentHash: contentHash,
+        projectionVersion: 1,
+        deduplicationSource: 'message'
+      }
+    })
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(fixture.manifests[0]).toMatchObject({
+      runId: 'run-1',
+      tapeIncarnationId: 'incarnation-1',
+      requireDurableManifest: true,
+      skillContexts: [
+        {
+          activationScope: 'message',
+          skillName: 'skill-1',
+          sourceEntryIds: [7],
+          projectedContentHash: contentHash,
+          authoritativeRef: {
+            kind: 'context',
+            entryId: 13,
+            provenanceKey: 'skill-materialization:v1:test'
+          }
+        }
+      ]
+    })
+    expect(fixture.order.indexOf('manifest:1')).toBeLessThan(fixture.order.indexOf('provider'))
   })
 
   it('prevents provider admission when a runtime Skill manifest cannot be committed', async () => {

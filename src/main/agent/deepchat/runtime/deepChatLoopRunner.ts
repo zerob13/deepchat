@@ -100,8 +100,10 @@ import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCo
 import {
   collectRuntimeSkillViewProjections,
   createLoopRun,
+  registerMaterializedSkillContext,
   registerRuntimeSkillContext
 } from '@/agent/deepchat/loop/loopRun'
+import type { MaterializedSkillProjection } from './skillContextMaterializer'
 import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import {
   buildContextCheckpoint,
@@ -214,6 +216,7 @@ export type DeepChatLoopRunInput = {
   search?: boolean
   interleavedReasoning?: InterleavedReasoningConfig
   viewContext?: PendingTapeViewContext
+  materializedSkillContexts?: readonly MaterializedSkillProjection[]
   maxProviderRounds?: number
   onBeforeProviderStream?: () => void
   onRunRegistered?: (runId: string) => void
@@ -393,6 +396,7 @@ export class DeepChatLoopRunner {
       search,
       interleavedReasoning: providedInterleavedReasoning,
       viewContext,
+      materializedSkillContexts = [],
       maxProviderRounds,
       onBeforeProviderStream,
       onRunRegistered,
@@ -512,6 +516,19 @@ export class DeepChatLoopRunner {
       resourceInstance.getAgentId()?.trim() ||
       this.ports.identity.getAgentId(sessionId) ||
       'deepchat'
+    for (const projection of materializedSkillContexts) {
+      if (projection.context.agentId !== activeAgentId) {
+        throw new Error('Materialized Skill context belongs to another DeepChat Agent.')
+      }
+      if (
+        projection.ref.sessionId !== sessionId ||
+        projection.ref.tapeIncarnationId !== tapeIncarnationId
+      ) {
+        throw new Error(
+          'Materialized Skill context belongs to another Session or Tape incarnation.'
+        )
+      }
+    }
     for (const recovered of recoveredRuntimeSkillContexts) {
       if (recovered.identity.agentId !== activeAgentId) {
         throw new Error('Recovered runtime Skill context belongs to another DeepChat Agent.')
@@ -605,6 +622,14 @@ export class DeepChatLoopRunner {
       initialRequestSeq
     })
     loopRun.resources.tapeIncarnationId = tapeIncarnationId
+    for (const projection of materializedSkillContexts) {
+      registerMaterializedSkillContext(loopRun, {
+        tapeIncarnationId: projection.ref.tapeIncarnationId,
+        effectiveContent: projection.effectiveContent,
+        completeBodyFragment: projection.completeBodyFragment,
+        context: projection.context
+      })
+    }
     for (const recovered of recoveredRuntimeSkillContexts) {
       registerRuntimeSkillContext(loopRun, recovered)
     }

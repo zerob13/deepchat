@@ -48,6 +48,7 @@ import {
 } from '@/agent/deepchat/runtime/toolOutputGuard'
 import { DeferredToolExecutor } from '@/agent/deepchat/runtime/deferredToolExecutor'
 import { createState } from '@/agent/deepchat/runtime/types'
+import { SkillContextMaterializer } from '@/agent/deepchat/runtime/skillContextMaterializer'
 import { AcpPromptController, AcpRuntimeOwner, type AcpClientRuntime } from '@/agent/acp/client'
 import { AcpAgentRuntime } from '@/agent/acp/instance'
 import type { AcpAgentDescriptor } from '@/agent/shared/agentDescriptors'
@@ -97,6 +98,7 @@ const skillServiceMock = {
     .mockImplementation(async (_agentId: string, skills: string[]) => skills),
   resolveSessionAgentId: vi.fn().mockResolvedValue('deepchat'),
   loadSkillContent: vi.fn().mockResolvedValue(null),
+  resolveFreshEffectiveSkillContents: vi.fn().mockResolvedValue([]),
   viewDraftSkill: vi.fn(),
   installDraftSkill: vi.fn(),
   discardDraftSkill: vi.fn()
@@ -464,6 +466,9 @@ function createMockSqlitePresenter() {
           (entry) => entry.session_id === sessionId && selected.has(entry.entry_id)
         )
       }),
+      getByEntryId: vi.fn((sessionId: string, entryId: number) =>
+        tapeEntries.find((entry) => entry.session_id === sessionId && entry.entry_id === entryId)
+      ),
       getMessageSourceEntries: vi.fn((sessionId: string, messageId: string) =>
         tapeEntries.filter(
           (entry) =>
@@ -485,6 +490,18 @@ function createMockSqlitePresenter() {
         const meta = JSON.parse(row.meta_json) as Record<string, unknown>
         return typeof meta.tapeIncarnationId === 'string' ? meta.tapeIncarnationId : undefined
       }),
+      appendSkillMaterialization: vi.fn((input: any) =>
+        deepchatTapeEntriesTable.append({
+          sessionId: input.sessionId,
+          kind: 'context',
+          name: 'skill/materialized',
+          source: { type: 'runtime_event', id: input.sourceId, seq: 0 },
+          provenanceKey: input.provenanceKey,
+          payload: input.payload,
+          meta: { payloadHash: input.payloadHash },
+          idempotent: true
+        })
+      ),
       getViewManifestEventsByMessage: vi.fn((sessionId: string, messageId: string) =>
         tapeEntries.filter(
           (entry) =>
@@ -1001,6 +1018,40 @@ function makeDeepchatAssistantRow(
   }
 }
 
+function makeRecoveredMessageSkillProjection(agentId: string) {
+  const effectiveContent = 'RECOVERED_SKILL_BODY'
+  return {
+    scope: 'message' as const,
+    effectiveContent,
+    completeBodyFragment: `### runtime-skill\n${effectiveContent}`,
+    context: {
+      activationScope: 'message' as const,
+      agentId,
+      sourceType: 'created' as const,
+      sourceId: '/skills/runtime-skill',
+      skillName: 'runtime-skill',
+      authoritativeRef: {
+        kind: 'context' as const,
+        entryId: 13,
+        provenanceKey: 'skill-materialization:v1:recovered',
+        payloadHash: 'a'.repeat(64)
+      },
+      providerRole: 'user' as const,
+      sourceEntryIds: [7],
+      projectedContentHash: createHash('sha256').update(effectiveContent).digest('hex'),
+      projectionVersion: 1,
+      deduplicationSource: 'message' as const
+    },
+    ref: {
+      sessionId: 's1',
+      entryId: 13,
+      tapeIncarnationId: 'test-tape-1',
+      provenanceKey: 'skill-materialization:v1:recovered',
+      payloadHash: 'a'.repeat(64)
+    }
+  }
+}
+
 describe('DeepChatAgentHarness', () => {
   let sqlitePresenter: ReturnType<typeof createMockSqlitePresenter>
   let llmProvider: ReturnType<typeof createMockProviderRuntime>
@@ -1266,6 +1317,27 @@ describe('DeepChatAgentHarness', () => {
     )
     skillService.resolveSessionAgentId.mockResolvedValue('deepchat')
     skillService.loadSkillContent.mockResolvedValue(null)
+    skillService.resolveFreshEffectiveSkillContents.mockImplementation(
+      async (agentId: string, names: readonly string[]) =>
+        await Promise.all(
+          names.map(async (name) => {
+            const loaded = await skillService.loadSkillContent(agentId, name)
+            if (!loaded?.content) throw new Error(`Missing mocked Skill content for ${name}`)
+            return {
+              identity: {
+                agentId,
+                sourceType: 'builtin' as const,
+                sourceId: `mock:${name}`,
+                skillName: name
+              },
+              effectiveContent: loaded.content,
+              builderVersion: 'effective-skill-content-v1',
+              renderedManifestHash: 'a'.repeat(64),
+              scriptInventoryHash: 'b'.repeat(64)
+            }
+          })
+        )
+    )
     skillService.viewDraftSkill.mockResolvedValue({ success: false, action: 'view', draftId: '' })
     skillService.installDraftSkill.mockResolvedValue({
       success: false,
@@ -4810,6 +4882,11 @@ describe('DeepChatAgentHarness', () => {
     })
 
     it('does not let stale turn cleanup clear replacement instance resources', async () => {
+      installSessionRows([])
+      getSkillServiceMock().loadSkillContent.mockResolvedValue({
+        name: 'stale-skill',
+        content: 'Stale Skill body'
+      })
       const streamResult = deferred<{ status: 'completed' }>()
       ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(
         async () => await streamResult.promise
@@ -4959,6 +5036,7 @@ describe('DeepChatAgentHarness', () => {
       vi.setSystemTime(new Date('2026-03-05T08:00:00.000Z'))
       const envBuilder = buildSystemEnvPrompt as ReturnType<typeof vi.fn>
       const skillService = getSkillServiceMock()
+      installSessionRows([])
 
       skillService.getMetadataList.mockResolvedValue([{ name: 'skill-a' }])
       skillService.getActiveSkills.mockResolvedValue(['skill-a'])
@@ -4975,13 +5053,22 @@ describe('DeepChatAgentHarness', () => {
       expect(secondCallArgs.run.messages[0].content).toContain('## Active Skills')
       expect(secondCallArgs.run.messages[0].content).toContain('### skill-a')
       expect(secondCallArgs.run.messages[0].content).toContain('Skill A instructions')
+      expect(
+        secondCallArgs.run.messages
+          .map((message: { content?: unknown }) => String(message.content ?? ''))
+          .join('\n')
+          .match(/Skill A instructions/g)
+      ).toHaveLength(1)
+      expect(secondCallArgs.run.resources.materializedSkillContexts).toHaveLength(1)
     })
 
     it('does not load stale skill pins when the skill is absent from available metadata', async () => {
       const skillService = getSkillServiceMock()
+      installSessionRows([])
 
       skillService.getMetadataList.mockResolvedValue([])
       skillService.getActiveSkills.mockResolvedValue(['plugin-skill'])
+      skillService.validateSkillNames.mockResolvedValue([])
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       await agent.processMessage('s1', 'Click a native app button')
@@ -4995,6 +5082,7 @@ describe('DeepChatAgentHarness', () => {
 
     it('intersects message-scoped skills with the session Agent catalog before the Run', async () => {
       const skillService = getSkillServiceMock()
+      installSessionRows([])
       skillService.resolveSessionAgentId.mockResolvedValue('writer')
       skillService.validateSkillNames.mockImplementation(
         async (_agentId: string, skills: string[]) =>
@@ -5024,12 +5112,35 @@ describe('DeepChatAgentHarness', () => {
       ])
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
       expect(callArgs.run.resources.activeSkillNames).toEqual(['owned-skill'])
+      expect(callArgs.run.resources.materializedSkillContexts).toHaveLength(1)
+      const providerText = callArgs.run.messages
+        .map((message: { content?: unknown }) =>
+          typeof message.content === 'string' ? message.content : ''
+        )
+        .join('\n')
+      expect(providerText.match(/Owned instructions/g)).toHaveLength(1)
+      expect(String(callArgs.run.messages[0].content)).not.toContain('Owned instructions')
+      expect(
+        callArgs.run.messages.some(
+          (message: { role: string; content?: unknown }) =>
+            message.role === 'user' && String(message.content).includes('Owned instructions')
+        )
+      ).toBe(true)
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable
+          .getBySession('s1')
+          .filter(
+            (entry: { kind: string; name: string }) =>
+              entry.kind === 'context' && entry.name === 'skill/materialized'
+          )
+      ).toHaveLength(1)
     })
 
     it('keeps system prompt section order: user prompt -> runtime -> env -> skills -> tooling -> permission -> verification', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2026-03-05T08:00:00.000Z'))
       const skillService = getSkillServiceMock()
+      installSessionRows([])
       toolService.getAllToolDefinitions.mockResolvedValueOnce([
         {
           type: 'function',
@@ -11218,6 +11329,61 @@ describe('DeepChatAgentHarness', () => {
       expect(skillService.getActiveSkills).toHaveBeenCalledTimes(1)
       expect(providerSettings.resolveDeepChatAgentConfig).toHaveBeenCalledTimes(2)
       expect(instance.getRuntimeActivatedSkills()).toEqual([])
+    })
+
+    it('rejects a recovered materialized Skill owned by another Agent', async () => {
+      const skillService = getSkillServiceMock()
+      skillService.getMetadataList.mockResolvedValue([
+        { name: 'runtime-skill', description: 'Runtime skill' }
+      ])
+      skillService.getActiveSkills.mockResolvedValue([])
+      vi.spyOn(SkillContextMaterializer.prototype, 'recoverResume').mockReturnValue({
+        foundSkillManifest: true,
+        projections: [makeRecoveredMessageSkillProjection('another-agent')]
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const assistantRow = installPendingQuestion()
+      assistantRow.metadata = JSON.stringify({
+        runId: '019feecb-8e55-7757-b555-4f53e8b602a7'
+      })
+
+      await expect(answerPendingQuestion()).rejects.toThrow('another DeepChat Agent')
+      expect(processStream).not.toHaveBeenCalled()
+    })
+
+    it('resumes from the exact materialized Skill without resolving mutable source content', async () => {
+      const skillService = getSkillServiceMock()
+      skillService.getMetadataList.mockResolvedValue([
+        { name: 'runtime-skill', description: 'Runtime skill' }
+      ])
+      skillService.getActiveSkills.mockResolvedValue([])
+      vi.spyOn(SkillContextMaterializer.prototype, 'recoverResume').mockReturnValue({
+        foundSkillManifest: true,
+        projections: [makeRecoveredMessageSkillProjection('deepchat')]
+      })
+      let streamParams: any
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params: any) => {
+        streamParams = params
+        return { status: 'completed' }
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const assistantRow = installPendingQuestion()
+      assistantRow.metadata = JSON.stringify({
+        runId: '019feecb-8e55-7757-b555-4f53e8b602a7'
+      })
+
+      await expect(answerPendingQuestion()).resolves.toEqual({ resumed: true })
+
+      const providerText = streamParams.run.messages
+        .map((message: { content?: unknown }) => String(message.content ?? ''))
+        .join('\n')
+      expect(providerText.match(/RECOVERED_SKILL_BODY/g)).toHaveLength(1)
+      expect(String(streamParams.run.messages[0]?.content ?? '')).not.toContain(
+        'RECOVERED_SKILL_BODY'
+      )
+      expect(streamParams.run.resources.materializedSkillContexts).toHaveLength(1)
+      expect(skillService.resolveFreshEffectiveSkillContents).not.toHaveBeenCalled()
+      expect(skillService.loadSkillContent).not.toHaveBeenCalled()
     })
 
     it('handles question_option and resumes assistant message', async () => {

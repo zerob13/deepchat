@@ -287,8 +287,7 @@ export async function buildSystemPromptAssemblyWithSkills(
     ) {
       throw new Error('Session Skill body projection does not match the active Skill set.')
     }
-    const skillSections = input.sessionSkillBodiesOverride.map(renderSessionSkillBody)
-    skillsPrompt = buildPinnedSkillsPrompt(skillSections, true)
+    skillsPrompt = renderSessionActiveSkillsContext(input.sessionSkillBodiesOverride)
   } else if (skillsEnabled && normalizedActiveSkills.length > 0) {
     stepStartedAt = Date.now()
     const skillSections: string[] = []
@@ -605,6 +604,12 @@ function buildPinnedSkillsPrompt(skillSections: string[], sessionPersistentOnly 
     '',
     skillSections.join('\n\n')
   ].join('\n')
+}
+
+export function renderSessionActiveSkillsContext(
+  skills: readonly Readonly<{ name: string; content: string }>[]
+): string {
+  return buildPinnedSkillsPrompt(skills.map(renderSessionSkillBody), true)
 }
 
 export function resolveEffectiveActiveSkillNames(

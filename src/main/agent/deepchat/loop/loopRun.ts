@@ -21,12 +21,20 @@ export interface RuntimeSkillContextBinding {
   readonly context: DeepChatTapeSkillContext
 }
 
+export interface MaterializedSkillContextBinding {
+  readonly effectiveContent: string
+  readonly completeBodyFragment: string
+  readonly tapeIncarnationId: string
+  readonly context: DeepChatTapeSkillContext
+}
+
 export interface LoopRunResources {
   toolDefinitions: MCPToolDefinition[]
   activeSkillNames: string[]
   promptAssembly?: DeepChatPromptAssembly
   commandShell: ResolvedCommandShell
   tapeIncarnationId?: string
+  materializedSkillContexts: MaterializedSkillContextBinding[]
   runtimeSkillContexts: RuntimeSkillContextBinding[]
 }
 
@@ -105,6 +113,7 @@ export function createLoopRun<TStreamState>(
       activeSkillNames: [...input.resources.activeSkillNames],
       ...(input.resources.promptAssembly ? { promptAssembly: input.resources.promptAssembly } : {}),
       commandShell,
+      materializedSkillContexts: [],
       runtimeSkillContexts: []
     },
     providerRecovery: {
@@ -113,6 +122,64 @@ export function createLoopRun<TStreamState>(
     },
     activeRequestContract: null
   }
+}
+
+function sameSkillIdentity(
+  left: DeepChatTapeSkillContext,
+  right: DeepChatTapeSkillContext
+): boolean {
+  return (
+    left.agentId === right.agentId &&
+    left.sourceType === right.sourceType &&
+    left.sourceId === right.sourceId &&
+    left.skillName === right.skillName
+  )
+}
+
+export function registerMaterializedSkillContext(
+  run: LoopRun<unknown>,
+  input: MaterializedSkillContextBinding
+): void {
+  if (!run.resources.tapeIncarnationId) {
+    throw new Error('Loop Run is not bound to a Session Tape incarnation.')
+  }
+  if (run.resources.tapeIncarnationId !== input.tapeIncarnationId) {
+    throw new Error('Materialized Skill context belongs to another Session Tape incarnation.')
+  }
+  if (
+    (input.context.activationScope !== 'message' && input.context.activationScope !== 'session') ||
+    !input.completeBodyFragment ||
+    !input.effectiveContent ||
+    hashSkillEffectiveContent(input.effectiveContent) !== input.context.projectedContentHash
+  ) {
+    throw new Error('Materialized Skill context projection is invalid.')
+  }
+  const existing = run.resources.materializedSkillContexts.find((binding) =>
+    sameSkillIdentity(binding.context, input.context)
+  )
+  if (existing) {
+    if (
+      existing.tapeIncarnationId === input.tapeIncarnationId &&
+      existing.effectiveContent === input.effectiveContent &&
+      existing.completeBodyFragment === input.completeBodyFragment &&
+      JSON.stringify(existing.context) === JSON.stringify(input.context)
+    ) {
+      return
+    }
+    throw new Error('Materialized Skill context identity was registered with conflicting evidence.')
+  }
+  if (
+    run.resources.materializedSkillContexts.length + run.resources.runtimeSkillContexts.length >=
+    MAX_SKILL_CONTEXTS_PER_VIEW
+  ) {
+    throw new Error('Skill context limit was exceeded for one provider View.')
+  }
+  run.resources.materializedSkillContexts.push({
+    effectiveContent: input.effectiveContent,
+    completeBodyFragment: input.completeBodyFragment,
+    tapeIncarnationId: input.tapeIncarnationId,
+    context: input.context
+  })
 }
 
 export function registerRuntimeSkillContext(
@@ -145,12 +212,15 @@ export function registerRuntimeSkillContext(
     projectionVersion: 1,
     deduplicationSource: 'runtime_view'
   }
-  const existing = run.resources.runtimeSkillContexts.find(
-    (binding) =>
-      binding.context.agentId === context.agentId &&
-      binding.context.sourceType === context.sourceType &&
-      binding.context.sourceId === context.sourceId &&
-      binding.context.skillName === context.skillName
+  if (
+    run.resources.materializedSkillContexts.some((binding) =>
+      sameSkillIdentity(binding.context, context)
+    )
+  ) {
+    throw new Error('Runtime Skill context duplicates an already materialized Skill context.')
+  }
+  const existing = run.resources.runtimeSkillContexts.find((binding) =>
+    sameSkillIdentity(binding.context, context)
   )
   if (existing) {
     if (
@@ -162,17 +232,71 @@ export function registerRuntimeSkillContext(
     }
     throw new Error('Runtime Skill context identity was activated with conflicting evidence.')
   }
-  if (run.resources.runtimeSkillContexts.length >= MAX_SKILL_CONTEXTS_PER_VIEW) {
-    throw new Error('Runtime Skill context limit was exceeded for one provider View.')
+  if (
+    run.resources.materializedSkillContexts.length + run.resources.runtimeSkillContexts.length >=
+    MAX_SKILL_CONTEXTS_PER_VIEW
+  ) {
+    throw new Error('Skill context limit was exceeded for one provider View.')
   }
   run.resources.runtimeSkillContexts.push({ toolCallId: input.toolCallId, context })
 }
 
-export function resolveRuntimeSkillContextsForRequest(
+function countOccurrences(value: string, fragment: string): number {
+  let count = 0
+  let offset = 0
+  while (offset <= value.length - fragment.length) {
+    const index = value.indexOf(fragment, offset)
+    if (index < 0) break
+    count += 1
+    offset = index + 1
+  }
+  return count
+}
+
+function readMessageTextSegments(message: ChatMessage): string[] {
+  if (typeof message.content === 'string') return [message.content]
+  if (!Array.isArray(message.content)) return []
+  return message.content
+    .filter(
+      (part): part is Extract<(typeof message.content)[number], { type: 'text' }> =>
+        part.type === 'text'
+    )
+    .map((part) => part.text)
+}
+
+export function resolveSkillContextsForRequest(
   run: LoopRun<unknown>,
   messages: readonly ChatMessage[]
 ): DeepChatTapeSkillContext[] {
-  if (run.resources.runtimeSkillContexts.length === 0) return []
+  if (
+    run.resources.materializedSkillContexts.length === 0 &&
+    run.resources.runtimeSkillContexts.length === 0
+  ) {
+    return []
+  }
+
+  const providerTextSegments = messages.map((message) => ({
+    role: message.role,
+    segments: readMessageTextSegments(message)
+  }))
+  const materializedContexts = run.resources.materializedSkillContexts.map((binding) => {
+    let projectedCount = 0
+    let expectedRoleCount = 0
+    for (const message of providerTextSegments) {
+      const occurrences = message.segments.reduce(
+        (total, segment) => total + countOccurrences(segment, binding.completeBodyFragment),
+        0
+      )
+      projectedCount += occurrences
+      if (message.role === binding.context.providerRole) expectedRoleCount += occurrences
+    }
+    if (projectedCount !== 1 || expectedRoleCount !== 1) {
+      throw new Error(
+        'Materialized Skill context must have exactly one Tape-backed provider projection.'
+      )
+    }
+    return binding.context
+  })
 
   const toolMessagesByCallId = new Map<string, ChatMessage | null>()
   for (const message of messages) {
@@ -182,7 +306,7 @@ export function resolveRuntimeSkillContextsForRequest(
       toolMessagesByCallId.has(message.tool_call_id) ? null : message
     )
   }
-  return run.resources.runtimeSkillContexts.flatMap((binding) => {
+  const runtimeContexts = run.resources.runtimeSkillContexts.flatMap((binding) => {
     const toolMessage = toolMessagesByCallId.get(binding.toolCallId)
     if (toolMessage === undefined) {
       throw new Error('Runtime Skill context is missing from the provider request projection.')
@@ -198,6 +322,7 @@ export function resolveRuntimeSkillContextsForRequest(
     }
     return [binding.context]
   })
+  return [...materializedContexts, ...runtimeContexts]
 }
 
 export function collectRuntimeSkillViewProjections(

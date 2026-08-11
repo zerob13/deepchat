@@ -30,12 +30,17 @@ import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { PostCompactionPromptAssembler } from '@/agent/deepchat/loop/ports'
-import { resolveEffectiveActiveSkillNames } from '@/agent/deepchat/resources/systemPromptBuilder'
 import {
+  renderSessionActiveSkillsContext,
+  resolveEffectiveActiveSkillNames
+} from '@/agent/deepchat/resources/systemPromptBuilder'
+import {
+  assemblePromptSections,
   appendPromptAssemblySection,
   createPromptAssemblySection,
   recordPromptAssemblyObservation
 } from '@/agent/deepchat/resources/promptAssembly'
+import { setMessageSkillActiveTurnContext } from './contextContributions'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import {
   capAgentRequestMaxTokens,
@@ -98,6 +103,11 @@ import type {
 import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
 import type { CommandShellService } from '@/agent/shared/process/commandShellService'
 import type { SessionPendingInputs } from '@/session/data/pendingInputs'
+import {
+  SkillContextMaterializer,
+  type MaterializedSkillProjection,
+  type SkillProjectionBodies
+} from './skillContextMaterializer'
 
 type TurnRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
@@ -158,7 +168,11 @@ export interface TurnCoordinatorPorts {
     'resolveProjectDir' | 'getEffectiveGenerationSettings'
   >
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
-  identity: Pick<SessionIdentityService, 'getSessionKind' | 'isAcpBackedSubagentSession'>
+  identity: Pick<
+    SessionIdentityService,
+    'getAgentId' | 'getSessionKind' | 'isAcpBackedSubagentSession'
+  >
+  skillContextMaterializer: SkillContextMaterializer
   taskContractContext: DeepChatTaskContractContextPort
   commandShell: Pick<CommandShellService, 'resolveForTurn'>
   loopRunner: Pick<DeepChatLoopRunner, 'run'>
@@ -184,6 +198,7 @@ export class TurnCoordinator {
     projectDir: string | null
     providerModelFacts: ProviderModelRuntimeFacts
     runtimeActivatedSkillNames?: string[]
+    sessionActiveSkillNamesOverride?: readonly string[]
   }) {
     const { sessionId, messageId, instance, signal, projectDir, providerModelFacts } = input
     const state = instance.getRuntimeState()
@@ -223,8 +238,9 @@ export class TurnCoordinator {
       state.modelId
     )
     const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
-    if (input.runtimeActivatedSkillNames) {
-      const validatedRuntimeSkillNames = await awaitWithAbort(
+    let messageActiveSkillNames: string[] = []
+    if (input.runtimeActivatedSkillNames !== undefined) {
+      messageActiveSkillNames = await awaitWithAbort(
         this.ports.toolResolver.validateSkillNamesForSession(
           sessionId,
           input.runtimeActivatedSkillNames,
@@ -233,16 +249,26 @@ export class TurnCoordinator {
         signal
       )
       this.ports.runLifecycle.assertCurrentInstance(sessionId, instance)
-      instance.replaceRuntimeActivatedSkills(validatedRuntimeSkillNames)
+      instance.replaceRuntimeActivatedSkills(messageActiveSkillNames)
     }
-    const sessionActiveSkillNames = await this.runPreStreamStep(
-      { sessionId, messageId, step: 'active-skills', signal },
-      () =>
-        awaitWithAbort(
-          this.ports.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
-          signal
-        )
-    )
+    const sessionActiveSkillNames =
+      input.sessionActiveSkillNamesOverride === undefined
+        ? await this.runPreStreamStep(
+            { sessionId, messageId, step: 'active-skills', signal },
+            () =>
+              awaitWithAbort(
+                this.ports.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
+                signal
+              )
+          )
+        : await awaitWithAbort(
+            this.ports.toolResolver.validateSkillNamesForSession(
+              sessionId,
+              [...input.sessionActiveSkillNamesOverride],
+              instance
+            ),
+            signal
+          )
     this.ports.runLifecycle.assertCurrentInstance(sessionId, instance)
     const requestedActiveSkillNames = resolveEffectiveActiveSkillNames(
       sessionActiveSkillNames,
@@ -269,9 +295,16 @@ export class TurnCoordinator {
       throw new Error('Tool catalog resolution did not publish its authority snapshot.')
     }
     const activeSkillNames = [...toolCatalogSnapshot.activeSkillNames]
-    const effectiveSessionActiveSkillNames = sessionActiveSkillNames.filter((skillName) =>
-      activeSkillNames.includes(skillName)
+    const projectsLocalSkills = !this.ports.identity.isAcpBackedSubagentSession(
+      sessionId,
+      state.providerId
     )
+    const effectiveSessionActiveSkillNames = projectsLocalSkills
+      ? sessionActiveSkillNames.filter((skillName) => activeSkillNames.includes(skillName))
+      : []
+    const effectiveMessageActiveSkillNames = projectsLocalSkills
+      ? messageActiveSkillNames.filter((skillName) => activeSkillNames.includes(skillName))
+      : []
     const strictDeepChatChild =
       this.ports.identity.getSessionKind(sessionId) === 'subagent' &&
       !this.ports.identity.isAcpBackedSubagentSession(sessionId, state.providerId)
@@ -287,23 +320,6 @@ export class TurnCoordinator {
     )
     throwIfAbortRequested(signal)
     const basePromptAssembler = this.ports.promptAssembly.createBasePromptAssembler(instance)
-    const basePromptAssembly = await this.runPreStreamStep(
-      { sessionId, messageId, step: 'system-prompt', signal },
-      () =>
-        awaitWithAbort(
-          basePromptAssembler.assembleWithProvenance({
-            sessionId: toAppSessionId(sessionId),
-            configuredPrompt: generationSettings.systemPrompt,
-            toolDefinitions: tools,
-            activeSkillNames,
-            sessionActiveSkillNames: effectiveSessionActiveSkillNames,
-            contextLength: generationSettings.contextLength,
-            commandShell
-          }),
-          signal
-        )
-    )
-    throwIfAbortRequested(signal)
 
     return {
       generationSettings,
@@ -312,6 +328,7 @@ export class TurnCoordinator {
       contextBudgetLength,
       maxTokens,
       activeSkillNames,
+      messageActiveSkillNames: effectiveMessageActiveSkillNames,
       sessionActiveSkillNames: effectiveSessionActiveSkillNames,
       toolCatalogSnapshot,
       taskContractContext,
@@ -319,9 +336,46 @@ export class TurnCoordinator {
       toolReserveTokens,
       commandShell,
       basePromptAssembler,
-      basePromptAssembly,
-      baseSystemPrompt: basePromptAssembly.prompt
+      configuredPrompt: generationSettings.systemPrompt,
+      promptContextLength: generationSettings.contextLength
     }
+  }
+
+  private async assembleBasePrompt(input: {
+    sessionId: string
+    messageId?: string | null
+    signal: AbortSignal
+    basePromptAssembler: ReturnType<PromptAssemblyService['createBasePromptAssembler']>
+    configuredPrompt: string
+    tools: MCPToolDefinition[]
+    activeSkillNames: string[]
+    sessionActiveSkillNames: string[]
+    sessionSkillBodies: SkillProjectionBodies['sessionSkillBodies']
+    contextLength: number
+    commandShell: Awaited<ReturnType<CommandShellService['resolveForTurn']>>
+  }): Promise<DeepChatPromptAssembly> {
+    return await this.runPreStreamStep(
+      {
+        sessionId: input.sessionId,
+        messageId: input.messageId,
+        step: 'system-prompt',
+        signal: input.signal
+      },
+      () =>
+        awaitWithAbort(
+          input.basePromptAssembler.assembleWithProvenance({
+            sessionId: toAppSessionId(input.sessionId),
+            configuredPrompt: input.configuredPrompt,
+            toolDefinitions: input.tools,
+            activeSkillNames: input.activeSkillNames,
+            sessionActiveSkillNames: input.sessionActiveSkillNames,
+            sessionSkillBodiesOverride: input.sessionSkillBodies,
+            contextLength: input.contextLength,
+            commandShell: input.commandShell
+          }),
+          input.signal
+        )
+    )
   }
 
   async start(
@@ -546,12 +600,17 @@ export class TurnCoordinator {
         interleavedReasoning,
         contextBudgetLength,
         maxTokens,
+        activeSkillNames,
+        messageActiveSkillNames,
+        sessionActiveSkillNames,
         taskContractContext,
         tools,
         toolCatalogSnapshot,
         toolReserveTokens,
         commandShell,
-        basePromptAssembly: unguardedBasePromptAssembly
+        basePromptAssembler,
+        configuredPrompt,
+        promptContextLength
       } = await this.prepareTurnResources({
         sessionId,
         messageId: userMessageId,
@@ -560,6 +619,40 @@ export class TurnCoordinator {
         projectDir,
         providerModelFacts,
         runtimeActivatedSkillNames: content.activeSkills ?? []
+      })
+      const preparedSkillContexts = await this.runPreStreamStep(
+        {
+          sessionId,
+          messageId: userMessageId,
+          step: 'skill-context-prepare',
+          signal: preStreamAbortSignal
+        },
+        () =>
+          awaitWithAbort(
+            this.ports.skillContextMaterializer.prepareFresh({
+              sessionId,
+              agentId: instance.getAgentId()?.trim() || this.ports.identity.getAgentId(sessionId) || 'deepchat',
+              messageSkillNames: messageActiveSkillNames,
+              sessionSkillNames: sessionActiveSkillNames
+            }),
+            preStreamAbortSignal
+          )
+      )
+      const candidateSkillBodies = this.ports.skillContextMaterializer.preview(
+        preparedSkillContexts
+      )
+      let unguardedBasePromptAssembly = await this.assembleBasePrompt({
+        sessionId,
+        messageId: userMessageId,
+        signal: preStreamAbortSignal,
+        basePromptAssembler,
+        configuredPrompt,
+        tools,
+        activeSkillNames,
+        sessionActiveSkillNames,
+        sessionSkillBodies: candidateSkillBodies.sessionSkillBodies,
+        contextLength: promptContextLength,
+        commandShell
       })
       // Retry truncation is destructive. Keep it after all independent resource I/O, but before
       // history/compaction preparation so those stages observe the replacement transcript.
@@ -779,9 +872,38 @@ export class TurnCoordinator {
         })
         .emit({ event: 'UserPromptSubmit', promptPreview: content.text })
 
+      const buildContextView = (
+        contextContributions: Awaited<
+          ReturnType<PostCompactionPromptAssembler['assemble']>
+        >
+      ) => {
+        const contextBuildStartedAt = Date.now()
+        const contextBuild = buildTapeChatView({
+          sessionId,
+          newUserContent: content,
+          systemPrompt: baseSystemPrompt,
+          contextLength: getUsableContextLength(contextBudgetLength),
+          reserveTokens: maxTokens,
+          messageStore: this.ports.messageStore,
+          supportsVision,
+          historyRecords,
+          contextContributions,
+          options: {
+            summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
+            supportsAudioInput,
+            extraReserveTokens: toolReserveTokens,
+            preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
+            preserveEmptyInterleavedReasoning:
+              interleavedReasoning.preserveEmptyReasoningContent === true,
+            providerReplayProjector
+          }
+        })
+        logSlowPreStreamStep(sessionId, 'context-build', contextBuildStartedAt)
+        return contextBuild
+      }
       const preparedContext = await this.ports.contextCoordinator.assemble({
         assembleContributions: async () => {
-          return await this.runPreStreamStep(
+          const contributions = await this.runPreStreamStep(
             {
               sessionId,
               messageId: userMessageId,
@@ -801,37 +923,40 @@ export class TurnCoordinator {
                 preStreamAbortSignal
               )
           )
+          return setMessageSkillActiveTurnContext(
+            contributions,
+            candidateSkillBodies.messageActiveTurnContext
+          )
         },
-        buildView: (contextContributions) => {
-          const contextBuildStartedAt = Date.now()
-          const contextBuild = buildTapeChatView({
-            sessionId,
-            newUserContent: content,
-            systemPrompt: baseSystemPrompt,
-            contextLength: getUsableContextLength(contextBudgetLength),
-            reserveTokens: maxTokens,
-            messageStore: this.ports.messageStore,
-            supportsVision,
-            historyRecords,
-            contextContributions,
-            options: {
-              summaryCursorOrderSeq: summaryState.summaryCursorOrderSeq,
-              supportsAudioInput,
-              extraReserveTokens: toolReserveTokens,
-              preserveInterleavedReasoning: interleavedReasoning.preserveReasoningContent,
-              preserveEmptyInterleavedReasoning:
-                interleavedReasoning.preserveEmptyReasoningContent === true,
-              providerReplayProjector
-            }
-          })
-          logSlowPreStreamStep(sessionId, 'context-build', contextBuildStartedAt)
-          return contextBuild
-        },
+        buildView: buildContextView,
         assertCurrent: () => scope.assertCurrent()
       })
-      const contextBuild = preparedContext.view
       const contextContributions = preparedContext.contributions
-      const messages = contextBuild.messages
+      let contextBuild = preparedContext.view
+      let messages = contextBuild.messages
+      let materializedSkillContexts: readonly MaterializedSkillProjection[] = []
+      if (preparedSkillContexts.items.length > 0) {
+        materializedSkillContexts = this.ports.skillContextMaterializer.materialize(
+          preparedSkillContexts,
+          userMessageId
+        )
+        const verifiedSkillBodies =
+          this.ports.skillContextMaterializer.projectBodies(materializedSkillContexts)
+        unguardedBasePromptAssembly = projectVerifiedSessionSkillBodies(
+          unguardedBasePromptAssembly,
+          verifiedSkillBodies.sessionSkillBodies
+        )
+        basePromptAssembly = shouldGuardAttachmentText
+          ? appendAttachmentTextSafetySection(unguardedBasePromptAssembly)
+          : unguardedBasePromptAssembly
+        baseSystemPrompt = basePromptAssembly.prompt
+        setMessageSkillActiveTurnContext(
+          contextContributions,
+          verifiedSkillBodies.messageActiveTurnContext
+        )
+        contextBuild = buildContextView(contextContributions)
+        messages = contextBuild.messages
+      }
 
       scope.assertCurrent()
       if (!isSteerClaim) {
@@ -889,6 +1014,7 @@ export class TurnCoordinator {
           abortController: preStreamAbortController,
           maxProviderRounds: context?.maxProviderRounds,
           interleavedReasoning,
+          materializedSkillContexts,
           viewContext: {
             taskType: 'chat',
             policy: contextBuild.policyId,
@@ -1273,24 +1399,90 @@ export class TurnCoordinator {
         providerModelFacts.capabilitySnapshot.supportsSearch &&
         providerModelFacts.capabilitySnapshot.searchExecution === 'provider'
       const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId, undefined, instance)
+      const recoveredSkillBatch = resumeAccounting.runId
+        ? this.ports.skillContextMaterializer.recoverResume({
+            sessionId,
+            previousRunId: resumeAccounting.runId,
+            assistantMessageId: messageId
+          })
+        : { foundSkillManifest: false, projections: [] as readonly MaterializedSkillProjection[] }
+      const materializedSkillContexts = recoveredSkillBatch.projections
+      const activeAgentId =
+        instance.getAgentId()?.trim() || this.ports.identity.getAgentId(sessionId) || 'deepchat'
+      if (
+        materializedSkillContexts.some(
+          ({ context: skillContext }) => skillContext.agentId !== activeAgentId
+        )
+      ) {
+        throw new Error('Recovered materialized Skill context belongs to another DeepChat Agent.')
+      }
+      const recoveredSessionSkillNames = materializedSkillContexts
+        .filter(({ scope }) => scope === 'session')
+        .map(({ context }) => context.skillName)
+      const recoveredMessageSkillNames = materializedSkillContexts
+        .filter(({ scope }) => scope === 'message')
+        .map(({ context }) => context.skillName)
       const {
         useContextBudget,
         interleavedReasoning,
         contextBudgetLength,
         maxTokens,
+        activeSkillNames,
+        messageActiveSkillNames,
+        sessionActiveSkillNames,
         taskContractContext,
         tools,
         toolCatalogSnapshot,
         toolReserveTokens,
         commandShell,
-        basePromptAssembly: unguardedBasePromptAssembly
+        basePromptAssembler,
+        configuredPrompt,
+        promptContextLength
       } = await this.prepareTurnResources({
         sessionId,
         messageId,
         instance,
         signal: preStreamAbortSignal,
         projectDir,
-        providerModelFacts
+        providerModelFacts,
+        runtimeActivatedSkillNames: recoveredSkillBatch.foundSkillManifest
+          ? recoveredMessageSkillNames
+          : undefined,
+        sessionActiveSkillNamesOverride: recoveredSkillBatch.foundSkillManifest
+          ? recoveredSessionSkillNames
+          : undefined
+      })
+      if (!recoveredSkillBatch.foundSkillManifest) {
+        const legacyMessageSkillNames = resolveAssistantTurnMessageSkillNames(
+          this.ports.messageStore,
+          sessionId,
+          messageId
+        )
+        if (sessionActiveSkillNames.length > 0 || legacyMessageSkillNames.length > 0) {
+          throw new Error(
+            'This paused Skill-bearing turn predates Tape-backed Skill context recovery and cannot be resumed safely. Start a new execution to use the current Skill version.'
+          )
+        }
+      } else if (
+        !haveSameNames(sessionActiveSkillNames, recoveredSessionSkillNames) ||
+        !haveSameNames(messageActiveSkillNames, recoveredMessageSkillNames)
+      ) {
+        throw new Error('Recovered Skill context is no longer valid for this Session and Agent.')
+      }
+      const recoveredSkillBodies =
+        this.ports.skillContextMaterializer.projectBodies(materializedSkillContexts)
+      const unguardedBasePromptAssembly = await this.assembleBasePrompt({
+        sessionId,
+        messageId,
+        signal: preStreamAbortSignal,
+        basePromptAssembler,
+        configuredPrompt,
+        tools,
+        activeSkillNames,
+        sessionActiveSkillNames,
+        sessionSkillBodies: recoveredSkillBodies.sessionSkillBodies,
+        contextLength: promptContextLength,
+        commandShell
       })
       let basePromptAssembly = unguardedBasePromptAssembly
       let baseSystemPrompt = basePromptAssembly.prompt
@@ -1383,8 +1575,8 @@ export class TurnCoordinator {
       const summaryState = preparedInput.summary
       throwIfAbortRequested(preStreamAbortSignal)
       const preparedContext = await this.ports.contextCoordinator.assemble({
-        assembleContributions: async () =>
-          await this.runPreStreamStep(
+        assembleContributions: async () => {
+          const contributions = await this.runPreStreamStep(
             { sessionId, messageId, step: 'memory-injection', signal: preStreamAbortSignal },
             () =>
               awaitWithAbort(
@@ -1398,7 +1590,12 @@ export class TurnCoordinator {
                 }),
                 preStreamAbortSignal
               )
-          ),
+          )
+          return setMessageSkillActiveTurnContext(
+            contributions,
+            recoveredSkillBodies.messageActiveTurnContext
+          )
+        },
         buildView: (contextContributions) => {
           const contextBuildStartedAt = Date.now()
           const contextBuild = buildTapeResumeView({
@@ -1550,6 +1747,7 @@ export class TurnCoordinator {
           maxProviderRounds: resumeAccounting.maxProviderRounds,
           search,
           interleavedReasoning,
+          materializedSkillContexts,
           viewContext: {
             taskType: 'resume',
             policy: resumeContextBuild.policyId,
@@ -1766,6 +1964,53 @@ function resolveAssistantTurnSearchIntent(
   }
   const user = messageStore.getLastUserMessageBeforeOrAt(sessionId, assistant.orderSeq)
   return user?.role === 'user' && extractUserMessageInput(user.content).search === true
+}
+
+function resolveAssistantTurnMessageSkillNames(
+  messageStore: Pick<SessionTranscript, 'getMessage' | 'getLastUserMessageBeforeOrAt'>,
+  sessionId: string,
+  assistantMessageId: string
+): string[] {
+  const assistant = messageStore.getMessage(assistantMessageId)
+  if (!assistant || assistant.sessionId !== sessionId || assistant.role !== 'assistant') return []
+  const user = messageStore.getLastUserMessageBeforeOrAt(sessionId, assistant.orderSeq)
+  const activeSkills = user?.role === 'user' ? extractUserMessageInput(user.content).activeSkills : []
+  return Array.isArray(activeSkills) ? activeSkills : []
+}
+
+function haveSameNames(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false
+  const rightNames = new Set(right)
+  return rightNames.size === left.length && left.every((name) => rightNames.has(name))
+}
+
+function projectVerifiedSessionSkillBodies(
+  assembly: DeepChatPromptAssembly,
+  bodies: SkillProjectionBodies['sessionSkillBodies']
+): DeepChatPromptAssembly {
+  if (bodies.length === 0) return assembly
+  const activeSkillsSection = assembly.sections.find(
+    (section) => section.kind === 'pinned_skills' && section.sourceRef === 'skills:active'
+  )
+  if (!activeSkillsSection) {
+    throw new Error('Session Skill prompt section is missing from the assembled projection.')
+  }
+  const content = renderSessionActiveSkillsContext(bodies)
+  return assemblePromptSections(
+    assembly.sections.map((section) =>
+      section === activeSkillsSection
+        ? createPromptAssemblySection({
+            kind: section.kind,
+            sourceRef: section.sourceRef,
+            content,
+            separatorBefore: section.separatorBefore,
+            freshness: section.freshness,
+            degradationCodes: section.degradationCodes,
+            normalize: 'none'
+          })
+        : section
+    )
+  )
 }
 
 function appendAttachmentTextSafetySection(

@@ -3,7 +3,7 @@ import {
   advanceRequestSequence,
   bindActiveRequestContract,
   enterPhysicalAttempt,
-  resolveRuntimeSkillContextsForRequest
+  resolveSkillContextsForRequest
 } from './loopRun'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import {
@@ -657,7 +657,7 @@ export class DeepChatContextCoordinator {
           input.manifest.onAppendError(error)
         } catch {}
       }
-      const skillContexts = resolveRuntimeSkillContextsForRequest(input.run, providerMessages)
+      const skillContexts = resolveSkillContextsForRequest(input.run, providerMessages)
       const requiresDurableSkillManifest = skillContexts.length > 0
       const tapeIncarnationId = input.run.resources.tapeIncarnationId
       if (requiresDurableSkillManifest && !tapeIncarnationId) {

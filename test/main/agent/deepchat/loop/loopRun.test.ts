@@ -7,8 +7,9 @@ import {
   createLoopRun,
   enterLogicalRound,
   enterPhysicalAttempt,
+  registerMaterializedSkillContext,
   registerRuntimeSkillContext,
-  resolveRuntimeSkillContextsForRequest
+  resolveSkillContextsForRequest
 } from '@/agent/deepchat/loop/loopRun'
 import { hashSkillEffectiveContent } from '@/tape/domain/skillMaterialization'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
@@ -222,10 +223,10 @@ describe('LoopRun', () => {
       contentHash
     })
 
-    expect(() => resolveRuntimeSkillContextsForRequest(run, run.messages)).toThrow(
+    expect(() => resolveSkillContextsForRequest(run, run.messages)).toThrow(
       'missing from the provider request projection'
     )
-    const projected = resolveRuntimeSkillContextsForRequest(run, [
+    const projected = resolveSkillContextsForRequest(run, [
       ...run.messages,
       { role: 'tool', tool_call_id: 'tool-call-1', content: responseText }
     ])
@@ -243,12 +244,12 @@ describe('LoopRun', () => {
     ])
 
     expect(() =>
-      resolveRuntimeSkillContextsForRequest(run, [
+      resolveSkillContextsForRequest(run, [
         { role: 'tool', tool_call_id: 'tool-call-1', content: 'drifted' }
       ])
     ).toThrow('projection drifted')
     expect(() =>
-      resolveRuntimeSkillContextsForRequest(run, [
+      resolveSkillContextsForRequest(run, [
         { role: 'tool', tool_call_id: 'tool-call-1', content: responseText },
         { role: 'tool', tool_call_id: 'tool-call-1', content: responseText }
       ])
@@ -263,7 +264,104 @@ describe('LoopRun', () => {
       }
     })
 
-    expect(resolveRuntimeSkillContextsForRequest(run, inaccessibleMessages)).toEqual([])
+    expect(resolveSkillContextsForRequest(run, inaccessibleMessages)).toEqual([])
+  })
+
+  it('binds materialized Skill evidence to one exact role projection', () => {
+    const run = createRun('session')
+    const effectiveContent = 'Follow the materialized instructions.'
+    const completeBodyFragment = ['### skill-1', effectiveContent].join('\n')
+    const contentHash = hashSkillEffectiveContent(effectiveContent)
+    run.resources.tapeIncarnationId = 'incarnation-1'
+    registerMaterializedSkillContext(run, {
+      tapeIncarnationId: 'incarnation-1',
+      effectiveContent,
+      completeBodyFragment,
+      context: {
+        activationScope: 'message',
+        agentId: 'agent-1',
+        sourceType: 'created',
+        sourceId: '/skills/skill-1',
+        skillName: 'skill-1',
+        authoritativeRef: {
+          kind: 'context',
+          entryId: 13,
+          provenanceKey: 'skill-materialization:v1:test',
+          payloadHash: 'a'.repeat(64)
+        },
+        providerRole: 'user',
+        sourceEntryIds: [11],
+        projectedContentHash: contentHash,
+        projectionVersion: 1,
+        deduplicationSource: 'message'
+      }
+    })
+
+    expect(
+      resolveSkillContextsForRequest(run, [
+        { role: 'system', content: 'system' },
+        { role: 'user', content: `context\n\n${completeBodyFragment}\n\nrequest` }
+      ])
+    ).toEqual([expect.objectContaining({ activationScope: 'message', skillName: 'skill-1' })])
+    expect(() =>
+      resolveSkillContextsForRequest(run, [
+        { role: 'system', content: completeBodyFragment },
+        { role: 'user', content: 'request' }
+      ])
+    ).toThrow('exactly one Tape-backed provider projection')
+    expect(() =>
+      resolveSkillContextsForRequest(run, [
+        { role: 'user', content: completeBodyFragment },
+        { role: 'user', content: completeBodyFragment }
+      ])
+    ).toThrow('exactly one Tape-backed provider projection')
+    expect(() =>
+      resolveSkillContextsForRequest(run, [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '### skill-1' },
+            { type: 'text', text: effectiveContent }
+          ]
+        }
+      ])
+    ).toThrow('exactly one Tape-backed provider projection')
+  })
+
+  it('rejects overlapping materialized Skill body projections', () => {
+    const run = createRun('session')
+    const effectiveContent = '### skill-1'
+    const completeBodyFragment = `### skill-1\n${effectiveContent}`
+    run.resources.tapeIncarnationId = 'incarnation-1'
+    registerMaterializedSkillContext(run, {
+      tapeIncarnationId: 'incarnation-1',
+      effectiveContent,
+      completeBodyFragment,
+      context: {
+        activationScope: 'message',
+        agentId: 'agent-1',
+        sourceType: 'created',
+        sourceId: '/skills/skill-1',
+        skillName: 'skill-1',
+        authoritativeRef: {
+          kind: 'context',
+          entryId: 13,
+          provenanceKey: 'skill-materialization:v1:overlap',
+          payloadHash: 'a'.repeat(64)
+        },
+        providerRole: 'user',
+        sourceEntryIds: [11],
+        projectedContentHash: hashSkillEffectiveContent(effectiveContent),
+        projectionVersion: 1,
+        deduplicationSource: 'message'
+      }
+    })
+
+    expect(() =>
+      resolveSkillContextsForRequest(run, [
+        { role: 'user', content: `${completeBodyFragment}\n### skill-1` }
+      ])
+    ).toThrow('exactly one Tape-backed provider projection')
   })
 
   it('does not inspect provider history when the current message has no runtime Skill view', () => {

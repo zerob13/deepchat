@@ -246,7 +246,7 @@ describe('SkillContextMaterializer', () => {
         sessionId: 'session-1',
         previousRunId: 'prior-run',
         assistantMessageId: 'assistant-1'
-      })[0].effectiveContent
+      }).projections[0].effectiveContent
     ).toBe('body:one')
     expect(tape.getViewManifestByExecutionBinding).toHaveBeenCalledWith({
       sessionId: 'session-1',
