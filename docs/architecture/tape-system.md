@@ -200,6 +200,15 @@ arguments，也不替代各工具的路径授权或 filesystem sandbox。permiss
 append 一个幂等 `provider/attempt_completed` event，provenance key 由 Session、message、requestSeq 和
 physicalAttempt 组成，`source.seq` 继续等于 requestSeq。
 
+Skill 渐进披露的目标合同由 `docs/architecture/skill-progressive-disclosure/` 定义。进入 provider 的
+消息级或 Session 级完整 Skill 指令必须先成为 Session Tape 中内容寻址、物理 kind 为 `context` 的
+materialization fact；Agent runtime 只能通过窄 writer/reader capability 写入和恢复。ViewManifest
+schema 6 记录 run/request/incarnation binding、activation scope、source entry ref 与 projected hash，
+不能用 hash 代替内容，也不能用“最新 manifest”恢复某次 Run。同一 Run 的 retry、context recovery、
+tool loop 和进程内暂停续跑复用原 fact，禁止重读可变 Skill 文件；崩溃 Run 继续沿用现有 parked 语义，
+用户显式发起的新 Run 才 fresh resolve 当前内容。materialization fact 默认从 transcript、effective
+view、搜索、Memory、普通 renderer 和 fork merge 排除，避免历史行为指令通过召回或合并重新激活。
+
 新 attempt event 使用 schema version 2，记录 logicalRound、physicalAttempt、request/attempt origin、
 failure classification、retry decision、受限错误标识、终态、stop reason、最后一个 cumulative usage
 snapshot、cache read/write token 与合法的命中比率；schema version 1 保持可读。它不保存 prompt、
