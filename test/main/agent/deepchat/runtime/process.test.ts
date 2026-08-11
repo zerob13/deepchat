@@ -36,8 +36,12 @@ import {
 } from '@shared/agentTools'
 import {
   buildCanonicalToolCatalog,
+  buildToolSurfaceDeferredDispatchBinding,
+  createFullToolSurfaceRunController,
   createPolicySelectedToolSurfaceRun,
   createToolSurfaceExecutionBatch,
+  getToolSurfaceDeferredDispatch,
+  revokeToolSurfaceDeferredDispatch,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
 
@@ -65,6 +69,10 @@ import {
   buildExecutionContract,
   buildExecutionContractBinding
 } from '@/tape/domain/executionContract'
+import {
+  ExecutionJournalCorruptionError,
+  ExecutionJournalError
+} from '@/tape/domain/executionJournal'
 import type { TapeToolFactInput } from '@/tape/domain/facts'
 import { TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION } from '@/tape/domain/toolSurfaceFacts'
 import type { TapeToolFactAppendReceipt } from '@/tape/ports/capabilities'
@@ -238,6 +246,7 @@ function createMockToolService(responses: Record<string, string> = {}): ToolServ
       }
     }),
     preCheckToolPermission: vi.fn().mockResolvedValue(null),
+    assertToolSurfaceAuthority: vi.fn(),
     clearConversationToolMapping: vi.fn(),
     clearAgentPlanState: vi.fn(),
     buildToolSystemPrompt: vi.fn().mockReturnValue('')
@@ -825,6 +834,101 @@ describe('processStream', () => {
         'chat.stream.failed',
         expect.anything()
       )
+    })
+
+    it('propagates a tool Journal failure after selecting a durable error terminal', async () => {
+      const journalFailure = new ExecutionJournalError(
+        'dispatch journal unavailable',
+        'persistence_failed'
+      )
+      const toolService = createMockToolService()
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions
+        executionOptions.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'agent-tools', originalName: request.function.name }
+        })
+        throw new Error('target must not run after a failed dispatch commit')
+      })
+      executionJournalWriter.commitDispatch.mockImplementation(() => {
+        throw journalFailure
+      })
+      const coreStream = createToolRoundStream('action')
+
+      await expect(
+        processStream(
+          createParams({
+            coreStream,
+            toolExecution: createToolExecutionPort(toolService),
+            tools: [makeTool('action')]
+          })
+        )
+      ).rejects.toBe(journalFailure)
+
+      expect(coreStream).toHaveBeenCalledOnce()
+      expect(commitRunTerminal).toHaveBeenCalledOnce()
+      expect(commitRunTerminal).toHaveBeenCalledWith({
+        outcome: 'error',
+        stopReason: 'journal_error',
+        errorMessage: journalFailure.message
+      })
+      expect(executionJournalWriter.commitToolOutcome).not.toHaveBeenCalled()
+      expect(messageStore.finalizeAssistantMessage).not.toHaveBeenCalled()
+      expect(messageStore.setMessageError).not.toHaveBeenCalled()
+    })
+
+    it('retains both Journal failures and the terminal corruption classification', async () => {
+      const executionFailure = new ExecutionJournalError(
+        'dispatch journal unavailable',
+        'persistence_failed'
+      )
+      const terminalCause = new Error('terminal row conflicts')
+      const terminalFailure = new ExecutionJournalCorruptionError(
+        'terminal journal conflict',
+        { cause: terminalCause }
+      )
+      const toolService = createMockToolService()
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions
+        executionOptions.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'agent-tools', originalName: request.function.name }
+        })
+        throw new Error('target must not run after a failed dispatch commit')
+      })
+      executionJournalWriter.commitDispatch.mockImplementation(() => {
+        throw executionFailure
+      })
+      commitRunTerminal.mockImplementation(() => {
+        throw terminalFailure
+      })
+
+      const rejection = processStream(
+        createParams({
+          coreStream: createToolRoundStream('action'),
+          toolExecution: createToolExecutionPort(toolService),
+          tools: [makeTool('action')]
+        })
+      ).catch((error: unknown) => error)
+
+      const error = await rejection
+      expect(error).toBeInstanceOf(ExecutionJournalCorruptionError)
+      expect(error).toMatchObject({
+        message: terminalFailure.message,
+        code: 'conflicting_fact',
+        cause: expect.any(AggregateError)
+      })
+      expect((error.cause as AggregateError).errors).toEqual([
+        executionFailure,
+        terminalCause
+      ])
+      expect(commitRunTerminal).toHaveBeenCalledOnce()
+      expect(messageStore.finalizeAssistantMessage).not.toHaveBeenCalled()
+      expect(messageStore.setMessageError).not.toHaveBeenCalled()
     })
 
     it('persists each tool round before entering the next provider round', async () => {
@@ -1416,6 +1520,11 @@ describe('processStream', () => {
 
     it('keeps the exact request contract and a durable View binding across permission pause', async () => {
       const tools = [{ ...makeTool('action'), source: 'agent' as const }]
+      const controller = createFullToolSurfaceRunController({
+        ceilingDefinitions: tools,
+        initialActiveDefinitions: tools,
+        policyVersion: 'process-test-v1'
+      })
       const run = createLoopRun({
         runId: RUN_ID,
         sessionId: toAppSessionId('s1'),
@@ -1426,10 +1535,22 @@ describe('processStream', () => {
         resources: {
           toolDefinitions: tools,
           activeSkillNames: [],
-          commandShell: POSIX_COMMAND_SHELL
+          commandShell: POSIX_COMMAND_SHELL,
+          toolSurfaceMode: 'full'
         },
         initialRequestSeq: 1
       })
+      const snapshot = controller.build({
+        request: {
+          sessionId: run.sessionId,
+          messageId: run.messageId,
+          runId: run.runId,
+          requestSeq: 1
+        },
+        eligibleDefinitions: tools
+      })
+      controller.admit(snapshot)
+      bindActiveRequestToolSurface(run, 1, snapshot, vi.fn())
       const promptAssembly = createOpaquePromptAssembly('System prompt')
       const executionContract = buildExecutionContract({
         request: {
@@ -1483,6 +1604,20 @@ describe('processStream', () => {
       expect(JSON.parse(permissionBlock?.extra?.executionContractBinding as string)).toEqual(
         buildExecutionContractBinding(executionContract)
       )
+      const expectedToolSurfaceBinding = buildToolSurfaceDeferredDispatchBinding({
+        snapshot,
+        toolCallId: 'tc1',
+        toolName: 'action',
+        contractBearing: true
+      })
+      expect(JSON.parse(permissionBlock?.extra?.toolSurfaceBinding as string)).toEqual(
+        expectedToolSurfaceBinding
+      )
+      expect(getToolSurfaceDeferredDispatch(run.sessionId, run.messageId, 'tc1')).toMatchObject({
+        authorityKind: 'process-live',
+        binding: expectedToolSurfaceBinding
+      })
+      revokeToolSurfaceDeferredDispatch(run.sessionId, run.messageId, 'tc1')
     })
 
     it('counts a post-call permission tool before persisting pause', async () => {

@@ -162,6 +162,7 @@ type ToolTarget = {
   client?: McpClient
   catalogBacked: boolean
   catalogTool?: Tool
+  definition: MCPToolDefinition
 }
 
 type CatalogValidationState = {
@@ -560,7 +561,7 @@ export class ToolManager {
           )
 
           const serverConfig = serverConfigs[source.serverName]
-          results.push({
+          const definition: MCPToolDefinition = {
             // Server annotations are untrusted hints and must not weaken local execution policy.
             execution: TOOL_EXECUTION.write,
             type: 'function',
@@ -592,14 +593,16 @@ export class ToolManager {
               _meta: tool._meta,
               execution: tool.execution
             }
-          })
+          }
+          results.push(definition)
 
           nextToolNameToTargetMap.set(finalName, {
             serverName: source.serverName,
             originalName,
             client: source.client,
             catalogBacked: source.catalogBacked,
-            catalogTool: tool
+            catalogTool: tool,
+            definition: deepFreeze(structuredClone({ ...definition, source: 'mcp' as const }))
           })
         }
       }
@@ -803,6 +806,7 @@ export class ToolManager {
       signal?: AbortSignal
       runId?: string
       expectedTarget?: McpExpectedToolTarget
+      assertCurrentToolDefinition?: (definition: MCPToolDefinition) => void
       commitDispatch?: ToolDispatchCommit
       registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
     }
@@ -810,7 +814,7 @@ export class ToolManager {
     let previewCall: ComputerUsePreviewCall | null = null
     let previewStarted = false
     let previewTerminalNotified = false
-    let dispatchCommitFailed = false
+    let dispatchBoundaryFailed = false
     let dispatchCommitted = false
     try {
       access?.signal?.throwIfAborted()
@@ -1035,6 +1039,7 @@ export class ToolManager {
         : undefined
       access?.signal?.throwIfAborted()
       try {
+        access?.assertCurrentToolDefinition?.(currentTarget.definition)
         access?.commitDispatch?.({
           toolName: finalName,
           toolSource: 'mcp',
@@ -1047,7 +1052,7 @@ export class ToolManager {
         })
         dispatchCommitted = access?.commitDispatch !== undefined
       } catch (error) {
-        dispatchCommitFailed = true
+        dispatchBoundaryFailed = true
         throw error
       }
       if (previewCall) {
@@ -1132,7 +1137,7 @@ export class ToolManager {
       if (isAbortError(error) || (access?.signal?.aborted && !dispatchCommitted)) {
         throw error
       }
-      if (dispatchCommitFailed) {
+      if (dispatchBoundaryFailed) {
         throw error
       }
 

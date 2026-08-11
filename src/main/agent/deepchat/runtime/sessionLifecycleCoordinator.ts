@@ -22,6 +22,7 @@ import type { SessionIdentityService } from './sessionIdentityService'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { InteractionParkingRegistry } from './interactionParkingRegistry'
 import type { ToolSurfaceShadowDiagnosticsRegistryPort } from './toolSurfaceDiagnostics'
+import { revokeToolSurfaceDeferredDispatchesForSession } from './toolSurface'
 
 export interface SessionInitConfig {
   agentId?: string
@@ -103,6 +104,7 @@ export class SessionLifecycleCoordinator {
    * backend hands the session off, so the next access rehydrates from persisted data.
    */
   async cleanup(sessionId: string): Promise<void> {
+    revokeToolSurfaceDeferredDispatchesForSession(sessionId)
     const instance = this.deps.registry.getHydratedScope(toAppSessionId(sessionId))?.instance
     if (!instance) {
       return

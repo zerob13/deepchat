@@ -23,7 +23,8 @@ import type {
   CreateTapeToolCatalogFactInput,
   CreateTapeToolSurfaceFactInput,
   TapeToolCatalogFactReference,
-  TapeToolResultFactReference
+  TapeToolResultFactReference,
+  TapeToolSurfaceFact
 } from '../domain/toolSurfaceFacts'
 
 export type TapeMigrationState = 'none' | 'ready'
@@ -58,6 +59,11 @@ export type TapeViewManifestAssemblySources = {
 export interface TapeViewManifestReader {
   getViewManifestSourceMaps(sessionId: string, messageId?: string): TapeViewManifestAssemblySources
   listViewManifestsByMessage(sessionId: string, messageId: string): DeepChatTapeViewManifestRecord[]
+  listViewManifestsByMessageRequest(
+    sessionId: string,
+    messageId: string,
+    requestSeq: number
+  ): DeepChatTapeViewManifestRecord[]
 }
 
 export interface TapeViewManifestWriter {
@@ -94,6 +100,21 @@ export interface TapeToolSurfaceViewWriter {
   commitToolSurfaceView(input: CommitTapeToolSurfaceViewInput): TapeToolSurfaceViewCommitReceipt
 }
 
+export interface TapeToolSurfaceFactRecord {
+  readonly entryId: number
+  readonly fact: TapeToolSurfaceFact
+}
+
+/** Recovery-only reader. Ordinary tool dispatch must use its process-live capability snapshot. */
+export interface TapeToolSurfaceViewReader {
+  listToolSurfaceFactsByMessage(sessionId: string, messageId: string): TapeToolSurfaceFactRecord[]
+  listToolSurfaceFactsByMessageRequest(
+    sessionId: string,
+    messageId: string,
+    requestSeq: number
+  ): TapeToolSurfaceFactRecord[]
+}
+
 export interface TapeToolFactAppendReceipt extends TapeEntryRef {
   /** Present only for a ToolSearch result in a canonical Tape incarnation. */
   readonly toolResult: TapeToolResultFactReference | null
@@ -120,6 +141,16 @@ export interface ExecutionJournalWriter {
 
 export interface ExecutionJournalRecoveryReader {
   classifyRecoveryCandidates(): ExecutionRecoveryReport[]
+  /**
+   * Recovery-only replay fence. Deferred T1 uses a fresh physical Run identity, so Journal v1
+   * conservatively treats any matching message/tool-call dispatch as spent. Ordinary dispatch
+   * must not query Journal facts.
+   */
+  hasAnyCommittedDispatchForMessageToolCall(
+    sessionId: string,
+    messageId: string,
+    providerToolCallId: string
+  ): boolean
 }
 
 // The DeepChat provider loop needs the coordinated Tape contract as one collaborator; splitting it

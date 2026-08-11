@@ -508,6 +508,17 @@ function createMockSqlitePresenter() {
               entry.source_seq === sourceSeq
           )
       ),
+      getEventsBySourceId: vi.fn(
+        (sessionId: string, name: string, sourceType: string, sourceId: string) =>
+          tapeEntries.filter(
+            (entry) =>
+              entry.session_id === sessionId &&
+              entry.kind === 'event' &&
+              entry.name === name &&
+              entry.source_type === sourceType &&
+              entry.source_id === sourceId
+          )
+      ),
       getFirstEntriesBySessions: vi.fn((sessionIds: string[]) =>
         [...new Set(sessionIds)]
           .flatMap((sessionId) => {
@@ -13105,6 +13116,129 @@ describe('DeepChatAgentHarness', () => {
       expect(runtimeDependencies.interactionContinuationAdmission.resume).not.toHaveBeenCalled()
     })
 
+    it('rejects an invalid Tool Surface binding before granting permission', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      makeAssistantRow({
+        blocks: [
+          {
+            type: 'tool_call',
+            status: 'pending',
+            timestamp: 1,
+            tool_call: { id: 'tc1', name: 'write_file', params: '{}', response: '' }
+          },
+          {
+            type: 'action',
+            action_type: 'tool_call_permission',
+            status: 'pending',
+            timestamp: 2,
+            content: 'Need permission',
+            tool_call: { id: 'tc1', name: 'write_file', params: '{}' },
+            extra: {
+              needsUserAction: true,
+              permissionType: 'write',
+              toolSurfaceBinding: '{',
+              permissionRequest: JSON.stringify({
+                permissionType: 'write',
+                description: 'Need permission',
+                toolName: 'write_file',
+                serverName: 'agent-filesystem',
+                shellProfile: 'posix',
+                paths: ['a.txt']
+              })
+            }
+          }
+        ]
+      })
+
+      await expect(
+        agent.respondToolInteraction('s1', 'm1', 'tc1', {
+          kind: 'permission',
+          granted: true
+        })
+      ).rejects.toMatchObject({ code: 'invalid_binding' })
+
+      expect(sessionPermissionPort.approvePermission).not.toHaveBeenCalled()
+      expect(toolService.callTool).not.toHaveBeenCalled()
+      expect(runtimeDependencies.interactionContinuationAdmission.resume).not.toHaveBeenCalled()
+    })
+
+    it('parks a stale pending approval when its durable dispatch already exists', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      makeAssistantRow({
+        blocks: [
+          {
+            type: 'tool_call',
+            status: 'pending',
+            timestamp: 1,
+            tool_call: { id: 'tc1', name: 'write_file', params: '{}', response: '' }
+          },
+          {
+            type: 'action',
+            action_type: 'tool_call_permission',
+            status: 'pending',
+            timestamp: 2,
+            content: 'Need permission',
+            tool_call: { id: 'tc1', name: 'write_file', params: '{}' },
+            extra: {
+              needsUserAction: true,
+              permissionType: 'write',
+              toolSurfaceBinding: JSON.stringify({
+                schemaVersion: 1,
+                request: {
+                  sessionId: 's1',
+                  messageId: 'm1',
+                  runId: '11111111-1111-4111-8111-111111111111',
+                  requestSeq: 1
+                },
+                toolCallId: 'tc1',
+                toolName: 'write_file',
+                stableTargetKey: 'agent:agent-filesystem:write_file:write_file',
+                canonicalToolDefinitionHash: '0'.repeat(64),
+                contractBearing: false
+              }),
+              permissionRequest: JSON.stringify({
+                permissionType: 'write',
+                description: 'Need permission',
+                toolName: 'write_file',
+                serverName: 'agent-filesystem',
+                shellProfile: 'posix',
+                paths: ['a.txt']
+              })
+            }
+          }
+        ]
+      })
+      vi.spyOn(sessionData.tapeStore, 'hasAnyCommittedDispatchForMessageToolCall').mockReturnValue(
+        true
+      )
+
+      await expect(
+        agent.respondToolInteraction('s1', 'm1', 'tc1', {
+          kind: 'permission',
+          granted: true
+        })
+      ).rejects.toMatchObject({ code: 'duplicate_dispatch' })
+      await expect(
+        agent.respondToolInteraction('s1', 'm1', 'tc1', {
+          kind: 'permission',
+          granted: true
+        })
+      ).rejects.toThrow('Execution is parked after its durable dispatch boundary')
+
+      expect(sessionPermissionPort.approvePermission).not.toHaveBeenCalled()
+      expect(toolService.callTool).not.toHaveBeenCalled()
+      expect(getLatestUpdatedBlocks()).toMatchObject([
+        {
+          status: 'error',
+          tool_call: {
+            response:
+              'Tool dispatch was recorded, but its outcome is indeterminate. It will not be retried automatically.'
+          }
+        },
+        { status: 'granted', extra: { needsUserAction: false } }
+      ])
+    })
+
     it('handles permission grant by executing deferred tool and resuming', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       makeAssistantRow({
@@ -15083,7 +15217,10 @@ describe('DeepChatAgentHarness', () => {
           expect.any(Function),
           undefined,
           'git-bash',
-          'command-grant-after-restart'
+          'command-grant-after-restart',
+          undefined,
+          expect.any(Function),
+          undefined
         )
         expect(sessionPermissionPort.revokeOneShotCommandPermission).toHaveBeenCalledWith(
           's1',
@@ -15095,7 +15232,7 @@ describe('DeepChatAgentHarness', () => {
       }
     })
 
-    it('settles a deferred interaction after T2 persistence fails without replaying the tool', async () => {
+    it('propagates T2 persistence failure after settling the interaction without replay', async () => {
       toolService.getAllToolDefinitions.mockResolvedValueOnce([
         {
           type: 'function',
@@ -15133,14 +15270,20 @@ describe('DeepChatAgentHarness', () => {
         throw new ExecutionJournalError('T2 unavailable', 'persistence_failed')
       })
 
-      await expect(approvePendingTool()).resolves.toEqual({ resumed: false })
+      await expect(approvePendingTool()).rejects.toThrow('T2 unavailable')
       await expect(approvePendingTool()).rejects.toThrow(
-        'No pending interaction found in target message.'
+        'Execution is parked after its durable dispatch boundary'
       )
 
       expect(toolService.callTool).toHaveBeenCalledOnce()
       expect(JSON.parse(row.content) as AssistantMessageBlock[]).toMatchObject([
-        { status: 'error', tool_call: { response: 'T2 unavailable' } },
+        {
+          status: 'error',
+          tool_call: {
+            response:
+              'Tool dispatch was recorded, but its outcome is indeterminate. It will not be retried automatically.'
+          }
+        },
         { status: 'granted', extra: { needsUserAction: false } }
       ])
     })
@@ -15185,7 +15328,7 @@ describe('DeepChatAgentHarness', () => {
 
       await expect(approvePendingTool()).rejects.toThrow('run terminal unavailable')
       await expect(approvePendingTool()).rejects.toThrow(
-        'Execution is parked after an Execution Journal failure'
+        'Execution is parked after its durable dispatch boundary'
       )
 
       expect(toolService.callTool).toHaveBeenCalledOnce()
@@ -15249,7 +15392,7 @@ describe('DeepChatAgentHarness', () => {
       })
       await agent.cleanupSession('s1')
       await expect(approvePendingTool()).rejects.toThrow(
-        'Execution is parked after an Execution Journal failure'
+        'Execution is parked after its durable dispatch boundary'
       )
 
       expect(toolService.callTool).toHaveBeenCalledOnce()

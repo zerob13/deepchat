@@ -342,6 +342,71 @@ describe('ToolSurfaceProvenanceService', () => {
     expect(surfacePayload.data.manifestHash).toBe(input.manifest.hashes.manifestHash)
   })
 
+  it('recovers one hash-verified surface fact by provider request identity', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    const receipt = service.commitToolSurfaceView(createCommitInput())
+
+    const records = service.listToolSurfaceFactsByMessageRequest(SESSION_ID, MESSAGE_ID, 1)
+
+    expect(records).toHaveLength(1)
+    expect(records[0].entryId).toBe(receipt.surface.entryId)
+    expect(records[0].fact).toMatchObject({
+      surfaceHash: receipt.surface.surfaceHash,
+      request: { sessionId: SESSION_ID, messageId: MESSAGE_ID, runId: RUN_ID, requestSeq: 1 }
+    })
+  })
+
+  it('keeps sessions without Tool Surface facts on the legacy recovery path', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+
+    expect(service.listToolSurfaceFactsByMessage(SESSION_ID, MESSAGE_ID)).toEqual([])
+    expect(service.listToolSurfaceFactsByMessageRequest(SESSION_ID, MESSAGE_ID, 1)).toEqual([])
+  })
+
+  it('fails recovery when a persisted surface payload no longer verifies', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    const receipt = service.commitToolSurfaceView(createCommitInput())
+    const row = table.getByEntryId(SESSION_ID, receipt.surface.entryId)
+    const payload = JSON.parse(row.payload_json)
+    payload.data.policyVersion = 'tampered-policy'
+    row.payload_json = JSON.stringify(payload)
+
+    expect(() => service.listToolSurfaceFactsByMessageRequest(SESSION_ID, MESSAGE_ID, 1)).toThrow(
+      ToolSurfaceProvenanceCorruptionError
+    )
+  })
+
+  it('fails recovery when a surface belongs to another Tape incarnation', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    service.commitToolSurfaceView(createCommitInput())
+    const anchor = table.getByEntryId(SESSION_ID, 1)
+    const meta = JSON.parse(anchor.meta_json)
+    meta.tapeIncarnationId = '00000000-0000-4000-8000-999999999999'
+    anchor.meta_json = JSON.stringify(meta)
+
+    expect(() => service.listToolSurfaceFactsByMessageRequest(SESSION_ID, MESSAGE_ID, 1)).toThrow(
+      /canonical row validation/
+    )
+  })
+
+  it('fails recovery when a surface loses its canonical catalog reference', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const receipt = service.commitToolSurfaceView(createCommitInput())
+    entries.splice(
+      entries.findIndex((entry) => entry.entry_id === receipt.catalog.entryId),
+      1
+    )
+
+    expect(() => service.listToolSurfaceFactsByMessageRequest(SESSION_ID, MESSAGE_ID, 1)).toThrow(
+      ToolSurfaceProvenanceCorruptionError
+    )
+  })
+
   it('reuses exact facts and one catalog fact across later Views in the same incarnation', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)

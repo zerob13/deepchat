@@ -33,6 +33,7 @@ import type {
 import type { CommandShellProfile } from '@shared/commandShell'
 import type { ExecutionJournalWriter, TapeToolFactWriter } from '@/tape/ports/capabilities'
 import type { SessionPermissionGrant } from '@/session/contracts'
+import type { ToolSurfaceDeferredDispatchBindingV1 } from './toolSurface'
 
 export interface InterleavedReasoningConfig {
   preserveReasoningContent: boolean
@@ -178,6 +179,7 @@ export interface PendingToolInteraction {
   serverName?: string
   serverIcons?: string
   serverDescription?: string
+  toolSurfaceBinding?: ToolSurfaceDeferredDispatchBindingV1
   question?: {
     header?: string
     question: string

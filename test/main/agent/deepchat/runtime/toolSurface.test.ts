@@ -12,6 +12,7 @@ import {
 import {
   MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES,
   MAX_TOOL_SURFACE_CANDIDATE_BATCHES,
+  MAX_TOOL_SURFACE_DEFERRED_DISPATCHES,
   MAX_TOOL_SURFACE_DEFINITION_BYTES,
   MAX_TOOL_SURFACE_DEFINITION_DEPTH,
   MAX_TOOL_SURFACE_OVERLAP_IDENTITIES,
@@ -22,8 +23,12 @@ import {
   appendToolSurfaceActivationBatch,
   assertActiveToolSurfaceExecutionContext,
   assertIssuedToolSurfaceExecutionContext,
+  assertToolSurfaceDeferredDispatchAllowsDispatch,
+  assertToolSurfaceAllowsDispatch,
   buildCanonicalToolCatalog,
+  buildToolSurfaceDeferredDispatchBinding,
   buildToolSurfaceRunCeiling,
+  claimToolSurfaceExecution,
   computeToolSurfaceShadowDecision,
   computeToolSurfaceStaticDefinitionOverlap,
   createFullToolSurfaceRunController,
@@ -31,11 +36,15 @@ import {
   createProviderOrderedToolSurfaceActivationLedger,
   createToolSurfaceActivationLedger,
   createToolSurfaceExecutionBatch,
+  getToolSurfaceDeferredDispatch,
   createToolSurfaceSnapshot,
   mergeToolSurfaceActivationCandidates,
   mergeToolSurfaceActivationEvidence,
   projectToolSurfaceActiveEntries,
   projectToolSurfaceTapeProvenance,
+  registerToolSurfaceDeferredDispatch,
+  revokeToolSurfaceDeferredDispatchesForSession,
+  revokeToolSurfaceExecutionEligibility,
   type ToolSurfaceActivationCandidate,
   type ToolSurfaceActivationEvidence,
   type ToolSurfaceDefinitionIdentity,
@@ -712,6 +721,10 @@ describe('Run Tool Ceiling and Tool Surface snapshots', () => {
       'search'
     ])
     controller.admit(expanded)
+    expectSurfaceError(
+      () => assertToolSurfaceAllowsDispatch(initial, request(1), 'read', read),
+      'invalid_definition'
+    )
 
     const revoked = controller.build({
       request: request(3),
@@ -872,6 +885,218 @@ describe('Run Tool Ceiling and Tool Surface snapshots', () => {
     expect(snapshot.activeEntries).toHaveLength(1)
     expect(snapshot.activeEntries[0]).toMatchObject({ reason: 'core', activationOrdinal: 0 })
     expect(snapshot.toolDefinitions[0].function.name).toBe('read')
+  })
+
+  it('binds dispatch to an admitted View and its exact active definition hash', () => {
+    const read = agentTool('read')
+    const write = agentTool('write')
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read, write],
+      initialActiveDefinitions: [read],
+      policyVersion: 'full-test'
+    })
+    const dispatchRequest = {
+      sessionId: 's1',
+      messageId: 'm1',
+      runId: 'r1',
+      requestSeq: 1
+    }
+    const snapshot = controller.build({
+      request: dispatchRequest,
+      eligibleDefinitions: [read]
+    })
+
+    expectSurfaceError(
+      () => assertToolSurfaceAllowsDispatch(snapshot, dispatchRequest, 'read', read),
+      'invalid_definition'
+    )
+    controller.admit(snapshot)
+    expect(() =>
+      assertToolSurfaceAllowsDispatch(snapshot, dispatchRequest, 'read', read)
+    ).not.toThrow()
+    expect(() =>
+      assertToolSurfaceAllowsDispatch(snapshot, dispatchRequest, 'write', write)
+    ).toThrow('Tool is not available in the current session: write')
+    expect(() =>
+      assertToolSurfaceAllowsDispatch(snapshot, dispatchRequest, 'write', undefined)
+    ).toThrow('Tool is not available in the current session: write')
+    expectSurfaceError(
+      () =>
+        assertToolSurfaceAllowsDispatch(
+          snapshot,
+          dispatchRequest,
+          'read',
+          agentTool('read', {
+            function: { ...read.function, description: 'drifted after assembly' }
+          })
+        ),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () => assertToolSurfaceAllowsDispatch(snapshot, dispatchRequest, 'read', undefined),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        assertToolSurfaceAllowsDispatch(
+          snapshot,
+          dispatchRequest,
+          'read',
+          agentTool('read', { execution: TOOL_EXECUTION.write })
+        ),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        assertToolSurfaceAllowsDispatch(
+          snapshot,
+          { ...dispatchRequest, requestSeq: 2 },
+          'read',
+          read
+        ),
+      'invalid_definition'
+    )
+    revokeToolSurfaceExecutionEligibility(snapshot)
+    expectSurfaceError(
+      () => assertToolSurfaceAllowsDispatch(snapshot, dispatchRequest, 'read', read),
+      'invalid_definition'
+    )
+  })
+
+  it('allows one execution settlement claim per admitted full View', () => {
+    const read = agentTool('read')
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read],
+      initialActiveDefinitions: [read],
+      policyVersion: 'full-test'
+    })
+    const snapshot = controller.build({
+      request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 1 },
+      eligibleDefinitions: [read]
+    })
+    controller.admit(snapshot)
+
+    expect(() => claimToolSurfaceExecution(snapshot)).not.toThrow()
+    expectSurfaceError(() => claimToolSurfaceExecution(snapshot), 'invalid_definition')
+  })
+
+  it('binds a paused approval to one process-live tool call after its View is revoked', () => {
+    const read = agentTool('read')
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read],
+      initialActiveDefinitions: [read],
+      policyVersion: 'full-test'
+    })
+    const snapshot = controller.build({
+      request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 1 },
+      eligibleDefinitions: [read]
+    })
+    controller.admit(snapshot)
+    const capability = registerToolSurfaceDeferredDispatch({
+      snapshot,
+      toolCallId: 'call-1',
+      toolName: 'read',
+      binding: buildToolSurfaceDeferredDispatchBinding({
+        snapshot,
+        toolCallId: 'call-1',
+        toolName: 'read',
+        contractBearing: false
+      })
+    })!
+    revokeToolSurfaceExecutionEligibility(snapshot)
+
+    expectSurfaceError(
+      () => assertToolSurfaceAllowsDispatch(snapshot, snapshot.request, 'read', read),
+      'invalid_definition'
+    )
+    expect(() =>
+      assertToolSurfaceDeferredDispatchAllowsDispatch(
+        capability,
+        { sessionId: 's1', messageId: 'm1', toolCallId: 'call-1', toolName: 'read' },
+        read
+      )
+    ).not.toThrow()
+    expect(getToolSurfaceDeferredDispatch('s1', 'm1', 'call-1')).toBe(capability)
+    expectSurfaceError(
+      () =>
+        assertToolSurfaceDeferredDispatchAllowsDispatch(
+          capability,
+          { sessionId: 's1', messageId: 'm1', toolCallId: 'call-2', toolName: 'read' },
+          read
+        ),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        assertToolSurfaceDeferredDispatchAllowsDispatch(
+          capability,
+          { sessionId: 's1', messageId: 'm1', toolCallId: 'call-1', toolName: 'read' },
+          agentTool('read', { execution: TOOL_EXECUTION.write })
+        ),
+      'conflicting_tool'
+    )
+    revokeToolSurfaceDeferredDispatchesForSession('s1')
+  })
+
+  it('fails closed without evicting deferred dispatch authority when capacity is exhausted', () => {
+    const read = agentTool('read')
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [read],
+      initialActiveDefinitions: [read],
+      policyVersion: 'full-test'
+    })
+    const snapshot = controller.build({
+      request: {
+        sessionId: 'capacity-session',
+        messageId: 'capacity-message',
+        runId: 'capacity-run',
+        requestSeq: 1
+      },
+      eligibleDefinitions: [read]
+    })
+    controller.admit(snapshot)
+
+    try {
+      for (let index = 0; index < MAX_TOOL_SURFACE_DEFERRED_DISPATCHES; index += 1) {
+        const toolCallId = `capacity-call-${index}`
+        registerToolSurfaceDeferredDispatch({
+          snapshot,
+          toolCallId,
+          toolName: 'read',
+          binding: buildToolSurfaceDeferredDispatchBinding({
+            snapshot,
+            toolCallId,
+            toolName: 'read',
+            contractBearing: false
+          })
+        })
+      }
+
+      expectSurfaceError(
+        () =>
+          registerToolSurfaceDeferredDispatch({
+            snapshot,
+            toolCallId: 'capacity-overflow',
+            toolName: 'read',
+            binding: buildToolSurfaceDeferredDispatchBinding({
+              snapshot,
+              toolCallId: 'capacity-overflow',
+              toolName: 'read',
+              contractBearing: false
+            })
+          }),
+        'limit_exceeded'
+      )
+      expect(
+        getToolSurfaceDeferredDispatch(
+          snapshot.request.sessionId,
+          snapshot.request.messageId,
+          'capacity-call-0'
+        )
+      ).not.toBeNull()
+    } finally {
+      revokeToolSurfaceDeferredDispatchesForSession(snapshot.request.sessionId)
+    }
   })
 
   it('projects bounded catalog, active, budget, and search provenance for Tape', () => {

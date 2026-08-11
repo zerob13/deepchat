@@ -56,7 +56,13 @@ export interface ToolCallOptions {
   registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
   commandShell?: ResolvedCommandShell
   oneShotCommandGrantId?: string
+  permissionLease?: ToolPermissionLeaseCapability
 }
+
+export type ToolPermissionLeaseCapability = Readonly<{
+  kind: 'file' | 'settings'
+  leaseId: string
+}>
 
 export interface ToolPermissionPreCheckResult {
   needsPermission: true

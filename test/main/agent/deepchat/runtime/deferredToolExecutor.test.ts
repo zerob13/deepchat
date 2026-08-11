@@ -293,6 +293,29 @@ describe('DeferredToolExecutor Execution Journal', () => {
     )
   })
 
+  it('forwards only the granted operation capability to deferred execution', async () => {
+    const { dependencies, executor } = createHarness()
+    const permissionLease = { kind: 'file' as const, leaseId: 'file-lease-1' }
+
+    await executor.execute(
+      SESSION_ID,
+      MESSAGE_ID,
+      TOOL_CALL,
+      undefined,
+      undefined,
+      'posix',
+      undefined,
+      undefined,
+      undefined,
+      permissionLease
+    )
+
+    expect(dependencies.toolExecutionPort.execute).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ permissionLease })
+    )
+  })
+
   it('fails closed for an invalid persisted shell profile', async () => {
     const { dependencies, executor } = createHarness()
 
@@ -403,7 +426,7 @@ describe('DeferredToolExecutor Execution Journal', () => {
     expect(dependencies.runLifecycle.clearDeferredToolController).toHaveBeenCalledOnce()
   })
 
-  it('returns a non-retryable terminal error when T2 persistence fails', async () => {
+  it('propagates T2 persistence failure even when the terminal fact commits', async () => {
     const { execute, executionJournal, order } = createHarness()
     executionJournal.commitToolOutcome.mockImplementationOnce(() => {
       order.push('journal.outcome.failed')
@@ -413,7 +436,11 @@ describe('DeferredToolExecutor Execution Journal', () => {
     await expect(execute()).resolves.toMatchObject({
       isError: true,
       invoked: true,
-      terminalError: 'T2 unavailable'
+      journalFailure: {
+        error: expect.objectContaining({ message: 'T2 unavailable' }),
+        dispatchCommitted: true,
+        outcomeCommitted: false
+      }
     })
 
     expect(order).toEqual([
@@ -431,7 +458,7 @@ describe('DeferredToolExecutor Execution Journal', () => {
     )
   })
 
-  it('does not reach the target when the dispatch commit fails', async () => {
+  it('propagates T1 persistence failure without reaching the target', async () => {
     const { execute, executionJournal, order } = createHarness()
     executionJournal.commitDispatch.mockImplementationOnce(() => {
       order.push('journal.dispatch.failed')
@@ -440,8 +467,14 @@ describe('DeferredToolExecutor Execution Journal', () => {
 
     await expect(execute()).resolves.toMatchObject({
       isError: true,
-      responseText: 'Error: Failed to commit deferred tool dispatch_committed.',
-      terminalError: 'Failed to commit deferred tool dispatch_committed.'
+      responseText: 'Tool dispatch was not recorded because Execution Journal persistence failed.',
+      journalFailure: {
+        error: expect.objectContaining({
+          message: 'Failed to commit deferred tool dispatch_committed.'
+        }),
+        dispatchCommitted: false,
+        outcomeCommitted: false
+      }
     })
 
     expect(order).not.toContain('target.call')

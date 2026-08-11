@@ -222,6 +222,17 @@ function createTapeTableMock() {
             entry.source_seq === sourceSeq
         )
     ),
+    getEventsBySourceId: vi.fn(
+      (sessionId: string, name: string, sourceType: string, sourceId: string) =>
+        entries.filter(
+          (entry) =>
+            entry.session_id === sessionId &&
+            entry.kind === 'event' &&
+            entry.name === name &&
+            entry.source_type === sourceType &&
+            entry.source_id === sourceId
+        )
+    ),
     getMaxEventSourceSeq: vi.fn(
       (sessionId: string, name: string, sourceType: string, sourceId: string) =>
         Math.max(

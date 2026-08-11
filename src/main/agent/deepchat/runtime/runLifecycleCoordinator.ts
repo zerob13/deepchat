@@ -27,6 +27,7 @@ import { buildUsageFromMetadata, stampTerminalMetadata } from './runtimeMetadata
 import type { SessionStatusPublisher } from './sessionStatusPublisher'
 import type { MessageProjectionService } from './messageProjectionService'
 import { resolveStreamRequestId as resolveRegistryStreamRequestId } from './streamRequestId'
+import { revokeToolSurfaceDeferredDispatchesForSession } from './toolSurface'
 import type { ProcessResult } from './types'
 
 export type PendingInputWakeReason = 'enqueue' | 'completed'
@@ -256,6 +257,7 @@ export class RunLifecycleCoordinator {
   }
 
   async cancel(sessionId: string): Promise<void> {
+    revokeToolSurfaceDeferredDispatchesForSession(sessionId)
     const scope = this.getHydratedScope(sessionId)
     if (!scope) {
       return
@@ -309,6 +311,7 @@ export class RunLifecycleCoordinator {
     if (!scope.isCurrent()) {
       return
     }
+    revokeToolSurfaceDeferredDispatchesForSession(scope.sessionId)
     scope.instance.abortAndClearGeneration()
     scope.instance.abortDeferredToolCalls()
     this.cancelProviderPermissions(scope.instance)

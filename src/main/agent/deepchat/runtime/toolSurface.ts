@@ -31,6 +31,7 @@ import { estimateToolDefinitionTokens } from './contextBuilder'
 
 export const TOOL_SURFACE_CATALOG_SCHEMA_VERSION = 1
 export const TOOL_SURFACE_SNAPSHOT_SCHEMA_VERSION = 1
+export const TOOL_SURFACE_DEFERRED_DISPATCH_BINDING_SCHEMA_VERSION = 1
 export const TOOL_SURFACE_CANONICALIZATION_VERSION = 'deepchat-tool-definition-v1'
 export const TOOL_SURFACE_ORDERING_VERSION = 'activation-ordinal-v1'
 export const FULL_TOOL_SURFACE_POLICY_VERSION = 'full-v1'
@@ -48,9 +49,12 @@ export const MAX_TOOL_SURFACE_CANDIDATE_BATCHES = 1_024
 export const MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES = 4_096
 export const MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH =
   TOOL_SEARCH_AGENT_TOOL_MAX_CALLS_PER_BATCH
+export const MAX_TOOL_SURFACE_DEFERRED_DISPATCHES = 4_096
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_TOOL_SURFACE_REQUEST_ID_BYTES = 1_024
+const MAX_TOOL_SURFACE_STABLE_TARGET_KEY_BYTES = 8 * 1_024
+const MAX_TOOL_SURFACE_DEFERRED_DISPATCH_BINDING_BYTES = 16 * 1_024
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const TOOL_SURFACE_SELECTION_REASONS = Object.freeze([
   'full-catalog',
@@ -83,6 +87,19 @@ const revokedToolSurfaceExecutionSnapshots = new WeakSet<ToolSurfaceSnapshot>()
 const executionBatchIssuedToolSurfaceSnapshots = new WeakSet<ToolSurfaceSnapshot>()
 // Tool execution contexts are request-local capabilities derived from one issued virtualized View.
 const issuedToolSurfaceExecutionContexts = new WeakSet<ToolSurfaceExecutionContext>()
+// Paused approvals retain only call-bound process-live authority, never a reusable active View.
+const issuedToolSurfaceDeferredDispatches = new WeakSet<ToolSurfaceDeferredDispatch>()
+const consumedRecoveredToolSurfaceDeferredDispatches = new WeakSet<ToolSurfaceDeferredDispatch>()
+const activeToolSurfaceDeferredDispatches = new Map<string, ToolSurfaceDeferredDispatch>()
+const claimedToolSurfaceDeferredDispatchKeys = new Set<string>()
+const toolSurfaceActiveEntryByName = new WeakMap<
+  ToolSurfaceSnapshot,
+  ReadonlyMap<string, ToolSurfaceSnapshotActiveEntry>
+>()
+const toolSurfaceEligibleEntryByTarget = new WeakMap<
+  ToolSurfaceSnapshot,
+  ReadonlyMap<string, CanonicalToolCatalogEntry>
+>()
 
 export type ToolSurfaceErrorCode =
   | 'conflicting_tool'
@@ -218,6 +235,32 @@ export interface ToolSurfaceSnapshot {
   readonly acceptedSearchEvidence: readonly ToolSurfaceActivationEvidence[]
   readonly activation: ToolSurfaceSnapshotActivation
 }
+
+export interface ToolSurfaceDeferredDispatchBindingV1 {
+  readonly schemaVersion: typeof TOOL_SURFACE_DEFERRED_DISPATCH_BINDING_SCHEMA_VERSION
+  readonly request: ToolSurfaceRequestIdentity
+  readonly toolCallId: string
+  readonly toolName: string
+  readonly stableTargetKey: string
+  readonly canonicalToolDefinitionHash: string
+  readonly contractBearing: boolean
+}
+
+export interface ProcessLiveToolSurfaceDeferredDispatch {
+  readonly authorityKind: 'process-live'
+  readonly snapshot: ToolSurfaceSnapshot
+  readonly binding: ToolSurfaceDeferredDispatchBindingV1
+}
+
+export interface RecoveredToolSurfaceDeferredDispatch {
+  readonly authorityKind: 'durable-binding'
+  readonly binding: ToolSurfaceDeferredDispatchBindingV1
+  readonly executionPolicyHash: string
+}
+
+export type ToolSurfaceDeferredDispatch =
+  | ProcessLiveToolSurfaceDeferredDispatch
+  | RecoveredToolSurfaceDeferredDispatch
 
 export type ToolSurfaceActivationRejectionCode =
   | 'ineligible'
@@ -437,6 +480,26 @@ export interface ToolSurfaceExecutionBatch {
   discard(): void
 }
 
+export function claimToolSurfaceExecution(snapshot: unknown): asserts snapshot is ToolSurfaceSnapshot {
+  assertIssuedToolSurfaceSnapshot(snapshot)
+  if (
+    !admittedToolSurfaceSnapshots.has(snapshot) ||
+    revokedToolSurfaceExecutionSnapshots.has(snapshot)
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface execution is not bound to an active provider View.',
+      'invalid_definition'
+    )
+  }
+  if (executionBatchIssuedToolSurfaceSnapshots.has(snapshot)) {
+    throw new ToolSurfaceError(
+      'Tool Surface execution was already claimed for this provider View.',
+      'invalid_definition'
+    )
+  }
+  executionBatchIssuedToolSurfaceSnapshots.add(snapshot)
+}
+
 export function createToolSurfaceExecutionBatch(input: {
   readonly snapshot: ToolSurfaceSnapshot
 }): ToolSurfaceExecutionBatch {
@@ -454,13 +517,7 @@ export function createToolSurfaceExecutionBatch(input: {
       'invalid_definition'
     )
   }
-  if (executionBatchIssuedToolSurfaceSnapshots.has(input.snapshot)) {
-    throw new ToolSurfaceError(
-      'Tool Surface execution batch was already issued for this provider View.',
-      'invalid_definition'
-    )
-  }
-  executionBatchIssuedToolSurfaceSnapshots.add(input.snapshot)
+  claimToolSurfaceExecution(input.snapshot)
   let active = true
   let sealedCandidates: readonly ToolSurfaceActivationCandidate[] | null = null
   const candidateBatchesByToolCall = new Map<
@@ -632,6 +689,371 @@ export function assertActiveToolSurfaceExecutionContext(
       'Tool Surface execution context is stale or does not match the active provider View.',
       'invalid_definition'
     )
+  }
+}
+
+function toolSurfaceDeferredDispatchKey(
+  sessionId: string,
+  messageId: string,
+  toolCallId: string
+): string {
+  return JSON.stringify([sessionId, messageId, toolCallId])
+}
+
+function assertToolSurfaceMembershipAllowsDispatch(
+  snapshot: unknown,
+  expectedRequest: ToolSurfaceRequestIdentity,
+  toolName: string,
+  allowRevokedSnapshot: boolean
+): ToolSurfaceSnapshotActiveEntry {
+  assertIssuedToolSurfaceSnapshot(snapshot)
+  if (
+    !admittedToolSurfaceSnapshots.has(snapshot) ||
+    (!allowRevokedSnapshot && revokedToolSurfaceExecutionSnapshots.has(snapshot)) ||
+    snapshot.request.sessionId !== expectedRequest.sessionId ||
+    snapshot.request.messageId !== expectedRequest.messageId ||
+    snapshot.request.runId !== expectedRequest.runId ||
+    snapshot.request.requestSeq !== expectedRequest.requestSeq
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface dispatch does not match an active provider View.',
+      'invalid_definition'
+    )
+  }
+  const activeEntry = toolSurfaceActiveEntryByName.get(snapshot)?.get(toolName)
+  if (!activeEntry) {
+    throw new ToolSurfaceError(
+      `Tool is not available in the current session: ${toolName}`,
+      'invalid_definition'
+    )
+  }
+  return activeEntry
+}
+
+function assertToolSurfaceDefinitionAllowsDispatch(
+  snapshot: unknown,
+  expectedRequest: ToolSurfaceRequestIdentity,
+  toolName: string,
+  currentDefinition: MCPToolDefinition | undefined,
+  allowRevokedSnapshot: boolean
+): asserts snapshot is ToolSurfaceSnapshot {
+  assertIssuedToolSurfaceSnapshot(snapshot)
+  const activeEntry = assertToolSurfaceMembershipAllowsDispatch(
+    snapshot,
+    expectedRequest,
+    toolName,
+    allowRevokedSnapshot
+  )
+  const assembledCatalogEntry = toolSurfaceEligibleEntryByTarget
+    .get(snapshot)
+    ?.get(activeEntry.stableTargetKey)
+  const currentEntry = currentDefinition
+    ? buildCanonicalToolCatalog([currentDefinition]).entries[0]
+    : undefined
+  if (
+    !assembledCatalogEntry ||
+    !currentEntry ||
+    currentEntry.stableTargetKey !== activeEntry.stableTargetKey ||
+    currentEntry.canonicalToolDefinitionHash !== activeEntry.canonicalToolDefinitionHash ||
+    currentEntry.exposure !== assembledCatalogEntry.exposure ||
+    canonicalJsonStringifyData(currentEntry.execution) !==
+      canonicalJsonStringifyData(assembledCatalogEntry.execution)
+  ) {
+    throw new ToolSurfaceError(
+      `Tool '${toolName}' changed after provider View assembly.`,
+      'conflicting_tool'
+    )
+  }
+}
+
+export function assertToolSurfaceAllowsDispatchMembership(
+  snapshot: unknown,
+  expectedRequest: ToolSurfaceRequestIdentity,
+  toolName: string
+): asserts snapshot is ToolSurfaceSnapshot {
+  assertToolSurfaceMembershipAllowsDispatch(snapshot, expectedRequest, toolName, false)
+}
+
+export function assertToolSurfaceAllowsDispatch(
+  snapshot: unknown,
+  expectedRequest: ToolSurfaceRequestIdentity,
+  toolName: string,
+  currentDefinition: MCPToolDefinition | undefined
+): asserts snapshot is ToolSurfaceSnapshot {
+  assertToolSurfaceDefinitionAllowsDispatch(
+    snapshot,
+    expectedRequest,
+    toolName,
+    currentDefinition,
+    false
+  )
+}
+
+export function registerToolSurfaceDeferredDispatch(input: {
+  readonly snapshot: ToolSurfaceSnapshot
+  readonly toolCallId: string
+  readonly toolName: string
+  readonly binding: ToolSurfaceDeferredDispatchBindingV1
+}): ProcessLiveToolSurfaceDeferredDispatch {
+  const visibleDefinition = toolSurfaceActiveEntryByName.get(input.snapshot)?.get(input.toolName)
+    ?.definition
+  assertToolSurfaceAllowsDispatch(
+    input.snapshot,
+    input.snapshot.request,
+    input.toolName,
+    visibleDefinition
+  )
+  const expectedBinding = buildToolSurfaceDeferredDispatchBinding({
+    snapshot: input.snapshot,
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+    contractBearing: input.binding.contractBearing
+  })
+  if (canonicalJsonStringifyData(input.binding) !== canonicalJsonStringifyData(expectedBinding)) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch binding does not match its provider View.',
+      'conflicting_tool'
+    )
+  }
+  const key = toolSurfaceDeferredDispatchKey(
+    input.snapshot.request.sessionId,
+    input.snapshot.request.messageId,
+    input.toolCallId
+  )
+  const existing = activeToolSurfaceDeferredDispatches.get(key)
+  if (existing) {
+    if (
+      existing.authorityKind === 'process-live' &&
+      existing.snapshot === input.snapshot &&
+      canonicalJsonStringifyData(existing.binding) === canonicalJsonStringifyData(expectedBinding)
+    ) {
+      return existing
+    }
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch identity is already bound.',
+      'conflicting_tool'
+    )
+  }
+  if (activeToolSurfaceDeferredDispatches.size >= MAX_TOOL_SURFACE_DEFERRED_DISPATCHES) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch capacity is exhausted.',
+      'limit_exceeded'
+    )
+  }
+  const capability = Object.freeze({
+    authorityKind: 'process-live' as const,
+    snapshot: input.snapshot,
+    binding: expectedBinding
+  })
+  issuedToolSurfaceDeferredDispatches.add(capability)
+  activeToolSurfaceDeferredDispatches.set(key, capability)
+  return capability
+}
+
+export function getToolSurfaceDeferredDispatch(
+  sessionId: string,
+  messageId: string,
+  toolCallId: string
+): ToolSurfaceDeferredDispatch | null {
+  if (
+    !isBoundedRequestIdentity(sessionId) ||
+    !isBoundedRequestIdentity(messageId) ||
+    !isBoundedRequestIdentity(toolCallId)
+  ) {
+    return null
+  }
+  return (
+    activeToolSurfaceDeferredDispatches.get(
+      toolSurfaceDeferredDispatchKey(sessionId, messageId, toolCallId)
+    ) ?? null
+  )
+}
+
+export function claimToolSurfaceDeferredDispatch(
+  capability: ToolSurfaceDeferredDispatch,
+  expected: {
+    readonly sessionId: string
+    readonly messageId: string
+    readonly toolCallId: string
+    readonly toolName: string
+  }
+): void {
+  assertIssuedToolSurfaceDeferredDispatch(capability, expected)
+  const key = toolSurfaceDeferredDispatchKey(
+    expected.sessionId,
+    expected.messageId,
+    expected.toolCallId
+  )
+  if (claimedToolSurfaceDeferredDispatchKeys.has(key)) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch is already claimed by another execution.',
+      'conflicting_tool'
+    )
+  }
+  claimedToolSurfaceDeferredDispatchKeys.add(key)
+}
+
+function assertIssuedToolSurfaceDeferredDispatch(
+  capability: unknown,
+  expected: {
+    readonly sessionId: string
+    readonly messageId: string
+    readonly toolCallId: string
+    readonly toolName: string
+  }
+): asserts capability is ToolSurfaceDeferredDispatch {
+  if (
+    !capability ||
+    typeof capability !== 'object' ||
+    !issuedToolSurfaceDeferredDispatches.has(capability as ToolSurfaceDeferredDispatch) ||
+    consumedRecoveredToolSurfaceDeferredDispatches.has(capability as ToolSurfaceDeferredDispatch)
+  ) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch was not issued by the active process.',
+      'invalid_definition'
+    )
+  }
+  const issued = capability as ToolSurfaceDeferredDispatch
+  const binding = issued.binding
+  if (
+    binding.request.sessionId !== expected.sessionId ||
+    binding.request.messageId !== expected.messageId ||
+    binding.toolCallId !== expected.toolCallId ||
+    binding.toolName !== expected.toolName ||
+    activeToolSurfaceDeferredDispatches.get(
+      toolSurfaceDeferredDispatchKey(expected.sessionId, expected.messageId, expected.toolCallId)
+    ) !== issued
+  ) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch is stale or belongs to another tool call.',
+      'invalid_definition'
+    )
+  }
+}
+
+export function assertToolSurfaceDeferredDispatchMembership(
+  capability: unknown,
+  expected: {
+    readonly sessionId: string
+    readonly messageId: string
+    readonly toolCallId: string
+    readonly toolName: string
+  }
+): asserts capability is ToolSurfaceDeferredDispatch {
+  assertIssuedToolSurfaceDeferredDispatch(capability, expected)
+  if (capability.authorityKind === 'process-live') {
+    assertToolSurfaceMembershipAllowsDispatch(
+      capability.snapshot,
+      capability.snapshot.request,
+      expected.toolName,
+      true
+    )
+  }
+}
+
+function assertCurrentDefinitionMatchesDeferredBinding(
+  capability: ToolSurfaceDeferredDispatch,
+  currentDefinition: MCPToolDefinition | undefined
+): void {
+  const binding = capability.binding
+  const currentEntry = currentDefinition
+    ? buildCanonicalToolCatalog([currentDefinition]).entries[0]
+    : undefined
+  if (
+    !currentEntry ||
+    currentEntry.stableTargetKey !== binding.stableTargetKey ||
+    currentEntry.canonicalToolDefinitionHash !== binding.canonicalToolDefinitionHash
+  ) {
+    throw new ToolSurfaceError(
+      `Tool '${binding.toolName}' changed after provider View assembly.`,
+      'conflicting_tool'
+    )
+  }
+  if (
+    capability.authorityKind === 'durable-binding' &&
+    hashJsonData(currentEntry.execution) !== capability.executionPolicyHash
+  ) {
+    throw new ToolSurfaceError(
+      `Tool '${binding.toolName}' execution policy changed after provider View assembly.`,
+      'conflicting_tool'
+    )
+  }
+}
+
+export function assertToolSurfaceDeferredDispatchAllowsDispatch(
+  capability: unknown,
+  expected: {
+    readonly sessionId: string
+    readonly messageId: string
+    readonly toolCallId: string
+    readonly toolName: string
+  },
+  currentDefinition: MCPToolDefinition | undefined
+): asserts capability is ToolSurfaceDeferredDispatch {
+  assertIssuedToolSurfaceDeferredDispatch(capability, expected)
+  if (capability.authorityKind === 'process-live') {
+    assertToolSurfaceDefinitionAllowsDispatch(
+      capability.snapshot,
+      capability.snapshot.request,
+      expected.toolName,
+      currentDefinition,
+      true
+    )
+  }
+  assertCurrentDefinitionMatchesDeferredBinding(capability, currentDefinition)
+}
+
+export function consumeToolSurfaceDeferredDispatch(
+  capability: unknown,
+  expected: {
+    readonly sessionId: string
+    readonly messageId: string
+    readonly toolCallId: string
+    readonly toolName: string
+  }
+): void {
+  assertIssuedToolSurfaceDeferredDispatch(capability, expected)
+  const key = toolSurfaceDeferredDispatchKey(
+    expected.sessionId,
+    expected.messageId,
+    expected.toolCallId
+  )
+  activeToolSurfaceDeferredDispatches.delete(key)
+  claimedToolSurfaceDeferredDispatchKeys.delete(key)
+  if (capability.authorityKind === 'durable-binding') {
+    consumedRecoveredToolSurfaceDeferredDispatches.add(capability)
+  }
+}
+
+export function releaseToolSurfaceDeferredDispatchClaim(
+  sessionId: string,
+  messageId: string,
+  toolCallId: string,
+  capability: ToolSurfaceDeferredDispatch
+): void {
+  const key = toolSurfaceDeferredDispatchKey(sessionId, messageId, toolCallId)
+  if (activeToolSurfaceDeferredDispatches.get(key) !== capability) return
+  claimedToolSurfaceDeferredDispatchKeys.delete(key)
+}
+
+export function revokeToolSurfaceDeferredDispatch(
+  sessionId: string,
+  messageId: string,
+  toolCallId: string,
+  capability?: ToolSurfaceDeferredDispatch
+): void {
+  const key = toolSurfaceDeferredDispatchKey(sessionId, messageId, toolCallId)
+  if (capability && activeToolSurfaceDeferredDispatches.get(key) !== capability) return
+  activeToolSurfaceDeferredDispatches.delete(key)
+  claimedToolSurfaceDeferredDispatchKeys.delete(key)
+}
+
+export function revokeToolSurfaceDeferredDispatchesForSession(sessionId: string): void {
+  for (const [key, capability] of activeToolSurfaceDeferredDispatches) {
+    if (capability.binding.request.sessionId === sessionId) {
+      activeToolSurfaceDeferredDispatches.delete(key)
+      claimedToolSurfaceDeferredDispatchKeys.delete(key)
+    }
   }
 }
 
@@ -1047,6 +1469,171 @@ function isBoundedRequestIdentity(value: unknown): value is string {
     !value.includes('\0') &&
     Buffer.byteLength(value, 'utf8') <= MAX_TOOL_SURFACE_REQUEST_ID_BYTES
   )
+}
+
+function isBoundedStableTargetKey(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value === value.trim() &&
+    !value.includes('\0') &&
+    Buffer.byteLength(value, 'utf8') <= MAX_TOOL_SURFACE_STABLE_TARGET_KEY_BYTES
+  )
+}
+
+function hasExactOwnKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) return false
+  const actualKeys = Object.keys(value)
+  return actualKeys.length === keys.length && keys.every((key) => actualKeys.includes(key))
+}
+
+function isToolSurfaceRequestIdentity(value: unknown): value is ToolSurfaceRequestIdentity {
+  return (
+    hasExactOwnKeys(value, ['sessionId', 'messageId', 'runId', 'requestSeq']) &&
+    isBoundedRequestIdentity(value.sessionId) &&
+    isBoundedRequestIdentity(value.messageId) &&
+    isBoundedRequestIdentity(value.runId) &&
+    Number.isSafeInteger(value.requestSeq) &&
+    (value.requestSeq as number) > 0
+  )
+}
+
+export function isToolSurfaceDeferredDispatchBinding(
+  value: unknown
+): value is ToolSurfaceDeferredDispatchBindingV1 {
+  return (
+    hasExactOwnKeys(value, [
+      'schemaVersion',
+      'request',
+      'toolCallId',
+      'toolName',
+      'stableTargetKey',
+      'canonicalToolDefinitionHash',
+      'contractBearing'
+    ]) &&
+    value.schemaVersion === TOOL_SURFACE_DEFERRED_DISPATCH_BINDING_SCHEMA_VERSION &&
+    isToolSurfaceRequestIdentity(value.request) &&
+    isBoundedRequestIdentity(value.toolCallId) &&
+    isBoundedRequestIdentity(value.toolName) &&
+    isBoundedStableTargetKey(value.stableTargetKey) &&
+    typeof value.canonicalToolDefinitionHash === 'string' &&
+    /^[0-9a-f]{64}$/.test(value.canonicalToolDefinitionHash) &&
+    typeof value.contractBearing === 'boolean'
+  )
+}
+
+function freezeToolSurfaceDeferredDispatchBinding(
+  binding: ToolSurfaceDeferredDispatchBindingV1
+): ToolSurfaceDeferredDispatchBindingV1 {
+  return Object.freeze({
+    ...binding,
+    request: Object.freeze({ ...binding.request })
+  })
+}
+
+export function parseToolSurfaceDeferredDispatchBinding(
+  rawBinding: unknown
+): ToolSurfaceDeferredDispatchBindingV1 | null {
+  if (
+    typeof rawBinding !== 'string' ||
+    Buffer.byteLength(rawBinding, 'utf8') > MAX_TOOL_SURFACE_DEFERRED_DISPATCH_BINDING_BYTES
+  ) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(rawBinding) as unknown
+    return isToolSurfaceDeferredDispatchBinding(parsed)
+      ? freezeToolSurfaceDeferredDispatchBinding(parsed)
+      : null
+  } catch {
+    return null
+  }
+}
+
+export function buildToolSurfaceDeferredDispatchBinding(input: {
+  readonly snapshot: ToolSurfaceSnapshot
+  readonly toolCallId: string
+  readonly toolName: string
+  readonly contractBearing: boolean
+}): ToolSurfaceDeferredDispatchBindingV1 {
+  assertIssuedToolSurfaceSnapshot(input.snapshot)
+  if (
+    !isBoundedRequestIdentity(input.toolCallId) ||
+    !isBoundedRequestIdentity(input.toolName) ||
+    typeof input.contractBearing !== 'boolean'
+  ) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch identity is invalid.',
+      'invalid_definition'
+    )
+  }
+  const activeEntry = toolSurfaceActiveEntryByName.get(input.snapshot)?.get(input.toolName)
+  if (!activeEntry) {
+    throw new ToolSurfaceError(
+      `Tool is not available in the current session: ${input.toolName}`,
+      'invalid_definition'
+    )
+  }
+  const binding = freezeToolSurfaceDeferredDispatchBinding({
+    schemaVersion: TOOL_SURFACE_DEFERRED_DISPATCH_BINDING_SCHEMA_VERSION,
+    request: input.snapshot.request,
+    toolCallId: input.toolCallId,
+    toolName: input.toolName,
+    stableTargetKey: activeEntry.stableTargetKey,
+    canonicalToolDefinitionHash: activeEntry.canonicalToolDefinitionHash,
+    contractBearing: input.contractBearing
+  })
+  if (
+    !isToolSurfaceDeferredDispatchBinding(binding) ||
+    Buffer.byteLength(JSON.stringify(binding), 'utf8') >
+      MAX_TOOL_SURFACE_DEFERRED_DISPATCH_BINDING_BYTES
+  ) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch binding exceeds its durable limits.',
+      'limit_exceeded'
+    )
+  }
+  return binding
+}
+
+export function issueRecoveredToolSurfaceDeferredDispatch(
+  binding: ToolSurfaceDeferredDispatchBindingV1,
+  expectedExecution: ToolExecutionContract
+): RecoveredToolSurfaceDeferredDispatch {
+  if (!isToolSurfaceDeferredDispatchBinding(binding)) {
+    throw new ToolSurfaceError(
+      'Recovered Tool Surface dispatch binding is invalid.',
+      'invalid_definition'
+    )
+  }
+  const key = toolSurfaceDeferredDispatchKey(
+    binding.request.sessionId,
+    binding.request.messageId,
+    binding.toolCallId
+  )
+  if (activeToolSurfaceDeferredDispatches.has(key)) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch identity is already bound.',
+      'conflicting_tool'
+    )
+  }
+  if (activeToolSurfaceDeferredDispatches.size >= MAX_TOOL_SURFACE_DEFERRED_DISPATCHES) {
+    throw new ToolSurfaceError(
+      'Deferred Tool Surface dispatch capacity is exhausted.',
+      'limit_exceeded'
+    )
+  }
+  const capability = Object.freeze({
+    authorityKind: 'durable-binding' as const,
+    binding: freezeToolSurfaceDeferredDispatchBinding(binding),
+    executionPolicyHash: hashJsonData(expectedExecution)
+  })
+  issuedToolSurfaceDeferredDispatches.add(capability)
+  activeToolSurfaceDeferredDispatches.set(key, capability)
+  claimedToolSurfaceDeferredDispatchKeys.add(key)
+  return capability
 }
 
 function compareSafeIntegers(left: number, right: number): number {
@@ -2469,6 +3056,14 @@ export function createToolSurfaceSnapshot(input: {
     acceptedSearchEvidence,
     activation
   })
+  toolSurfaceActiveEntryByName.set(
+    snapshot,
+    new Map(activeEntries.map((entry) => [entry.definition.function.name, entry]))
+  )
+  toolSurfaceEligibleEntryByTarget.set(
+    snapshot,
+    new Map(eligible.catalog.entries.map((entry) => [entry.stableTargetKey, entry]))
+  )
   issuedToolSurfaceSnapshots.add(snapshot)
   return snapshot
 }
@@ -2507,6 +3102,7 @@ export function createFullToolSurfaceRunController(input: {
     }
   >()
   const admittedSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+  let latestExecutionEligibleSnapshot: ToolSurfaceSnapshot | null = null
 
   const controller: FullToolSurfaceRunController = {
     ceiling,
@@ -2564,10 +3160,14 @@ export function createFullToolSurfaceRunController(input: {
           'conflicting_tool'
         )
       }
+      if (latestExecutionEligibleSnapshot) {
+        revokeToolSurfaceExecutionEligibility(latestExecutionEligibleSnapshot)
+      }
       admittedLedger = proposal.nextLedger
       proposals.delete(snapshot)
       admittedSnapshots.add(snapshot)
       admittedToolSurfaceSnapshots.add(snapshot)
+      latestExecutionEligibleSnapshot = snapshot
     }
   }
   return Object.freeze(controller)

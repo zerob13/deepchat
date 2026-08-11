@@ -20,7 +20,9 @@ import {
   type TapeToolCatalogFactReference,
   type TapeToolCatalogSourceEntry,
   type TapeToolSurfaceActiveEntry,
-  type TapeToolSurfaceFact
+  type TapeToolSurfaceFact,
+  verifyTapeToolCatalogFact,
+  verifyTapeToolSurfaceFact
 } from '../domain/toolSurfaceFacts'
 import {
   TAPE_VIEW_MANIFEST_EVENT_NAME,
@@ -30,7 +32,9 @@ import {
 import type { TapeApplicationEntryStore, TapeApplicationProviders } from '../ports/application'
 import type {
   CommitTapeToolSurfaceViewInput,
+  TapeToolSurfaceFactRecord,
   TapeToolSurfaceViewCommitReceipt,
+  TapeToolSurfaceViewReader,
   TapeToolSurfaceViewWriter
 } from '../ports/capabilities'
 import { readCanonicalTapeIncarnationId } from './common'
@@ -433,11 +437,212 @@ function surfaceEventInput(
   }
 }
 
-export class ToolSurfaceProvenanceService implements TapeToolSurfaceViewWriter {
+function parsePersistedSurfaceFact(row: DeepChatTapeEntryRow): TapeToolSurfaceFact {
+  try {
+    const payload = JSON.parse(row.payload_json) as { name?: unknown; data?: unknown }
+    if (payload.name !== TAPE_TOOL_SURFACE_EVENT_NAME || !verifyTapeToolSurfaceFact(payload.data)) {
+      throw new TypeError('invalid Tool Surface fact payload')
+    }
+    const fact = payload.data
+    if (
+      row.session_id !== fact.request.sessionId ||
+      row.kind !== 'event' ||
+      row.name !== TAPE_TOOL_SURFACE_EVENT_NAME ||
+      row.source_type !== 'runtime_event' ||
+      row.source_id !== fact.request.messageId ||
+      row.source_seq !== fact.request.requestSeq
+    ) {
+      throw new TypeError('Tool Surface fact row identity does not match its payload')
+    }
+    return fact
+  } catch (error) {
+    throw new ToolSurfaceProvenanceCorruptionError(
+      `Tool surface entry ${row.entry_id} failed recovery validation.`,
+      { cause: error }
+    )
+  }
+}
+
+function parsePersistedCatalogFact(row: DeepChatTapeEntryRow): TapeToolCatalogFact {
+  try {
+    const payload = JSON.parse(row.payload_json) as { name?: unknown; data?: unknown }
+    if (payload.name !== TAPE_TOOL_CATALOG_EVENT_NAME || !verifyTapeToolCatalogFact(payload.data)) {
+      throw new TypeError('invalid Tool Catalog fact payload')
+    }
+    return payload.data
+  } catch (error) {
+    throw new ToolSurfaceProvenanceCorruptionError(
+      `Tool catalog entry ${row.entry_id} failed recovery validation.`,
+      { cause: error }
+    )
+  }
+}
+
+export class ToolSurfaceProvenanceService
+  implements TapeToolSurfaceViewWriter, TapeToolSurfaceViewReader
+{
   constructor(
     private readonly providers: ToolSurfaceProvenanceProviders,
     private readonly viewReplay: TapeViewReplayService
   ) {}
+
+  listToolSurfaceFactsByMessage(sessionId: string, messageId: string): TapeToolSurfaceFactRecord[] {
+    const normalizedSessionId = sessionId.trim()
+    const normalizedMessageId = messageId.trim()
+    if (!normalizedSessionId || !normalizedMessageId) {
+      throw new ToolSurfaceProvenanceError(
+        'Tool surface recovery identity is invalid.',
+        'invalid_input'
+      )
+    }
+    const table = this.providers.getEntryStore()
+    return this.parseRecoveryRows(
+      normalizedSessionId,
+      normalizedMessageId,
+      table.getEventsBySourceId(
+        normalizedSessionId,
+        TAPE_TOOL_SURFACE_EVENT_NAME,
+        'runtime_event',
+        normalizedMessageId
+      )
+    )
+  }
+
+  listToolSurfaceFactsByMessageRequest(
+    sessionId: string,
+    messageId: string,
+    requestSeq: number
+  ): TapeToolSurfaceFactRecord[] {
+    const normalizedSessionId = sessionId.trim()
+    const normalizedMessageId = messageId.trim()
+    if (
+      !normalizedSessionId ||
+      !normalizedMessageId ||
+      !Number.isSafeInteger(requestSeq) ||
+      requestSeq <= 0
+    ) {
+      throw new ToolSurfaceProvenanceError(
+        'Tool surface recovery identity is invalid.',
+        'invalid_input'
+      )
+    }
+    const table = this.providers.getEntryStore()
+    return this.parseRecoveryRows(
+      normalizedSessionId,
+      normalizedMessageId,
+      table.getEventsBySource(
+        normalizedSessionId,
+        TAPE_TOOL_SURFACE_EVENT_NAME,
+        'runtime_event',
+        normalizedMessageId,
+        requestSeq
+      )
+    )
+  }
+
+  private parseRecoveryRows(
+    sessionId: string,
+    messageId: string,
+    rows: DeepChatTapeEntryRow[]
+  ): TapeToolSurfaceFactRecord[] {
+    if (rows.length === 0) return []
+    const table = this.providers.getEntryStore()
+    const firstEntry = table.getFirstEntriesBySessions([sessionId])[0]
+    const tapeIncarnationId = firstEntry ? readCanonicalTapeIncarnationId(firstEntry) : null
+    if (!tapeIncarnationId) {
+      throw new ToolSurfaceProvenanceCorruptionError(
+        `Session ${sessionId} has no canonical Tape incarnation.`
+      )
+    }
+    const records = rows.map((row) => ({
+      entryId: row.entry_id,
+      fact: parsePersistedSurfaceFact(row)
+    }))
+    for (let index = 0; index < records.length; index += 1) {
+      const row = rows[index]
+      const { fact } = records[index]
+      if (
+        fact.catalog.sessionId !== sessionId ||
+        fact.catalog.tapeIncarnationId !== tapeIncarnationId ||
+        row.provenance_key !== surfaceProvenanceKey(tapeIncarnationId, fact.request) ||
+        !canonicalJsonEquals(row.meta_json, {
+          tapeIncarnationId,
+          schemaVersion: fact.schemaVersion,
+          surfaceHashVersion: fact.surfaceHashVersion,
+          runId: fact.request.runId,
+          manifestHash: fact.manifestHash,
+          fullCatalogHash: fact.catalog.fullCatalogHash,
+          surfaceHash: fact.surfaceHash,
+          contractBearing: fact.contractBearing
+        })
+      ) {
+        throw new ToolSurfaceProvenanceCorruptionError(
+          `Tool surface for message ${messageId} failed canonical row validation.`
+        )
+      }
+      const catalogRow = table.getByEntryId(sessionId, fact.catalog.entryId)
+      if (!catalogRow || catalogRow.entry_id >= row.entry_id) {
+        throw new ToolSurfaceProvenanceCorruptionError(
+          `Tool surface for message ${messageId} has an invalid catalog reference.`
+        )
+      }
+      const catalog = parsePersistedCatalogFact(catalogRow)
+      if (
+        catalog.fullCatalogHash !== fact.catalog.fullCatalogHash ||
+        catalog.catalogFactHash !== fact.catalog.catalogFactHash ||
+        catalogRow.session_id !== sessionId ||
+        catalogRow.kind !== 'event' ||
+        catalogRow.name !== TAPE_TOOL_CATALOG_EVENT_NAME ||
+        catalogRow.source_type !== 'runtime_event' ||
+        catalogRow.source_id !== catalog.fullCatalogHash ||
+        catalogRow.source_seq !== 0 ||
+        catalogRow.provenance_key !==
+          catalogProvenanceKey(tapeIncarnationId, catalog.fullCatalogHash) ||
+        !canonicalJsonEquals(catalogRow.meta_json, {
+          tapeIncarnationId,
+          schemaVersion: catalog.schemaVersion,
+          catalogFactHashVersion: catalog.catalogFactHashVersion,
+          fullCatalogHash: catalog.fullCatalogHash,
+          catalogFactHash: catalog.catalogFactHash
+        })
+      ) {
+        throw new ToolSurfaceProvenanceCorruptionError(
+          `Tool catalog for message ${messageId} failed canonical row validation.`
+        )
+      }
+      const retainedCatalogEntries = new Map(
+        catalog.entries.map((entry) => [entry.stableTargetKey, entry] as const)
+      )
+      for (const activeEntry of fact.activeEntries) {
+        const catalogEntry = retainedCatalogEntries.get(activeEntry.stableTargetKey)
+        if (!catalogEntry && catalog.retainedEntryCount === catalog.totalEntryCount) {
+          throw new ToolSurfaceProvenanceCorruptionError(
+            `Tool surface for message ${messageId} is missing its complete catalog entry.`
+          )
+        }
+        if (
+          catalogEntry &&
+          canonicalJsonStringifyData({
+            target: catalogEntry.target,
+            canonicalToolDefinitionHash: catalogEntry.canonicalToolDefinitionHash,
+            exposure: catalogEntry.exposure,
+            execution: catalogEntry.execution
+          }) !==
+            canonicalJsonStringifyData({
+              target: activeEntry.target,
+              canonicalToolDefinitionHash: activeEntry.canonicalToolDefinitionHash,
+              exposure: activeEntry.exposure,
+              execution: activeEntry.execution
+            })
+        ) {
+          throw new ToolSurfaceProvenanceCorruptionError(
+            `Tool surface for message ${messageId} conflicts with its retained catalog entry.`
+          )
+        }
+      }
+    }
+    return records
+  }
 
   commitToolSurfaceView(input: CommitTapeToolSurfaceViewInput): TapeToolSurfaceViewCommitReceipt {
     let prepared: PreparedCommitInput

@@ -16,6 +16,7 @@ import {
   SessionStatusPublisher,
   type SessionStatusPublisherPorts
 } from '@/agent/deepchat/runtime/sessionStatusPublisher'
+import * as toolSurface from '@/agent/deepchat/runtime/toolSurface'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
 const SESSION_ID = 'session'
@@ -311,6 +312,25 @@ describe('RunLifecycleCoordinator', () => {
     expect(transcript.setMessageError).toHaveBeenCalledOnce()
     expect(terminalObserver.observeTerminal).toHaveBeenCalledOnce()
     expect(pendingInputWakeup.drain).toHaveBeenCalledWith(SESSION_ID, 'completed')
+  })
+
+  it('revokes deferred Tool Surface dispatches when a session is cancelled', async () => {
+    const { coordinator } = createHarness()
+    const revoke = vi.spyOn(toolSurface, 'revokeToolSurfaceDeferredDispatchesForSession')
+
+    await coordinator.cancel(SESSION_ID)
+
+    expect(revoke).toHaveBeenCalledWith(SESSION_ID)
+  })
+
+  it('revokes deferred Tool Surface dispatches when current scope operations are cancelled', () => {
+    const { coordinator } = createHarness()
+    const scope = coordinator.getOrCreateScope(SESSION_ID)
+    const revoke = vi.spyOn(toolSurface, 'revokeToolSurfaceDeferredDispatchesForSession')
+
+    coordinator.cancelScopeOperations(scope)
+
+    expect(revoke).toHaveBeenCalledWith(SESSION_ID)
   })
 
   it('preserves pending interaction order across assistant messages', () => {

@@ -1703,6 +1703,36 @@ describe('ToolManager', () => {
     expect(order).toEqual(['journal', 'target', 'projection'])
   })
 
+  it('checks the exact current definition before committing or calling the target', async () => {
+    const serverName = 'dispatch-server'
+    const client = createClient(serverName)
+    const manager = createToolManager(
+      createProviderSettings(serverName),
+      createServerManager([client])
+    )
+    const [definition] = await manager.getAllToolDefinitions()
+    const assertCurrentToolDefinition = vi.fn(() => {
+      throw new Error('definition drift')
+    })
+    const commitDispatch = vi.fn()
+
+    await expect(
+      manager.callTool(
+        {
+          id: 'definition-drift-call',
+          type: 'function',
+          function: { name: 'echo', arguments: '{}' }
+        },
+        { assertCurrentToolDefinition, commitDispatch }
+      )
+    ).rejects.toThrow('definition drift')
+
+    expect(assertCurrentToolDefinition).toHaveBeenCalledOnce()
+    expect(assertCurrentToolDefinition).toHaveBeenCalledWith({ ...definition, source: 'mcp' })
+    expect(commitDispatch).not.toHaveBeenCalled()
+    expect(client.callTool).not.toHaveBeenCalled()
+  })
+
   it('returns a known target result when cancellation arrives as the target settles', async () => {
     const serverName = 'dispatch-server'
     const abortController = new AbortController()

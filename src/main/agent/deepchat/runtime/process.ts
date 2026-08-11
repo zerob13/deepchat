@@ -41,10 +41,18 @@ import {
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
 import type { OutputSink } from '@/agent/deepchat/loop/ports'
 import { buildTapeToolFactInputs } from '@/tape/application/factPersistence'
+import {
+  ExecutionJournalCorruptionError,
+  ExecutionJournalError,
+  isExecutionJournalError
+} from '@/tape/domain/executionJournal'
 import type { TapeToolResultFactReference } from '@/tape/domain/toolSurfaceFacts'
-import type {
-  ToolSurfaceActivationCandidate,
-  ToolSurfaceActivationEvidence
+import {
+  registerToolSurfaceDeferredDispatch,
+  revokeToolSurfaceDeferredDispatch,
+  type ToolSurfaceActivationCandidate,
+  type ToolSurfaceActivationEvidence,
+  type ToolSurfaceDeferredDispatch
 } from '@/agent/deepchat/runtime/toolSurface'
 import {
   createOpaquePromptAssembly,
@@ -63,6 +71,41 @@ export const INCOMPLETE_TOOL_USE_ERROR =
 const deepChatLoopEngine = new DeepChatLoopEngine()
 type PendingPermissionPayload = NonNullable<PendingToolInteraction['permission']>
 type PendingPermissionCommandInfo = NonNullable<PendingPermissionPayload['commandInfo']>
+
+function wrapTerminalCommitFailure(
+  executionError: ExecutionJournalError,
+  terminalCommitError: unknown
+): ExecutionJournalError {
+  const terminalFailureCause = isExecutionJournalError(terminalCommitError)
+    ? terminalCommitError.cause
+    : terminalCommitError
+  const combinedCause =
+    terminalFailureCause === undefined || terminalFailureCause === executionError
+      ? executionError
+      : new AggregateError(
+          [executionError, terminalFailureCause],
+          'Run execution and terminal commit both failed.'
+        )
+
+  if (terminalCommitError instanceof ExecutionJournalCorruptionError) {
+    return new ExecutionJournalCorruptionError(terminalCommitError.message, {
+      cause: combinedCause
+    })
+  }
+  if (isExecutionJournalError(terminalCommitError)) {
+    return new ExecutionJournalError(terminalCommitError.message, terminalCommitError.code, {
+      cause: combinedCause
+    })
+  }
+  return new ExecutionJournalError(
+    terminalCommitError instanceof Error
+      ? terminalCommitError.message
+      : String(terminalCommitError),
+    'persistence_failed',
+    { cause: combinedCause }
+  )
+}
+
 type ToolRoundBatch = {
   prevBlockCount: number
   toolCalls: ToolCallResult[]
@@ -618,6 +661,20 @@ function settleLoopOutcome(
   stampRunAccounting(state, run)
   if (outcome.type === 'thrown') {
     commitRoundUsage(state)
+    if (isExecutionJournalError(outcome.error)) {
+      const journalError = outcome.error
+      stampRunOutcome(state, 'error', 'journal_error')
+      try {
+        commitRunTerminal({
+          outcome: 'error',
+          stopReason: 'journal_error',
+          errorMessage: journalError.message
+        })
+      } catch (terminalError) {
+        throw wrapTerminalCommitFailure(journalError, terminalError)
+      }
+      throw journalError
+    }
     if (io.abortSignal.aborted) {
       logger.info(`[ProcessStream] aborted via exception after ${eventCount} events`)
       stampRunOutcome(state, 'aborted', 'user_stop')
@@ -958,21 +1015,45 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
       }
     },
     settleTurn: ({ outcome }) => {
-      revokeActiveRequestToolSurface(run)
-      if (outcome.type === 'thrown') {
-        return settleLoopOutcome(
-          outcome,
-          state,
-          io,
-          eventCount,
-          run,
-          outputSink,
-          commitRunTerminal
-        )
+      const registeredDeferredDispatches: {
+        readonly sessionId: string
+        readonly messageId: string
+        readonly toolCallId: string
+        readonly capability: ToolSurfaceDeferredDispatch
+      }[] = []
+      const releaseRegisteredDeferredDispatches = (): void => {
+        for (const registered of registeredDeferredDispatches) {
+          revokeToolSurfaceDeferredDispatch(
+            registered.sessionId,
+            registered.messageId,
+            registered.toolCallId,
+            registered.capability
+          )
+        }
       }
-
       try {
-        return settleLoopOutcome(
+        if (
+          outcome.type === 'halted' &&
+          outcome.result.status === 'paused' &&
+          run.activeRequestToolSurface
+        ) {
+          for (const interaction of outcome.result.pendingInteractions ?? []) {
+            if (interaction.type !== 'permission' || !interaction.toolSurfaceBinding) continue
+            const registered = registerToolSurfaceDeferredDispatch({
+              snapshot: run.activeRequestToolSurface.snapshot,
+              toolCallId: interaction.toolCallId,
+              toolName: interaction.toolName,
+              binding: interaction.toolSurfaceBinding
+            })
+            registeredDeferredDispatches.push({
+              sessionId: run.sessionId,
+              messageId: run.messageId,
+              toolCallId: interaction.toolCallId,
+              capability: registered
+            })
+          }
+        }
+        const result = settleLoopOutcome(
           outcome,
           state,
           io,
@@ -981,7 +1062,10 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           outputSink,
           commitRunTerminal
         )
+        if (result.status !== 'paused') releaseRegisteredDeferredDispatches()
+        return result
       } catch (error) {
+        releaseRegisteredDeferredDispatches()
         if (terminalCommitAttempted) throw error
         return settleLoopOutcome(
           { type: 'thrown', error },
@@ -992,6 +1076,8 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           outputSink,
           commitRunTerminal
         )
+      } finally {
+        revokeActiveRequestToolSurface(run)
       }
     }
   }
@@ -1229,6 +1315,9 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           }
         },
         settleToolBatch: async ({ run, batch }) => {
+          if (run.resources.toolSurfaceMode === 'full' && !batch.toolSurface) {
+            throw new Error('Full Tool Surface Run lost its provider View dispatch capability.')
+          }
           const completedToolBatch = batch.toolCalls.map((toolCall) => ({ ...toolCall }))
           const settledTools = batch.toolSurface
             ? [...batch.toolSurface.snapshot.toolDefinitions]

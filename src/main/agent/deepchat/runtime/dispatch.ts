@@ -9,7 +9,7 @@ import type {
 } from '@shared/types/core/mcp'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { SearchResult } from '@shared/types/core/search'
-import type { AgentToolProgressUpdate } from '@shared/types/tool'
+import type { AgentToolProgressUpdate, ToolPermissionLeaseCapability } from '@shared/types/tool'
 import type { AssistantMessageBlock, PermissionMode } from '@shared/types/agent-interface'
 import type { AgentPlanSnapshot, AgentPlanTerminalReason } from '@shared/types/agent-plan'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
@@ -86,9 +86,12 @@ import {
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
 import type { LoopRunRequestToolSurfaceBinding } from '@/agent/deepchat/loop/loopRun'
 import {
+  buildToolSurfaceDeferredDispatchBinding,
+  claimToolSurfaceExecution,
   createToolSurfaceExecutionBatch,
   type ToolSurfaceActivationCandidate,
-  type ToolSurfaceExecutionBatch
+  type ToolSurfaceExecutionBatch,
+  type ToolSurfaceSnapshot
 } from './toolSurface'
 
 type PermissionType = 'read' | 'write' | 'all' | 'command'
@@ -1249,15 +1252,23 @@ function getOneShotCommandSignature(
 async function runWithAutoGrantedPermission<T>(
   controls: ProcessControlCollaborators | undefined,
   permission: NonNullable<PendingToolInteraction['permission']>,
-  run: (oneShotCommandGrantId?: string) => Promise<T>
+  run: (
+    oneShotCommandGrantId?: string,
+    onDispatchCommitted?: () => void,
+    permissionLease?: ToolPermissionLeaseCapability
+  ) => Promise<T>,
+  assertAuthority?: () => void
 ): Promise<T> {
   const expectedCommandSignature = getOneShotCommandSignature(permission)
   if (permission.permissionType === 'command' && !expectedCommandSignature) {
     throw new Error('Command approval is missing a valid shell profile and signature.')
   }
   let grant: Awaited<ReturnType<typeof autoGrantPermission>> = null
+  let grantFinalized = false
   try {
+    assertAuthority?.()
     grant = await autoGrantPermission(controls, permission)
+    assertAuthority?.()
     if (expectedCommandSignature) {
       if (grant?.kind !== 'command') {
         throw new Error('Command approval did not return a one-shot grant lease.')
@@ -1270,8 +1281,19 @@ async function runWithAutoGrantedPermission<T>(
     if (grant?.kind === 'command') {
       throw new Error('Non-command approval returned a command grant lease.')
     }
-    return await run()
+    const provisionalGrant = grant?.kind === 'granted' ? grant : null
+    return await run(
+      undefined,
+      () => {
+        provisionalGrant?.lease?.finalize()
+        grantFinalized = true
+      },
+      provisionalGrant?.lease?.capability
+    )
   } finally {
+    if (grant?.kind === 'granted' && grant.lease && !grantFinalized) {
+      grant.lease.revoke()
+    }
     if (grant?.kind === 'command') {
       try {
         controls?.revokeOneShotCommandPermission?.(grant.signature, grant.oneShotGrantId)
@@ -1496,8 +1518,17 @@ function appendPermissionActionBlock(
   permission: NonNullable<PendingToolInteraction['permission']>,
   origin: Extract<PendingToolInteractionOrigin, 'pre-check-permission' | 'post-call-permission'>,
   order: number,
-  executionContract?: DeepChatExecutionContract | null
+  executionContract?: DeepChatExecutionContract | null,
+  toolSurfaceSnapshot?: ToolSurfaceSnapshot
 ): ToolBatchInteraction {
+  const toolSurfaceBinding = toolSurfaceSnapshot
+    ? buildToolSurfaceDeferredDispatchBinding({
+        snapshot: toolSurfaceSnapshot,
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        contractBearing: Boolean(executionContract)
+      })
+    : undefined
   state.blocks.push({
     type: 'action',
     content: permission.description,
@@ -1528,6 +1559,9 @@ function appendPermissionActionBlock(
             )
           }
         : {}),
+      ...(toolSurfaceBinding
+        ? { toolSurfaceBinding: JSON.stringify(toolSurfaceBinding) }
+        : {}),
       ...(permission.rememberable === false ? { rememberable: false } : {})
     }
   })
@@ -1543,6 +1577,7 @@ function appendPermissionActionBlock(
     serverName: toolCall.serverName,
     serverIcons: toolCall.serverIcons,
     serverDescription: toolCall.serverDescription,
+    ...(toolSurfaceBinding ? { toolSurfaceBinding } : {}),
     permission
   }
 }
@@ -1696,9 +1731,12 @@ async function runToolCall(params: {
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
   executionContract?: DeepChatExecutionContract | null
   toolSurfaceExecutionBatch?: ToolSurfaceExecutionBatch
+  toolSurfaceSnapshot?: ToolSurfaceSnapshot
   toolCallOrdinalWithinBatch: number
   commandShell: ResolvedCommandShell
   oneShotCommandGrantId?: string
+  onPermissionDispatchCommitted?: () => void
+  permissionLease?: ToolPermissionLeaseCapability
 }): Promise<ToolRunOutcome> {
   const {
     execution,
@@ -1717,15 +1755,30 @@ async function runToolCall(params: {
     operationScope,
     executionContract,
     toolSurfaceExecutionBatch,
+    toolSurfaceSnapshot,
     toolCallOrdinalWithinBatch,
     commandShell,
-    oneShotCommandGrantId
+    oneShotCommandGrantId,
+    onPermissionDispatchCommitted,
+    permissionLease
   } = params
   const { completedToolCall, toolCall, toolContext } = execution
   const toolSurfaceContext =
     completedToolCall.name === TOOL_SEARCH_AGENT_TOOL_NAME && toolSurfaceExecutionBatch
       ? toolSurfaceExecutionBatch.createContext(toolCallOrdinalWithinBatch)
       : undefined
+  const assertToolSurfaceAuthority = (): void => {
+    if (!toolSurfaceSnapshot) return
+    toolExecution.assertAuthority(toolCall, {
+      permissionMode: toolPermissionMode,
+      signal: io.abortSignal,
+      commandShell,
+      messageId: io.messageId,
+      runId: operationScope.runId,
+      requestSeq: operationScope.requestSeq,
+      toolSurfaceSnapshot
+    })
+  }
   let returnedToolResult: MCPToolResponse | null = null
   let dispatchedOperation: ExecutionOperationIdentity | undefined
   let committedOutcome: StagedToolResult | undefined
@@ -1826,6 +1879,7 @@ async function runToolCall(params: {
     }
 
     let toolCallStarted = false
+    let activePermissionDispatchCommit = onPermissionDispatchCommitted
     const commitDispatch = (input: ToolDispatchCommitInput): void => {
       const receipt = executionJournal.commitDispatch({
         sessionId: io.sessionId,
@@ -1837,36 +1891,49 @@ async function runToolCall(params: {
         throw new ExecutionJournalDuplicateDispatchError(operation)
       }
       dispatchedOperation = operation
+      activePermissionDispatchCommit?.()
     }
-    const callTool = async (scopedOneShotCommandGrantId = oneShotCommandGrantId) => {
-      returnedToolResult = null
-      io.abortSignal.throwIfAborted()
-      if (!toolCallStarted) {
-        toolCallStarted = true
-        onToolCallStarted?.(completedToolCall.id)
+    const callTool = async (
+      scopedOneShotCommandGrantId = oneShotCommandGrantId,
+      scopedPermissionDispatchCommit = onPermissionDispatchCommitted,
+      scopedPermissionLease = permissionLease
+    ) => {
+      const previousPermissionDispatchCommit = activePermissionDispatchCommit
+      activePermissionDispatchCommit = scopedPermissionDispatchCommit
+      try {
+        returnedToolResult = null
+        io.abortSignal.throwIfAborted()
+        if (!toolCallStarted) {
+          toolCallStarted = true
+          onToolCallStarted?.(completedToolCall.id)
+        }
+        const enabledMcpServerIds = controls?.getEnabledMcpServerIds?.()
+        const result = await toolExecution.execute(toolCall, {
+          runId: operationScope.runId,
+          messageId: io.messageId,
+          requestSeq: operationScope.requestSeq,
+          ...(executionContract ? { executionContract } : {}),
+          ...(toolSurfaceSnapshot ? { toolSurfaceSnapshot } : {}),
+          onProgress: applyProgressUpdate,
+          signal: io.abortSignal,
+          permissionMode: toolPermissionMode,
+          activeSkillNames: controls?.getActiveSkillNames?.(),
+          agentId: controls?.getAgentId?.(),
+          commitDispatch,
+          registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection),
+          ...(toolSurfaceContext ? { toolSurfaceContext } : {}),
+          commandShell,
+          oneShotCommandGrantId: scopedOneShotCommandGrantId,
+          permissionLease: scopedPermissionLease,
+          ...(enabledMcpServerIds === null || enabledMcpServerIds === undefined
+            ? {}
+            : { enabledMcpServerIds })
+        })
+        returnedToolResult = result.rawData.requiresPermission ? null : result.rawData
+        return result
+      } finally {
+        activePermissionDispatchCommit = previousPermissionDispatchCommit
       }
-      const enabledMcpServerIds = controls?.getEnabledMcpServerIds?.()
-      const result = await toolExecution.execute(toolCall, {
-        runId: operationScope.runId,
-        messageId: io.messageId,
-        requestSeq: operationScope.requestSeq,
-        ...(executionContract ? { executionContract } : {}),
-        onProgress: applyProgressUpdate,
-        signal: io.abortSignal,
-        permissionMode: toolPermissionMode,
-        activeSkillNames: controls?.getActiveSkillNames?.(),
-        agentId: controls?.getAgentId?.(),
-        commitDispatch,
-        registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection),
-        ...(toolSurfaceContext ? { toolSurfaceContext } : {}),
-        commandShell,
-        oneShotCommandGrantId: scopedOneShotCommandGrantId,
-        ...(enabledMcpServerIds === null || enabledMcpServerIds === undefined
-          ? {}
-          : { enabledMcpServerIds })
-      })
-      returnedToolResult = result.rawData.requiresPermission ? null : result.rawData
-      return result
     }
 
     let toolCallResult = await callTool()
@@ -1874,6 +1941,7 @@ async function runToolCall(params: {
 
     if (toolRawData?.requiresPermission) {
       io.abortSignal.throwIfAborted()
+      assertToolSurfaceAuthority()
       const pendingPermission = normalizePermissionRequest(
         toolRawData.permissionRequest as PermissionRequestLike | undefined,
         {
@@ -1896,7 +1964,8 @@ async function runToolCall(params: {
           toolCallResult = await runWithAutoGrantedPermission(
             controls,
             pendingPermission,
-            callTool
+            callTool,
+            assertToolSurfaceAuthority
           )
           toolRawData = toolCallResult.rawData
         } else if (permissionMode === 'auto_approve') {
@@ -1910,11 +1979,13 @@ async function runToolCall(params: {
             permission: pendingPermission,
             reason: 'requires_permission'
           })
+          assertToolSurfaceAuthority()
           if (review === 'auto_allow') {
             toolCallResult = await runWithAutoGrantedPermission(
               controls,
               pendingPermission,
-              callTool
+              callTool,
+              assertToolSurfaceAuthority
             )
             toolRawData = toolCallResult.rawData
           } else {
@@ -2064,9 +2135,6 @@ async function runToolCall(params: {
     }
   } catch (err) {
     if (isExecutionJournalError(err)) {
-      if (err.code === 'invalid_fact' && !dispatchedOperation) {
-        return buildToolErrorOutcome(execution, err)
-      }
       throw err
     }
     if (committedOutcome?.operation) {
@@ -2154,6 +2222,9 @@ export async function settleToolBatch(
     toolSurface?.snapshot.virtualizationTriggered === true
       ? createToolSurfaceExecutionBatch({ snapshot: toolSurface.snapshot })
       : null
+  if (toolSurface && !toolSurfaceExecutionBatch) {
+    claimToolSurfaceExecution(toolSurface.snapshot)
+  }
   const candidateEligibleToolCallOrdinals = new Set<number>()
   const sealToolBatchOutcome = (
     committed: CommittedStagedToolResults
@@ -2292,6 +2363,18 @@ export async function settleToolBatch(
   }
 
   const toolPermissionMode = resolveToolPermissionMode(permissionMode)
+  const assertToolSurfaceAuthority = (call: MCPToolCall): void => {
+    if (!toolSurface) return
+    toolExecution.assertAuthority(call, {
+      permissionMode: toolPermissionMode,
+      signal: io.abortSignal,
+      commandShell,
+      messageId: io.messageId,
+      runId: operationScope.runId,
+      requestSeq: operationScope.requestSeq,
+      toolSurfaceSnapshot: toolSurface.snapshot
+    })
+  }
 
   const batchExecutionMode = selectToolBatchExecutionMode({
     permissionMode,
@@ -2315,9 +2398,18 @@ export async function settleToolBatch(
             const preChecked = await toolExecution.preCheck(execution.toolCall, {
               permissionMode: toolPermissionMode,
               signal: io.abortSignal,
-              commandShell
+              commandShell,
+              ...(toolSurface
+                ? {
+                    messageId: io.messageId,
+                    runId: operationScope.runId,
+                    requestSeq: operationScope.requestSeq,
+                    toolSurfaceSnapshot: toolSurface.snapshot
+                  }
+                : {})
             })
             io.abortSignal.throwIfAborted()
+            assertToolSurfaceAuthority(execution.toolCall)
             if (preChecked?.needsPermission) {
               const permission = normalizePermissionRequest(preChecked as PermissionRequestLike, {
                 toolName: execution.toolContext.name,
@@ -2337,7 +2429,11 @@ export async function settleToolBatch(
             }
           }
 
-          const execute = async (oneShotCommandGrantId?: string): Promise<ToolRunOutcome> => {
+          const execute = async (
+            oneShotCommandGrantId?: string,
+            onPermissionDispatchCommitted?: () => void,
+            permissionLease?: ToolPermissionLeaseCapability
+          ): Promise<ToolRunOutcome> => {
             io.abortSignal.throwIfAborted()
             emitDeepChatLoopNotification(notificationObserver, {
               event: 'PreToolUse',
@@ -2365,13 +2461,21 @@ export async function settleToolBatch(
               operationScope,
               executionContract,
               toolSurfaceExecutionBatch: toolSurfaceExecutionBatch ?? undefined,
+              toolSurfaceSnapshot: toolSurface?.snapshot,
               toolCallOrdinalWithinBatch,
               commandShell,
-              oneShotCommandGrantId
+              oneShotCommandGrantId,
+              onPermissionDispatchCommitted,
+              permissionLease
             })
           }
           return permissionToAutoGrant
-            ? await runWithAutoGrantedPermission(controls, permissionToAutoGrant, execute)
+            ? await runWithAutoGrantedPermission(
+                controls,
+                permissionToAutoGrant,
+                execute,
+                () => assertToolSurfaceAuthority(execution.toolCall)
+              )
             : await execute()
         } catch (error) {
           if (isExecutionJournalError(error)) throw error
@@ -2415,7 +2519,8 @@ export async function settleToolBatch(
           outcome.permission,
           'post-call-permission',
           takeInteractionOrder(),
-          executionContract
+          executionContract,
+          toolSurface?.snapshot
         )
         pendingInteractions.push(interaction)
         updateToolCallBlock(batchToolCallBlocks, outcome.toolContext.id, '', false)
@@ -2529,9 +2634,18 @@ export async function settleToolBatch(
         const preChecked = await toolExecution.preCheck(toolCall, {
           permissionMode: toolPermissionMode,
           signal: io.abortSignal,
-          commandShell
+          commandShell,
+          ...(toolSurface
+            ? {
+                messageId: io.messageId,
+                runId: operationScope.runId,
+                requestSeq: operationScope.requestSeq,
+                toolSurfaceSnapshot: toolSurface.snapshot
+              }
+            : {})
         })
         io.abortSignal.throwIfAborted()
+        assertToolSurfaceAuthority(toolCall)
         if (preChecked?.needsPermission) {
           preCheckedPermission = normalizePermissionRequest(preChecked as PermissionRequestLike, {
             toolName: toolContext.name,
@@ -2556,6 +2670,7 @@ export async function settleToolBatch(
             permission: preCheckedPermission,
             reason: 'precheck'
           })
+          assertToolSurfaceAuthority(toolCall)
           if (review === 'auto_allow') {
             permissionToAutoGrant = preCheckedPermission
           } else {
@@ -2582,7 +2697,8 @@ export async function settleToolBatch(
             preCheckedPermission,
             'pre-check-permission',
             takeInteractionOrder(),
-            executionContract
+            executionContract,
+            toolSurface?.snapshot
           )
           pendingInteractions.push(interaction)
           updateToolCallBlock(batchToolCallBlocks, tc.id, '', false)
@@ -2607,6 +2723,7 @@ export async function settleToolBatch(
           permission: reviewPermission,
           reason: 'tool_call'
         })
+        assertToolSurfaceAuthority(toolCall)
         if (review !== 'auto_allow') {
           emitDeepChatLoopNotification(notificationObserver, {
             event: 'PermissionRequest',
@@ -2624,7 +2741,8 @@ export async function settleToolBatch(
             reviewPermission,
             'pre-check-permission',
             takeInteractionOrder(),
-            executionContract
+            executionContract,
+            toolSurface?.snapshot
           )
           pendingInteractions.push(interaction)
           updateToolCallBlock(batchToolCallBlocks, tc.id, '', false)
@@ -2633,7 +2751,11 @@ export async function settleToolBatch(
         }
       }
 
-      const execute = async (oneShotCommandGrantId?: string): Promise<ToolRunOutcome> => {
+      const execute = async (
+        oneShotCommandGrantId?: string,
+        onPermissionDispatchCommitted?: () => void,
+        permissionLease?: ToolPermissionLeaseCapability
+      ): Promise<ToolRunOutcome> => {
         io.abortSignal.throwIfAborted()
         emitDeepChatLoopNotification(notificationObserver, {
           event: 'PreToolUse',
@@ -2661,13 +2783,21 @@ export async function settleToolBatch(
           operationScope,
           executionContract,
           toolSurfaceExecutionBatch: toolSurfaceExecutionBatch ?? undefined,
+          toolSurfaceSnapshot: toolSurface?.snapshot,
           toolCallOrdinalWithinBatch,
           commandShell,
-          oneShotCommandGrantId
+          oneShotCommandGrantId,
+          onPermissionDispatchCommitted,
+          permissionLease
         })
       }
       const outcome = permissionToAutoGrant
-        ? await runWithAutoGrantedPermission(controls, permissionToAutoGrant, execute)
+        ? await runWithAutoGrantedPermission(
+            controls,
+            permissionToAutoGrant,
+            execute,
+            () => assertToolSurfaceAuthority(toolCall)
+          )
         : await execute()
       batchState.invokedCallIds.add(tc.id)
 
@@ -2688,7 +2818,8 @@ export async function settleToolBatch(
           outcome.permission,
           'post-call-permission',
           takeInteractionOrder(),
-          executionContract
+          executionContract,
+          toolSurface?.snapshot
         )
         pendingInteractions.push(interaction)
         updateToolCallBlock(batchToolCallBlocks, tc.id, '', false)

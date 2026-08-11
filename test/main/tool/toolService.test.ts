@@ -27,8 +27,12 @@ import { createOpaquePromptAssembly } from '@/agent/deepchat/resources/promptAss
 import { buildExecutionContract } from '@/tape/domain/executionContract'
 import {
   buildCanonicalToolCatalog,
+  buildToolSurfaceDeferredDispatchBinding,
+  createFullToolSurfaceRunController,
   createPolicySelectedToolSurfaceRun,
   createToolSurfaceExecutionBatch,
+  registerToolSurfaceDeferredDispatch,
+  revokeToolSurfaceDeferredDispatch,
   revokeToolSurfaceExecutionEligibility,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
@@ -243,6 +247,353 @@ const cronJobRunFixture = {
 } as any
 
 describe('ToolService', () => {
+  it('dispatches an unchanged MCP definition through the exact Tool Surface boundary', async () => {
+    const definition = buildContractMcpDefinition()
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [definition],
+      initialActiveDefinitions: [definition],
+      policyVersion: 'tool-service-test-v1'
+    })
+    const request = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 1
+    }
+    const snapshot = controller.build({ request, eligibleDefinitions: [definition] })
+    controller.admit(snapshot)
+    const commitDispatch = vi.fn()
+    const mcpService = {
+      getAllToolDefinitions: vi.fn().mockResolvedValue([definition]),
+      callTool: vi.fn(async (toolCall, access) => {
+        access.assertCurrentToolDefinition({ ...definition, source: 'mcp' })
+        access.commitDispatch({
+          toolName: definition.function.name,
+          toolSource: 'mcp',
+          normalizedArguments: {},
+          target: {
+            serverName: definition.server.name,
+            originalName: definition.raw.name
+          }
+        })
+        return { toolCallId: toolCall.id, content: 'ok' }
+      })
+    } as any
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: request.sessionId,
+      sessionKind: 'regular'
+    })
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'unchanged-mcp-call',
+          type: 'function',
+          function: { name: definition.function.name, arguments: '{}' },
+          conversationId: request.sessionId
+        },
+        {
+          messageId: request.messageId,
+          runId: request.runId,
+          requestSeq: request.requestSeq,
+          permissionMode: 'full_access',
+          toolSurfaceSnapshot: snapshot,
+          commitDispatch
+        }
+      )
+    ).resolves.toMatchObject({ content: 'ok' })
+    expect(commitDispatch).toHaveBeenCalledOnce()
+  })
+
+  it('requires a durable dispatch commit for deferred Tool Surface authority', async () => {
+    const definition = buildContractMcpDefinition()
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [definition],
+      initialActiveDefinitions: [definition],
+      policyVersion: 'tool-service-test-v1'
+    })
+    const request = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 1
+    }
+    const snapshot = controller.build({ request, eligibleDefinitions: [definition] })
+    controller.admit(snapshot)
+    const toolCallId = 'deferred-without-journal'
+    const deferred = registerToolSurfaceDeferredDispatch({
+      snapshot,
+      toolCallId,
+      toolName: definition.function.name,
+      binding: buildToolSurfaceDeferredDispatchBinding({
+        snapshot,
+        toolCallId,
+        toolName: definition.function.name,
+        contractBearing: false
+      })
+    })!
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: { getAllToolDefinitions: vi.fn(), callTool: vi.fn() } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+
+    try {
+      await expect(
+        toolService.callTool(
+          {
+            id: toolCallId,
+            type: 'function',
+            function: { name: definition.function.name, arguments: '{}' },
+            conversationId: request.sessionId
+          },
+          {
+            messageId: request.messageId,
+            runId: request.runId,
+            requestSeq: request.requestSeq,
+            toolSurfaceDeferredDispatch: deferred
+          }
+        )
+      ).rejects.toThrow(/requires a durable dispatch commit/)
+    } finally {
+      revokeToolSurfaceDeferredDispatch(request.sessionId, request.messageId, toolCallId)
+    }
+  })
+
+  it('rejects Tool Surface definition drift before authorization or dispatch', async () => {
+    const definition = buildContractMcpDefinition()
+    const driftedDefinition = {
+      ...definition,
+      function: { ...definition.function, description: 'changed after provider View assembly' }
+    }
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [definition],
+      initialActiveDefinitions: [definition],
+      policyVersion: 'tool-service-test-v1'
+    })
+    const request = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 1
+    }
+    const snapshot = controller.build({ request, eligibleDefinitions: [definition] })
+    controller.admit(snapshot)
+    const mcpService = {
+      getAllToolDefinitions: vi
+        .fn()
+        .mockResolvedValueOnce([definition])
+        .mockResolvedValueOnce([driftedDefinition]),
+      callTool: vi.fn()
+    } as any
+    const effectObserver = {
+      beforeToolAuthorization: vi.fn(),
+      beforeToolExecution: vi.fn()
+    }
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock(),
+      effectObserver
+    })
+    const definitionContext = {
+      chatMode: 'agent' as const,
+      conversationId: request.sessionId,
+      sessionKind: 'regular' as const
+    }
+    await toolService.getAllToolDefinitions(definitionContext)
+    await toolService.getAllToolDefinitions(definitionContext)
+
+    await expect(
+      toolService.preCheckToolPermission(
+        {
+          id: 'drifted-pre-check',
+          type: 'function',
+          function: { name: definition.function.name, arguments: '{}' },
+          conversationId: request.sessionId
+        },
+        {
+          messageId: request.messageId,
+          runId: request.runId,
+          requestSeq: request.requestSeq,
+          toolSurfaceSnapshot: snapshot
+        }
+      )
+    ).rejects.toThrow(/changed after provider View assembly/)
+    await expect(
+      toolService.callTool(
+        {
+          id: 'drifted-call',
+          type: 'function',
+          function: { name: definition.function.name, arguments: '{}' },
+          conversationId: request.sessionId
+        },
+        {
+          messageId: request.messageId,
+          runId: request.runId,
+          requestSeq: request.requestSeq,
+          toolSurfaceSnapshot: snapshot,
+          commitDispatch: vi.fn()
+        }
+      )
+    ).rejects.toThrow(/changed after provider View assembly/)
+    expect(effectObserver.beforeToolAuthorization).not.toHaveBeenCalled()
+    expect(effectObserver.beforeToolExecution).not.toHaveBeenCalled()
+    expect(mcpService.callTool).not.toHaveBeenCalled()
+  })
+
+  it('rechecks Tool Surface authority at the dispatch commit boundary', async () => {
+    const definition = buildContractMcpDefinition()
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [definition],
+      initialActiveDefinitions: [definition],
+      policyVersion: 'tool-service-test-v1'
+    })
+    const request = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 1
+    }
+    const snapshot = controller.build({ request, eligibleDefinitions: [definition] })
+    controller.admit(snapshot)
+    const commitDispatch = vi.fn()
+    let toolService!: ToolService
+    const mcpService = {
+      getAllToolDefinitions: vi.fn().mockResolvedValue([definition]),
+      callTool: vi.fn(async (_request, access) => {
+        access.assertCurrentToolDefinition(definition)
+        toolService.clearConversationToolMapping(request.sessionId)
+        access.commitDispatch({
+          toolName: definition.function.name,
+          toolSource: 'mcp',
+          normalizedArguments: {},
+          target: {
+            serverName: definition.server.name,
+            originalName: definition.raw.name
+          }
+        })
+        throw new Error('unreachable')
+      })
+    } as any
+    toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: request.sessionId,
+      sessionKind: 'regular'
+    })
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'revoked-before-dispatch',
+          type: 'function',
+          function: { name: definition.function.name, arguments: '{}' },
+          conversationId: request.sessionId
+        },
+        {
+          messageId: request.messageId,
+          runId: request.runId,
+          requestSeq: request.requestSeq,
+          permissionMode: 'full_access',
+          toolSurfaceSnapshot: snapshot,
+          commitDispatch
+        }
+      )
+    ).rejects.toThrow(/not enabled by current runtime authority/)
+    expect(commitDispatch).not.toHaveBeenCalled()
+  })
+
+  it('rejects exact MCP schema drift at the final target dispatch boundary', async () => {
+    const definition = buildContractMcpDefinition()
+    const driftedDefinition = {
+      ...definition,
+      function: { ...definition.function, description: 'Changed after View assembly' }
+    }
+    const controller = createFullToolSurfaceRunController({
+      ceilingDefinitions: [definition],
+      initialActiveDefinitions: [definition],
+      policyVersion: 'tool-service-test-v1'
+    })
+    const request = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 1
+    }
+    const snapshot = controller.build({ request, eligibleDefinitions: [definition] })
+    controller.admit(snapshot)
+    const mcpService = {
+      getAllToolDefinitions: vi.fn().mockResolvedValue([definition]),
+      callTool: vi.fn(async (_request, access) => {
+        access.assertCurrentToolDefinition(driftedDefinition)
+        throw new Error('unreachable')
+      })
+    } as any
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: request.sessionId,
+      sessionKind: 'regular'
+    })
+    const commitDispatch = vi.fn()
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'schema-drift-before-dispatch',
+          type: 'function',
+          function: { name: definition.function.name, arguments: '{}' },
+          conversationId: request.sessionId
+        },
+        {
+          messageId: request.messageId,
+          runId: request.runId,
+          requestSeq: request.requestSeq,
+          permissionMode: 'full_access',
+          toolSurfaceSnapshot: snapshot,
+          commitDispatch
+        }
+      )
+    ).rejects.toThrow(/changed after provider View assembly/)
+    expect(mcpService.callTool).toHaveBeenCalledOnce()
+    expect(commitDispatch).not.toHaveBeenCalled()
+  })
+
   it('rejects stale ToolSearch execution contexts before authorization side effects', async () => {
     const stale = buildToolSurfaceExecutionContext(true)
     const revoked = buildToolSurfaceExecutionContext()
@@ -385,7 +736,7 @@ describe('ToolService', () => {
     revokeToolSurfaceExecutionEligibility(active.context.snapshot)
     resolveAuthorization(null)
 
-    await expect(pending).rejects.toThrow(/no longer active|stale/)
+    await expect(pending).rejects.toThrow(/active provider View|no longer active|stale/)
     expect(commitDispatch).not.toHaveBeenCalled()
     expect(registerOutcomeProjection).not.toHaveBeenCalled()
     active.batch.discard()
@@ -447,6 +798,74 @@ describe('ToolService', () => {
     ).resolves.toMatchObject({ content: 'ok' })
     expect(resolveConversationExecutionAuthority).toHaveBeenCalledTimes(2)
     expect(mcpService.callTool).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks live runtime authority at the actual T1 boundary', async () => {
+    const definition = buildContractMcpDefinition()
+    const authority = {
+      sessionId: 'session-1',
+      agentId: 'agent-1',
+      projectDir: '/workspace',
+      sessionKind: 'regular' as const,
+      disabledAgentTools: [] as string[],
+      enabledMcpServerIds: [definition.server.id as string],
+      subagentCapability: {
+        available: false as const,
+        reason: 'policy_disabled' as const,
+        cacheKey: 'unavailable'
+      }
+    }
+    const commitDispatch = vi.fn()
+    const mcpService = {
+      getAllToolDefinitions: vi.fn().mockResolvedValue([definition]),
+      callTool: vi.fn(async (_request, access) => {
+        authority.enabledMcpServerIds = []
+        access.commitDispatch?.({
+          toolName: definition.function.name,
+          toolSource: 'mcp',
+          normalizedArguments: {},
+          target: { serverName: definition.server.name, originalName: definition.function.name }
+        })
+        throw new Error('target must not execute after runtime revocation')
+      })
+    } as any
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({
+        resolveConversationExecutionAuthority: vi.fn(async () => authority),
+        resolveConversationExecutionAuthorityNow: vi.fn(() => authority)
+      })
+    })
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: 'session-1',
+      sessionKind: 'regular'
+    })
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'call-1',
+          type: 'function',
+          function: { name: definition.function.name, arguments: '{}' },
+          conversationId: 'session-1'
+        },
+        {
+          runId: CONTRACT_RUN_ID,
+          messageId: 'message-1',
+          requestSeq: 1,
+          executionContract: buildToolExecutionContract(definition),
+          permissionMode: 'full_access',
+          commitDispatch
+        }
+      )
+    ).rejects.toMatchObject({ code: 'tool_not_allowed' })
+    expect(commitDispatch).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -830,7 +1249,22 @@ describe('ToolService', () => {
       providerSettings: { getModelConfig: vi.fn() } as any,
       settings: { get: vi.fn() },
       commandPermissionHandler: new CommandPermissionService(),
-      agentTools: buildAgentToolRuntimeMock({ resolveConversationExecutionAuthority })
+      agentTools: buildAgentToolRuntimeMock({
+        resolveConversationExecutionAuthority,
+        resolveConversationExecutionAuthorityNow: (sessionId: string) => ({
+          sessionId,
+          agentId: 'agent-1',
+          projectDir: '/workspace',
+          sessionKind: 'regular',
+          disabledAgentTools: [],
+          enabledMcpServerIds: undefined,
+          subagentCapability: {
+            available: false,
+            reason: 'policy_disabled',
+            cacheKey: 'unavailable'
+          }
+        })
+      })
     })
 
     const definitions = await toolService.getAllToolDefinitions({

@@ -94,7 +94,7 @@ function createFixture(permissionMode: 'default' | 'full_access' = 'default') {
 }
 
 function createReader(records: ReturnType<typeof createFixture>['record'][] = []) {
-  return { listViewManifestsByMessage: vi.fn(() => records) }
+  return { listViewManifestsByMessageRequest: vi.fn(() => records) }
 }
 
 describe('deferred ExecutionContract recovery', () => {
@@ -111,7 +111,7 @@ describe('deferred ExecutionContract recovery', () => {
     })
 
     expect(resolved).toBe(fixture.executionContract)
-    expect(viewManifests.listViewManifestsByMessage).not.toHaveBeenCalled()
+    expect(viewManifests.listViewManifestsByMessageRequest).not.toHaveBeenCalled()
   })
 
   it('recovers a frozen projection from the single hash-verified v5 View', () => {
@@ -128,9 +128,10 @@ describe('deferred ExecutionContract recovery', () => {
 
     expect(resolved).toEqual(fixture.executionContract)
     expect(Object.isFrozen(resolved)).toBe(true)
-    expect(viewManifests.listViewManifestsByMessage).toHaveBeenCalledWith(
+    expect(viewManifests.listViewManifestsByMessageRequest).toHaveBeenCalledWith(
       'session-1',
-      'message-1'
+      'message-1',
+      3
     )
   })
 
@@ -145,7 +146,7 @@ describe('deferred ExecutionContract recovery', () => {
         viewManifests
       })
     ).toBeUndefined()
-    expect(viewManifests.listViewManifestsByMessage).not.toHaveBeenCalled()
+    expect(viewManifests.listViewManifestsByMessageRequest).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -197,7 +198,7 @@ describe('deferred ExecutionContract recovery', () => {
         viewManifests
       })
     ).toThrow(expect.objectContaining({ code: 'identity_mismatch' }))
-    expect(viewManifests.listViewManifestsByMessage).not.toHaveBeenCalled()
+    expect(viewManifests.listViewManifestsByMessageRequest).not.toHaveBeenCalled()
   })
 
   it.each(['{', 'x'.repeat(4097)])('rejects malformed or oversized binding data', (rawBinding) => {
@@ -211,6 +212,6 @@ describe('deferred ExecutionContract recovery', () => {
         viewManifests
       })
     ).toThrow(expect.objectContaining({ code: 'invalid_contract' }))
-    expect(viewManifests.listViewManifestsByMessage).not.toHaveBeenCalled()
+    expect(viewManifests.listViewManifestsByMessageRequest).not.toHaveBeenCalled()
   })
 })

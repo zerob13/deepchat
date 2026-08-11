@@ -31,6 +31,12 @@ export interface TapeEntryStore {
     sourceId: string,
     sourceSeq: number
   ): DeepChatTapeEntryRow[]
+  getEventsBySourceId(
+    sessionId: string,
+    name: string,
+    sourceType: DeepChatTapeSourceType,
+    sourceId: string
+  ): DeepChatTapeEntryRow[]
   getMaxEventSourceSeq(
     sessionId: string,
     name: string,
@@ -96,6 +102,11 @@ export interface ExecutionJournalPersistenceStore
     input: TapeEventAppendInput & { name: ExecutionJournalEventName }
   ): DeepChatTapeEntryRow
   listUnterminatedRunEvents(): Iterable<DeepChatTapeEntryRow>
+  listDispatchEventsForRecoveryIdentity(
+    sessionId: string,
+    messageId: string,
+    providerToolCallId: string
+  ): DeepChatTapeEntryRow[]
   getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
 }
 

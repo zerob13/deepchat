@@ -184,6 +184,20 @@ describe('DeepChat tool adapters', () => {
     })
   })
 
+  it('fails closed when a Tool Surface dispatch has no runtime authority gate', () => {
+    const port = createToolExecutionPort(createToolService())
+    const call: MCPToolCall = {
+      id: 'call-1',
+      type: 'function',
+      function: { name: 'write', arguments: '{}' },
+      conversationId: 'session-1'
+    }
+
+    expect(() =>
+      port.assertAuthority(call, { toolSurfaceSnapshot: {} } as never)
+    ).toThrow('Tool Surface runtime authority gate is unavailable.')
+  })
+
   it('delegates success, error, screenshot fallback, preparation and batch fitting', async () => {
     const normalize: ToolResultPort['normalize'] = vi.fn(async ({ content, isError }) =>
       isError ? content : 'English screenshot summary'

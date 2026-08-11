@@ -30,6 +30,7 @@ import {
 import type {
   DeepChatLoopToolNotification,
   ToolExecutionOptions,
+  ToolExecutionPreCheckOptions,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
 import type { LoopRunRequestToolSurfaceBinding } from '@/agent/deepchat/loop/loopRun'
@@ -51,6 +52,7 @@ import {
   MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH,
   assertIssuedToolSurfaceExecutionContext,
   buildCanonicalToolCatalog,
+  buildToolSurfaceDeferredDispatchBinding,
   createPolicySelectedToolSurfaceRun,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
@@ -230,6 +232,7 @@ function createMockToolService(responses: Record<string, string> = {}): ToolServ
       }
     }),
     preCheckToolPermission: vi.fn().mockResolvedValue(null),
+    assertToolSurfaceAuthority: vi.fn(),
     clearConversationToolMapping: vi.fn(),
     clearAgentPlanState: vi.fn(),
     buildToolSystemPrompt: vi.fn().mockReturnValue('')
@@ -416,10 +419,19 @@ describe('dispatch', () => {
       )
       const toolService = createMockToolService()
       const contexts = new Map<string, ToolExecutionOptions['toolSurfaceContext']>()
+      vi.mocked(toolService.preCheckToolPermission).mockImplementation(async (_request, options) => {
+        const preCheckOptions = options as ToolExecutionPreCheckOptions
+        expect(preCheckOptions.toolSurfaceSnapshot).toBe(binding.snapshot)
+        expect(preCheckOptions.messageId).toBe(io.messageId)
+        expect(preCheckOptions.runId).toBe(binding.snapshot.request.runId)
+        expect(preCheckOptions.requestSeq).toBe(binding.snapshot.request.requestSeq)
+        return null
+      })
       vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
         const executionOptions = options as ToolExecutionOptions | undefined
         const context = executionOptions?.toolSurfaceContext
         contexts.set(request.id, context)
+        expect(executionOptions?.toolSurfaceSnapshot).toBe(binding.snapshot)
         executionOptions?.commitDispatch({
           toolName: request.function.name,
           toolSource: 'agent',
@@ -778,6 +790,57 @@ describe('dispatch', () => {
       expect(toolService.callTool).not.toHaveBeenCalled()
     })
 
+    it('persists a call-bound Tool Surface binding before a permission pause', async () => {
+      const { tools, binding } = createDispatchToolSurfaceBinding([
+        makeAgentTool('write_file', TOOL_EXECUTION.write)
+      ])
+      const toolService = createMockToolService()
+      vi.mocked(toolService.preCheckToolPermission).mockResolvedValue({
+        needsPermission: true,
+        requiresUserConfirmation: true,
+        permissionType: 'write',
+        description: 'Need write permission'
+      })
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: { id: 'tc-write', name: 'write_file', params: '{}', response: '' }
+      })
+      state.completedToolCalls = [{ id: 'tc-write', name: 'write_file', arguments: '{}' }]
+
+      const settled = await settleToolBatch(
+        state,
+        [{ role: 'user', content: 'Write' }],
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'default',
+        new ToolOutputGuard(),
+        32_000,
+        1_024,
+        { toolSurface: binding },
+        'openai'
+      )
+
+      const expectedBinding = buildToolSurfaceDeferredDispatchBinding({
+        snapshot: binding.snapshot,
+        toolCallId: 'tc-write',
+        toolName: 'write_file',
+        contractBearing: false
+      })
+      expect(settled).toMatchObject({
+        type: 'paused',
+        interactions: [{ toolSurfaceBinding: expectedBinding }]
+      })
+      const action = state.blocks.find((block) => block.action_type === 'tool_call_permission')
+      expect(JSON.parse(action?.extra?.toolSurfaceBinding as string)).toEqual(expectedBinding)
+      expect(toolService.callTool).not.toHaveBeenCalled()
+    })
+
     it('builds assistant message, calls tools, updates blocks', async () => {
       const tools = [makeAgentTool('get_weather')]
       const toolService = createMockToolService({ get_weather: 'Sunny, 72F' })
@@ -1001,7 +1064,7 @@ describe('dispatch', () => {
       expect(conversation).toHaveLength(4)
     })
 
-    it('rejects one invalid pre-dispatch fact without cancelling parallel siblings', async () => {
+    it('propagates an invalid pre-dispatch fact without invoking its target', async () => {
       const tools = [
         makeTool('invalid', TOOL_EXECUTION.read.parallel),
         makeTool('valid', TOOL_EXECUTION.read.parallel)
@@ -1074,18 +1137,20 @@ describe('dispatch', () => {
           },
           'openai'
         )
-      ).resolves.toMatchObject({ executed: 2 })
+      ).rejects.toThrow('normalizedArguments must be JSON serializable')
 
       expect(invalidTarget).not.toHaveBeenCalled()
       expect(validTarget).toHaveBeenCalledOnce()
-      expect(conversation.at(-2)).toMatchObject({
-        tool_call_id: 'tc-invalid',
-        content: expect.stringContaining('must be JSON serializable')
+      expect(conversation).toHaveLength(2)
+      expect(conversation[0]).toEqual({ role: 'user', content: 'Run both' })
+      expect(conversation[1]).toMatchObject({
+        role: 'assistant',
+        tool_calls: expect.arrayContaining([
+          expect.objectContaining({ id: 'tc-invalid' }),
+          expect.objectContaining({ id: 'tc-valid' })
+        ])
       })
-      expect(conversation.at(-1)).toMatchObject({
-        tool_call_id: 'tc-valid',
-        content: 'valid-result'
-      })
+      expect(conversation).not.toContainEqual(expect.objectContaining({ role: 'tool' }))
     })
 
     it('keeps a dispatched result unprojected when its outcome commit fails', async () => {
@@ -2817,6 +2882,9 @@ describe('dispatch', () => {
       const abortIo = createIo({ abortSignal: abortController.signal })
       const abortError = new Error('approved dispatch cancelled')
       abortError.name = 'AbortError'
+      const finalizePermission = vi.fn()
+      const revokePermission = vi.fn()
+      const permissionLease = { kind: 'file' as const, leaseId: 'file-lease-1' }
       const tools = [makeAgentTool('write')]
       const toolService = createMockToolService()
       vi.mocked(toolService.callTool)
@@ -2883,7 +2951,14 @@ describe('dispatch', () => {
           32000,
           1024,
           {
-            autoGrantPermission: vi.fn().mockResolvedValue(undefined),
+            autoGrantPermission: vi.fn().mockResolvedValue({
+              kind: 'granted',
+              lease: {
+                capability: permissionLease,
+                finalize: finalizePermission,
+                revoke: revokePermission
+              }
+            }),
             executionJournal: {
               commitDispatch: vi.fn(() => ({ sessionId: 's1', entryId: 1, created: true })),
               commitToolOutcome
@@ -2892,11 +2967,162 @@ describe('dispatch', () => {
         )
       ).rejects.toBe(abortError)
 
+      expect(finalizePermission).toHaveBeenCalledOnce()
+      expect(revokePermission).not.toHaveBeenCalled()
+      expect(vi.mocked(toolService.callTool).mock.calls[1]?.[1]).toMatchObject({ permissionLease })
       expect(commitToolOutcome).not.toHaveBeenCalled()
       expect(state.blocks[0]).toMatchObject({
         status: 'pending',
         tool_call: { response: '' }
       })
+    })
+
+    it('revokes a pre-checked permission lease when Tool Surface authority changes before T1', async () => {
+      const { tools, binding } = createDispatchToolSurfaceBinding([
+        makeAgentTool('write_file', TOOL_EXECUTION.write)
+      ])
+      const toolService = createMockToolService({ write_file: 'written' }) as ToolServicePort & {
+        preCheckToolPermission: ReturnType<typeof vi.fn>
+        assertToolSurfaceAuthority: ReturnType<typeof vi.fn>
+      }
+      toolService.preCheckToolPermission.mockResolvedValue({
+        needsPermission: true,
+        permissionType: 'write',
+        description: 'Need write permission',
+        toolName: 'write_file',
+        serverName: 'agent-filesystem',
+        paths: ['/tmp/outside.txt'],
+        rememberable: false
+      })
+      let authorityRevoked = false
+      toolService.assertToolSurfaceAuthority.mockImplementation(() => {
+        if (authorityRevoked) throw new Error('Tool Surface authority was revoked')
+      })
+      const finalizePermission = vi.fn()
+      const revokePermission = vi.fn()
+      const autoGrantPermission = vi.fn(async () => {
+        authorityRevoked = true
+        return {
+          kind: 'granted' as const,
+          lease: { finalize: finalizePermission, revoke: revokePermission }
+        }
+      })
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc-write',
+          name: 'write_file',
+          params: '{"path":"/tmp/outside.txt","content":"hello"}',
+          response: ''
+        }
+      })
+      state.completedToolCalls = [
+        {
+          id: 'tc-write',
+          name: 'write_file',
+          arguments: '{"path":"/tmp/outside.txt","content":"hello"}'
+        }
+      ]
+
+      const result = await settleToolBatch(
+        state,
+        [],
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32000,
+        1024,
+        { autoGrantPermission, toolSurface: binding }
+      )
+
+      expect(result.type).toBe('completed')
+      expect(toolService.callTool).not.toHaveBeenCalled()
+      expect(finalizePermission).not.toHaveBeenCalled()
+      expect(revokePermission).toHaveBeenCalledOnce()
+    })
+
+    it('revokes a pre-checked permission lease when T1 persistence fails', async () => {
+      const tools = [makeAgentTool('write_file')]
+      const toolService = createMockToolService() as ToolServicePort & {
+        preCheckToolPermission: ReturnType<typeof vi.fn>
+      }
+      toolService.preCheckToolPermission.mockResolvedValue({
+        needsPermission: true,
+        permissionType: 'write',
+        description: 'Need write permission',
+        toolName: 'write_file',
+        serverName: 'agent-filesystem',
+        paths: ['/tmp/outside.txt'],
+        rememberable: false
+      })
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        options?.commitDispatch?.({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: { path: '/tmp/outside.txt', content: 'hello' },
+          target: { serverName: 'agent-filesystem', originalName: 'write_file' }
+        })
+        throw new Error('unreachable')
+      })
+      const finalizePermission = vi.fn()
+      const revokePermission = vi.fn()
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc-write',
+          name: 'write_file',
+          params: '{"path":"/tmp/outside.txt","content":"hello"}',
+          response: ''
+        }
+      })
+      state.completedToolCalls = [
+        {
+          id: 'tc-write',
+          name: 'write_file',
+          arguments: '{"path":"/tmp/outside.txt","content":"hello"}'
+        }
+      ]
+
+      await expect(
+        settleToolBatch(
+          state,
+          [],
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          new ToolOutputGuard(),
+          32000,
+          1024,
+          {
+            autoGrantPermission: vi.fn().mockResolvedValue({
+              kind: 'granted',
+              lease: { finalize: finalizePermission, revoke: revokePermission }
+            }),
+            executionJournal: {
+              commitDispatch: vi.fn(() => {
+                throw new ExecutionJournalError('T1 unavailable', 'persistence_failed')
+              }),
+              commitToolOutcome: vi.fn()
+            }
+          }
+        )
+      ).rejects.toThrow('T1 unavailable')
+
+      expect(finalizePermission).not.toHaveBeenCalled()
+      expect(revokePermission).toHaveBeenCalledOnce()
     })
 
     it.each([
@@ -3966,24 +4192,26 @@ describe('dispatch', () => {
       })
       state.completedToolCalls = [{ id: '', name: 'mutate', arguments: '{}' }]
 
-      await settleToolBatch(
-        state,
-        [],
-        0,
-        tools,
-        toolService,
-        'gpt-4',
-        io,
-        'full_access',
-        new ToolOutputGuard(),
-        32000,
-        1024
-      )
+      await expect(
+        settleToolBatch(
+          state,
+          [],
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          new ToolOutputGuard(),
+          32000,
+          1024
+        )
+      ).rejects.toThrow('providerToolCallId')
 
       expect(toolService.callTool).not.toHaveBeenCalled()
       expect(state.blocks[0]).toMatchObject({
-        status: 'error',
-        tool_call: { response: expect.stringContaining('providerToolCallId') }
+        status: 'pending',
+        tool_call: { response: '' }
       })
     })
 

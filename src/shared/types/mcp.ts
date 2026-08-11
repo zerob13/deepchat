@@ -649,6 +649,7 @@ export interface McpServicePort {
       enabledServerIds?: string[]
       runId?: string
       expectedTarget?: McpExpectedToolTarget
+      assertCurrentToolDefinition?: (definition: MCPToolDefinition) => void
       commitDispatch?: ToolDispatchCommit
       registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
     }

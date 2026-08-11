@@ -316,6 +316,7 @@ export interface AssistantMessageExtra {
   permissionRequestId?: string
   permissionRequest?: string
   executionContractBinding?: string
+  toolSurfaceBinding?: string
   commandInfo?: string
   rememberable?: boolean
   questionHeader?: string

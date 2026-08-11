@@ -7,6 +7,7 @@ import {
   type MCPToolDefinition,
   type MCPToolDefinitionBase,
   type MCPToolResponse,
+  type ToolDispatchCommit,
   type ToolExecutionContract
 } from '@shared/types/mcp'
 import type {
@@ -41,6 +42,7 @@ import {
 import type {
   AgentDisplaySettingsPort,
   AgentToolDependencies,
+  ConversationExecutionAuthority,
   LiveDelegationStartAuthorization
 } from './runtimePorts'
 import {
@@ -56,13 +58,33 @@ import type { AgentSettingsPort } from '@/agent/settings'
 import type { SettingsStore } from '@/config/settingsStore'
 import {
   assertActiveToolSurfaceExecutionContext,
-  type ToolSurfaceExecutionContext
+  assertToolSurfaceDeferredDispatchAllowsDispatch,
+  assertToolSurfaceDeferredDispatchMembership,
+  assertToolSurfaceAllowsDispatch,
+  assertToolSurfaceAllowsDispatchMembership,
+  consumeToolSurfaceDeferredDispatch,
+  revokeToolSurfaceDeferredDispatchesForSession,
+  type ToolSurfaceDeferredDispatch,
+  type ToolSurfaceExecutionContext,
+  type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
 import { buildToolSearchDefinition } from './agentTools/toolSearchTool'
 
 type MainProcessToolCallOptions = ToolCallOptions & {
+  readonly toolSurfaceDeferredDispatch?: ToolSurfaceDeferredDispatch
   readonly toolSurfaceContext?: ToolSurfaceExecutionContext
+  readonly toolSurfaceSnapshot?: ToolSurfaceSnapshot
 }
+type MainProcessToolPreCheckOptions = Pick<
+  MainProcessToolCallOptions,
+  | 'permissionMode'
+  | 'signal'
+  | 'commandShell'
+  | 'messageId'
+  | 'runId'
+  | 'requestSeq'
+  | 'toolSurfaceSnapshot'
+>
 import type { AgentCommandEnvironmentPort } from './agentTools/agentBashHandler'
 import type { ToolEffectObserver } from './effectObserver'
 import { resolvePluginToolPolicy } from '@/plugin/toolPolicyStore'
@@ -210,12 +232,15 @@ export class ToolService implements ToolServicePort {
       this.ensureAgentToolManager(agentWorkspacePath),
       {
         reportRuntimeDiagnostics: true,
-        mcpDefinitionSource: 'refresh',
-        onMcpDefinitions: (definitions) =>
-          this.rememberMcpDefinitions(context.conversationId, definitions)
+        mcpDefinitionSource: 'refresh'
       }
     )
-    this.publishMapper(context.conversationId, resolved.mapper, resolved.definitions)
+    this.publishMapper(
+      context.conversationId,
+      resolved.mapper,
+      resolved.definitions,
+      resolved.mcpDefinitions
+    )
     return resolved.definitions
   }
 
@@ -250,11 +275,11 @@ export class ToolService implements ToolServicePort {
     options: {
       reportRuntimeDiagnostics: boolean
       mcpDefinitionSource: 'refresh' | 'snapshot'
-      onMcpDefinitions?: (definitions: MCPToolDefinition[]) => void
       signal?: AbortSignal
     }
   ): Promise<{
     definitions: MCPToolDefinition[]
+    mcpDefinitions: MCPToolDefinition[]
     mapper: ToolMapper
     complete: boolean
     unavailableSourceCount: number
@@ -310,7 +335,6 @@ export class ToolService implements ToolServicePort {
     )
     definitions.push(...mcpDefinitions)
     mapper.registerTools(mcpDefinitions, 'mcp')
-    options.onMcpDefinitions?.(mcpDefinitions)
 
     try {
       const agentDefinitions = withToolSource(
@@ -358,7 +382,7 @@ export class ToolService implements ToolServicePort {
     }
 
     options.signal?.throwIfAborted()
-    return { definitions, mapper, complete, unavailableSourceCount }
+    return { definitions, mcpDefinitions, mapper, complete, unavailableSourceCount }
   }
 
   /**
@@ -417,6 +441,7 @@ export class ToolService implements ToolServicePort {
     this.conversationAgentDefinitions.delete(normalizedConversationId)
     this.conversationMcpAccessContexts.delete(normalizedConversationId)
     this.conversationMcpDefinitions.delete(normalizedConversationId)
+    revokeToolSurfaceDeferredDispatchesForSession(normalizedConversationId)
     this.permissionBroker.cancelConversation(normalizedConversationId)
     this.clearAgentPlanState(normalizedConversationId)
   }
@@ -440,6 +465,15 @@ export class ToolService implements ToolServicePort {
     options?.signal?.throwIfAborted()
     const toolName = request.function.name
     const toolSurfaceContext = options?.toolSurfaceContext
+    const toolSurfaceSnapshot = options?.toolSurfaceSnapshot ?? toolSurfaceContext?.snapshot
+    const toolSurfaceDeferredDispatch = options?.toolSurfaceDeferredDispatch
+    const commitDispatch = options?.commitDispatch
+    if (toolSurfaceDeferredDispatch && toolSurfaceSnapshot) {
+      throw new Error('Tool Surface dispatch cannot use active and deferred authority together.')
+    }
+    if (toolSurfaceDeferredDispatch && !commitDispatch) {
+      throw new Error('Deferred Tool Surface dispatch requires a durable dispatch commit.')
+    }
     if (toolName === TOOL_SEARCH_AGENT_TOOL_NAME && !toolSurfaceContext) {
       throw new Error('ToolSearch requires an active request-scoped execution context.')
     }
@@ -455,16 +489,74 @@ export class ToolService implements ToolServicePort {
         requestSeq: options.requestSeq ?? 0
       })
     }
+    const assertToolSurfaceDispatchAllowed = (): void => {
+      if (!toolSurfaceSnapshot && !toolSurfaceDeferredDispatch) return
+      if (toolSurfaceContext && toolSurfaceContext.snapshot !== toolSurfaceSnapshot) {
+        throw new Error('Tool Surface execution and dispatch contexts do not match.')
+      }
+      this.assertToolSurfaceAuthorityAllowsDispatch(
+        request,
+        { snapshot: toolSurfaceSnapshot, deferred: toolSurfaceDeferredDispatch },
+        options
+      )
+    }
+    const assertExactToolSurfaceDefinitionAllowed = (
+      currentDefinition: MCPToolDefinition
+    ): void => {
+      if (!toolSurfaceSnapshot && !toolSurfaceDeferredDispatch) return
+      this.assertExactToolSurfaceDefinitionAllowsDispatch(
+        request,
+        { snapshot: toolSurfaceSnapshot, deferred: toolSurfaceDeferredDispatch },
+        options,
+        currentDefinition
+      )
+    }
+    let dispatchSource: ToolSource | undefined
+    const requiresCurrentAuthority = Boolean(
+      toolSurfaceSnapshot || toolSurfaceDeferredDispatch || options?.executionContract
+    )
+    const guardedCommitDispatch: ToolDispatchCommit | undefined =
+      requiresCurrentAuthority && commitDispatch
+        ? (input) => {
+            assertToolSurfaceDispatchAllowed()
+            if (!dispatchSource) {
+              throw new ExecutionContractDispatchError(
+                `Tool '${toolName}' no longer resolves to its provider View target.`,
+                'target_mismatch'
+              )
+            }
+            this.assertCurrentRuntimeAuthorityAllowsDispatch(
+              request,
+              dispatchSource,
+              options,
+              this.options.agentTools.sessions.resolveConversationExecutionAuthorityNow(
+                request.conversationId?.trim() ?? ''
+              )
+            )
+            commitDispatch(input)
+            if (toolSurfaceDeferredDispatch) {
+              consumeToolSurfaceDeferredDispatch(toolSurfaceDeferredDispatch, {
+                sessionId: request.conversationId?.trim() ?? '',
+                messageId: options?.messageId?.trim() ?? '',
+                toolCallId: request.id,
+                toolName
+              })
+            }
+          }
+        : commitDispatch
     assertToolSurfaceContextActive()
     const source = this.getToolSource(toolName, request.conversationId)
-
+    dispatchSource = source
+    assertToolSurfaceDispatchAllowed()
     if (!source) {
       throw new Error(`Tool ${toolName} not found in any source`)
     }
     await this.assertExecutionContractDispatchAllowed(request, source, options)
+    assertToolSurfaceDispatchAllowed()
     const permissionMode =
       (await this.observeToolAuthorization(request, source, options?.signal))?.permissionMode ??
       options?.permissionMode
+    assertToolSurfaceDispatchAllowed()
     assertToolSurfaceContextActive()
 
     if (source === 'agent') {
@@ -476,6 +568,7 @@ export class ToolService implements ToolServicePort {
         request.conversationId,
         options?.signal
       )
+      assertToolSurfaceDispatchAllowed()
       this.assertSubagentAgentToolAllowed(preflightPolicy, toolName)
       assertToolSurfaceContextActive()
 
@@ -487,6 +580,7 @@ export class ToolService implements ToolServicePort {
           }),
           options?.signal
         )
+        assertToolSurfaceDispatchAllowed()
         const permissionContext = this.createRequiredAgentApprovalContext(
           request,
           args,
@@ -501,6 +595,7 @@ export class ToolService implements ToolServicePort {
           if (!authorization.allowed) {
             return this.createPermissionRequiredResponse(request.id, authorization.request)
           }
+          assertToolSurfaceDispatchAllowed()
           const operation = resolveLiveDelegationStartOperation(args.operation)
           const parentSessionId = request.conversationId?.trim()
           if (operation && parentSessionId) {
@@ -516,12 +611,14 @@ export class ToolService implements ToolServicePort {
         }
       }
 
+      assertToolSurfaceDispatchAllowed()
       await this.observeToolExecution(request, source, permissionMode, options?.signal)
       const dispatchPolicy = await this.resolveSubagentExecutionToolPolicy(
         request.conversationId,
         options?.signal
       )
       this.assertSubagentAgentToolAllowed(dispatchPolicy, toolName)
+      assertToolSurfaceDispatchAllowed()
       await this.assertExecutionContractDispatchAllowed(request, source, options)
       assertToolSurfaceContextActive()
       // Route to Agent tool manager
@@ -541,8 +638,9 @@ export class ToolService implements ToolServicePort {
             : {}),
           commandShell: options?.commandShell,
           oneShotCommandGrantId: options?.oneShotCommandGrantId,
+          permissionLease: options?.permissionLease,
           liveDelegationAuthorization,
-          commitDispatch: options?.commitDispatch,
+          commitDispatch: guardedCommitDispatch,
           registerOutcomeProjection: options?.registerOutcomeProjection
         }
       )
@@ -590,6 +688,7 @@ export class ToolService implements ToolServicePort {
       request.conversationId,
       options?.signal
     )
+    assertToolSurfaceDispatchAllowed()
     this.resolveAllowedMcpServerIds(preflightPolicy, configuredServerIds, definition, toolName)
 
     const permissionContext = this.createMcpPermissionContext(request, definition, permissionMode)
@@ -603,6 +702,7 @@ export class ToolService implements ToolServicePort {
       }
     }
 
+    assertToolSurfaceDispatchAllowed()
     await this.observeToolExecution(request, source, permissionMode, options?.signal)
     const dispatchPolicy = await this.resolveSubagentExecutionToolPolicy(
       request.conversationId,
@@ -614,6 +714,7 @@ export class ToolService implements ToolServicePort {
       definition,
       toolName
     )
+    assertToolSurfaceDispatchAllowed()
     await this.assertExecutionContractDispatchAllowed(request, source, options)
     return await this.options.mcpService.callTool(request, {
       agentId: options?.agentId ?? storedAccess?.agentId,
@@ -621,7 +722,10 @@ export class ToolService implements ToolServicePort {
       runId: options?.runId,
       signal: options?.signal,
       expectedTarget,
-      commitDispatch: options?.commitDispatch,
+      ...(toolSurfaceSnapshot || toolSurfaceDeferredDispatch
+        ? { assertCurrentToolDefinition: assertExactToolSurfaceDefinitionAllowed }
+        : {}),
+      commitDispatch: guardedCommitDispatch,
       registerOutcomeProjection: options?.registerOutcomeProjection
     })
   }
@@ -632,13 +736,10 @@ export class ToolService implements ToolServicePort {
    */
   async preCheckToolPermission(
     request: MCPToolCall,
-    options?: {
-      permissionMode?: PermissionMode
-      signal?: AbortSignal
-      commandShell?: ToolCallOptions['commandShell']
-    }
+    options?: MainProcessToolPreCheckOptions
   ): Promise<ToolPermissionPreCheckResult | null> {
     options?.signal?.throwIfAborted()
+    this.assertToolSurfaceAuthority(request, options)
     const toolName = request.function.name
     const source = this.getToolSource(toolName, request.conversationId)
 
@@ -649,6 +750,7 @@ export class ToolService implements ToolServicePort {
     const permissionMode =
       (await this.observeToolAuthorization(request, source, options?.signal))?.permissionMode ??
       options?.permissionMode
+    this.assertToolSurfaceAuthority(request, options)
 
     if (source === 'agent') {
       // Agent tools: delegate to AgentToolManager for pre-check
@@ -665,6 +767,7 @@ export class ToolService implements ToolServicePort {
         }),
         options?.signal
       )
+      this.assertToolSurfaceAuthority(request, options)
       if (!result) {
         return null
       }
@@ -689,6 +792,15 @@ export class ToolService implements ToolServicePort {
     return permissionContext
       ? this.permissionBroker.evaluateModel(permissionContext, options?.signal)
       : null
+  }
+
+  assertToolSurfaceAuthority(request: MCPToolCall, options?: MainProcessToolPreCheckOptions): void {
+    if (!options?.toolSurfaceSnapshot) return
+    this.assertToolSurfaceAuthorityAllowsDispatch(
+      request,
+      { snapshot: options.toolSurfaceSnapshot },
+      options
+    )
   }
 
   private resolveAgentToolResponse(response: AgentToolCallResult | string): AgentToolCallResult {
@@ -847,10 +959,25 @@ export class ToolService implements ToolServicePort {
         { cause: error }
       )
     }
-    options.signal?.throwIfAborted()
-    if (!currentAuthority || currentAuthority.sessionId.trim() !== sessionId) {
+    this.assertCurrentRuntimeAuthorityAllowsDispatch(
+      request,
+      expectedSource,
+      options,
+      currentAuthority
+    )
+  }
+
+  private assertCurrentRuntimeAuthorityAllowsDispatch(
+    request: MCPToolCall,
+    expectedSource: ToolSource,
+    options: MainProcessToolCallOptions | undefined,
+    currentAuthority: ConversationExecutionAuthority | null
+  ): void {
+    options?.signal?.throwIfAborted()
+    const sessionId = request.conversationId?.trim()
+    if (!sessionId || !currentAuthority || currentAuthority.sessionId.trim() !== sessionId) {
       throw new ExecutionContractDispatchError(
-        `Session ${sessionId} runtime authority is unavailable.`,
+        `Session ${sessionId || '<unknown>'} runtime authority is unavailable.`,
         'invalid_runtime_authority'
       )
     }
@@ -889,6 +1016,17 @@ export class ToolService implements ToolServicePort {
       }
     }
 
+    const contract = options?.executionContract
+    if (!contract) return
+    const messageId = options?.messageId?.trim()
+    const runId = options?.runId?.trim()
+    const requestSeq = options?.requestSeq
+    if (!messageId || !runId || !Number.isSafeInteger(requestSeq) || (requestSeq as number) <= 0) {
+      throw new ExecutionContractDispatchError(
+        'Contract-bearing tool dispatch requires complete provider View identity.',
+        'identity_mismatch'
+      )
+    }
     const currentProjectDir = currentAuthority.projectDir
     assertExecutionContractAllowsDispatch(contract, {
       request: {
@@ -904,6 +1042,94 @@ export class ToolService implements ToolServicePort {
       currentMaxSubagentDepth: currentAuthority.subagentCapability.available ? 1 : 0,
       requestedSubagentDepth: request.function.name === LIVE_DELEGATION_AGENT_TOOL_NAME ? 1 : 0
     })
+  }
+
+  private assertToolSurfaceAuthorityAllowsDispatch(
+    request: MCPToolCall,
+    authority: {
+      readonly snapshot?: ToolSurfaceSnapshot
+      readonly deferred?: ToolSurfaceDeferredDispatch
+    },
+    options?: Pick<MainProcessToolCallOptions, 'messageId' | 'runId' | 'requestSeq' | 'signal'>
+  ): void {
+    options?.signal?.throwIfAborted()
+    const sessionId = request.conversationId?.trim() ?? ''
+    const toolName = request.function.name
+    const currentSource = this.getToolSource(toolName, sessionId)
+    const currentDefinition =
+      currentSource === 'mcp'
+        ? this.getMcpDefinition(toolName, sessionId)
+        : currentSource === 'agent'
+          ? this.getAgentDefinition(toolName, sessionId)
+          : undefined
+    this.assertExactToolSurfaceDefinitionAllowsDispatch(
+      request,
+      authority,
+      options,
+      currentDefinition
+    )
+  }
+
+  private assertExactToolSurfaceDefinitionAllowsDispatch(
+    request: MCPToolCall,
+    authority: {
+      readonly snapshot?: ToolSurfaceSnapshot
+      readonly deferred?: ToolSurfaceDeferredDispatch
+    },
+    options:
+      | Pick<MainProcessToolCallOptions, 'messageId' | 'runId' | 'requestSeq' | 'signal'>
+      | undefined,
+    currentDefinition: MCPToolDefinition | undefined
+  ): void {
+    options?.signal?.throwIfAborted()
+    const sessionId = request.conversationId?.trim() ?? ''
+    const toolName = request.function.name
+    if (!currentDefinition) {
+      if (authority.deferred) {
+        assertToolSurfaceDeferredDispatchMembership(authority.deferred, {
+          sessionId,
+          messageId: options?.messageId?.trim() ?? '',
+          toolCallId: request.id,
+          toolName
+        })
+      } else {
+        assertToolSurfaceAllowsDispatchMembership(
+          authority.snapshot,
+          {
+            sessionId,
+            messageId: options?.messageId?.trim() ?? '',
+            runId: options?.runId?.trim() ?? '',
+            requestSeq: options?.requestSeq ?? 0
+          },
+          toolName
+        )
+      }
+      throw new Error(`Tool '${toolName}' is not enabled by current runtime authority.`)
+    }
+    if (authority.deferred) {
+      assertToolSurfaceDeferredDispatchAllowsDispatch(
+        authority.deferred,
+        {
+          sessionId,
+          messageId: options?.messageId?.trim() ?? '',
+          toolCallId: request.id,
+          toolName
+        },
+        currentDefinition
+      )
+      return
+    }
+    assertToolSurfaceAllowsDispatch(
+      authority.snapshot,
+      {
+        sessionId,
+        messageId: options?.messageId?.trim() ?? '',
+        runId: options?.runId?.trim() ?? '',
+        requestSeq: options?.requestSeq ?? 0
+      },
+      toolName,
+      currentDefinition
+    )
   }
 
   private async resolveSubagentExecutionToolPolicy(
@@ -1034,7 +1260,8 @@ export class ToolService implements ToolServicePort {
   private publishMapper(
     conversationId: string | undefined,
     mapper: ToolMapper,
-    definitions: MCPToolDefinition[]
+    definitions: MCPToolDefinition[],
+    mcpDefinitions: MCPToolDefinition[]
   ): void {
     const normalizedConversationId = conversationId?.trim()
     const agentDefinitions = new Map(
@@ -1042,9 +1269,13 @@ export class ToolService implements ToolServicePort {
         .filter((definition) => definition.source === 'agent')
         .map((definition) => [definition.function.name, definition])
     )
+    const mcpDefinitionsByName = new Map(
+      mcpDefinitions.map((definition) => [definition.function.name, definition])
+    )
     if (normalizedConversationId) {
       this.conversationMappers.set(normalizedConversationId, mapper)
       this.conversationAgentDefinitions.set(normalizedConversationId, agentDefinitions)
+      this.conversationMcpDefinitions.set(normalizedConversationId, mcpDefinitionsByName)
     }
 
     this.mapper.clear()
@@ -1053,18 +1284,7 @@ export class ToolService implements ToolServicePort {
     }
     this.globalMapperConversationId = normalizedConversationId || null
     this.globalAgentDefinitions = agentDefinitions
-  }
-
-  private rememberMcpDefinitions(
-    conversationId: string | undefined,
-    definitions: MCPToolDefinition[]
-  ): void {
-    const byName = new Map(definitions.map((definition) => [definition.function.name, definition]))
-    const normalizedConversationId = conversationId?.trim()
-    if (normalizedConversationId) {
-      this.conversationMcpDefinitions.set(normalizedConversationId, byName)
-    }
-    this.globalMcpDefinitions = byName
+    this.globalMcpDefinitions = mcpDefinitionsByName
   }
 
   private getMcpDefinition(

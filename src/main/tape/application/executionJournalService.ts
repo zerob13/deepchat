@@ -163,6 +163,43 @@ export class ExecutionJournalService
     return classifyExecutionJournalRows(this.getStore().listUnterminatedRunEvents())
   }
 
+  hasAnyCommittedDispatchForMessageToolCall(
+    sessionId: string,
+    messageId: string,
+    providerToolCallId: string
+  ): boolean {
+    const normalizedSessionId = sessionId.trim()
+    const normalizedMessageId = messageId.trim()
+    const normalizedToolCallId = providerToolCallId.trim()
+    if (!normalizedSessionId || !normalizedMessageId || !normalizedToolCallId) {
+      throw new ExecutionJournalError(
+        'Deferred dispatch recovery identity is invalid.',
+        'invalid_fact'
+      )
+    }
+    const rows = this.getStore().listDispatchEventsForRecoveryIdentity(
+      normalizedSessionId,
+      normalizedMessageId,
+      normalizedToolCallId
+    )
+    let matchingDispatches = 0
+    for (const row of rows) {
+      const fact = parseExecutionJournalFact(row)
+      if (fact.type !== 'execution/dispatch_committed' || fact.sessionId !== normalizedSessionId) {
+        throw new ExecutionJournalCorruptionError(
+          'Deferred dispatch recovery found a conflicting dispatch fact.'
+        )
+      }
+      if (
+        fact.messageId === normalizedMessageId &&
+        fact.operation.providerToolCallId === normalizedToolCallId
+      ) {
+        matchingDispatches += 1
+      }
+    }
+    return matchingDispatches > 0
+  }
+
   private commitStrictEvent(
     input: StrictEventInput,
     requirePrerequisite?: (table: ExecutionJournalPersistenceStore) => void,

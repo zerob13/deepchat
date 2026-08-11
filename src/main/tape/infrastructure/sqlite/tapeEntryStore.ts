@@ -805,6 +805,26 @@ export class DeepChatTapeEntriesTable
       .all(sessionId, name, sourceType, sourceId, sourceSeq) as DeepChatTapeEntryRow[]
   }
 
+  getEventsBySourceId(
+    sessionId: string,
+    name: string,
+    sourceType: DeepChatTapeSourceType,
+    sourceId: string
+  ): DeepChatTapeEntryRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = ?
+           AND source_type = ?
+           AND source_id = ?
+         ORDER BY source_seq ASC, entry_id ASC`
+      )
+      .all(sessionId, name, sourceType, sourceId) as DeepChatTapeEntryRow[]
+  }
+
   getMaxEventSourceSeq(
     sessionId: string,
     name: string,
@@ -1319,6 +1339,39 @@ export class DeepChatExecutionJournalStore
     return this.db
       .prepare(UNTERMINATED_EXECUTION_JOURNAL_EVENTS_SQL)
       .iterate() as IterableIterator<DeepChatTapeEntryRow>
+  }
+
+  listDispatchEventsForRecoveryIdentity(
+    sessionId: string,
+    messageId: string,
+    providerToolCallId: string
+  ): DeepChatTapeEntryRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = 'execution/dispatch_committed'
+           AND CASE
+             WHEN json_valid(payload_json) = 0 THEN 1
+             WHEN json_type(payload_json, '$.name') IS NOT 'text' THEN 1
+             WHEN json_extract(payload_json, '$.name') != 'execution/dispatch_committed' THEN 1
+             WHEN json_type(payload_json, '$.data.messageId') IS NOT 'text' THEN 1
+             WHEN json_type(
+               payload_json,
+               '$.data.operation.providerToolCallId'
+             ) IS NOT 'text' THEN 1
+             WHEN json_extract(payload_json, '$.data.messageId') = ?
+               AND json_extract(
+                 payload_json,
+                 '$.data.operation.providerToolCallId'
+               ) = ? THEN 1
+             ELSE 0
+           END = 1
+         ORDER BY entry_id ASC`
+      )
+      .all(sessionId, messageId, providerToolCallId) as DeepChatTapeEntryRow[]
   }
 
   appendExecutionJournalEvent(

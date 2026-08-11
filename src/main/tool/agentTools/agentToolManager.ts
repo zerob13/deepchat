@@ -7,7 +7,7 @@ import {
 } from '@shared/types/mcp'
 import type { AgentSettingsPort } from '@/agent/settings'
 import type { SettingsStore } from '@/config/settingsStore'
-import type { AgentToolProgressUpdate } from '@shared/types/tool'
+import type { AgentToolProgressUpdate, ToolPermissionLeaseCapability } from '@shared/types/tool'
 import { toDeepChatJsonSchema } from '@shared/lib/zodJsonSchema'
 import { z } from 'zod'
 import fs from 'fs'
@@ -50,7 +50,7 @@ import {
   IMAGE_GENERATE_TOOL_NAME,
   IMAGE_GENERATION_TOOL_SERVER_NAME
 } from './agentImageGenerationTool'
-import { AgentPlanTool, UPDATE_PLAN_TOOL_NAME } from './agentPlanTool'
+import { AGENT_CORE_TOOL_SERVER_NAME, AgentPlanTool, UPDATE_PLAN_TOOL_NAME } from './agentPlanTool'
 import { AgentTapeToolHandler } from './agentTapeTools'
 import { AGENT_MEMORY_TOOL_SERVER_NAME, AgentMemoryToolHandler } from './agentMemoryTools'
 import {
@@ -160,6 +160,7 @@ interface AgentToolExecutionOptions {
   commitDispatch?: ToolDispatchCommit
   commandShell?: ResolvedCommandShell
   oneShotCommandGrantId?: string
+  permissionLease?: ToolPermissionLeaseCapability
 }
 
 type AgentFileSystemExecutionOptions = AgentToolExecutionOptions & {
@@ -670,7 +671,13 @@ export class AgentToolManager {
     if (toolName === UPDATE_PLAN_TOOL_NAME) {
       return this.planTool.call(args, conversationId, {
         toolCallId: options?.toolCallId,
-        onProgress: options?.onProgress
+        onProgress: options?.onProgress,
+        beforeMutation: this.createAgentDispatchCommit(
+          toolName,
+          AGENT_CORE_TOOL_SERVER_NAME,
+          args,
+          options
+        )
       })
     }
 
@@ -1239,7 +1246,9 @@ export class AgentToolManager {
       includeSkillRoots: toolName !== 'exec',
       includeRuntimeRoots: toolName !== 'exec',
       requiredPermission: this.getRequiredFilePermission(toolName),
-      activeSkillNames: options.activeSkillNames
+      activeSkillNames: options.activeSkillNames,
+      provisionalLeaseId:
+        options.permissionLease?.kind === 'file' ? options.permissionLease.leaseId : undefined
     })
     const protectedDirectoryRules = await this.buildProtectedSkillDirectoryRules(
       conversationId,
@@ -1592,6 +1601,7 @@ export class AgentToolManager {
       includeRuntimeRoots?: boolean
       requiredPermission?: FilePermissionLevel
       activeSkillNames?: string[]
+      provisionalLeaseId?: string
     } = {}
   ): Promise<string[]> {
     const includeSkillRoots = options.includeSkillRoots !== false
@@ -1630,7 +1640,8 @@ export class AgentToolManager {
     if (conversationId) {
       const approved = this.dependencies.permissions.getApprovedFilePaths(
         conversationId,
-        options.requiredPermission ?? 'read'
+        options.requiredPermission ?? 'read',
+        options.provisionalLeaseId
       )
       for (const approvedPath of approved) {
         addPath(approvedPath)
@@ -2833,7 +2844,10 @@ export class AgentToolManager {
       if (shouldCheckPermission && conversationId) {
         const approved = this.dependencies.permissions.consumeSettingsApproval(
           conversationId,
-          toolName
+          toolName,
+          options?.permissionLease?.kind === 'settings'
+            ? options.permissionLease.leaseId
+            : undefined
         )
         if (!approved) {
           const responseContent = 'components.messageBlockPermissionRequest.description.write'

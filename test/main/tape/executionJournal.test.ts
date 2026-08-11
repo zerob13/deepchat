@@ -649,6 +649,143 @@ describe('Execution Journal domain and strict persistence', () => {
   })
 })
 
+itIfSqlite('finds an exact deferred dispatch even after its Run terminal commits', () => {
+  const db = new DatabaseCtor(':memory:')
+  try {
+    const table = new DeepChatExecutionJournalStore(db)
+    table.createTable()
+    const service = new ExecutionJournalService(() => table)
+    service.commitRunStarted({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      runKind: 'deferred_tool'
+    })
+    service.commitDispatch({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed, 'deferred-call-1'),
+      toolName: 'write',
+      toolSource: 'agent',
+      normalizedArguments: { path: '/tmp/file' },
+      target: { serverName: 'agent-filesystem', originalName: 'write' }
+    })
+    service.commitToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed, 'deferred-call-1'),
+      responseText: 'done',
+      isError: false
+    })
+    service.commitRunTerminal({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      outcome: 'completed',
+      stopReason: 'complete'
+    })
+
+    expect(
+      service.hasAnyCommittedDispatchForMessageToolCall(
+        'session-1',
+        'assistant-1',
+        'deferred-call-1'
+      )
+    ).toBe(true)
+    expect(
+      service.hasAnyCommittedDispatchForMessageToolCall(
+        'session-1',
+        'assistant-1',
+        'never-dispatched'
+      )
+    ).toBe(false)
+    expect(
+      service.hasAnyCommittedDispatchForMessageToolCall(
+        'session-1',
+        'another-message',
+        'deferred-call-1'
+      )
+    ).toBe(false)
+  } finally {
+    db.close()
+  }
+})
+
+itIfSqlite('fails deferred recovery closed for a malformed dispatch fact', () => {
+  const db = new DatabaseCtor(':memory:')
+  try {
+    const table = new DeepChatExecutionJournalStore(db)
+    table.createTable()
+    const service = new ExecutionJournalService(() => table)
+    service.commitRunStarted({
+      sessionId: 'session-1',
+      runId: RUN_IDS.indeterminate,
+      messageId: 'assistant-1',
+      runKind: 'deferred_tool'
+    })
+    service.commitDispatch({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.indeterminate, 'deferred-call-1'),
+      toolName: 'write',
+      toolSource: 'agent',
+      normalizedArguments: { path: '/tmp/file' },
+      target: { serverName: 'agent-filesystem', originalName: 'write' }
+    })
+    db.prepare(
+      `UPDATE deepchat_tape_entries
+       SET payload_json = '{'
+       WHERE session_id = ? AND name = 'execution/dispatch_committed'`
+    ).run('session-1')
+
+    expect(() =>
+      service.hasAnyCommittedDispatchForMessageToolCall(
+        'session-1',
+        'assistant-1',
+        'deferred-call-1'
+      )
+    ).toThrow()
+  } finally {
+    db.close()
+  }
+})
+
+itIfSqlite('conservatively fences the same provider tool-call ID across deferred Runs', () => {
+  const db = new DatabaseCtor(':memory:')
+  try {
+    const table = new DeepChatExecutionJournalStore(db)
+    table.createTable()
+    const service = new ExecutionJournalService(() => table)
+    for (const runId of [RUN_IDS.completed, RUN_IDS.indeterminate]) {
+      service.commitRunStarted({
+        sessionId: 'session-1',
+        runId,
+        messageId: 'assistant-1',
+        runKind: 'deferred_tool'
+      })
+      service.commitDispatch({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: operation(runId, 'deferred-call-1'),
+        toolName: 'write',
+        toolSource: 'agent',
+        normalizedArguments: { path: '/tmp/file' },
+        target: { serverName: 'agent-filesystem', originalName: 'write' }
+      })
+    }
+
+    expect(
+      service.hasAnyCommittedDispatchForMessageToolCall(
+        'session-1',
+        'assistant-1',
+        'deferred-call-1'
+      )
+    ).toBe(true)
+  } finally {
+    db.close()
+  }
+})
+
 itIfSqlite('loads only unterminated Runs through the dedicated SQLite index', () => {
   const db = new DatabaseCtor(':memory:')
   try {

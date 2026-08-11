@@ -20,6 +20,7 @@ import {
   normalizeStoredTapeViewManifest,
   withReplaySliceHash
 } from '../domain/replay'
+import { canonicalJsonStringifyData } from '../domain/canonicalJson'
 import {
   hashJson,
   TAPE_VIEW_MANIFEST_EVENT_NAME,
@@ -314,6 +315,50 @@ export class TapeViewReplayService {
       .map((row) => this.toViewManifestRecord(row))
       .filter((record): record is DeepChatTapeViewManifestRecord => Boolean(record))
       .sort((left, right) => right.requestSeq - left.requestSeq || right.entryId - left.entryId)
+  }
+
+  listViewManifestsByMessageRequest(
+    sessionId: string,
+    messageId: string,
+    requestSeq: number
+  ): DeepChatTapeViewManifestRecord[] {
+    const normalizedSessionId = sessionId.trim()
+    const normalizedMessageId = messageId.trim()
+    if (!normalizedSessionId || !normalizedMessageId || !isPositiveInteger(requestSeq)) {
+      throw new Error('View manifest recovery identity is invalid.')
+    }
+    return this.table
+      .getEventsBySource(
+        normalizedSessionId,
+        TAPE_VIEW_MANIFEST_EVENT_NAME,
+        'runtime_event',
+        normalizedMessageId,
+        requestSeq
+      )
+      .map((row) => {
+        const record = this.toViewManifestRecord(row)
+        if (
+          !record ||
+          row.provenance_key !== buildTapeViewManifestProvenanceKey(record.manifest) ||
+          row.created_at !== record.manifest.assembledAt ||
+          canonicalJsonStringifyData(parseJsonObject(row.payload_json)) !==
+            canonicalJsonStringifyData({
+              name: TAPE_VIEW_MANIFEST_EVENT_NAME,
+              data: { manifest: record.manifest }
+            }) ||
+          canonicalJsonStringifyData(parseJsonObject(row.meta_json)) !==
+            canonicalJsonStringifyData({
+              viewId: record.manifest.viewId,
+              requestSeq: record.manifest.requestSeq,
+              taskType: record.manifest.taskType,
+              policy: record.manifest.policy,
+              policyVersion: record.manifest.policyVersion
+            })
+        ) {
+          throw new Error(`View manifest entry ${row.entry_id} failed recovery validation.`)
+        }
+        return record
+      })
   }
 
   exportReplaySlice(

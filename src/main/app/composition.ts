@@ -190,6 +190,7 @@ import {
   normalizeDeepChatSubagentSlots,
   resolveDeepChatSubagentCapability
 } from '@shared/lib/deepchatSubagents'
+import { DEFAULT_DISABLED_AGENT_TOOLS } from '@shared/agentTools'
 import { composeSubagentAuthority } from '@/session/subagentAuthority'
 import type {
   AcpAsLlmProviderPermissionPort,
@@ -1095,6 +1096,53 @@ export async function createMainProcessControl(dependencies: {
   })
 
   const agentInvocationAdmission = new AgentInvocationAdmission()
+  const resolveConversationExecutionAuthorityNow = (conversationId: string) => {
+    const session = appSessionService.get(conversationId)
+    if (!session) return null
+    const resolveAgentConfig = (agentId: string) => {
+      const config = agentRepository.resolveDeepChatAgentConfig(agentId)
+      return {
+        ...config,
+        disabledAgentTools: Array.isArray(config.disabledAgentTools)
+          ? config.disabledAgentTools
+          : [...DEFAULT_DISABLED_AGENT_TOOLS]
+      }
+    }
+    const agentType = agentRepository.getAgentType(session.agentId)
+    const agentConfig = resolveAgentConfig(session.agentId)
+    const persistedDisabledAgentTools = appSessionService.getDisabledAgentTools(session.id)
+    let authority = composeSubagentAuthority({
+      disabledAgentTools: persistedDisabledAgentTools,
+      enabledMcpServerIds: agentConfig.enabledMcpServerIds
+    })
+    if (session.sessionKind === 'subagent') {
+      const parentSessionId = session.parentSessionId?.trim()
+      const parent = parentSessionId ? appSessionService.get(parentSessionId) : null
+      if (!parent || parent.sessionKind !== 'regular') {
+        throw new Error(`Subagent Session ${session.id} has no resolvable parent tool policy.`)
+      }
+      authority = composeSubagentAuthority(
+        { disabledAgentTools: persistedDisabledAgentTools },
+        { disabledAgentTools: appSessionService.getDisabledAgentTools(parent.id) },
+        resolveAgentConfig(parent.agentId),
+        agentConfig
+      )
+    }
+    return {
+      sessionId: session.id,
+      agentId: session.agentId,
+      projectDir: session.projectDir ?? null,
+      sessionKind: session.sessionKind,
+      disabledAgentTools: authority.disabledAgentTools,
+      enabledMcpServerIds: authority.enabledMcpServerIds,
+      subagentCapability: resolveDeepChatSubagentCapability({
+        agentType,
+        sessionKind: session.sessionKind,
+        agentPolicyEnabled: agentConfig.subagentEnabled === true,
+        slots: normalizeDeepChatSubagentSlots(agentConfig.subagents)
+      })
+    }
+  }
   const agentToolDependencies: AgentToolDependencies = {
     agentInvocationAdmission,
     sessions: {
@@ -1114,55 +1162,9 @@ export async function createMainProcessControl(dependencies: {
 
         return null
       },
-      resolveConversationExecutionAuthority: async (conversationId) => {
-        const session = await sessionQuery.getSession(conversationId)
-        if (!session) {
-          return null
-        }
-
-        const [agentType, persistedDisabledAgentTools, agentConfig] = await Promise.all([
-          agentSettings.getAgentType(session.agentId),
-          sessionAssignment.getSessionDisabledAgentTools(session.id),
-          agentSettings.resolveDeepChatAgentConfig(session.agentId)
-        ])
-        let authority = composeSubagentAuthority({
-          disabledAgentTools: persistedDisabledAgentTools,
-          enabledMcpServerIds: agentConfig.enabledMcpServerIds
-        })
-        if (session.sessionKind === 'subagent') {
-          const parentSessionId = session.parentSessionId?.trim()
-          const parent = parentSessionId ? await sessionQuery.getSession(parentSessionId) : null
-          if (!parent || parent.sessionKind !== 'regular') {
-            throw new Error(`Subagent Session ${session.id} has no resolvable parent tool policy.`)
-          }
-          const [parentDisabledAgentTools, parentConfig] = await Promise.all([
-            sessionAssignment.getSessionDisabledAgentTools(parent.id),
-            agentSettings.resolveDeepChatAgentConfig(parent.agentId)
-          ])
-          authority = composeSubagentAuthority(
-            { disabledAgentTools: persistedDisabledAgentTools },
-            { disabledAgentTools: parentDisabledAgentTools },
-            parentConfig,
-            agentConfig
-          )
-        }
-        const subagentCapability = resolveDeepChatSubagentCapability({
-          agentType,
-          sessionKind: session.sessionKind,
-          agentPolicyEnabled: agentConfig.subagentEnabled === true,
-          slots: normalizeDeepChatSubagentSlots(agentConfig.subagents)
-        })
-
-        return {
-          sessionId: session.id,
-          agentId: session.agentId,
-          projectDir: session.projectDir ?? null,
-          sessionKind: session.sessionKind,
-          disabledAgentTools: authority.disabledAgentTools,
-          enabledMcpServerIds: authority.enabledMcpServerIds,
-          subagentCapability
-        }
-      },
+      resolveConversationExecutionAuthorityNow,
+      resolveConversationExecutionAuthority: async (conversationId) =>
+        resolveConversationExecutionAuthorityNow(conversationId),
       resolveConversationSessionInfo: async (conversationId) => {
         const session = await sessionQuery.getSession(conversationId)
         if (!session) {
@@ -1304,10 +1306,14 @@ export async function createMainProcessControl(dependencies: {
         windowPresenter.sendSettingsNavigation(windowId, navigation)
     },
     permissions: {
-      getApprovedFilePaths: (conversationId, requiredPermission) =>
-        filePermissionService.getApprovedPaths(conversationId, requiredPermission),
-      consumeSettingsApproval: (conversationId, toolName) =>
-        settingsPermissionService.consumeApproval(conversationId, toolName)
+      getApprovedFilePaths: (conversationId, requiredPermission, provisionalLeaseId) =>
+        filePermissionService.getApprovedPaths(
+          conversationId,
+          requiredPermission,
+          provisionalLeaseId
+        ),
+      consumeSettingsApproval: (conversationId, toolName, provisionalLeaseId) =>
+        settingsPermissionService.consumeApproval(conversationId, toolName, provisionalLeaseId)
     }
   }
 

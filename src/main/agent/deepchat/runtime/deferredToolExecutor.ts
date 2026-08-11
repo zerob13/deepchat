@@ -32,6 +32,8 @@ import { isUserConfigurableAgentTool } from '@shared/agentTools'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import { CommandShellProfileSchema, type CommandShellProfile } from '@shared/commandShell'
 import type { CommandShellService } from '@/agent/shared/process/commandShellService'
+import type { ToolSurfaceDeferredDispatch } from './toolSurface'
+import type { ToolPermissionLeaseCapability } from '@shared/types/tool'
 
 export type DeferredToolExecutionResult = {
   responseText: string
@@ -105,7 +107,10 @@ export class DeferredToolExecutor {
     onToolCallStarted?: () => void,
     executionContract?: DeepChatExecutionContract,
     commandShellProfile?: CommandShellProfile,
-    oneShotCommandGrantId?: string
+    oneShotCommandGrantId?: string,
+    toolSurfaceDeferredDispatch?: ToolSurfaceDeferredDispatch,
+    onDispatchCommitted?: () => void,
+    permissionLease?: ToolPermissionLeaseCapability
   ): Promise<DeferredToolExecutionResult> {
     const toolName = toolCall.name
     if (!toolName) {
@@ -132,7 +137,6 @@ export class DeferredToolExecutor {
     let runId: string | null = null
     let runStartedCommitted = false
     let terminalCommitAttempted = false
-    let terminalCommitted = false
     let dispatchCommitted = false
     let outcomeCommitted = false
     let returnedToolResponse: MCPToolResponse | null = null
@@ -179,7 +183,6 @@ export class DeferredToolExecutor {
           `Execution Journal terminal for deferred tool Run ${committedRunId} already existed.`
         )
       }
-      terminalCommitted = true
     }
     const releaseOutcomeProjections = (): void => {
       if (pendingOutcomeProjections.length === 0) return
@@ -261,27 +264,19 @@ export class DeferredToolExecutor {
           )
         }
       }
-      if (!terminalCommitted) {
-        return {
-          ...(committedOutcomeProjection ?? {
-            responseText: dispatchCommitted
-              ? 'Tool dispatch was recorded, but its outcome is indeterminate. It will not be retried automatically.'
-              : 'Tool dispatch was not recorded because Execution Journal persistence failed.',
-            isError: true,
-            invoked
-          }),
-          journalFailure: {
-            error: failure,
-            dispatchCommitted,
-            outcomeCommitted
-          }
-        }
-      }
       return {
-        responseText: `Error: ${journalError.message}`,
-        isError: true,
-        invoked,
-        terminalError: journalError.message
+        ...(committedOutcomeProjection ?? {
+          responseText: dispatchCommitted
+            ? 'Tool dispatch was recorded, but its outcome is indeterminate. It will not be retried automatically.'
+            : 'Tool dispatch was not recorded because Execution Journal persistence failed.',
+          isError: true,
+          invoked
+        }),
+        journalFailure: {
+          error: failure,
+          dispatchCommitted,
+          outcomeCommitted
+        }
       }
     }
 
@@ -403,14 +398,21 @@ export class DeferredToolExecutor {
       invoked = true
       onToolCallStarted?.()
       const result = await this.dependencies.toolExecutionPort.execute(request, {
-        ...(executionContract
+        ...(toolSurfaceDeferredDispatch
           ? {
-              runId: executionContract.request.runId,
-              messageId,
-              requestSeq: executionContract.request.requestSeq,
-              executionContract
+              runId: toolSurfaceDeferredDispatch.binding.request.runId,
+              messageId: toolSurfaceDeferredDispatch.binding.request.messageId,
+              requestSeq: toolSurfaceDeferredDispatch.binding.request.requestSeq,
+              toolSurfaceDeferredDispatch
             }
-          : {}),
+          : executionContract
+            ? {
+                runId: executionContract.request.runId,
+                messageId,
+                requestSeq: executionContract.request.requestSeq
+              }
+            : {}),
+        ...(executionContract ? { executionContract } : {}),
         agentId: this.dependencies.identity.getAgentId(sessionId) ?? 'deepchat',
         permissionMode: sessionState.permissionMode,
         activeSkillNames: deferredActiveSkillNames,
@@ -443,10 +445,12 @@ export class DeferredToolExecutor {
             throw new ExecutionJournalDuplicateDispatchError(operation())
           }
           dispatchCommitted = true
+          onDispatchCommitted?.()
         },
         registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection),
         commandShell,
         oneShotCommandGrantId,
+        permissionLease,
         signal: deferredAbortSignal
       })
       const rawData = result.rawData as MCPToolResponse

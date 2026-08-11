@@ -38,6 +38,7 @@ import type {
   TapeMessageFactWriter,
   TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
+  TapeToolSurfaceViewReader,
   TapeToolSurfaceViewWriter,
   ExecutionJournalRecoveryReader,
   ExecutionJournalWriter,
@@ -104,6 +105,7 @@ export class SessionTape
     TapeReconciliationPort,
     TapeViewManifestReader,
     TapeViewManifestWriter,
+    TapeToolSurfaceViewReader,
     TapeToolSurfaceViewWriter,
     TapeAnchorReader,
     TapeAnchorWriter,
@@ -192,6 +194,18 @@ export class SessionTape
     return this.executionJournal.classifyRecoveryCandidates()
   }
 
+  hasAnyCommittedDispatchForMessageToolCall(
+    sessionId: string,
+    messageId: string,
+    providerToolCallId: string
+  ): boolean {
+    return this.executionJournal.hasAnyCommittedDispatchForMessageToolCall(
+      sessionId,
+      messageId,
+      providerToolCallId
+    )
+  }
+
   getMessageRecords(sessionId: string): ChatMessageRecord[] {
     return this.facts.getMessageRecords(sessionId)
   }
@@ -231,11 +245,38 @@ export class SessionTape
     return this.toolSurfaceProvenance.commitToolSurfaceView(input)
   }
 
+  listToolSurfaceFactsByMessageRequest(
+    sessionId: string,
+    messageId: string,
+    requestSeq: number
+  ): ReturnType<TapeToolSurfaceViewReader['listToolSurfaceFactsByMessageRequest']> {
+    return this.toolSurfaceProvenance.listToolSurfaceFactsByMessageRequest(
+      sessionId,
+      messageId,
+      requestSeq
+    )
+  }
+
+  listToolSurfaceFactsByMessage(
+    sessionId: string,
+    messageId: string
+  ): ReturnType<TapeToolSurfaceViewReader['listToolSurfaceFactsByMessage']> {
+    return this.toolSurfaceProvenance.listToolSurfaceFactsByMessage(sessionId, messageId)
+  }
+
   listViewManifestsByMessage(
     sessionId: string,
     messageId: string
   ): DeepChatTapeViewManifestRecord[] {
     return this.viewReplay.listViewManifestsByMessage(sessionId, messageId)
+  }
+
+  listViewManifestsByMessageRequest(
+    sessionId: string,
+    messageId: string,
+    requestSeq: number
+  ): DeepChatTapeViewManifestRecord[] {
+    return this.viewReplay.listViewManifestsByMessageRequest(sessionId, messageId, requestSeq)
   }
 
   exportReplaySlice(
