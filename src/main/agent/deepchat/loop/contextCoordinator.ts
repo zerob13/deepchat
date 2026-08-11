@@ -153,6 +153,8 @@ export interface ProviderAttemptManifestInput<TSelection> {
   contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
   executionContract?: DeepChatExecutionContract
+  /** Exact immutable snapshot whose tool definitions are sent by this provider request. */
+  toolSurfaceSnapshot: ToolSurfaceSnapshot | null
 }
 
 export interface ProviderAttemptManifestPort<TSelection> {
@@ -729,7 +731,8 @@ export class DeepChatContextCoordinator {
           traceDebugEnabled: input.viewContext?.traceDebugEnabled ?? input.traceDebugEnabled,
           contextBuilderVersion,
           syntheticContributions: manifestSyntheticContributions,
-          ...(executionContract ? { executionContract } : {})
+          ...(executionContract ? { executionContract } : {}),
+          toolSurfaceSnapshot
         })
       } catch (error) {
         if (executionContract) {
@@ -741,7 +744,7 @@ export class DeepChatContextCoordinator {
           const reason = error instanceof Error ? error.message : String(error)
           reportManifestError(
             new Error(
-              `ExecutionContract disabled for request ${requestSeq} because durable ViewManifest persistence could not be confirmed: ${reason}`,
+              `ExecutionContract disabled for request ${requestSeq} because durable provider View provenance could not be confirmed: ${reason}`,
               { cause: error }
             )
           )

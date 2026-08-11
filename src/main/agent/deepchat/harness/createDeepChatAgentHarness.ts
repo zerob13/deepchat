@@ -466,7 +466,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
         tapeReconciliation: tapeService,
         toolResolver,
         appendViewManifest: (manifest) =>
-          loopRunner.appendTapeViewManifest({
+          loopRunner.commitTapeProviderView({
             sessionId: manifest.sessionId,
             messageId: manifest.messageId,
             requestSeq: manifest.requestSeq,

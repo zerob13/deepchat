@@ -21,6 +21,10 @@ import {
 } from '@/tape/domain/executionContract'
 import {
   TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION,
+  type CreateTapeToolCatalogFactInput,
+  type CreateTapeToolSurfaceFactInput,
+  type TapeToolCatalogSourceEntry,
+  type TapeToolSurfaceActiveEntry,
   type TapeToolResultFactReference
 } from '@/tape/domain/toolSurfaceFacts'
 import { estimateToolDefinitionTokens } from './contextBuilder'
@@ -210,6 +214,8 @@ export interface ToolSurfaceSnapshot {
   readonly eligibleCatalog: CanonicalToolCatalog
   readonly activeEntries: readonly ToolSurfaceSnapshotActiveEntry[]
   readonly toolDefinitions: readonly MCPToolDefinition[]
+  /** Complete durable ToolSearch evidence for active search-result entries in this View. */
+  readonly acceptedSearchEvidence: readonly ToolSurfaceActivationEvidence[]
   readonly activation: ToolSurfaceSnapshotActivation
 }
 
@@ -267,6 +273,121 @@ export function assertIssuedToolSurfaceSnapshot(
       'Tool Surface snapshot was not issued by the canonical builder.',
       'invalid_definition'
     )
+  }
+}
+
+export interface ToolSurfaceTapeProvenanceProjection {
+  readonly catalog: CreateTapeToolCatalogFactInput
+  readonly surface: Omit<CreateTapeToolSurfaceFactInput, 'manifestHash' | 'catalog'>
+}
+
+export function projectToolSurfaceTapeProvenance(
+  snapshot: ToolSurfaceSnapshot,
+  contractBearing: boolean
+): ToolSurfaceTapeProvenanceProjection {
+  assertIssuedToolSurfaceSnapshot(snapshot)
+  if (typeof contractBearing !== 'boolean') {
+    throw new ToolSurfaceError(
+      'Tool Surface Tape projection requires an explicit contract-bearing state.',
+      'invalid_definition'
+    )
+  }
+  const catalogEntries: TapeToolCatalogSourceEntry[] = snapshot.eligibleCatalog.entries.map(
+    (entry) => ({
+      target: entry.target,
+      stableTargetKey: entry.stableTargetKey,
+      canonicalToolDefinitionHash: entry.canonicalToolDefinitionHash,
+      exposure: entry.exposure,
+      execution: entry.execution
+    })
+  )
+  const catalogEntryByTarget = new Map(
+    snapshot.eligibleCatalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  const activeEntries: TapeToolSurfaceActiveEntry[] = snapshot.activeEntries.map((entry) => {
+    const catalogEntry = catalogEntryByTarget.get(entry.stableTargetKey)
+    if (
+      !catalogEntry ||
+      catalogEntry.canonicalToolDefinitionHash !== entry.canonicalToolDefinitionHash
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface Tape projection lost an active catalog entry.',
+        'conflicting_tool'
+      )
+    }
+    return {
+      target: catalogEntry.target,
+      stableTargetKey: catalogEntry.stableTargetKey,
+      canonicalToolDefinitionHash: catalogEntry.canonicalToolDefinitionHash,
+      exposure: catalogEntry.exposure,
+      execution: catalogEntry.execution,
+      activationOrdinal: entry.activationOrdinal,
+      reason: entry.reason
+    }
+  })
+  const searchResultRefs = snapshot.acceptedSearchEvidence.map((evidence) => ({
+    originRequestSeq: evidence.requestSeq,
+    toolCallOrdinalWithinBatch: evidence.toolCallOrdinalWithinBatch,
+    resultRank: evidence.resultRank,
+    stableTargetKey: evidence.stableTargetKey,
+    canonicalToolDefinitionHash: evidence.canonicalToolDefinitionHash,
+    toolResult: evidence.toolResult
+  }))
+  const candidateRejections = [] as NonNullable<
+    CreateTapeToolSurfaceFactInput['candidateRejections']
+  >[number][]
+  for (const decision of snapshot.activation.decisions) {
+    if (decision.accepted) continue
+    if (!decision.rejectionCode) {
+      throw new ToolSurfaceError(
+        'Tool Surface Tape projection lost a candidate rejection code.',
+        'invalid_definition'
+      )
+    }
+    candidateRejections.push({
+      originRequestSeq: decision.requestSeq,
+      toolCallOrdinalWithinBatch: decision.toolCallOrdinalWithinBatch,
+      resultRank: decision.resultRank,
+      stableTargetKey: decision.stableTargetKey,
+      canonicalToolDefinitionHash: decision.canonicalToolDefinitionHash,
+      toolResult: decision.toolResult,
+      rejectionCode: decision.rejectionCode
+    })
+  }
+  const activeDefinitionTokens = snapshot.activeEntries.reduce((total, entry) => {
+    const catalogEntry = catalogEntryByTarget.get(entry.stableTargetKey)
+    if (!catalogEntry) {
+      throw new ToolSurfaceError(
+        'Tool Surface Tape projection lost active definition tokens.',
+        'conflicting_tool'
+      )
+    }
+    return total + catalogEntry.definitionTokens
+  }, 0)
+  return {
+    catalog: {
+      catalogSchemaVersion: snapshot.eligibleCatalog.schemaVersion,
+      canonicalizationVersion: snapshot.eligibleCatalog.canonicalizationVersion,
+      fullCatalogHash: snapshot.eligibleCatalog.fullCatalogHash,
+      entries: catalogEntries
+    },
+    surface: {
+      request: snapshot.request,
+      canonicalizationVersion: snapshot.canonicalizationVersion,
+      orderingVersion: snapshot.orderingVersion,
+      policyVersion: snapshot.policyVersion,
+      virtualizationTriggered: snapshot.virtualizationTriggered,
+      contractBearing,
+      activeEntries,
+      budget: {
+        eligibleToolCount: snapshot.eligibleCatalog.entries.length,
+        activeToolCount: snapshot.activeEntries.length,
+        eligibleDefinitionTokens: snapshot.eligibleCatalog.definitionTokens,
+        activeDefinitionTokens
+      },
+      searchResultRefs,
+      candidateRejections
+    }
   }
 }
 
@@ -2004,6 +2125,7 @@ export function createToolSurfaceSnapshot(input: {
     readonly stableTargetKey: string
     readonly reason: ToolSurfaceSelectionReason
   }[]
+  readonly acceptedSearchEvidence?: readonly ToolSurfaceActivationEvidence[]
   readonly activation?: ToolSurfaceSnapshotActivation
 }): ToolSurfaceSnapshot {
   if (
@@ -2016,6 +2138,8 @@ export function createToolSurfaceSnapshot(input: {
     typeof input.activationLedger !== 'object' ||
     !Array.isArray(input.activationLedger.entries) ||
     (input.selectionReasons !== undefined && !Array.isArray(input.selectionReasons)) ||
+    (input.acceptedSearchEvidence !== undefined &&
+      !Array.isArray(input.acceptedSearchEvidence)) ||
     (input.activation !== undefined &&
       (!input.activation || typeof input.activation !== 'object'))
   ) {
@@ -2256,6 +2380,75 @@ export function createToolSurfaceSnapshot(input: {
       definition
     })
   })
+  const acceptedDecisionEvidence = activationDecisions
+    .filter((decision) => decision.accepted)
+    .map((decision) => copyActivationEvidence(decision))
+  const acceptedSearchEvidenceInput =
+    input.acceptedSearchEvidence === undefined
+      ? acceptedDecisionEvidence
+      : readDataArray(
+          input.acceptedSearchEvidence,
+          'Tool Surface accepted search evidence',
+          MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+        )
+  const acceptedSearchEvidence = mergeToolSurfaceActivationEvidence(
+    {
+      sessionId: request.sessionId,
+      messageId: request.messageId,
+      runId: request.runId
+    },
+    [acceptedSearchEvidenceInput as readonly ToolSurfaceActivationEvidence[]]
+  )
+  if (acceptedSearchEvidence.length !== acceptedSearchEvidenceInput.length) {
+    throw new ToolSurfaceError(
+      'Tool Surface accepted search evidence contains duplicate targets.',
+      'invalid_definition'
+    )
+  }
+  const activeEntryByTarget = new Map(
+    activeEntries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  const acceptedEvidenceByTarget = new Map<string, ToolSurfaceActivationEvidence>()
+  for (const evidence of acceptedSearchEvidence) {
+    const ceilingEntry = ceilingEntryByTarget.get(evidence.stableTargetKey)
+    const activeEntry = activeEntryByTarget.get(evidence.stableTargetKey)
+    if (
+      evidence.requestSeq >= request.requestSeq ||
+      !ceilingEntry ||
+      ceilingEntry.canonicalToolDefinitionHash !== evidence.canonicalToolDefinitionHash ||
+      !activeEntry ||
+      activeEntry.reason !== 'search-result'
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface accepted search evidence does not prove an active target.',
+        'invalid_definition'
+      )
+    }
+    acceptedEvidenceByTarget.set(evidence.stableTargetKey, evidence)
+  }
+  for (const decision of acceptedDecisionEvidence) {
+    const retainedEvidence = acceptedEvidenceByTarget.get(decision.stableTargetKey)
+    if (
+      !retainedEvidence ||
+      canonicalJsonStringifyData(retainedEvidence) !== canonicalJsonStringifyData(decision)
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface accepted activation decision lost its durable evidence.',
+        'invalid_definition'
+      )
+    }
+  }
+  if (
+    activeEntries.some(
+      (entry) =>
+        entry.reason === 'search-result' && !acceptedEvidenceByTarget.has(entry.stableTargetKey)
+    )
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface search-result entry lacks durable activation evidence.',
+      'invalid_definition'
+    )
+  }
   const toolDefinitions = Object.freeze(activeEntries.map((entry) => entry.definition))
   for (const decision of activationDecisions) Object.freeze(decision)
   const activation = Object.freeze({
@@ -2273,6 +2466,7 @@ export function createToolSurfaceSnapshot(input: {
     eligibleCatalog: eligible.catalog,
     activeEntries: Object.freeze(activeEntries),
     toolDefinitions,
+    acceptedSearchEvidence,
     activation
   })
   issuedToolSurfaceSnapshots.add(snapshot)
@@ -2465,6 +2659,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
     ...selectedIdentities,
     copyDefinitionIdentity(searchEntry)
   ])
+  let acceptedSearchEvidenceByTarget = new Map<string, ToolSurfaceActivationEvidence>()
   const reasonByTarget = new Map<ToolSurfaceDefinitionIdentity['stableTargetKey'], ToolSurfaceSelectionReason>(
     decision.selectedEntries.map((entry) => [entry.stableTargetKey, entry.reason])
   )
@@ -2487,6 +2682,11 @@ export function createPolicySelectedToolSurfaceRun(input: {
     {
       readonly baseLedger: ToolSurfaceActivationLedger
       readonly nextLedger: ToolSurfaceActivationLedger
+      readonly baseAcceptedSearchEvidenceByTarget: ReadonlyMap<
+        string,
+        ToolSurfaceActivationEvidence
+      >
+      readonly nextAcceptedSearchEvidenceByTarget: Map<string, ToolSurfaceActivationEvidence>
       readonly pendingCandidates: readonly ToolSurfaceActivationEvidence[] | null
       readonly pendingFingerprint: string | null
       readonly appendedTargets: number
@@ -2680,10 +2880,30 @@ export function createPolicySelectedToolSurfaceRun(input: {
       const nextLedger = appendToolSurfaceActivationBatch(admittedLedger, additions)
       const proposedReasonByTarget = new Map(reasonByTarget)
       for (const addition of additions) proposedReasonByTarget.set(addition.stableTargetKey, 'search-result')
+      const nextAcceptedSearchEvidenceByTarget = new Map(acceptedSearchEvidenceByTarget)
+      for (const activationDecision of decisions) {
+        if (activationDecision.accepted) {
+          nextAcceptedSearchEvidenceByTarget.set(
+            activationDecision.stableTargetKey,
+            copyActivationEvidence(activationDecision)
+          )
+        }
+      }
       const selectionReasons = [...proposedReasonByTarget.entries()].flatMap(
         ([stableTargetKey, reason]) =>
           eligibleTargets.has(stableTargetKey) ? [{ stableTargetKey, reason }] : []
       )
+      const acceptedSearchEvidence = selectionReasons.flatMap(({ stableTargetKey, reason }) => {
+        if (reason !== 'search-result') return []
+        const evidence = nextAcceptedSearchEvidenceByTarget.get(stableTargetKey)
+        if (!evidence) {
+          throw new ToolSurfaceError(
+            'Tool Surface lost retained ToolSearch evidence for an active target.',
+            'invalid_definition'
+          )
+        }
+        return [evidence]
+      })
       const snapshot = createToolSurfaceSnapshot({
         request,
         policyVersion: input.policy.policyVersion,
@@ -2692,6 +2912,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
         eligibleDefinitions: effectiveEligibleDefinitions,
         activationLedger: nextLedger,
         selectionReasons,
+        acceptedSearchEvidence,
         activation: {
           originRequestSeq: pendingOriginRequest?.requestSeq ?? null,
           decisions
@@ -2700,6 +2921,8 @@ export function createPolicySelectedToolSurfaceRun(input: {
       proposals.set(snapshot, {
         baseLedger: admittedLedger,
         nextLedger,
+        baseAcceptedSearchEvidenceByTarget: acceptedSearchEvidenceByTarget,
+        nextAcceptedSearchEvidenceByTarget,
         pendingCandidates,
         pendingFingerprint,
         appendedTargets: additions.length
@@ -2719,6 +2942,12 @@ export function createPolicySelectedToolSurfaceRun(input: {
       if (proposal.baseLedger !== admittedLedger) {
         throw new ToolSurfaceError(
           'Tool Surface snapshot was prepared from a stale activation ledger.',
+          'conflicting_tool'
+        )
+      }
+      if (proposal.baseAcceptedSearchEvidenceByTarget !== acceptedSearchEvidenceByTarget) {
+        throw new ToolSurfaceError(
+          'Tool Surface snapshot was prepared from stale ToolSearch evidence.',
           'conflicting_tool'
         )
       }
@@ -2753,6 +2982,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
         revokeToolSurfaceExecutionEligibility(latestExecutionEligibleSnapshot)
       }
       admittedLedger = proposal.nextLedger
+      acceptedSearchEvidenceByTarget = proposal.nextAcceptedSearchEvidenceByTarget
       latestAdmittedRequest = snapshot.request
       if (proposal.pendingCandidates && consumedRelease) {
         consumedReleaseFingerprintByRequestSeq.set(

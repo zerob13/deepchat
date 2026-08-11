@@ -65,6 +65,10 @@ import {
 } from '@/tape/domain/executionJournal'
 import { buildTaskContract } from '@/tape/domain/taskContract'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  TAPE_TOOL_CATALOG_EVENT_NAME,
+  TAPE_TOOL_SURFACE_EVENT_NAME
+} from '@/tape/domain/toolSurfaceFacts'
 
 vi.mock('nanoid', () => ({ nanoid: vi.fn(() => 'mock-msg-id') }))
 
@@ -209,6 +213,8 @@ function createMockSqlitePresenter() {
   }
   let memoryCursorOrderSeq = 0
   const tapeEntries: any[] = []
+  let tapeIncarnationSequence = 0
+  let tapeTransactionActive = false
   const pendingRows: any[] = []
   let pendingRowClock = 1
   const pendingInputsTable = {
@@ -364,9 +370,41 @@ function createMockSqlitePresenter() {
       delete: vi.fn()
     },
     deepchatTapeEntriesTable: (deepchatTapeEntriesTable = {
-      runInTransaction: vi.fn((operation: () => unknown) => operation()),
-      isInTransaction: vi.fn(() => false),
-      ensureBootstrapAnchor: vi.fn(),
+      runInTransaction: vi.fn((operation: () => unknown) => {
+        const snapshot = tapeEntries.map((entry) => ({ ...entry }))
+        const previousTransactionState = tapeTransactionActive
+        tapeTransactionActive = true
+        try {
+          return operation()
+        } catch (error) {
+          tapeEntries.splice(0, tapeEntries.length, ...snapshot)
+          throw error
+        } finally {
+          tapeTransactionActive = previousTransactionState
+        }
+      }),
+      isInTransaction: vi.fn(() => tapeTransactionActive),
+      ensureBootstrapAnchor: vi.fn((sessionId: string) => {
+        if (
+          tapeEntries.some(
+            (entry) => entry.session_id === sessionId && entry.name === 'session/start'
+          )
+        ) {
+          return
+        }
+        deepchatTapeEntriesTable.appendAnchor({
+          sessionId,
+          name: 'session/start',
+          source: { type: 'session', id: sessionId, seq: 0 },
+          state: { owner: 'human' },
+          meta: {
+            tapeIncarnationId: `00000000-0000-4000-8000-${String(
+              ++tapeIncarnationSequence
+            ).padStart(12, '0')}`
+          },
+          idempotent: true
+        })
+      }),
       append: vi.fn((input: any) => {
         const provenanceKey =
           input.provenanceKey ??
@@ -434,6 +472,13 @@ function createMockSqlitePresenter() {
           payload: { name: input.name, data: input.data }
         })
       }),
+      appendToolSurfaceEvent: vi.fn((input: any) => {
+        return deepchatTapeEntriesTable.append({
+          ...input,
+          kind: 'event',
+          payload: { name: input.name, data: input.data }
+        })
+      }),
       listUnterminatedRunEvents: vi.fn(() =>
         tapeEntries.filter(
           (entry) => entry.kind === 'event' && entry.name?.startsWith('execution/')
@@ -441,6 +486,37 @@ function createMockSqlitePresenter() {
       ),
       getBySession: vi.fn((sessionId: string) =>
         tapeEntries.filter((entry) => entry.session_id === sessionId)
+      ),
+      getByEntryId: vi.fn((sessionId: string, entryId: number) =>
+        tapeEntries.find((entry) => entry.session_id === sessionId && entry.entry_id === entryId)
+      ),
+      getEventsBySource: vi.fn(
+        (
+          sessionId: string,
+          name: string,
+          sourceType: string,
+          sourceId: string,
+          sourceSeq: number
+        ) =>
+          tapeEntries.filter(
+            (entry) =>
+              entry.session_id === sessionId &&
+              entry.kind === 'event' &&
+              entry.name === name &&
+              entry.source_type === sourceType &&
+              entry.source_id === sourceId &&
+              entry.source_seq === sourceSeq
+          )
+      ),
+      getFirstEntriesBySessions: vi.fn((sessionIds: string[]) =>
+        [...new Set(sessionIds)]
+          .flatMap((sessionId) => {
+            const first = tapeEntries
+              .filter((entry) => entry.session_id === sessionId)
+              .sort((left, right) => left.entry_id - right.entry_id)[0]
+            return first ? [first] : []
+          })
+          .sort((left, right) => left.session_id.localeCompare(right.session_id))
       ),
       getMaxEventSourceSeq: vi.fn(
         (sessionId: string, name: string, sourceType: string, sourceId: string) =>
@@ -3014,6 +3090,25 @@ describe('DeepChatAgentHarness', () => {
       expect(snapshots[1].snapshot.activeEntries.map((entry) => entry.activationOrdinal)).toEqual([
         0, 1, 2
       ])
+      const toolSurfaceViewEvents = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .filter((row: any) =>
+          ['view/assembled', TAPE_TOOL_CATALOG_EVENT_NAME, TAPE_TOOL_SURFACE_EVENT_NAME].includes(
+            row.name
+          )
+        )
+      expect(
+        toolSurfaceViewEvents.filter((row: any) => row.name === 'view/assembled')
+      ).toHaveLength(2)
+      expect(
+        toolSurfaceViewEvents.filter((row: any) => row.name === TAPE_TOOL_CATALOG_EVENT_NAME)
+      ).toHaveLength(2)
+      const surfaceFacts = toolSurfaceViewEvents
+        .filter((row: any) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)
+        .map((row: any) => JSON.parse(row.payload_json).data)
+      expect(surfaceFacts).toHaveLength(2)
+      expect(surfaceFacts.map((fact: any) => fact.contractBearing)).toEqual([false, false])
+      expect(surfaceFacts.map((fact: any) => fact.request.requestSeq)).toEqual([1, 2])
       expect(agent.getToolSurfaceShadowDiagnostics('s1')).toBeNull()
     })
 
@@ -3084,6 +3179,20 @@ describe('DeepChatAgentHarness', () => {
         complete: true,
         unavailableSourceCount: 0
       })
+      const persistedViewCountsAtProviderEntry: Array<{
+        manifests: number
+        catalogs: number
+        surfaces: number
+      }> = []
+      llmProvider.providerInstance.coreStream.mockImplementation(async function* () {
+        const rows = sqlitePresenter.deepchatTapeEntriesTable.getBySession('s1')
+        persistedViewCountsAtProviderEntry.push({
+          manifests: rows.filter((row: any) => row.name === 'view/assembled').length,
+          catalogs: rows.filter((row: any) => row.name === TAPE_TOOL_CATALOG_EVENT_NAME).length,
+          surfaces: rows.filter((row: any) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME).length
+        })
+        yield { type: 'stop', stop_reason: 'complete' }
+      })
       recreateAgentWithToolSurfaceRunMode(() => 'full')
 
       const activeSurfaceNames: string[][] = []
@@ -3125,10 +3234,26 @@ describe('DeepChatAgentHarness', () => {
           call[5].map((tool: MCPToolDefinition) => tool.function.name)
         )
       ).toEqual([['read_file'], ['read_file']])
-      const manifests = sqlitePresenter.deepchatTapeEntriesTable
+      expect(persistedViewCountsAtProviderEntry).toEqual([
+        { manifests: 1, catalogs: 1, surfaces: 1 },
+        { manifests: 2, catalogs: 1, surfaces: 2 }
+      ])
+      const providerViewRows = sqlitePresenter.deepchatTapeEntriesTable
         .getBySession('s1')
-        .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
+        .filter((row: any) =>
+          ['view/assembled', TAPE_TOOL_CATALOG_EVENT_NAME, TAPE_TOOL_SURFACE_EVENT_NAME].includes(
+            row.name
+          )
+        )
+      const manifests = providerViewRows
+        .filter((row: any) => row.name === 'view/assembled')
         .map((row: any) => JSON.parse(row.payload_json).data.manifest)
+      const catalogRows = providerViewRows.filter(
+        (row: any) => row.name === TAPE_TOOL_CATALOG_EVENT_NAME
+      )
+      const surfaceFacts = providerViewRows
+        .filter((row: any) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)
+        .map((row: any) => JSON.parse(row.payload_json).data)
       expect(
         manifests.map((manifest: any) =>
           manifest.executionContract.ceilings.tools.map(
@@ -3136,6 +3261,120 @@ describe('DeepChatAgentHarness', () => {
           )
         )
       ).toEqual([['read_file'], ['read_file']])
+      expect(catalogRows).toHaveLength(1)
+      expect(surfaceFacts).toHaveLength(2)
+      expect(surfaceFacts.map((fact: any) => fact.contractBearing)).toEqual([true, true])
+      expect(surfaceFacts.map((fact: any) => fact.manifestHash)).toEqual(
+        manifests.map((manifest: any) => manifest.hashes.manifestHash)
+      )
+      expect(surfaceFacts.map((fact: any) => fact.catalog.entryId)).toEqual([
+        catalogRows[0].entry_id,
+        catalogRows[0].entry_id
+      ])
+      expect(surfaceFacts.map((fact: any) => fact.catalog.fullCatalogHash)).toEqual([
+        JSON.parse(catalogRows[0].payload_json).data.fullCatalogHash,
+        JSON.parse(catalogRows[0].payload_json).data.fullCatalogHash
+      ])
+    })
+
+    it('rolls back strict Tool Surface provenance before provider execution', async () => {
+      const taskContract = buildTaskContract({
+        delegationId: 'delegation-surface-persistence',
+        turnId: 'turn-surface-persistence',
+        turnSeq: 1,
+        turnKind: 'initial',
+        parentSessionId: 'parent-1',
+        slotId: 'reviewer',
+        targetAgentId: 'deepchat',
+        title: 'Persist a strict Tool Surface',
+        prompt: 'Use only read capabilities.',
+        workspace: { kind: 'runtime_default' },
+        handoffFormat: [],
+        maxToolEffect: 'read',
+        maxSubagentDepth: 0
+      })
+      sqlitePresenter.newSessionsTable.get.mockImplementation((sessionId: string) =>
+        sessionId === 's1'
+          ? {
+              id: 's1',
+              agent_id: 'deepchat',
+              session_kind: 'subagent',
+              parent_session_id: 'parent-1'
+            }
+          : sessionId === 'parent-1'
+            ? { id: 'parent-1', agent_id: 'deepchat', session_kind: 'regular' }
+            : undefined
+      )
+      vi.mocked(runtimeDependencies.taskContractContext.prepare).mockReturnValue({
+        contract: taskContract,
+        localRef: {
+          schemaVersion: 1,
+          sessionId: 's1',
+          tapeIdentity: 'f'.repeat(64),
+          entryId: 5,
+          contractHash: taskContract.contractHash
+        }
+      })
+      const readTool = {
+        source: 'agent',
+        execution: TOOL_EXECUTION.read.parallel,
+        type: 'function',
+        function: {
+          name: 'read_file',
+          description: 'Read a file',
+          parameters: { type: 'object', properties: {} }
+        },
+        server: { name: 'agent-tools', icons: '', description: 'Agent tools' }
+      } satisfies MCPToolDefinition
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue([readTool])
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions: [readTool],
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'full')
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      const appendToolSurfaceEvent = sqlitePresenter.deepchatTapeEntriesTable.appendToolSurfaceEvent
+      const appendImplementation = appendToolSurfaceEvent.getMockImplementation()!
+      appendToolSurfaceEvent.mockImplementation((input: any) => {
+        if (input.name === TAPE_TOOL_SURFACE_EVENT_NAME) {
+          throw new Error('surface write failed')
+        }
+        return appendImplementation(input)
+      })
+
+      await expect(async () => {
+        for await (const _event of callArgs.coreStream(
+          callArgs.run.messages,
+          callArgs.modelId,
+          callArgs.modelConfig,
+          callArgs.temperature,
+          callArgs.maxTokens,
+          callArgs.run.resources.toolDefinitions
+        )) {
+        }
+      }).rejects.toThrow('Failed to persist Tool surface provenance for session s1')
+
+      expect(llmProvider.providerInstance.coreStream).not.toHaveBeenCalled()
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable
+          .getBySession('s1')
+          .filter((row: any) =>
+            ['view/assembled', TAPE_TOOL_CATALOG_EVENT_NAME, TAPE_TOOL_SURFACE_EVENT_NAME].includes(
+              row.name
+            )
+          )
+      ).toEqual([])
+      expect(callArgs.run.activeRequestContract).toBeNull()
+      expect(callArgs.run.activeRequestToolSurface).toBeNull()
     })
 
     it('fails full Tool Surface admission when the Run universe is incomplete', async () => {
@@ -5035,7 +5274,7 @@ describe('DeepChatAgentHarness', () => {
         .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
       expect(viewManifests).toEqual([])
       expect(loggerWarnMock).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to persist tape view manifest: manifest write failed')
+        expect.stringContaining('Failed to persist provider View provenance: manifest write failed')
       )
     })
 

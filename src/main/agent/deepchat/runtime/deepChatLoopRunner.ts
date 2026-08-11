@@ -130,7 +130,9 @@ import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinato
 import {
   createFullToolSurfaceRunController,
   FULL_TOOL_SURFACE_POLICY_VERSION,
-  type FullToolSurfaceRunController
+  projectToolSurfaceTapeProvenance,
+  type FullToolSurfaceRunController,
+  type ToolSurfaceSnapshot
 } from './toolSurface'
 import {
   meetTaskContractToolDefinitions,
@@ -241,7 +243,7 @@ export type DeepChatLoopRunInput = {
   abortController?: AbortController
 }
 
-export interface AppendTapeViewManifestInput {
+export interface CommitTapeProviderViewInput {
   sessionId: string
   messageId: string
   requestSeq: number
@@ -261,6 +263,7 @@ export interface AppendTapeViewManifestInput {
   contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
   executionContract?: DeepChatExecutionContract
+  toolSurfaceSnapshot?: ToolSurfaceSnapshot | null
 }
 
 export interface DeepChatLoopRunnerPorts {
@@ -698,7 +701,7 @@ export class DeepChatLoopRunner {
       }
       const ports = this.ports
       const recoverRequestContextPressure = this.recoverRequestContextPressure.bind(this)
-      const appendTapeViewManifest = this.appendTapeViewManifest.bind(this)
+      const commitTapeProviderView = this.commitTapeProviderView.bind(this)
       const persistMessageTrace = this.persistMessageTrace.bind(this)
       const emitRateLimitWaitingMessage = this.emitRateLimitWaitingMessage.bind(this)
       const clearRateLimitWaitingMessage = this.clearRateLimitWaitingMessage.bind(this)
@@ -909,7 +912,7 @@ export class DeepChatLoopRunner {
             manifest: {
               resolvePolicy: resolveTapeViewManifestPolicy,
               append: (manifest) =>
-                appendTapeViewManifest({
+                commitTapeProviderView({
                   sessionId,
                   messageId,
                   ...manifest,
@@ -921,7 +924,7 @@ export class DeepChatLoopRunner {
                 }),
               onAppendError: (error) =>
                 logger.warn(
-                  `[DeepChatAgent] Failed to persist tape view manifest: ${
+                  `[DeepChatAgent] Failed to persist provider View provenance: ${
                     error instanceof Error ? error.message : String(error)
                   }`
                 )
@@ -1260,7 +1263,7 @@ export class DeepChatLoopRunner {
     }
   }
 
-  appendTapeViewManifest(params: AppendTapeViewManifestInput): void {
+  commitTapeProviderView(params: CommitTapeProviderViewInput): void {
     const sourceMaps = this.ports.tape.getViewManifestSourceMaps(
       params.sessionId,
       params.messageId
@@ -1303,7 +1306,27 @@ export class DeepChatLoopRunner {
       traceDebugEnabled: params.traceDebugEnabled,
       ...(params.executionContract ? { executionContract: params.executionContract } : {})
     })
-    this.ports.tape.appendViewManifest(manifest)
+    if (!params.toolSurfaceSnapshot) {
+      this.ports.tape.appendViewManifest(manifest)
+      return
+    }
+    if (
+      params.toolSurfaceSnapshot.request.sessionId !== params.sessionId ||
+      params.toolSurfaceSnapshot.request.messageId !== params.messageId ||
+      params.toolSurfaceSnapshot.request.requestSeq !== params.requestSeq ||
+      params.toolSurfaceSnapshot.toolDefinitions !== params.tools
+    ) {
+      throw new Error('Provider View lost its exact Tool Surface snapshot binding.')
+    }
+    const projection = projectToolSurfaceTapeProvenance(
+      params.toolSurfaceSnapshot,
+      params.executionContract !== undefined
+    )
+    this.ports.tape.commitToolSurfaceView({
+      manifest,
+      activeToolDefinitions: params.tools,
+      ...projection
+    })
   }
 
   emitRateLimitWaitingMessage(

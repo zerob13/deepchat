@@ -35,13 +35,17 @@ import {
   mergeToolSurfaceActivationCandidates,
   mergeToolSurfaceActivationEvidence,
   projectToolSurfaceActiveEntries,
+  projectToolSurfaceTapeProvenance,
   type ToolSurfaceActivationCandidate,
   type ToolSurfaceActivationEvidence,
   type ToolSurfaceDefinitionIdentity,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
 import { buildProviderVisibleToolDefinitionsHash } from '@/tape/domain/executionContract'
-import { TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION } from '@/tape/domain/toolSurfaceFacts'
+import {
+  TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION,
+  createTapeToolSurfaceFact
+} from '@/tape/domain/toolSurfaceFacts'
 
 const SERVER_ID = '22222222-2222-4222-8222-222222222222'
 const BINDING_HASH = 'a'.repeat(64)
@@ -870,6 +874,101 @@ describe('Run Tool Ceiling and Tool Surface snapshots', () => {
     expect(snapshot.toolDefinitions[0].function.name).toBe('read')
   })
 
+  it('projects bounded catalog, active, budget, and search provenance for Tape', () => {
+    const definitions = [agentTool('read'), agentTool('write')]
+    const ceiling = buildToolSurfaceRunCeiling(definitions)
+    const readEntry = ceiling.catalog.entries.find(
+      (entry) => entry.target.providerVisibleName === 'read'
+    )!
+    const writeEntry = ceiling.catalog.entries.find(
+      (entry) => entry.target.providerVisibleName === 'write'
+    )!
+    const candidate = activationEvidence({
+      sessionId: 's1',
+      messageId: 'm1',
+      runId: 'r1',
+      requestSeq: 1,
+      stableTargetKey: readEntry.stableTargetKey,
+      canonicalToolDefinitionHash: readEntry.canonicalToolDefinitionHash,
+      toolCallOrdinalWithinBatch: 0,
+      resultRank: 0
+    })
+    const rejectedCandidate = activationEvidence(
+      {
+        ...candidate,
+        stableTargetKey: writeEntry.stableTargetKey,
+        canonicalToolDefinitionHash: writeEntry.canonicalToolDefinitionHash,
+        resultRank: 1
+      },
+      candidate.toolResult
+    )
+    const snapshot = createToolSurfaceSnapshot({
+      request: { sessionId: 's1', messageId: 'm1', runId: 'r1', requestSeq: 2 },
+      policyVersion: 'virtual-v1',
+      virtualizationTriggered: true,
+      ceiling,
+      eligibleDefinitions: definitions,
+      activationLedger: createToolSurfaceActivationLedger([readEntry]),
+      selectionReasons: [
+        { stableTargetKey: readEntry.stableTargetKey, reason: 'search-result' }
+      ],
+      activation: {
+        originRequestSeq: 1,
+        decisions: [
+          { ...candidate, accepted: true },
+          {
+            ...rejectedCandidate,
+            accepted: false,
+            rejectionCode: 'per-batch-count-cap'
+          }
+        ]
+      }
+    })
+
+    const projection = projectToolSurfaceTapeProvenance(snapshot, false)
+
+    expect(projection.catalog).toMatchObject({
+      catalogSchemaVersion: 1,
+      canonicalizationVersion: snapshot.canonicalizationVersion,
+      fullCatalogHash: snapshot.eligibleCatalog.fullCatalogHash
+    })
+    expect(projection.catalog.entries).toHaveLength(2)
+    expect(projection.surface).toMatchObject({
+      request: snapshot.request,
+      policyVersion: 'virtual-v1',
+      virtualizationTriggered: true,
+      contractBearing: false,
+      budget: {
+        eligibleToolCount: 2,
+        activeToolCount: 1,
+        eligibleDefinitionTokens: snapshot.eligibleCatalog.definitionTokens,
+        activeDefinitionTokens: readEntry.definitionTokens
+      }
+    })
+    expect(projection.surface.activeEntries).toEqual([
+      expect.objectContaining({
+        stableTargetKey: readEntry.stableTargetKey,
+        activationOrdinal: 0,
+        reason: 'search-result'
+      })
+    ])
+    expect(projection.surface.searchResultRefs).toEqual([
+      expect.objectContaining({
+        originRequestSeq: 1,
+        stableTargetKey: readEntry.stableTargetKey,
+        toolResult: candidate.toolResult
+      })
+    ])
+    expect(projection.surface.candidateRejections).toEqual([
+      expect.objectContaining({
+        originRequestSeq: 1,
+        stableTargetKey: writeEntry.stableTargetKey,
+        rejectionCode: 'per-batch-count-cap',
+        toolResult: candidate.toolResult
+      })
+    ])
+  })
+
   it('rejects expansion, definition drift, and an incomplete full surface', () => {
     const read = agentTool('read')
     const write = agentTool('write')
@@ -1016,6 +1115,10 @@ describe('Run Tool Ceiling and Tool Surface snapshots', () => {
         { stableTargetKey: readEntry.stableTargetKey, reason: 'search-result' as const }
       ]
     }
+    expectSurfaceError(
+      () => createToolSurfaceSnapshot(activationBaseInput),
+      'invalid_definition'
+    )
     expectSurfaceError(
       () =>
         createToolSurfaceSnapshot({
@@ -2245,6 +2348,9 @@ describe('Tool Surface production selection', () => {
     expect(Object.isFrozen(proposal.activation)).toBe(true)
     expect(Object.isFrozen(proposal.activation.decisions)).toBe(true)
     expect(Object.isFrozen(proposal.activation.decisions[0])).toBe(true)
+    expect(proposal.acceptedSearchEvidence).toEqual([candidate])
+    expect(Object.isFrozen(proposal.acceptedSearchEvidence)).toBe(true)
+    expect(Object.isFrozen(proposal.acceptedSearchEvidence[0])).toBe(true)
     expect(build(4).activation).toEqual(proposal.activation)
 
     selected.controller.admit(proposal)
@@ -2259,13 +2365,45 @@ describe('Tool Surface production selection', () => {
     expect(
       replayed.activeEntries.find((entry) => entry.definition.function.name === 'hidden')
     ).toMatchObject({ reason: 'search-result', activationOrdinal: 2 })
+    expect(replayed.acceptedSearchEvidence).toEqual([candidate])
+    expect(projectToolSurfaceTapeProvenance(replayed, false).surface.searchResultRefs).toEqual([
+      expect.objectContaining({
+        originRequestSeq: 1,
+        stableTargetKey: hiddenEntry.stableTargetKey,
+        toolResult: candidate.toolResult
+      })
+    ])
     const revoked = build(5, [read, other])
+    expect(revoked.acceptedSearchEvidence).toEqual([])
+    expect(projectToolSurfaceTapeProvenance(revoked, false).surface.searchResultRefs).toEqual([])
     selected.controller.admit(revoked)
     const restored = build(6)
     expect(restored.activeEntries.find((entry) => entry.definition.function.name === 'hidden')).toMatchObject({
       reason: 'search-result',
       activationOrdinal: 2
     })
+    expect(restored.acceptedSearchEvidence).toEqual([candidate])
+    const restoredProjection = projectToolSurfaceTapeProvenance(restored, false)
+    expect(restoredProjection.surface.searchResultRefs).toEqual([
+      expect.objectContaining({
+        originRequestSeq: 1,
+        stableTargetKey: hiddenEntry.stableTargetKey,
+        toolResult: candidate.toolResult
+      })
+    ])
+    expect(() =>
+      createTapeToolSurfaceFact({
+        ...restoredProjection.surface,
+        manifestHash: 'd'.repeat(64),
+        catalog: {
+          sessionId: 's1',
+          tapeIncarnationId: candidate.toolResult.tapeIncarnationId,
+          entryId: 1,
+          fullCatalogHash: restoredProjection.catalog.fullCatalogHash,
+          catalogFactHash: 'e'.repeat(64)
+        }
+      })
+    ).not.toThrow()
     expectSurfaceError(
       () =>
         selected.controller.build({

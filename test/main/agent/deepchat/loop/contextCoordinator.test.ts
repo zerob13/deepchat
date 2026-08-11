@@ -140,6 +140,7 @@ function createAttemptInput(options?: {
   providerAttempts?: Array<{ events?: LLMCoreStreamEvent[]; error?: unknown }>
   appendManifest?: (manifest: any) => void
   buildExecutionContract?: (input: any) => any
+  executionContract?: false
   tools?: MCPToolDefinition[]
   toolSurface?: ProviderAttemptToolSurfacePort
   viewContext?: false
@@ -151,6 +152,7 @@ function createAttemptInput(options?: {
   const providerRequests: any[] = []
   const manifestContractRefs: any[] = []
   const manifestToolRefs: any[] = []
+  const manifestToolSurfaceRefs: any[] = []
   const providerContractRefs: any[] = []
   const providerToolSurfaceRefs: any[] = []
   const providerToolRefs: any[] = []
@@ -181,6 +183,7 @@ function createAttemptInput(options?: {
     providerRequests,
     manifestContractRefs,
     manifestToolRefs,
+    manifestToolSurfaceRefs,
     providerContractRefs,
     providerToolSurfaceRefs,
     providerToolRefs,
@@ -244,23 +247,27 @@ function createAttemptInput(options?: {
           messages: requestMessages
         }))
       },
-      executionContract: {
-        build: (input: any) => {
-          contractToolRefs.push(input.tools)
-          contractBuildInputs.push(structuredClone(input))
-          return (
-            options?.buildExecutionContract?.(input) ?? {
-              request: {
-                sessionId: run.sessionId,
-                messageId: run.messageId,
-                runId: run.runId,
-                requestSeq: input.requestSeq
-              }
+      ...(options?.executionContract === false
+        ? {}
+        : {
+            executionContract: {
+              build: (input: any) => {
+                contractToolRefs.push(input.tools)
+                contractBuildInputs.push(structuredClone(input))
+                return (
+                  options?.buildExecutionContract?.(input) ?? {
+                    request: {
+                      sessionId: run.sessionId,
+                      messageId: run.messageId,
+                      runId: run.runId,
+                      requestSeq: input.requestSeq
+                    }
+                  }
+                )
+              },
+              onBuildError: (error: unknown) => executionContractErrors.push(error)
             }
-          )
-        },
-        onBuildError: (error: unknown) => executionContractErrors.push(error)
-      },
+          }),
       manifest: {
         resolvePolicy: ({ recoveredFromContextPressure, viewPolicy, viewPolicyVersion }: any) => ({
           policy: recoveredFromContextPressure
@@ -272,6 +279,7 @@ function createAttemptInput(options?: {
           order.push(`manifest:${manifest.requestSeq}`)
           manifestContractRefs.push(manifest.executionContract)
           manifestToolRefs.push(manifest.tools)
+          manifestToolSurfaceRefs.push(manifest.toolSurfaceSnapshot)
           manifests.push(structuredClone(manifest))
           options?.appendManifest?.(manifest)
         },
@@ -461,6 +469,7 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.manifestToolRefs[0]).toBe(fixture.input.tools)
     expect(fixture.contractToolRefs[0]).toBe(fixture.input.tools)
     expect(fixture.providerToolRefs[0]).toBe(fixture.input.tools)
+    expect(fixture.manifestToolSurfaceRefs).toEqual([null])
     expect(fixture.providerToolSurfaceRefs).toEqual([null])
     expect(fixture.run.activeRequestContract).toEqual({
       requestSeq: 1,
@@ -517,6 +526,7 @@ describe('DeepChatContextCoordinator', () => {
     expect(surface.admit).toHaveBeenCalledWith({ requestSeq: 1, snapshot })
     expect(snapshot.toolDefinitions.map((tool) => tool.function.name)).toEqual(['write', 'read'])
     expect(fixture.manifestToolRefs[0]).toBe(snapshot.toolDefinitions)
+    expect(fixture.manifestToolSurfaceRefs).toEqual([snapshot])
     expect(Object.isFrozen(fixture.manifestToolRefs[0])).toBe(true)
     expect(fixture.manifestToolRefs).toEqual([fixture.contractToolRefs[0]])
     expect(fixture.providerToolRefs[0]).toBe(fixture.contractToolRefs[0])
@@ -629,8 +639,43 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.manifestErrors).toEqual([
       expect.objectContaining({
         message: expect.stringContaining(
-          'ExecutionContract disabled for request 1 because durable ViewManifest persistence could not be confirmed'
+          'ExecutionContract disabled for request 1 because durable provider View provenance could not be confirmed'
         )
+      })
+    ])
+  })
+
+  it('keeps an ordinary Tool Surface fail-open when atomic View persistence throws', async () => {
+    const tools = [agentTool('read')]
+    const surface = createFullToolSurfacePort(tools)
+    const fixture = createAttemptInput({
+      tools,
+      toolSurface: surface.port,
+      executionContract: false,
+      appendManifest: () => {
+        throw new Error('surface provenance unavailable')
+      }
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).resolves.toEqual([
+      { type: 'text', content: 'ok' },
+      { type: 'stop', stop_reason: 'complete' }
+    ])
+
+    expect(surface.build).toHaveBeenCalledOnce()
+    expect(surface.admit).toHaveBeenCalledOnce()
+    expect(fixture.providerRequests).toHaveLength(1)
+    expect(fixture.providerToolSurfaceRefs[0]).toBe(surface.snapshots[0])
+    expect(fixture.contractBuildInputs).toEqual([])
+    expect(fixture.run.activeRequestContract).toEqual({
+      requestSeq: 1,
+      executionContract: null
+    })
+    expect(fixture.manifestErrors).toEqual([
+      expect.objectContaining({
+        message: 'surface provenance unavailable'
       })
     ])
   })
@@ -1182,7 +1227,7 @@ describe('DeepChatContextCoordinator', () => {
         throw contractError
       }
     })
-    fixture.input.executionContract.onBuildError = (error: unknown) => {
+    fixture.input.executionContract!.onBuildError = (error: unknown) => {
       fixture.executionContractErrors.push(error)
       throw new Error('contract error reporting unavailable')
     }
