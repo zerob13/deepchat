@@ -26,12 +26,18 @@ import {
   isContractTapeReservedName,
   type ContractTapeEventName
 } from '@/tape/domain/contractFacts'
+import {
+  isToolSurfaceTapeReservedName,
+  TOOL_SURFACE_TAPE_EVENT_NAMES,
+  type ToolSurfaceTapeEventName
+} from '@/tape/domain/toolSurfaceFacts'
 import type {
   ContractPersistenceStore,
   ExecutionJournalPersistenceStore,
   TapeBootstrapStore,
   TapeEntryStore,
   TapeMutationProjection,
+  ToolSurfacePersistenceStore,
   TapeTransactionRunner
 } from '@/tape/ports/storage'
 
@@ -505,7 +511,7 @@ const EFFECTIVE_TAPE_SEARCH_ROW_PREDICATE_SQL = `
 
 export class DeepChatTapeEntriesTable
   extends BaseTable
-  implements TapeEntryStore, TapeTransactionRunner, TapeBootstrapStore
+  implements TapeEntryStore, TapeTransactionRunner, TapeBootstrapStore, ToolSurfacePersistenceStore
 {
   constructor(
     db: Database.Database,
@@ -565,7 +571,7 @@ export class DeepChatTapeEntriesTable
 
   protected appendInternal(
     input: DeepChatTapeAppendInput,
-    authorizedNamespace: 'execution' | 'contract' | null
+    authorizedNamespace: 'execution' | 'contract' | 'tool-surface' | null
   ): DeepChatTapeEntryRow {
     if (authorizedNamespace !== 'execution' && isExecutionJournalReservedName(input.name)) {
       throw new Error(
@@ -574,6 +580,9 @@ export class DeepChatTapeEntriesTable
     }
     if (authorizedNamespace !== 'contract' && isContractTapeReservedName(input.name)) {
       throw new Error('The contract/* namespace is reserved for the strict Contract writer.')
+    }
+    if (authorizedNamespace !== 'tool-surface' && isToolSurfaceTapeReservedName(input.name)) {
+      throw new Error('The View Tool Surface namespace is reserved for its provenance writer.')
     }
     const append = this.db.transaction(() => {
       const provenanceKey = buildProvenanceKey(input)
@@ -693,6 +702,31 @@ export class DeepChatTapeEntriesTable
       createdAt: input.createdAt,
       idempotent: input.idempotent
     })
+  }
+
+  appendToolSurfaceEvent(
+    input: TapeEventAppendInput & { name: ToolSurfaceTapeEventName }
+  ): DeepChatTapeEntryRow {
+    if (!TOOL_SURFACE_TAPE_EVENT_NAMES.includes(input.name)) {
+      throw new Error(`Unsupported View Tool Surface event name: ${input.name}.`)
+    }
+    return this.appendInternal(
+      {
+        sessionId: input.sessionId,
+        kind: 'event',
+        name: input.name,
+        source: input.source,
+        provenanceKey: input.provenanceKey,
+        payload: {
+          name: input.name,
+          data: input.data
+        },
+        meta: input.meta,
+        createdAt: input.createdAt,
+        idempotent: input.idempotent
+      },
+      'tool-surface'
+    )
   }
 
   ensureBootstrapAnchor(sessionId: string): void {

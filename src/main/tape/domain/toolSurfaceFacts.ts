@@ -14,6 +14,18 @@ import { buildExecutionToolTargetKey, isDetachedStoredToolTarget } from './execu
 
 export const TAPE_TOOL_CATALOG_EVENT_NAME = 'view/tool_catalog'
 export const TAPE_TOOL_SURFACE_EVENT_NAME = 'view/tool_surface'
+export const TOOL_SURFACE_TAPE_EVENT_NAMES = [
+  TAPE_TOOL_CATALOG_EVENT_NAME,
+  TAPE_TOOL_SURFACE_EVENT_NAME
+] as const
+export type ToolSurfaceTapeEventName = (typeof TOOL_SURFACE_TAPE_EVENT_NAMES)[number]
+
+export function isToolSurfaceTapeReservedName(
+  name: string | null | undefined
+): name is ToolSurfaceTapeEventName {
+  return TOOL_SURFACE_TAPE_EVENT_NAMES.some((eventName) => eventName === name)
+}
+
 export const TAPE_TOOL_CATALOG_FACT_SCHEMA_VERSION = 1
 export const TAPE_TOOL_CATALOG_FACT_HASH_VERSION = 1
 export const TAPE_TOOL_CATALOG_PROJECTION_HASH_VERSION = 1

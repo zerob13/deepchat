@@ -9,6 +9,7 @@ import type {
 } from '../domain/entry'
 import type { ExecutionJournalEventName } from '../domain/executionJournal'
 import type { ContractTapeEventName } from '../domain/contractFacts'
+import type { ToolSurfaceTapeEventName } from '../domain/toolSurfaceFacts'
 
 export interface TapeMutationProjection {
   applyAppendedEntry(row: DeepChatTapeEntryRow, previousSessionMaxEntryId: number): boolean
@@ -70,6 +71,14 @@ export interface TapeTransactionRunner {
 /** Transitional bootstrap capability until bootstrap orchestration lives in application services. */
 export interface TapeBootstrapStore {
   ensureBootstrapAnchor(sessionId: string): void
+}
+
+/** Tool Surface provenance has a dedicated namespace gate and shares the host transaction. */
+export interface ToolSurfacePersistenceStore extends TapeTransactionRunner, TapeBootstrapStore {
+  appendToolSurfaceEvent(
+    input: TapeEventAppendInput & { name: ToolSurfaceTapeEventName }
+  ): DeepChatTapeEntryRow
+  getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
 }
 
 /** Strict Journal persistence is intentionally absent from the generic Context Tape store port. */

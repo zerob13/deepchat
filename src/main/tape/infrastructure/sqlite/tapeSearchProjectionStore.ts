@@ -20,7 +20,8 @@ import type {
 // incarnation after a previously interrupted reset.
 // Version 4 rebuilds user-message projections with bounded OCR attachment snapshot text.
 // Version 6 derives tool order refs from the corresponding effective message.
-export const DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION = 6
+// Version 7 excludes Tool Surface provenance from ordinary Tape search.
+export const DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION = 7
 
 export type DeepChatTapeSearchProjectionInput = TapeSearchProjectionInput
 export type DeepChatTapeSearchProjectionRow = TapeSearchProjectionRow
