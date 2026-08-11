@@ -773,6 +773,38 @@ export class DeepChatTapeEntriesTable
       .all(sessionId) as DeepChatTapeEntryRow[]
   }
 
+  getByEntryId(sessionId: string, entryId: number): DeepChatTapeEntryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ? AND entry_id = ?`
+      )
+      .get(sessionId, entryId) as DeepChatTapeEntryRow | undefined
+  }
+
+  getEventsBySource(
+    sessionId: string,
+    name: string,
+    sourceType: DeepChatTapeSourceType,
+    sourceId: string,
+    sourceSeq: number
+  ): DeepChatTapeEntryRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = ?
+           AND source_type = ?
+           AND source_id = ?
+           AND source_seq = ?
+         ORDER BY entry_id ASC`
+      )
+      .all(sessionId, name, sourceType, sourceId, sourceSeq) as DeepChatTapeEntryRow[]
+  }
+
   getMaxEventSourceSeq(
     sessionId: string,
     name: string,

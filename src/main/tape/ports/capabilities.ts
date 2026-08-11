@@ -1,4 +1,5 @@
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
+import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type {
   DeepChatTapeViewManifest,
   DeepChatTapeViewManifestRecord
@@ -18,6 +19,11 @@ import type {
   ExecutionJournalCommitReceipt,
   ExecutionRecoveryReport
 } from '../domain/executionJournal'
+import type {
+  CreateTapeToolCatalogFactInput,
+  CreateTapeToolSurfaceFactInput,
+  TapeToolCatalogFactReference
+} from '../domain/toolSurfaceFacts'
 
 export type TapeMigrationState = 'none' | 'ready'
 
@@ -57,6 +63,36 @@ export interface TapeViewManifestWriter {
   appendViewManifest(manifest: DeepChatTapeViewManifest): void
 }
 
+export interface CommitTapeToolSurfaceViewInput {
+  readonly manifest: DeepChatTapeViewManifest
+  /** Exact provider-ordered definitions used to build the manifest; never persisted by this API. */
+  readonly activeToolDefinitions: readonly MCPToolDefinition[]
+  readonly catalog: CreateTapeToolCatalogFactInput
+  readonly surface: Omit<CreateTapeToolSurfaceFactInput, 'manifestHash' | 'catalog'>
+}
+
+export interface TapeToolSurfaceViewCommitReceipt {
+  readonly tapeIncarnationId: string
+  readonly manifest: {
+    readonly sessionId: string
+    readonly entryId: number
+    readonly manifestHash: string
+    readonly created: boolean
+  }
+  readonly catalog: TapeToolCatalogFactReference & { readonly created: boolean }
+  readonly surface: {
+    readonly sessionId: string
+    readonly tapeIncarnationId: string
+    readonly entryId: number
+    readonly surfaceHash: string
+    readonly created: boolean
+  }
+}
+
+export interface TapeToolSurfaceViewWriter {
+  commitToolSurfaceView(input: CommitTapeToolSurfaceViewInput): TapeToolSurfaceViewCommitReceipt
+}
+
 export interface TapeToolFactWriter {
   appendToolFact(input: TapeToolFactInput): Promise<TapeEntryRef>
 }
@@ -87,6 +123,7 @@ export interface DeepChatLoopTapePort
     TapeReconciliationPort,
     TapeViewManifestReader,
     TapeViewManifestWriter,
+    TapeToolSurfaceViewWriter,
     TapeToolFactWriter,
     TapeProviderAttemptWriter,
     TapeProviderAttemptReader,

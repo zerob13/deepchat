@@ -42,6 +42,7 @@ import type {
   TapeMessageFactWriter,
   TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
+  TapeToolSurfaceViewWriter,
   ExecutionJournalRecoveryReader,
   ExecutionJournalWriter,
   TapeRawEntryReader,
@@ -49,6 +50,8 @@ import type {
   TapeToolFactWriter,
   TapeTranscriptReader,
   TapeMemoryViewManifestInspection,
+  CommitTapeToolSurfaceViewInput,
+  TapeToolSurfaceViewCommitReceipt,
   TapeViewManifestReader,
   TapeViewManifestWriter
 } from '../ports/capabilities'
@@ -80,6 +83,7 @@ import { TapeRecallService } from './recallService'
 import { TapeReconcilerService } from './reconcilerService'
 import { TapeViewReplayService } from './viewReplayService'
 import { ExecutionJournalService } from './executionJournalService'
+import { ToolSurfaceProvenanceService } from './toolSurfaceProvenanceService'
 
 export type {
   AgentTapeViewErrorCode,
@@ -103,6 +107,7 @@ export class SessionTape
     TapeReconciliationPort,
     TapeViewManifestReader,
     TapeViewManifestWriter,
+    TapeToolSurfaceViewWriter,
     TapeAnchorReader,
     TapeAnchorWriter,
     TapeInspectionReader,
@@ -118,6 +123,7 @@ export class SessionTape
   private readonly providerAttempts: TapeProviderAttemptService
   private readonly executionJournal: ExecutionJournalService
   private readonly viewReplay: TapeViewReplayService
+  private readonly toolSurfaceProvenance: ToolSurfaceProvenanceService
   private readonly forks: TapeForkService
 
   constructor(database: TapeApplicationDatabase) {
@@ -131,6 +137,7 @@ export class SessionTape
     this.reconciler = new TapeReconcilerService(this.providers, this.facts)
     this.recall = new TapeRecallService(this.providers, this.lineage)
     this.viewReplay = new TapeViewReplayService(this.providers)
+    this.toolSurfaceProvenance = new ToolSurfaceProvenanceService(this.providers, this.viewReplay)
     this.forks = new TapeForkService(this.providers)
   }
 
@@ -221,6 +228,10 @@ export class SessionTape
 
   appendViewManifest(manifest: DeepChatTapeViewManifest): DeepChatTapeEntryRow {
     return this.viewReplay.appendViewManifest(manifest)
+  }
+
+  commitToolSurfaceView(input: CommitTapeToolSurfaceViewInput): TapeToolSurfaceViewCommitReceipt {
+    return this.toolSurfaceProvenance.commitToolSurfaceView(input)
   }
 
   listViewManifestsByMessage(

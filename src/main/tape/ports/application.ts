@@ -9,6 +9,7 @@ import type {
   TapeBootstrapStore,
   TapeEntryLifecycleStore,
   TapeEntryStore,
+  ToolSurfacePersistenceStore,
   TapeTransactionRunner
 } from './storage'
 
@@ -145,7 +146,10 @@ export interface TapeTerminalMessageReader {
   get(messageId: string): TapeTerminalMessageRow | undefined
 }
 
-export type TapeApplicationEntryStore = TapeEntryStore & TapeTransactionRunner & TapeBootstrapStore
+export type TapeApplicationEntryStore = TapeEntryStore &
+  TapeTransactionRunner &
+  TapeBootstrapStore &
+  ToolSurfacePersistenceStore
 
 export interface TapeApplicationDatabase {
   readonly deepchatTapeEntriesTable: TapeApplicationEntryStore

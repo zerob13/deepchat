@@ -44,6 +44,10 @@ type TapeViewReplayProviders = Pick<
 
 const BOOTSTRAP_ANCHOR_NAME = 'session/start'
 
+export function buildTapeViewManifestProvenanceKey(manifest: DeepChatTapeViewManifest): string {
+  return `view:${manifest.sessionId}:${manifest.messageId}:${manifest.requestSeq}:${manifest.hashes.manifestHash}`
+}
+
 function isReconstructionAnchorName(name: string | null): boolean {
   if (name === null) {
     return false
@@ -277,7 +281,7 @@ export class TapeViewReplayService {
         id: manifest.messageId,
         seq: manifest.requestSeq
       },
-      provenanceKey: `view:${manifest.sessionId}:${manifest.messageId}:${manifest.requestSeq}:${manifest.hashes.manifestHash}`,
+      provenanceKey: buildTapeViewManifestProvenanceKey(manifest),
       data: {
         manifest
       },

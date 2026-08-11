@@ -76,7 +76,12 @@ function createTapeTableMock() {
         name: 'session/start',
         source: { type: 'session', id: sessionId, seq: 0 },
         state: { owner: 'human' },
-        meta: { tapeIncarnationId: `test-tape-${++tapeIncarnationSequence}` },
+        meta: {
+          tapeIncarnationId: `00000000-0000-4000-8000-${String(++tapeIncarnationSequence).padStart(
+            12,
+            '0'
+          )}`
+        },
         idempotent: true
       })
     }),
@@ -146,6 +151,13 @@ function createTapeTableMock() {
         payload: { name: input.name, data: input.data }
       })
     ),
+    appendToolSurfaceEvent: vi.fn((input: any) =>
+      table.append({
+        ...input,
+        kind: 'event',
+        payload: { name: input.name, data: input.data }
+      })
+    ),
     listUnterminatedRunEvents: vi.fn(() => {
       const runKey = (sessionId: string, runId: string) => JSON.stringify([sessionId, runId])
       const unterminatedRunKeys = new Set(
@@ -194,6 +206,21 @@ function createTapeTableMock() {
     isInTransaction: vi.fn(() => inTransaction),
     getBySession: vi.fn((sessionId: string) =>
       entries.filter((entry) => entry.session_id === sessionId)
+    ),
+    getByEntryId: vi.fn((sessionId: string, entryId: number) =>
+      entries.find((entry) => entry.session_id === sessionId && entry.entry_id === entryId)
+    ),
+    getEventsBySource: vi.fn(
+      (sessionId: string, name: string, sourceType: string, sourceId: string, sourceSeq: number) =>
+        entries.filter(
+          (entry) =>
+            entry.session_id === sessionId &&
+            entry.kind === 'event' &&
+            entry.name === name &&
+            entry.source_type === sourceType &&
+            entry.source_id === sourceId &&
+            entry.source_seq === sourceSeq
+        )
     ),
     getMaxEventSourceSeq: vi.fn(
       (sessionId: string, name: string, sourceType: string, sourceId: string) =>
