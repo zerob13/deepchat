@@ -3,6 +3,9 @@ export const SUBAGENT_ORCHESTRATOR_TOOL_NAME = 'subagent_orchestrator'
 export const LIVE_DELEGATION_AGENT_TOOL_NAME = 'deepchat_subagents'
 export const LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME = 'agent-live-delegation'
 export const TOOL_SEARCH_AGENT_TOOL_NAME = 'tool_search'
+export const TOOL_SEARCH_AGENT_TOOL_SERVER_NAME = 'agent-tool-surface'
+export const TOOL_SEARCH_AGENT_TOOL_MAX_RESULTS = 8
+export const TOOL_SEARCH_AGENT_TOOL_MAX_CALLS_PER_BATCH = 8
 export const DEFAULT_DISABLED_AGENT_TOOLS = [CRON_JOB_AGENT_TOOL_NAME] as const
 
 export const TAPE_TOOL_NAMES = Object.freeze({

@@ -1,7 +1,12 @@
 import { Buffer } from 'node:buffer'
 import { types as nodeTypes } from 'node:util'
 import type { AgentToolExposure } from '@shared/agentTools'
-import { TOOL_SEARCH_AGENT_TOOL_NAME, getAgentToolExposure } from '@shared/agentTools'
+import {
+  TOOL_SEARCH_AGENT_TOOL_MAX_CALLS_PER_BATCH,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_SERVER_NAME,
+  getAgentToolExposure
+} from '@shared/agentTools'
 import {
   stripToolExecutionContract,
   type MCPToolDefinition,
@@ -33,7 +38,8 @@ export const MAX_TOOL_SURFACE_OVERLAP_IDENTITIES = MAX_TOOL_SURFACE_DEFINITIONS
 export const MAX_TOOL_SURFACE_HINT_INPUT_BYTES = MAX_TOOL_SURFACE_TOTAL_INPUT_BYTES
 export const MAX_TOOL_SURFACE_CANDIDATE_BATCHES = 1_024
 export const MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES = 4_096
-export const MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH = 8
+export const MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH =
+  TOOL_SEARCH_AGENT_TOOL_MAX_CALLS_PER_BATCH
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_TOOL_SURFACE_REQUEST_ID_BYTES = 1_024
@@ -1801,8 +1807,13 @@ function isToolSearchCatalogEntry(entry: CanonicalToolCatalogEntry): boolean {
     entry.target.source === 'agent' &&
     entry.target.providerVisibleName === TOOL_SEARCH_AGENT_TOOL_NAME &&
     entry.target.originalName === TOOL_SEARCH_AGENT_TOOL_NAME &&
+    entry.target.serverName === TOOL_SEARCH_AGENT_TOOL_SERVER_NAME &&
+    entry.target.serverId === null &&
+    entry.target.configGeneration === null &&
+    entry.target.bindingHash === null &&
     entry.exposure === 'system-model' &&
-    entry.execution.effect === 'read'
+    entry.execution.effect === 'read' &&
+    entry.execution.mode === 'parallel'
   )
 }
 

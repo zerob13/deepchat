@@ -1,4 +1,8 @@
-import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  TOOL_SEARCH_AGENT_TOOL_MAX_RESULTS,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_SERVER_NAME
+} from '@shared/agentTools'
 import type {
   CanonicalToolCatalogEntry,
   ToolSurfaceActivationCandidate,
@@ -9,9 +13,9 @@ import { toDeepChatJsonSchema } from '@shared/lib/zodJsonSchema'
 import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/mcp'
 import { z } from 'zod'
 
-export const TOOL_SEARCH_TOOL_SERVER_NAME = 'agent-tool-surface'
+export const TOOL_SEARCH_TOOL_SERVER_NAME = TOOL_SEARCH_AGENT_TOOL_SERVER_NAME
 export const TOOL_SEARCH_DEFAULT_RESULT_LIMIT = 5
-export const TOOL_SEARCH_MAX_RESULT_LIMIT = 8
+export const TOOL_SEARCH_MAX_RESULT_LIMIT = TOOL_SEARCH_AGENT_TOOL_MAX_RESULTS
 export const TOOL_SEARCH_MAX_QUERY_LENGTH = 512
 export const TOOL_SEARCH_MAX_NAME_LENGTH = 256
 export const TOOL_SEARCH_MAX_DESCRIPTION_LENGTH = 240

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TAPE_TOOL_NAMES, TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  TAPE_TOOL_NAMES,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_SERVER_NAME
+} from '@shared/agentTools'
 import {
   TOOL_EXECUTION,
   type MCPToolDefinition,
@@ -53,7 +57,10 @@ function agentTool(
       parameters: { type: 'object', properties: {} }
     },
     server: {
-      name: 'agent-tools',
+      name:
+        name === TOOL_SEARCH_AGENT_TOOL_NAME
+          ? TOOL_SEARCH_AGENT_TOOL_SERVER_NAME
+          : 'agent-tools',
       icons: '',
       description: 'Agent tools'
     },
@@ -1917,6 +1924,53 @@ describe('Tool Surface production selection', () => {
           ceilingDefinitions: definitions,
           initialEligibleDefinitions: definitions,
           toolSearchDefinition: agentTool('not_tool_search'),
+          policy
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME, {
+            server: {
+              name: 'agent-tools',
+              icons: '',
+              description: 'Wrong ToolSearch owner'
+            }
+          }),
+          policy
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME, {
+            server: {
+              name: TOOL_SEARCH_AGENT_TOOL_SERVER_NAME,
+              icons: '',
+              description: 'Bound ToolSearch impostor',
+              id: SERVER_ID,
+              configGeneration: 1,
+              bindingHash: BINDING_HASH
+            }
+          }),
+          policy
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions: definitions,
+          initialEligibleDefinitions: definitions,
+          toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME, {
+            execution: TOOL_EXECUTION.read.sequential
+          }),
           policy
         }),
       'invalid_definition'
