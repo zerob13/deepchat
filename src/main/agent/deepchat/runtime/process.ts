@@ -36,10 +36,6 @@ import {
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
 import type { OutputSink } from '@/agent/deepchat/loop/ports'
 import { buildTapeToolFactInputs } from '@/tape/application/factPersistence'
-import {
-  createOpaquePromptAssembly,
-  reconcilePromptAssembly
-} from '@/agent/deepchat/resources/promptAssembly'
 import { CommandShellProfileSchema } from '@shared/commandShell'
 
 const UNKNOWN_CONTEXT_LIMIT = Number.MAX_SAFE_INTEGER
@@ -539,19 +535,6 @@ export function appendStreamingProviderPermissionBlock(
       params: toolArgs
     }
   }
-}
-
-function replaceLeadingSystemMessage(messages: ChatMessage[], systemPrompt: string): void {
-  if (!systemPrompt) {
-    return
-  }
-
-  if (messages[0]?.role === 'system') {
-    messages[0] = { ...messages[0], content: systemPrompt }
-    return
-  }
-
-  messages.unshift({ role: 'system', content: systemPrompt })
 }
 
 function commitCorrectedToolMessage(
@@ -1285,6 +1268,16 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
             }
           }
 
+          if (executed.toolsChanged) {
+            const activeSkillNames = controls?.getActiveSkillNames?.()
+            run.resources.toolDefinitions = await toolCatalog.resolve({
+              activeSkillNames,
+              failClosed: true
+            })
+            run.resources.activeSkillNames = [...(controls?.getActiveSkillNames?.() ?? [])]
+            currentTools = run.resources.toolDefinitions
+          }
+
           if (params.shouldYieldForPendingInput?.()) {
             return {
               type: 'halted',
@@ -1292,44 +1285,6 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 status: 'completed',
                 stopReason: 'pending_input',
                 usage: buildUsageSnapshot(state)
-              }
-            }
-          }
-
-          if (executed.toolsChanged) {
-            const activeSkillNames = controls?.getActiveSkillNames?.()
-            run.resources.activeSkillNames = [...(activeSkillNames ?? [])]
-            try {
-              run.resources.toolDefinitions = await toolCatalog.resolve({ activeSkillNames })
-              currentTools = run.resources.toolDefinitions
-            } catch (error) {
-              console.warn('[ProcessStream] failed to refresh tools after skill activation:', error)
-            }
-            if (params.refreshSystemPrompt) {
-              try {
-                const refreshedSystemPrompt = await params.refreshSystemPrompt(
-                  activeSkillNames,
-                  currentTools
-                )
-                const refreshedAssembly =
-                  typeof refreshedSystemPrompt === 'string'
-                    ? createOpaquePromptAssembly(refreshedSystemPrompt)
-                    : refreshedSystemPrompt
-                replaceLeadingSystemMessage(conversationMessages, refreshedAssembly.prompt)
-                const effectiveSystemPrompt =
-                  conversationMessages[0]?.role === 'system' &&
-                  typeof conversationMessages[0].content === 'string'
-                    ? conversationMessages[0].content
-                    : ''
-                run.resources.promptAssembly = reconcilePromptAssembly(
-                  refreshedAssembly,
-                  effectiveSystemPrompt
-                )
-              } catch (error) {
-                console.warn(
-                  '[ProcessStream] failed to refresh system prompt after skill activation:',
-                  error
-                )
               }
             }
           }

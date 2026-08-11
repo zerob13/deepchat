@@ -13,6 +13,8 @@ import type { AgentToolProgressUpdate } from '@shared/types/tool'
 import type { AssistantMessageBlock, PermissionMode } from '@shared/types/agent-interface'
 import type { AgentPlanSnapshot, AgentPlanTerminalReason } from '@shared/types/agent-plan'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import { isSkillSourceType } from '@shared/types/skillManagement'
+import type { TapeSkillIdentity } from '@/tape/domain/skillMaterialization'
 import { buildExecutionContractBinding } from '@/tape/domain/executionContract'
 import {
   parseQuestionToolArgs,
@@ -83,6 +85,7 @@ import {
   type ExecutionOperationIdentity
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
+import { preflightRequestContext } from './contextBudget'
 
 type PermissionType = 'read' | 'write' | 'all' | 'command'
 
@@ -122,6 +125,12 @@ type StagedToolResult = {
   skippedReason?: 'max_tokens'
   operation?: ExecutionOperationIdentity
   outcomeCommitted?: true
+  outcomeEntryId?: number
+  requiresInline?: boolean
+  runtimeSkillView?: {
+    skillName: string
+    identity: TapeSkillIdentity
+  }
 }
 
 type SkillDraftPromptPayload = {
@@ -218,6 +227,7 @@ interface CommitStagedToolResultsParams {
   contextLength: number
   maxTokens: number
   rendererFlushHandle: RendererFlushHandle
+  controls?: ProcessControlCollaborators
 }
 
 async function commitStagedToolResults(
@@ -228,7 +238,7 @@ async function commitStagedToolResults(
     pendingInteractions,
     batchState,
     executed,
-    toolsChanged,
+    toolsChanged: initialToolsChanged,
     conversation,
     state,
     batchToolCallBlocks,
@@ -240,8 +250,10 @@ async function commitStagedToolResults(
     tools,
     contextLength,
     maxTokens,
-    rendererFlushHandle
+    rendererFlushHandle,
+    controls
   } = params
+  let toolsChanged = initialToolsChanged
 
   if (stagedResults.length > 0) {
     for (const stagedResult of stagedResults) {
@@ -260,12 +272,94 @@ async function commitStagedToolResults(
         responseText: result.responseText,
         isError: result.isError,
         offloadPath: result.offloadPath,
-        existingOffloadPath: result.existingOffloadPath
+        existingOffloadPath: result.existingOffloadPath,
+        requiresInline: result.requiresInline
       })),
       toolDefinitions: tools,
       contextLength,
       maxTokens
     })
+    if (fittedResults.kind !== 'ok') {
+      const runtimeSkillViewResult = stagedResults.find((result) => result.runtimeSkillView)
+      if (runtimeSkillViewResult?.operation && runtimeSkillViewResult.outcomeCommitted) {
+        throw new CommittedToolOutcomeProjectionError(runtimeSkillViewResult.operation, {
+          cause: new Error(
+            `Runtime Skill-view result ${runtimeSkillViewResult.toolCallId} could not remain inline in the provider projection.`
+          )
+        })
+      }
+    }
+    if (fittedResults.kind === 'ok') {
+      for (let index = 0; index < stagedResults.length; index += 1) {
+        const stagedResult = stagedResults[index]
+        const runtimeSkillView = stagedResult.runtimeSkillView
+        if (!runtimeSkillView) continue
+        if (
+          !stagedResult.operation ||
+          !stagedResult.outcomeCommitted ||
+          !Number.isSafeInteger(stagedResult.outcomeEntryId) ||
+          stagedResult.outcomeEntryId! <= 0
+        ) {
+          throw new ExecutionJournalCorruptionError(
+            `Runtime Skill-view result ${stagedResult.toolCallId} has no committed Journal outcome.`
+          )
+        }
+        const fittedResult = fittedResults.results[index]
+        if (
+          !fittedResult ||
+          fittedResult.isError ||
+          fittedResult.downgraded ||
+          fittedResult.responseText !== stagedResult.responseText ||
+          fittedResult.contextResponseText !== stagedResult.responseText
+        ) {
+          const error = new Error(
+            `Runtime Skill-view result ${stagedResult.toolCallId} could not preserve its exact inline projection.`
+          )
+          if (stagedResult.operation && stagedResult.outcomeCommitted) {
+            throw new CommittedToolOutcomeProjectionError(stagedResult.operation, { cause: error })
+          }
+          throw error
+        }
+        const block = batchToolCallBlocks.find(
+          (candidate) => candidate.tool_call?.id === stagedResult.toolCallId
+        )
+        const blockIndex = block ? state.blocks.indexOf(block) : -1
+        if (!block || blockIndex < 0 || !Number.isSafeInteger(block.timestamp)) {
+          throw new CommittedToolOutcomeProjectionError(stagedResult.operation, {
+            cause: new Error('Runtime Skill-view tool result lost its transcript identity.')
+          })
+        }
+        if (!controls?.commitRuntimeSkillView || !controls.activateSkill) {
+          throw new CommittedToolOutcomeProjectionError(stagedResult.operation, {
+            cause: new Error(
+              'Runtime Skill-view activation is missing its strict commit capability.'
+            )
+          })
+        }
+        try {
+          await controls.commitRuntimeSkillView({
+            identity: runtimeSkillView.identity,
+            toolCallId: stagedResult.toolCallId,
+            responseText: stagedResult.responseText,
+            blockIndex,
+            timestamp: block.timestamp!,
+            operation: stagedResult.operation,
+            outcomeEntryId: stagedResult.outcomeEntryId!
+          })
+          const activeSkillNames = await controls.activateSkill(runtimeSkillView.skillName)
+          if (!activeSkillNames.includes(runtimeSkillView.skillName)) {
+            throw new Error(
+              `Runtime Skill-view activation did not activate ${runtimeSkillView.skillName}.`
+            )
+          }
+        } catch (error) {
+          if (error instanceof CommittedToolOutcomeProjectionError) throw error
+          throw new CommittedToolOutcomeProjectionError(stagedResult.operation, { cause: error })
+        }
+        io.abortSignal.throwIfAborted()
+        toolsChanged = true
+      }
+    }
     const finalizedInteractions = applyFinalizedToolResults({
       stagedResults,
       fittedResults: fittedResults.results,
@@ -837,9 +931,12 @@ function extractSkillDraftPromptPayload(
   return { draftId, skillName }
 }
 
-function extractActivatedSkillAfterCall(toolName: string, rawData: MCPToolResponse): string | null {
+function extractRuntimeSkillViewAfterCall(
+  toolName: string,
+  rawData: MCPToolResponse
+): StagedToolResult['runtimeSkillView'] {
   if (toolName !== 'skill_view') {
-    return null
+    return undefined
   }
 
   const toolResult =
@@ -848,12 +945,36 @@ function extractActivatedSkillAfterCall(toolName: string, rawData: MCPToolRespon
       : null
 
   if (toolResult?.activationApplied !== true) {
-    return null
+    return undefined
   }
 
   const activatedSkill =
     typeof toolResult.activatedSkill === 'string' ? toolResult.activatedSkill.trim() : ''
-  return activatedSkill || null
+  const skillContext =
+    toolResult.skillContext && typeof toolResult.skillContext === 'object'
+      ? (toolResult.skillContext as Record<string, unknown>)
+      : null
+  if (
+    !activatedSkill ||
+    !skillContext ||
+    typeof skillContext.agentId !== 'string' ||
+    !skillContext.agentId.trim() ||
+    !isSkillSourceType(skillContext.sourceType) ||
+    typeof skillContext.sourceId !== 'string' ||
+    !skillContext.sourceId.trim() ||
+    skillContext.skillName !== activatedSkill
+  ) {
+    throw new Error('Runtime Skill-view activation metadata is invalid.')
+  }
+  return {
+    skillName: activatedSkill,
+    identity: {
+      agentId: skillContext.agentId,
+      sourceType: skillContext.sourceType,
+      sourceId: skillContext.sourceId,
+      skillName: activatedSkill
+    }
+  }
 }
 
 function buildToolExecutionContext(
@@ -965,7 +1086,7 @@ function commitDispatchedToolOutcome(
       `Execution Journal outcome already existed for tool operation ${stagedResult.toolCallId}.`
     )
   }
-  return { ...stagedResult, outcomeCommitted: true }
+  return { ...stagedResult, outcomeCommitted: true, outcomeEntryId: receipt.entryId }
 }
 
 function scheduleRendererFlush(
@@ -1671,6 +1792,9 @@ async function runToolCall(params: {
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
   executionContract?: DeepChatExecutionContract | null
   commandShell: ResolvedCommandShell
+  tools: MCPToolDefinition[]
+  contextLength: number
+  maxTokens: number
   oneShotCommandGrantId?: string
 }): Promise<ToolRunOutcome> {
   const {
@@ -1690,12 +1814,15 @@ async function runToolCall(params: {
     operationScope,
     executionContract,
     commandShell,
+    contextLength,
+    maxTokens,
     oneShotCommandGrantId
   } = params
   const { completedToolCall, toolCall, toolContext } = execution
   let returnedToolResult: MCPToolResponse | null = null
   let dispatchedOperation: ExecutionOperationIdentity | undefined
   let committedOutcome: StagedToolResult | undefined
+  let returnedRuntimeSkillView: ReturnType<typeof extractRuntimeSkillViewAfterCall>
   const pendingOutcomeProjections: ToolOutcomeProjection[] = []
   const releaseOutcomeProjections = (outcomeCommitted: boolean): void => {
     if (pendingOutcomeProjections.length === 0) return
@@ -1928,7 +2055,20 @@ async function runToolCall(params: {
       )
     }
 
+    returnedRuntimeSkillView = extractRuntimeSkillViewAfterCall(
+      completedToolCall.name,
+      toolRawData
+    )
     if (io.abortSignal.aborted) {
+      if (returnedRuntimeSkillView) {
+        return commitOutcome(
+          buildToolErrorOutcome(
+            execution,
+            new Error('Runtime Skill view was canceled before activation.'),
+            dispatchedOperation
+          )
+        )
+      }
       return commitOutcome(
         buildReturnedToolResultOutcome(execution, toolRawData, dispatchedOperation)
       )
@@ -1969,18 +2109,56 @@ async function runToolCall(params: {
     )
 
     const responseText = toolResponseToText(toolRawData.content)
-    const preparedResult = await toolResults.prepare({
-      sessionId: io.sessionId,
-      toolCallId: completedToolCall.id,
-      toolName: toolContext.name,
-      rawContent: responseText
-    })
+    const runtimeSkillViewCandidate = returnedRuntimeSkillView
+    const runtimeSkillViewFitsOptimisticRequest = runtimeSkillViewCandidate
+      ? preflightRequestContext({
+          messages: [
+            {
+              role: 'assistant',
+              content: '',
+              tool_calls: [
+                {
+                  id: completedToolCall.id,
+                  type: 'function',
+                  function: {
+                    name: completedToolCall.name,
+                    arguments: '{}'
+                  }
+                }
+              ]
+            },
+            { role: 'tool', tool_call_id: completedToolCall.id, content: responseText }
+          ],
+          // This is only a conservative rejection guard before append-only Tape persistence. Use
+          // the smallest valid protocol projection and no tool schemas so every request that might
+          // fit after authoritative context recovery reaches ContextCoordinator's final preflight.
+          tools: [],
+          contextLength,
+          requestedMaxTokens: maxTokens
+        }).fitsWithinContext
+      : true
+    const runtimeSkillView = runtimeSkillViewFitsOptimisticRequest
+      ? runtimeSkillViewCandidate
+      : undefined
+    const preparedResult = runtimeSkillView
+      ? ({ kind: 'ok', content: responseText, offloaded: false, offloadPath: undefined } as const)
+      : runtimeSkillViewCandidate
+        ? ({
+            kind: 'tool_error',
+            message:
+              'Skill content cannot fit this model context even before conversation history is included.'
+          } as const)
+        : await toolResults.prepare({
+          sessionId: io.sessionId,
+          toolCallId: completedToolCall.id,
+          toolName: toolContext.name,
+          rawContent: responseText
+        })
     io.abortSignal.throwIfAborted()
     const stagedResponseText =
       preparedResult.kind === 'tool_error' ? preparedResult.message : preparedResult.content
     const stagedIsError = preparedResult.kind === 'tool_error' || toolRawData.isError === true
 
-    const activatedSkill = extractActivatedSkillAfterCall(completedToolCall.name, toolRawData)
     const stagedResult = commitDispatchedToolOutcome(
       {
         toolCallId: completedToolCall.id,
@@ -2000,7 +2178,8 @@ async function runToolCall(params: {
         mcpResult: toolRawData.mcpResult,
         skillDraftPrompt: extractSkillDraftPromptPayload(toolRawData),
         postHookKind: stagedIsError ? 'failure' : 'success',
-        operation: dispatchedOperation
+        operation: dispatchedOperation,
+        ...(runtimeSkillView ? { requiresInline: true, runtimeSkillView } : {})
       },
       executionJournal,
       io
@@ -2018,15 +2197,10 @@ async function runToolCall(params: {
         subagentState.subagentFinal
       )
     }
-    if (activatedSkill) {
-      await controls?.activateSkill?.(activatedSkill)
-      io.abortSignal.throwIfAborted()
-    }
-
     return {
       kind: 'staged',
       stagedResult,
-      toolsChanged: Boolean(activatedSkill)
+      toolsChanged: false
     }
   } catch (err) {
     if (isExecutionJournalError(err)) {
@@ -2039,6 +2213,15 @@ async function runToolCall(params: {
       throw new CommittedToolOutcomeProjectionError(committedOutcome.operation, { cause: err })
     }
     if (io.abortSignal.aborted && returnedToolResult) {
+      if (returnedRuntimeSkillView) {
+        return commitOutcome(
+          buildToolErrorOutcome(
+            execution,
+            new Error('Runtime Skill view was canceled before activation.'),
+            dispatchedOperation
+          )
+        )
+      }
       return commitOutcome(
         buildReturnedToolResultOutcome(execution, returnedToolResult, dispatchedOperation)
       )
@@ -2208,7 +2391,8 @@ export async function settleToolBatch(
       tools,
       contextLength,
       maxTokens,
-      rendererFlushHandle
+      rendererFlushHandle,
+      controls
     })
   }
 
@@ -2283,6 +2467,9 @@ export async function settleToolBatch(
               operationScope,
               executionContract,
               commandShell,
+              tools,
+              contextLength,
+              maxTokens,
               oneShotCommandGrantId
             })
           }
@@ -2365,7 +2552,8 @@ export async function settleToolBatch(
       tools,
       contextLength,
       maxTokens,
-      rendererFlushHandle
+      rendererFlushHandle,
+      controls
     })
   }
 
@@ -2568,6 +2756,9 @@ export async function settleToolBatch(
           operationScope,
           executionContract,
           commandShell,
+          tools,
+          contextLength,
+          maxTokens,
           oneShotCommandGrantId
         })
       }
@@ -2643,7 +2834,8 @@ export async function settleToolBatch(
     tools,
     contextLength,
     maxTokens,
-    rendererFlushHandle
+    rendererFlushHandle,
+    controls
   })
 }
 

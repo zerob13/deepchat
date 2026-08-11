@@ -219,12 +219,14 @@ export class ToolService implements ToolServicePort {
           conversationId: context.conversationId,
           activeSkillNames: context.activeSkillNames,
           subagentCapability: context.subagentCapability,
-          skillsEnabled
+          skillsEnabled,
+          ...(context.requireCompleteCatalog ? { requireCompleteCatalog: true } : {})
         }),
         'agent'
       )
     } catch (error) {
       console.warn('[Tool] Failed to load Agent tool definitions', error)
+      if (context.requireCompleteCatalog) throw error
     }
 
     const hasBuiltInSkillDiscovery = agentDefs.some(
@@ -255,6 +257,7 @@ export class ToolService implements ToolServicePort {
       mapper.registerTools(filteredAgentDefs, 'agent')
     } catch (error) {
       console.warn('[Tool] Failed to merge Agent tool definitions', error)
+      if (context.requireCompleteCatalog) throw error
     }
 
     this.publishMapper(context.conversationId, mapper, defs)

@@ -302,24 +302,29 @@ optional contract under its own exact recipe. Manifest assembly receives a separ
 `(sessionId, tapeIncarnation, runId, requestSeq)` binding fail closed. Existing schemas and hash
 recipes remain readable and are never reinterpreted under the new semantics.
 
-Recovery uses the manifest bound to the exact execution and request, never a Session-global or
-message-global "latest manifest" lookup. The replay service remains an evidence-slice validator;
-runtime continuation receives a separate narrow, hash-validating Skill-context reader rather than
-assuming replay already reconstructs provider messages.
+Request-occurrence recovery uses the manifest bound to the exact Run and request, never a
+Session-global or message-global "latest manifest" lookup. Runtime-view continuation across a
+permission pause instead intersects the current assistant message's persisted root-view blocks
+with its provider projection, then restores identity and content authority from matching strict
+tool-result facts. The replay service remains an evidence-slice validator; runtime continuation
+receives a separate narrow, hash-validating Skill-context reader rather than assuming replay
+already reconstructs provider messages.
 
 ### Continuation And New Execution
 
-The existing loop `runId` is the Skill execution identity. Transient retry, context-pressure
-recovery, strict overflow retry, in-process paused-permission continuation, and tool-loop rounds
-keep that Run and reuse its original materialization references. They must not reread disk. Missing
-entries, Tape incarnation changes, scope conflicts, or hash drift fail closed.
+`runId` identifies one provider-loop attempt and its request occurrences. Transient retry,
+context-pressure recovery, strict overflow retry, and ordinary tool-loop rounds keep that Run and
+reuse its original references. Permission resume starts a new Run for the same assistant-message
+execution and must rebuild its registry from the exact Tape-backed references selected before the
+pause. Neither path may reread mutable Skill files. Missing entries, physical-envelope drift, Tape
+incarnation changes, scope conflicts, or hash drift fail closed.
 
-The current Execution Journal parks interrupted Runs after process restart; this increment does not
-invent automatic Run resurrection. A user-initiated continuation after restart, Regenerate,
-edit-and-resend, or newly submitted message creates a new Run and new Skill execution. It
-fresh-resolves the current Skill source by bypassing or validating the content cache, then strictly
-reuses equal materialized content or appends a new version. Version drift remains visible through
-entry and projection hashes.
+The current Execution Journal does not resurrect an old Run after process restart. Resuming the
+same pending assistant message creates a new Run but remains a continuation and restores its exact
+Tape-backed Skill content. Regenerate, edit-and-resend, or a newly submitted message creates a new
+Skill execution. It fresh-resolves the current Skill source by bypassing or validating the content
+cache, then strictly reuses equal materialized content or appends a new version. Version drift
+remains visible through entry and projection hashes.
 
 Root `skill_view` keeps `execution/tool_outcome` as the strict operation-settlement fact; that fact
 contains the response hash, not the response body. A narrow strict Skill-view writer therefore
@@ -383,7 +388,8 @@ single rejected request never overwrite provider configuration.
 10. Existing Session active Skills remain visible and removable, while no new Pin entry point is
     introduced.
 11. Every message or Session Skill body sent to a provider is read back from a validated Tape
-    materialization fact; continuation within one Run never rereads mutable disk.
+    materialization fact; continuation in one Run or across permission resume never rereads mutable
+    disk.
 12. New executions fresh-resolve Skill source content and record or strictly reuse the resulting
     version.
 13. Skill-bearing ViewManifest persistence and all pre-provider fact/ref/hash checks fail closed.

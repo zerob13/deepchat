@@ -16,7 +16,6 @@ import type {
 } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
-import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { DeepchatEventName } from '@shared/contracts/events'
 import type { DeepChatInternalSessionUpdate } from './sessionUpdates'
 import type { SessionTranscript } from '@/session/data/transcript'
@@ -32,6 +31,8 @@ import type {
 } from '@/agent/deepchat/loop/ports'
 import type { CommandShellProfile } from '@shared/commandShell'
 import type { ExecutionJournalWriter, TapeToolFactWriter } from '@/tape/ports/capabilities'
+import type { TapeSkillIdentity } from '@/tape/domain/skillMaterialization'
+import type { ExecutionOperationIdentity } from '@/tape/domain/executionJournal'
 import type { SessionPermissionGrant } from '@/session/contracts'
 
 export interface InterleavedReasoningConfig {
@@ -127,6 +128,15 @@ export interface ProcessControlCollaborators {
   getEnabledMcpServerIds?: () => string[] | null | undefined
   getAgentId?: () => string | undefined
   activateSkill?: (skillName: string) => Promise<string[]>
+  commitRuntimeSkillView?: (input: {
+    identity: TapeSkillIdentity
+    toolCallId: string
+    responseText: string
+    blockIndex: number
+    timestamp: number
+    operation: ExecutionOperationIdentity
+    outcomeEntryId: number
+  }) => Promise<void> | void
   cacheImage?: (data: string) => Promise<string>
 }
 
@@ -231,10 +241,6 @@ export interface ProcessTerminalSelection {
 export interface ProcessParams {
   run: LoopRun<StreamState>
   toolCatalog: ToolCatalogPort
-  refreshSystemPrompt?: (
-    activeSkillNames: string[] | undefined,
-    toolDefinitions: MCPToolDefinition[]
-  ) => Promise<DeepChatPromptAssembly | string>
   toolExecution: ToolExecutionPort
   toolResults: ToolResultPort
   coreStream: (

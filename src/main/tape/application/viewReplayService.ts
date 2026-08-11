@@ -31,12 +31,25 @@ import type {
   TapeApplicationProviders,
   TapeMessageTraceRow as DeepChatMessageTraceRow
 } from '../ports/application'
+import { toTapeSessionId } from '../domain/facts'
+import type {
+  TapeRuntimeSkillViewContextReceipt,
+  TapeRuntimeSkillViewRecoveryInput
+} from '../domain/skillContext'
+import {
+  MAX_SKILL_VIEW_RESULT_FACT_BYTES,
+  readSkillContextEvidence,
+  validateRuntimeSkillJournalChain,
+  type TapeSkillContextEvidence
+} from '../domain/skillContext'
+import { buildExecutionOperationProvenanceKey } from '../domain/executionJournal'
 import type {
   TapeMemoryContributionBudgetInspection,
   TapeMemoryContributionTokenInspection,
   TapeMemoryViewManifestInspection
 } from '../ports/capabilities'
 import { parseJsonObject } from './common'
+import { assertTapeToolFactPhysicalEnvelope, buildToolFactProvenanceKey } from './factPersistence'
 import type { TapeViewManifestAssemblySources } from './contracts'
 
 type TapeViewReplayProviders = Pick<
@@ -200,6 +213,39 @@ export class TapeViewReplayService {
     return this.providers.getEntryStore()
   }
 
+  private requireRuntimeSkillJournalEvidence(input: {
+    sessionId: string
+    messageId: string
+    toolCallId: string
+    responseText: string
+    evidence: unknown
+  }): TapeSkillContextEvidence {
+    const evidence = readSkillContextEvidence(input.evidence)
+    if (evidence.operation.providerToolCallId !== input.toolCallId) {
+      throw new Error('Runtime Skill-view Journal operation does not match its tool result.')
+    }
+    const outcomeRow = this.table.getByEntryIds(input.sessionId, [evidence.outcomeEntryId])[0]
+    if (!outcomeRow) {
+      throw new Error('Runtime Skill-view Journal outcome is missing.')
+    }
+    const dispatchRow = this.table.getByProvenanceKey(
+      input.sessionId,
+      buildExecutionOperationProvenanceKey(evidence.operation, 'dispatch')
+    )
+    if (!dispatchRow) {
+      throw new Error('Runtime Skill-view Journal dispatch is missing.')
+    }
+    return validateRuntimeSkillJournalChain({
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      toolCallId: input.toolCallId,
+      responseText: input.responseText,
+      evidence,
+      dispatchRow,
+      outcomeRow
+    })
+  }
+
   getViewManifestSourceMaps(
     sessionId: string,
     messageId?: string
@@ -260,6 +306,138 @@ export class TapeViewReplayService {
       toolCallEntryIdByToolId,
       toolResultEntryIdByToolId
     }
+  }
+
+  recoverRuntimeSkillViewContexts(
+    input: TapeRuntimeSkillViewRecoveryInput
+  ): TapeRuntimeSkillViewContextReceipt[] {
+    if (
+      !input.sessionId.trim() ||
+      !input.messageId.trim() ||
+      !Number.isSafeInteger(input.messageOrderSeq) ||
+      input.messageOrderSeq < 0 ||
+      !input.expectedTapeIncarnationId.trim() ||
+      input.projections.length > 64
+    ) {
+      throw new TypeError('Runtime Skill-view recovery identity is invalid.')
+    }
+    if (this.table.getBootstrapIncarnation(input.sessionId) !== input.expectedTapeIncarnationId) {
+      throw new Error('Runtime Skill-view recovery belongs to another Session Tape incarnation.')
+    }
+
+    const expected = new Map<string, string>()
+    for (const projection of input.projections) {
+      if (
+        !projection.toolCallId.trim() ||
+        !projection.responseText ||
+        !Number.isSafeInteger(projection.blockIndex) ||
+        projection.blockIndex < 0 ||
+        !Number.isSafeInteger(projection.timestamp) ||
+        projection.timestamp < 0 ||
+        Buffer.byteLength(projection.responseText, 'utf8') > MAX_SKILL_VIEW_RESULT_FACT_BYTES ||
+        expected.has(projection.toolCallId)
+      ) {
+        throw new TypeError('Runtime Skill-view recovery projection is invalid or ambiguous.')
+      }
+      expected.set(projection.toolCallId, projection.responseText)
+    }
+    if (expected.size === 0) return []
+
+    return input.projections.map((projection) => {
+      const expectedPayload = {
+        messageId: input.messageId,
+        orderSeq: input.messageOrderSeq,
+        toolCallId: projection.toolCallId,
+        response: projection.responseText
+      }
+      const provenanceKey = buildToolFactProvenanceKey(
+        'tool_result',
+        input.messageId,
+        projection.toolCallId,
+        expectedPayload
+      )
+      const authority = this.table.getByProvenanceKey(input.sessionId, provenanceKey)
+      const payload = authority ? parseJsonObject(authority.payload_json) : {}
+      const meta = authority ? parseJsonObject(authority.meta_json) : {}
+      const evidence = authority
+        ? this.requireRuntimeSkillJournalEvidence({
+            sessionId: input.sessionId,
+            messageId: input.messageId,
+            toolCallId: projection.toolCallId,
+            responseText: projection.responseText,
+            evidence: meta.skillContextEvidence
+          })
+        : null
+      const identity = evidence?.identity ?? null
+      if (
+        !authority ||
+        !evidence ||
+        !identity ||
+        evidence.outcomeEntryId >= authority.entry_id ||
+        authority.kind !== 'tool_result' ||
+        authority.name !== 'skill_view' ||
+        authority.source_type !== 'tool_result' ||
+        authority.source_id !== `${input.messageId}:${projection.toolCallId}` ||
+        authority.provenance_key !== provenanceKey ||
+        readToolFactMessageId(authority) !== input.messageId ||
+        readToolFactToolCallId(authority) !== projection.toolCallId ||
+        readToolFactStatus(authority) !== 'success' ||
+        payload.orderSeq !== input.messageOrderSeq ||
+        payload.response !== projection.responseText ||
+        meta.source !== 'live' ||
+        meta.role !== 'assistant' ||
+        meta.status !== 'success' ||
+        meta.reason !== 'tool_loop' ||
+        Object.keys(meta).sort().join('\0') !==
+          ['reason', 'role', 'skillContextEvidence', 'source', 'status'].sort().join('\0')
+      ) {
+        throw new Error(
+          'Runtime Skill-view recovery evidence drifted from its provider projection.'
+        )
+      }
+      assertTapeToolFactPhysicalEnvelope(
+        authority,
+        {
+          sessionId: toTapeSessionId(input.sessionId),
+          messageId: input.messageId,
+          orderSeq: input.messageOrderSeq,
+          blockIndex: projection.blockIndex,
+          block: {
+            type: 'tool_call',
+            content: '',
+            status: 'success',
+            timestamp: projection.timestamp,
+            tool_call: {
+              id: projection.toolCallId,
+              name: 'skill_view',
+              params: '',
+              response: projection.responseText
+            }
+          },
+          provenance: {
+            source: 'tool_result',
+            sourceId: `${input.messageId}:${projection.toolCallId}`,
+            sequence: projection.blockIndex
+          }
+        },
+        'live',
+        {
+          reason: 'tool_loop',
+          skillContextEvidence: {
+            identity,
+            operation: evidence.operation,
+            outcomeEntryId: evidence.outcomeEntryId
+          }
+        }
+      )
+      return {
+        identity,
+        toolCallId: projection.toolCallId,
+        entryId: authority.entry_id,
+        tapeIncarnationId: input.expectedTapeIncarnationId,
+        contentHash: hashString(projection.responseText)
+      }
+    })
   }
 
   listMemoryViewManifestsByAgent(
@@ -450,15 +628,82 @@ export class TapeViewReplayService {
         })
       } else {
         const payload = parseJsonObject(authoritativeRow.payload_json)
+        const meta = parseJsonObject(authoritativeRow.meta_json)
+        const evidence =
+          typeof payload.messageId === 'string' &&
+          typeof payload.toolCallId === 'string' &&
+          typeof payload.response === 'string'
+            ? this.requireRuntimeSkillJournalEvidence({
+                sessionId: manifest.sessionId,
+                messageId: payload.messageId,
+                toolCallId: payload.toolCallId,
+                responseText: payload.response,
+                evidence: meta.skillContextEvidence
+              })
+            : null
+        const identity = evidence?.identity ?? null
         if (
           authoritativeRow.kind !== 'tool_result' ||
+          authoritativeRow.name !== 'skill_view' ||
           authoritativeRow.source_type !== 'tool_result' ||
+          !evidence ||
+          !identity ||
+          evidence.outcomeEntryId >= authoritativeRow.entry_id ||
+          identity.agentId !== context.agentId ||
+          identity.sourceType !== context.sourceType ||
+          identity.sourceId !== context.sourceId ||
+          identity.skillName !== context.skillName ||
           readToolFactStatus(authoritativeRow) !== 'success' ||
+          typeof payload.messageId !== 'string' ||
+          payload.messageId !== manifest.messageId ||
+          typeof payload.toolCallId !== 'string' ||
+          !payload.toolCallId ||
+          !Number.isSafeInteger(payload.orderSeq) ||
+          (payload.orderSeq as number) < 0 ||
+          !Number.isSafeInteger(authoritativeRow.source_seq) ||
+          (authoritativeRow.source_seq as number) < 0 ||
+          !Number.isSafeInteger(authoritativeRow.created_at) ||
+          authoritativeRow.created_at < 0 ||
           typeof payload.response !== 'string' ||
           hashString(payload.response) !== authoritativeRef.contentHash
         ) {
           throw new Error('Schema-6 Skill tool-result authority is invalid.')
         }
+        assertTapeToolFactPhysicalEnvelope(
+          authoritativeRow,
+          {
+            sessionId: toTapeSessionId(manifest.sessionId),
+            messageId: payload.messageId,
+            orderSeq: payload.orderSeq as number,
+            blockIndex: authoritativeRow.source_seq as number,
+            block: {
+              type: 'tool_call',
+              content: '',
+              status: 'success',
+              timestamp: authoritativeRow.created_at,
+              tool_call: {
+                id: payload.toolCallId,
+                name: 'skill_view',
+                params: '',
+                response: payload.response
+              }
+            },
+            provenance: {
+              source: 'tool_result',
+              sourceId: `${manifest.messageId}:${payload.toolCallId}`,
+              sequence: authoritativeRow.source_seq as number
+            }
+          },
+          'live',
+          {
+            reason: 'tool_loop',
+            skillContextEvidence: {
+              identity,
+              operation: evidence.operation,
+              outcomeEntryId: evidence.outcomeEntryId
+            }
+          }
+        )
       }
 
       for (const sourceEntryId of context.sourceEntryIds) {

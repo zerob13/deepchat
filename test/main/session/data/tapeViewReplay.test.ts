@@ -36,7 +36,161 @@ import {
   readObservationMatrix
 } from './tapeTestHarness'
 
+const RUNTIME_SKILL_OPERATION = {
+  runId: '11111111-1111-4111-8111-111111111111',
+  requestSeq: 1,
+  providerToolCallId: 'tool-call-1'
+}
+
+function commitRuntimeSkillOutcome(
+  service: ReturnType<typeof createTapeService>,
+  responseText: string,
+  skillName = 'review'
+) {
+  service.commitRunStarted({
+    sessionId: 's1',
+    runId: RUNTIME_SKILL_OPERATION.runId,
+    messageId: 'a1',
+    runKind: 'loop'
+  })
+  service.commitDispatch({
+    sessionId: 's1',
+    messageId: 'a1',
+    operation: RUNTIME_SKILL_OPERATION,
+    toolName: 'skill_view',
+    toolSource: 'agent',
+    normalizedArguments: { name: skillName },
+    target: { serverName: 'agent-skills', originalName: 'skill_view' }
+  })
+  const outcome = service.commitToolOutcome({
+    sessionId: 's1',
+    messageId: 'a1',
+    operation: RUNTIME_SKILL_OPERATION,
+    responseText,
+    isError: false
+  })
+  return { operation: RUNTIME_SKILL_OPERATION, outcomeEntryId: outcome.entryId }
+}
+
 describe('SessionTape view and replay', () => {
+  it('recovers runtime Skill identity only from its strict tool-result fact', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    table.ensureBootstrapAnchor('s1')
+    const tapeIncarnationId = table.getBootstrapIncarnation('s1')!
+    const responseText = JSON.stringify({
+      success: true,
+      name: 'review',
+      content: '# Review\n\nFollow the review contract.',
+      activatedForMessage: true,
+      activationScope: 'message',
+      activationEvidenceVersion: 1
+    })
+    const fact = service.appendSkillViewResultFact({
+      sessionId: 's1',
+      expectedTapeIncarnationId: tapeIncarnationId,
+      messageId: 'a1',
+      orderSeq: 2,
+      blockIndex: 0,
+      toolCallId: 'tool-call-1',
+      toolName: 'skill_view',
+      responseText,
+      timestamp: 100,
+      ...commitRuntimeSkillOutcome(service, responseText),
+      identity: {
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'builtin-skills',
+        skillName: 'review'
+      }
+    })
+    expect(
+      service.recoverRuntimeSkillViewContexts({
+        sessionId: 's1',
+        messageId: 'a1',
+        messageOrderSeq: 2,
+        expectedTapeIncarnationId: tapeIncarnationId,
+        projections: [{ toolCallId: 'tool-call-1', responseText, blockIndex: 0, timestamp: 100 }]
+      })
+    ).toEqual([
+      {
+        identity: {
+          agentId: 'deepchat',
+          sourceType: 'builtin',
+          sourceId: 'builtin-skills',
+          skillName: 'review'
+        },
+        toolCallId: 'tool-call-1',
+        entryId: fact.entryId,
+        tapeIncarnationId,
+        contentHash: fact.contentHash
+      }
+    ])
+    expect(() =>
+      service.recoverRuntimeSkillViewContexts({
+        sessionId: 's1',
+        messageId: 'a1',
+        messageOrderSeq: 2,
+        expectedTapeIncarnationId: tapeIncarnationId,
+        projections: [
+          {
+            toolCallId: 'tool-call-1',
+            responseText: `${responseText} `,
+            blockIndex: 0,
+            timestamp: 100
+          }
+        ]
+      })
+    ).toThrow('drifted')
+    for (const physicalIdentity of [
+      { blockIndex: 1, timestamp: 100 },
+      { blockIndex: 0, timestamp: 101 }
+    ]) {
+      expect(() =>
+        service.recoverRuntimeSkillViewContexts({
+          sessionId: 's1',
+          messageId: 'a1',
+          messageOrderSeq: 2,
+          expectedTapeIncarnationId: tapeIncarnationId,
+          projections: [{ toolCallId: 'tool-call-1', responseText, ...physicalIdentity }]
+        })
+      ).toThrow('physical envelope')
+    }
+
+    const resultRow = entries.find((entry) => entry.entry_id === fact.entryId)!
+    const storedResultMetadata = resultRow.meta_json
+    const driftedResultMetadata = JSON.parse(storedResultMetadata)
+    driftedResultMetadata.skillContextEvidence.operation.requestSeq = 2
+    resultRow.meta_json = JSON.stringify(driftedResultMetadata)
+    expect(() =>
+      service.recoverRuntimeSkillViewContexts({
+        sessionId: 's1',
+        messageId: 'a1',
+        messageOrderSeq: 2,
+        expectedTapeIncarnationId: tapeIncarnationId,
+        projections: [{ toolCallId: 'tool-call-1', responseText, blockIndex: 0, timestamp: 100 }]
+      })
+    ).toThrow('Journal dispatch is missing')
+    resultRow.meta_json = storedResultMetadata
+
+    const outcomeEntryId = JSON.parse(storedResultMetadata).skillContextEvidence.outcomeEntryId
+    const outcomeRow = entries.find((entry) => entry.entry_id === outcomeEntryId)!
+    const storedOutcomePayload = outcomeRow.payload_json
+    const driftedOutcomePayload = JSON.parse(storedOutcomePayload)
+    driftedOutcomePayload.data.responseHash = '0'.repeat(64)
+    outcomeRow.payload_json = JSON.stringify(driftedOutcomePayload)
+    expect(() =>
+      service.recoverRuntimeSkillViewContexts({
+        sessionId: 's1',
+        messageId: 'a1',
+        messageOrderSeq: 2,
+        expectedTapeIncarnationId: tapeIncarnationId,
+        projections: [{ toolCallId: 'tool-call-1', responseText, blockIndex: 0, timestamp: 100 }]
+      })
+    ).toThrow('Journal chain does not match its exact result')
+    outcomeRow.payload_json = storedOutcomePayload
+  })
+
   it('strictly binds materialized Skill evidence to one execution occurrence', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
@@ -162,15 +316,34 @@ describe('SessionTape view and replay', () => {
     const service = createTapeService(table)
     table.ensureBootstrapAnchor('s1')
     const tapeIncarnationId = table.getBootstrapIncarnation('s1')!
-    const response = '# Runtime Skill\n\nUse this only in the current loop.'
-    const contentHash = hashSkillEffectiveContent(response)
-    const toolResult = table.append({
-      sessionId: 's1',
-      kind: 'tool_result',
-      source: { type: 'tool_result', id: 'tool-call-1', seq: 0 },
-      payload: { messageId: 'a1', toolCallId: 'tool-call-1', response },
-      meta: { status: 'success' }
+    const response = JSON.stringify({
+      success: true,
+      name: 'runtime-skill',
+      content: '# Runtime Skill\n\nUse this only in the current loop.',
+      activatedForMessage: true,
+      activationScope: 'message',
+      activationEvidenceVersion: 1
     })
+    const toolResultReceipt = service.appendSkillViewResultFact({
+      sessionId: 's1',
+      expectedTapeIncarnationId: tapeIncarnationId,
+      messageId: 'a1',
+      orderSeq: 2,
+      blockIndex: 0,
+      toolCallId: 'tool-call-1',
+      toolName: 'skill_view',
+      responseText: response,
+      timestamp: 250,
+      ...commitRuntimeSkillOutcome(service, response, 'runtime-skill'),
+      identity: {
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'builtin-skills',
+        skillName: 'runtime-skill'
+      }
+    })
+    const toolResult = entries.find((entry) => entry.entry_id === toolResultReceipt.entryId)!
+    const contentHash = toolResultReceipt.contentHash
     const manifest = createTapeViewManifest({
       sessionId: 's1',
       messageId: 'a1',
@@ -242,6 +415,21 @@ describe('SessionTape view and replay', () => {
     expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 3 })?.integrity).toBe('invalid')
     manifestRow.created_at -= 1
 
+    const toolResultMetadata = toolResult.meta_json
+    const parsedToolResultMetadata = JSON.parse(toolResultMetadata)
+    parsedToolResultMetadata.skillContextEvidence.identity.skillName = 'other-skill'
+    toolResult.meta_json = JSON.stringify(parsedToolResultMetadata)
+    expect(() => service.appendViewManifest(manifest)).toThrow(/activation identity/)
+    toolResult.meta_json = toolResultMetadata
+
+    const driftedOperationMetadata = JSON.parse(toolResultMetadata)
+    driftedOperationMetadata.skillContextEvidence.operation.requestSeq += 1
+    toolResult.meta_json = JSON.stringify(driftedOperationMetadata)
+    expect(() => service.appendViewManifest(manifest)).toThrow(
+      /activation identity|Journal|tool-result authority/
+    )
+    toolResult.meta_json = toolResultMetadata
+
     const bootstrap = entries.find((entry) => entry.name === 'session/start')!
     bootstrap.meta_json = JSON.stringify({ tapeIncarnationId: 'replacement-incarnation' })
     expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 3 })?.integrity).toBe('invalid')
@@ -250,9 +438,14 @@ describe('SessionTape view and replay', () => {
     entries.find((entry) => entry.entry_id === toolResult.entry_id)!.payload_json = JSON.stringify({
       messageId: 'a1',
       toolCallId: 'tool-call-1',
-      response: 'tampered'
+      response: JSON.stringify({
+        ...JSON.parse(response),
+        content: 'tampered'
+      })
     })
-    expect(() => service.appendViewManifest(manifest)).toThrow(/tool-result authority is invalid/)
+    expect(() => service.appendViewManifest(manifest)).toThrow(
+      /activation identity|Journal chain does not match its exact result/
+    )
   })
 
   it('stores and lists view manifests as idempotent tape events', () => {

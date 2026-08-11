@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
-import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
+import { createLoopRun, registerRuntimeSkillContext } from '@/agent/deepchat/loop/loopRun'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
+import { hashSkillEffectiveContent } from '@/tape/domain/skillMaterialization'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
 import type { ModelConfig } from '@shared/types/provider'
@@ -402,6 +403,85 @@ describe('DeepChatContextCoordinator', () => {
     })
     expect(fixture.run.requestSeq).toBe(1)
     expect(fixture.actualRateClears).toEqual(['clear'])
+  })
+
+  it('durably binds a projected runtime Skill result to its provider request occurrence', async () => {
+    const fixture = createAttemptInput()
+    const responseText = '{"success":true,"content":"effective Skill body"}'
+    const contentHash = hashSkillEffectiveContent(responseText)
+    fixture.run.resources.tapeIncarnationId = 'incarnation-1'
+    fixture.run.messages.push({
+      role: 'tool',
+      tool_call_id: 'tool-call-1',
+      content: responseText
+    })
+    registerRuntimeSkillContext(fixture.run, {
+      identity: {
+        agentId: 'agent-1',
+        sourceType: 'created',
+        sourceId: '/skills/skill-1',
+        skillName: 'skill-1'
+      },
+      toolCallId: 'tool-call-1',
+      entryId: 12,
+      tapeIncarnationId: 'incarnation-1',
+      contentHash
+    })
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(fixture.manifests[0]).toMatchObject({
+      runId: 'run-1',
+      tapeIncarnationId: 'incarnation-1',
+      requireDurableManifest: true,
+      skillContexts: [
+        {
+          activationScope: 'runtime_view',
+          skillName: 'skill-1',
+          projectedContentHash: contentHash,
+          authoritativeRef: {
+            kind: 'tool_result',
+            entryId: 12,
+            contentHash
+          }
+        }
+      ]
+    })
+    expect(fixture.manifests[0].messages).toEqual(fixture.providerRequests[0].messages)
+  })
+
+  it('prevents provider admission when a runtime Skill manifest cannot be committed', async () => {
+    const fixture = createAttemptInput({
+      appendManifest: () => {
+        throw new Error('manifest unavailable')
+      }
+    })
+    const responseText = '{"success":true,"content":"effective Skill body"}'
+    fixture.run.resources.tapeIncarnationId = 'incarnation-1'
+    fixture.run.messages.push({
+      role: 'tool',
+      tool_call_id: 'tool-call-1',
+      content: responseText
+    })
+    registerRuntimeSkillContext(fixture.run, {
+      identity: {
+        agentId: 'agent-1',
+        sourceType: 'created',
+        sourceId: '/skills/skill-1',
+        skillName: 'skill-1'
+      },
+      toolCallId: 'tool-call-1',
+      entryId: 12,
+      tapeIncarnationId: 'incarnation-1',
+      contentHash: hashSkillEffectiveContent(responseText)
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow('manifest unavailable')
+    expect(fixture.providerRequests).toEqual([])
+    expect(fixture.order).toEqual(['manifest:1'])
+    expect(fixture.manifestErrors).toHaveLength(1)
   })
 
   it('uses fallback capabilities without a ViewManifest context', async () => {

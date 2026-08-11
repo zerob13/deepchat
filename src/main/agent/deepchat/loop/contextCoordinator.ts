@@ -1,5 +1,10 @@
 import type { LoopRun } from './loopRun'
-import { advanceRequestSequence, bindActiveRequestContract, enterPhysicalAttempt } from './loopRun'
+import {
+  advanceRequestSequence,
+  bindActiveRequestContract,
+  enterPhysicalAttempt,
+  resolveRuntimeSkillContextsForRequest
+} from './loopRun'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import {
   createStreamEvent,
@@ -19,6 +24,7 @@ import type {
   DeepChatProviderRetryDecision
 } from '@shared/types/provider-attempt'
 import type {
+  DeepChatTapeSkillContext,
   DeepChatTapeViewPolicy,
   DeepChatTapeViewSyntheticContribution,
   DeepChatTapeViewTaskType,
@@ -143,6 +149,10 @@ export interface ProviderAttemptManifestInput<TSelection> {
   contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
   executionContract?: DeepChatExecutionContract
+  runId?: string
+  tapeIncarnationId?: string
+  skillContexts?: DeepChatTapeSkillContext[]
+  requireDurableManifest?: boolean
 }
 
 export interface ProviderAttemptManifestPort<TSelection> {
@@ -647,6 +657,12 @@ export class DeepChatContextCoordinator {
           input.manifest.onAppendError(error)
         } catch {}
       }
+      const skillContexts = resolveRuntimeSkillContextsForRequest(input.run, providerMessages)
+      const requiresDurableSkillManifest = skillContexts.length > 0
+      const tapeIncarnationId = input.run.resources.tapeIncarnationId
+      if (requiresDurableSkillManifest && !tapeIncarnationId) {
+        throw new Error('Skill-bearing provider request lost its Session Tape incarnation.')
+      }
       try {
         input.manifest.append({
           requestSeq,
@@ -672,11 +688,23 @@ export class DeepChatContextCoordinator {
           traceDebugEnabled: input.viewContext?.traceDebugEnabled ?? input.traceDebugEnabled,
           contextBuilderVersion,
           syntheticContributions: manifestSyntheticContributions,
-          ...(executionContract ? { executionContract } : {})
+          ...(executionContract ? { executionContract } : {}),
+          ...(requiresDurableSkillManifest
+            ? {
+                runId: input.run.runId,
+                tapeIncarnationId,
+                skillContexts,
+                requireDurableManifest: true
+              }
+            : {})
         })
       } catch (error) {
         if (executionContract) {
-          if (input.strictViewContract || input.requireDurableManifest) {
+          if (
+            input.strictViewContract ||
+            input.requireDurableManifest ||
+            requiresDurableSkillManifest
+          ) {
             reportManifestError(error)
             throw error
           }
@@ -690,7 +718,7 @@ export class DeepChatContextCoordinator {
           )
         } else {
           reportManifestError(error)
-          if (input.requireDurableManifest) throw error
+          if (input.requireDurableManifest || requiresDurableSkillManifest) throw error
         }
       }
       bindActiveRequestContract(input.run, requestSeq, executionContract)

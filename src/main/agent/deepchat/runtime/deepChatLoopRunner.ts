@@ -16,6 +16,7 @@ import type {
   RateLimitQueueSnapshot
 } from '@shared/types/provider'
 import type {
+  DeepChatTapeSkillContext,
   DeepChatTapeViewPolicy,
   DeepChatTapeViewSyntheticContribution,
   DeepChatTapeViewTaskType,
@@ -77,7 +78,10 @@ import {
 } from '@/tape/domain/executionJournal'
 import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
 import type { RuntimeHookSink } from './runtimeHookSink'
-import type { DeepChatToolResolver } from '@/agent/deepchat/runtime/toolResolver'
+import type {
+  DeepChatToolCatalogSnapshot,
+  DeepChatToolResolver
+} from '@/agent/deepchat/runtime/toolResolver'
 import type {
   DeepChatEventPublisher,
   DeepChatSessionUpdatePublisher,
@@ -93,7 +97,11 @@ import type {
 } from '@/provider/requestTrace'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
-import { createLoopRun } from '@/agent/deepchat/loop/loopRun'
+import {
+  collectRuntimeSkillViewProjections,
+  createLoopRun,
+  registerRuntimeSkillContext
+} from '@/agent/deepchat/loop/loopRun'
 import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import {
   buildContextCheckpoint,
@@ -194,6 +202,7 @@ export type DeepChatLoopRunInput = {
   providerModelFacts?: ProviderModelRuntimeFacts
   taskContractContext: DeepChatTaskContractContext | null
   tools?: MCPToolDefinition[]
+  toolCatalogSnapshot?: DeepChatToolCatalogSnapshot
   commandShell: ResolvedCommandShell
   baseSystemPrompt?: string
   basePromptAssembly?: DeepChatPromptAssembly
@@ -205,10 +214,6 @@ export type DeepChatLoopRunInput = {
   search?: boolean
   interleavedReasoning?: InterleavedReasoningConfig
   viewContext?: PendingTapeViewContext
-  refreshSystemPrompt?: (
-    activeSkillNames: string[] | undefined,
-    toolDefinitions: MCPToolDefinition[]
-  ) => Promise<DeepChatPromptAssembly | string>
   maxProviderRounds?: number
   onBeforeProviderStream?: () => void
   onRunRegistered?: (runId: string) => void
@@ -235,6 +240,10 @@ export interface AppendTapeViewManifestInput {
   contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
   executionContract?: DeepChatExecutionContract
+  runId?: string
+  tapeIncarnationId?: string
+  skillContexts?: DeepChatTapeSkillContext[]
+  requireDurableManifest?: boolean
 }
 
 export interface DeepChatLoopRunnerPorts {
@@ -372,6 +381,7 @@ export class DeepChatLoopRunner {
       providerModelFacts: providedProviderModelFacts,
       taskContractContext,
       tools: providedTools,
+      toolCatalogSnapshot: providedToolCatalogSnapshot,
       commandShell,
       baseSystemPrompt,
       basePromptAssembly,
@@ -383,7 +393,6 @@ export class DeepChatLoopRunner {
       search,
       interleavedReasoning: providedInterleavedReasoning,
       viewContext,
-      refreshSystemPrompt,
       maxProviderRounds,
       onBeforeProviderStream,
       onRunRegistered,
@@ -478,6 +487,37 @@ export class DeepChatLoopRunner {
       this.ports.messageStore.getMaxMessageTraceRequestSeq(messageId),
       this.ports.tape.getMaxProviderAttemptRequestSeq(sessionId, messageId)
     )
+    const tapeIncarnationId = this.ports.tape.getTapeIncarnationId(sessionId)
+    const runtimeSkillViewProjections = collectRuntimeSkillViewProjections(
+      messages,
+      initialBlocks ?? []
+    )
+    let recoveredRuntimeSkillContexts = [] as ReturnType<
+      DeepChatLoopTapePort['recoverRuntimeSkillViewContexts']
+    >
+    if (runtimeSkillViewProjections.length > 0) {
+      const message = this.ports.messageStore.getMessage(messageId)
+      if (!message || message.sessionId !== sessionId || message.role !== 'assistant') {
+        throw new Error('Runtime Skill-view recovery lost its assistant message identity.')
+      }
+      recoveredRuntimeSkillContexts = this.ports.tape.recoverRuntimeSkillViewContexts({
+        sessionId,
+        messageId,
+        messageOrderSeq: message.orderSeq,
+        expectedTapeIncarnationId: tapeIncarnationId,
+        projections: runtimeSkillViewProjections
+      })
+    }
+    const activeAgentId =
+      resourceInstance.getAgentId()?.trim() ||
+      this.ports.identity.getAgentId(sessionId) ||
+      'deepchat'
+    for (const recovered of recoveredRuntimeSkillContexts) {
+      if (recovered.identity.agentId !== activeAgentId) {
+        throw new Error('Recovered runtime Skill context belongs to another DeepChat Agent.')
+      }
+      resourceInstance.activateRuntimeSkill(recovered.identity.skillName)
+    }
     const temperature = generationSettings.temperature
     const maxTokens = capAgentRequestMaxTokens(generationSettings.maxTokens, contextBudgetLength)
     const effectiveSystemPrompt =
@@ -492,35 +532,54 @@ export class DeepChatLoopRunner {
       effectiveSystemPrompt
     )
 
-    const streamSessionActiveSkillNames = await awaitWithAbort(
-      this.ports.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
-      abortSignal
-    )
-    resourceScope.assertCurrent()
-    const streamExtensionPolicy = await awaitWithAbort(
-      this.ports.toolResolver.resolveAgentExtensionPolicy(sessionId, resourceInstance),
-      abortSignal
-    )
-    resourceScope.assertCurrent()
-    const getEffectiveRuntimeSkillNames = (baseSkillNames = streamSessionActiveSkillNames) =>
-      resolveEffectiveActiveSkillNames(baseSkillNames, resourceInstance)
+    let catalogActiveSkillNames = [...(providedToolCatalogSnapshot?.activeSkillNames ?? [])]
+    let catalogEnabledMcpServerIds = providedToolCatalogSnapshot?.enabledMcpServerIds
+    if (!providedToolCatalogSnapshot) {
+      const compatibleSessionActiveSkillNames = await awaitWithAbort(
+        this.ports.toolResolver.resolveActiveSkillNamesForToolProfile(sessionId),
+        abortSignal
+      )
+      resourceScope.assertCurrent()
+      const compatibleExtensionPolicy = await awaitWithAbort(
+        this.ports.toolResolver.resolveAgentExtensionPolicy(sessionId, resourceInstance),
+        abortSignal
+      )
+      resourceScope.assertCurrent()
+      catalogActiveSkillNames = resolveEffectiveActiveSkillNames(
+        compatibleSessionActiveSkillNames,
+        resourceInstance
+      )
+      catalogEnabledMcpServerIds = this.ports.toolResolver.normalizeNullablePolicyList(
+        compatibleExtensionPolicy.enabledMcpServerIds
+      )
+    }
+    const getCandidateActiveSkillNames = () =>
+      resolveEffectiveActiveSkillNames(catalogActiveSkillNames, resourceInstance)
     const unconstrainedToolCatalog = this.ports.toolResolver.createSessionToolCatalogPort(
       sessionId,
       projectDir,
-      resourceInstance
+      resourceInstance,
+      (snapshot) => {
+        catalogActiveSkillNames = [...snapshot.activeSkillNames]
+        catalogEnabledMcpServerIds = snapshot.enabledMcpServerIds
+      }
     )
     const toolCatalog = {
-      resolve: async (request?: { activeSkillNames?: string[] }) => {
+      resolve: async (request?: { activeSkillNames?: string[]; failClosed?: boolean }) => {
         const resolved = await unconstrainedToolCatalog.resolve(request)
         return meetTaskContractToolDefinitions(sessionId, resolved, taskContractContext)
       }
     }
     const tools =
-      providedTools ??
-      (await awaitWithAbort(
-        toolCatalog.resolve({ activeSkillNames: getEffectiveRuntimeSkillNames() }),
-        abortSignal
-      ))
+      providedTools && providedToolCatalogSnapshot && recoveredRuntimeSkillContexts.length === 0
+        ? providedTools
+        : await awaitWithAbort(
+            toolCatalog.resolve({
+              activeSkillNames: getCandidateActiveSkillNames(),
+              failClosed: recoveredRuntimeSkillContexts.length > 0
+            }),
+            abortSignal
+          )
     resourceScope.assertCurrent()
     const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
       this.ports.providerSettings,
@@ -539,12 +598,16 @@ export class DeepChatLoopRunner {
       streamState: createState(),
       resources: {
         toolDefinitions: tools,
-        activeSkillNames: getEffectiveRuntimeSkillNames(),
+        activeSkillNames: [...catalogActiveSkillNames],
         promptAssembly: initialPromptAssembly,
         commandShell
       },
       initialRequestSeq
     })
+    loopRun.resources.tapeIncarnationId = tapeIncarnationId
+    for (const recovered of recoveredRuntimeSkillContexts) {
+      registerRuntimeSkillContext(loopRun, recovered)
+    }
     const runStarted = this.ports.tape.commitRunStarted({
       sessionId,
       runId: loopRun.runId,
@@ -557,7 +620,6 @@ export class DeepChatLoopRunner {
         `Execution Journal run identity ${loopRun.runId} was already committed.`
       )
     }
-
     let terminalCommitAttempted = false
     let committedTerminal: ProcessTerminalSelection | null = null
     const commitRunTerminal = (selection: ProcessTerminalSelection): void => {
@@ -634,28 +696,6 @@ export class DeepChatLoopRunner {
         maxProviderRounds,
         providerReplayProjector,
         toolCatalog,
-        refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
-          if (refreshSystemPrompt) {
-            const refreshed = await refreshSystemPrompt(
-              getEffectiveRuntimeSkillNames(activeSkillNames),
-              refreshedTools
-            )
-            return typeof refreshed === 'string'
-              ? createOpaquePromptAssembly(refreshed)
-              : refreshed
-          }
-          return await this.ports.promptAssembly
-            .createBasePromptAssembler(resourceInstance)
-            .assembleWithProvenance({
-              sessionId: toAppSessionId(sessionId),
-              configuredPrompt: generationSettings.systemPrompt,
-              toolDefinitions: refreshedTools,
-              activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames),
-              sessionActiveSkillNames: streamSessionActiveSkillNames,
-              contextLength: generationSettings.contextLength,
-              commandShell: loopRun.resources.commandShell
-            })
-        },
         toolExecution: this.ports.toolExecutionPort,
         toolResults: this.ports.toolResultPort,
         coreStream: async function* (
@@ -944,11 +984,8 @@ export class DeepChatLoopRunner {
           Boolean(this.ports.pendingInputCoordinator.getNextSteerInput(sessionId)),
         notificationObserver: hooks.toolObserver(),
         controls: {
-          getActiveSkillNames: () => getEffectiveRuntimeSkillNames(),
-          getEnabledMcpServerIds: () =>
-            this.ports.toolResolver.normalizeNullablePolicyList(
-              streamExtensionPolicy.enabledMcpServerIds
-            ),
+          getActiveSkillNames: getCandidateActiveSkillNames,
+          getEnabledMcpServerIds: () => catalogEnabledMcpServerIds,
           getAgentId: () =>
             resourceInstance.getAgentId()?.trim() ||
             this.ports.identity.getAgentId(sessionId) ||
@@ -960,10 +997,41 @@ export class DeepChatLoopRunner {
               resourceInstance
             )
             if (!validated.includes(skillName)) {
-              return getEffectiveRuntimeSkillNames()
+              return getCandidateActiveSkillNames()
             }
             resourceInstance.activateRuntimeSkill(skillName)
-            return getEffectiveRuntimeSkillNames()
+            return getCandidateActiveSkillNames()
+          },
+          commitRuntimeSkillView: (input) => {
+            const tapeIncarnationId = loopRun.resources.tapeIncarnationId
+            if (!tapeIncarnationId) {
+              throw new Error('Loop Run is not bound to a Session Tape incarnation.')
+            }
+            const message = this.ports.messageStore.getMessage(messageId)
+            if (!message || message.sessionId !== sessionId || message.role !== 'assistant') {
+              throw new Error('Runtime Skill-view result lost its assistant message identity.')
+            }
+            const receipt = this.ports.tape.appendSkillViewResultFact({
+              sessionId,
+              expectedTapeIncarnationId: tapeIncarnationId,
+              messageId,
+              orderSeq: message.orderSeq,
+              blockIndex: input.blockIndex,
+              toolCallId: input.toolCallId,
+              toolName: 'skill_view',
+              responseText: input.responseText,
+              timestamp: input.timestamp,
+              identity: input.identity,
+              operation: input.operation,
+              outcomeEntryId: input.outcomeEntryId
+            })
+            registerRuntimeSkillContext(loopRun, {
+              identity: input.identity,
+              toolCallId: input.toolCallId,
+              entryId: receipt.entryId,
+              tapeIncarnationId: receipt.tapeIncarnationId,
+              contentHash: receipt.contentHash
+            })
           },
           onStreamingProviderPermission: (permission, tool, commitDecision) => {
             this.ports.providerPermissionCoordinator.register(
@@ -1104,7 +1172,15 @@ export class DeepChatLoopRunner {
       supportsVision: params.supportsVision,
       supportsAudioInput: params.supportsAudioInput,
       traceDebugEnabled: params.traceDebugEnabled,
-      ...(params.executionContract ? { executionContract: params.executionContract } : {})
+      ...(params.executionContract ? { executionContract: params.executionContract } : {}),
+      ...(params.skillContexts?.length
+        ? {
+            runId: params.runId,
+            tapeIncarnationId: params.tapeIncarnationId,
+            skillContexts: params.skillContexts,
+            requireDurableManifest: params.requireDurableManifest
+          }
+        : {})
     })
     this.ports.tape.appendViewManifest(manifest)
   }

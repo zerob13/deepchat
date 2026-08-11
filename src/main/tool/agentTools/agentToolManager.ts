@@ -11,7 +11,7 @@ import { app, nativeImage } from 'electron'
 import logger from '@shared/logger'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { ToolCallImagePreview } from '@shared/types/core/mcp'
-import type { SkillManageResult } from '@shared/types/skill'
+import { SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES, type SkillManageResult } from '@shared/types/skill'
 import { buildBinaryReadGuidance, shouldRejectAgentBinaryRead } from '@/lib/binaryReadGuard'
 import { AgentFileSystemHandler, type ProtectedDirectoryRule } from './agentFileSystemHandler'
 import { AgentBashHandler, type AgentCommandEnvironmentPort } from './agentBashHandler'
@@ -475,6 +475,7 @@ export class AgentToolManager {
     subagentCapability?: DeepChatSubagentCapability
     catalogPurpose?: 'runtime' | 'configurable'
     skillsEnabled?: boolean
+    requireCompleteCatalog?: boolean
   }): Promise<MCPToolDefinition[]> {
     const defs: MCPToolDefinition[] = []
     const isAgentMode = context.chatMode === 'agent'
@@ -520,6 +521,7 @@ export class AgentToolManager {
         }
       } catch (error) {
         logger.warn('[AgentToolManager] Failed to resolve tape tool availability', { error })
+        if (context.requireCompleteCatalog) throw error
       }
     }
 
@@ -531,6 +533,7 @@ export class AgentToolManager {
         }
       } catch (error) {
         logger.warn('[AgentToolManager] Failed to resolve memory tool availability', { error })
+        if (context.requireCompleteCatalog) throw error
       }
     }
 
@@ -544,6 +547,7 @@ export class AgentToolManager {
         logger.warn('[AgentToolManager] Failed to resolve image generation tool availability', {
           error
         })
+        if (context.requireCompleteCatalog) throw error
       }
     }
 
@@ -568,6 +572,7 @@ export class AgentToolManager {
         }
       } catch (error) {
         logger.warn('[AgentToolManager] Failed to resolve subagent tool availability', { error })
+        if (context.requireCompleteCatalog) throw error
       }
     }
 
@@ -585,7 +590,11 @@ export class AgentToolManager {
 
       if (
         context.conversationId &&
-        (await this.hasRunnableSkillScripts(context.conversationId, context.activeSkillNames))
+        (await this.hasRunnableSkillScripts(
+          context.conversationId,
+          context.activeSkillNames,
+          context.requireCompleteCatalog
+        ))
       ) {
         appendDefinitions([this.getSkillRunToolDefinition()], 'user-configurable')
       }
@@ -618,6 +627,7 @@ export class AgentToolManager {
         }
       } catch (error) {
         logger.warn('[AgentToolManager] Failed to load DeepChat settings tools', { error })
+        if (context.requireCompleteCatalog) throw error
       }
     }
 
@@ -627,6 +637,7 @@ export class AgentToolManager {
         appendDefinitions(this.getYoBrowserToolHandler().getToolDefinitions(), 'user-configurable')
       } catch (error) {
         logger.warn('[AgentToolManager] Failed to load YoBrowser tools', { error })
+        if (context.requireCompleteCatalog) throw error
       }
     }
 
@@ -2281,7 +2292,8 @@ export class AgentToolManager {
 
   private async hasRunnableSkillScripts(
     conversationId: string,
-    activeSkillNames?: string[]
+    activeSkillNames?: string[],
+    failClosed = false
   ): Promise<boolean> {
     try {
       const skillService = this.getSkillService()
@@ -2300,6 +2312,7 @@ export class AgentToolManager {
         conversationId,
         error
       })
+      if (failClosed) throw error
     }
 
     return false
@@ -2584,7 +2597,43 @@ export class AgentToolManager {
           ? validationResult.data.file_path.trim()
           : ''
       const isLinkedFileView = normalizedFilePath.length > 0
+      const requestedSkillName = validationResult.data.name.trim()
+      if (!isLinkedFileView && effectiveActiveSkills?.includes(requestedSkillName)) {
+        const isPinned = conversationId
+          ? (await this.getSkillService().getActiveSkills(conversationId)).includes(
+              requestedSkillName
+            )
+          : false
+        const content = JSON.stringify({
+          success: true,
+          name: requestedSkillName,
+          isPinned,
+          activeForCurrentMessage: true,
+          activatedForMessage: false,
+          activationScope: 'none',
+          message: 'Skill is already active for the current message.'
+        })
+        return {
+          content,
+          rawData: {
+            content,
+            toolResult: {
+              activationApplied: false,
+              activationSource: 'none'
+            }
+          }
+        }
+      }
+      if (conversationId && !isLinkedFileView) {
+        this.createAgentDispatchCommit(
+          toolName,
+          'agent-skills',
+          { name: requestedSkillName },
+          options
+        )?.()
+      }
       const result = await skillTools.handleSkillView(conversationId, validationResult.data)
+      const { contentIdentity, ...publicResult } = result
       const normalizedViewedSkill = result.name?.trim() || validationResult.data.name.trim()
       const activeSkillNamesForResult = effectiveActiveSkills ?? []
       const activationApplied =
@@ -2601,8 +2650,17 @@ export class AgentToolManager {
             : isLinkedFileView
               ? 'file'
               : 'none'
+      const skillContext = activationApplied ? contentIdentity : null
+      if (activationApplied && !skillContext) {
+        const content = JSON.stringify({
+          success: false,
+          name: normalizedViewedSkill,
+          error: 'Skill identity could not be resolved safely; activation was refused'
+        })
+        return { content, rawData: { content, isError: true } }
+      }
       const content = JSON.stringify({
-        ...result,
+        ...publicResult,
         isPinned: result.isPinned === true,
         activeForCurrentMessage:
           result.isPinned === true ||
@@ -2610,8 +2668,20 @@ export class AgentToolManager {
             Boolean(normalizedViewedSkill) &&
             (activationApplied || activeSkillNamesForResult.includes(normalizedViewedSkill))),
         activatedForMessage: activationApplied,
-        activationScope: activationApplied ? 'message' : 'none'
+        activationScope: activationApplied ? 'message' : 'none',
+        ...(activationApplied ? { activationEvidenceVersion: 1 } : {})
       })
+      if (
+        activationApplied &&
+        Buffer.byteLength(content, 'utf8') > SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES
+      ) {
+        const errorContent = JSON.stringify({
+          success: false,
+          name: normalizedViewedSkill,
+          error: `Rendered Skill view exceeds ${SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES} bytes and cannot be activated inline`
+        })
+        return { content: errorContent, rawData: { content: errorContent, isError: true } }
+      }
 
       return {
         content,
@@ -2620,7 +2690,7 @@ export class AgentToolManager {
           toolResult: {
             activationApplied,
             activationSource,
-            ...(activationApplied ? { activatedSkill: normalizedViewedSkill } : {})
+            ...(activationApplied ? { activatedSkill: normalizedViewedSkill, skillContext } : {})
           }
         }
       }

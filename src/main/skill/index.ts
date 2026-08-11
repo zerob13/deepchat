@@ -45,6 +45,7 @@ import {
   SkillViewResult,
   SkillLinkedFile,
   SKILL_ARCHIVE_MAX_INPUT_BYTES,
+  SKILL_EFFECTIVE_CONTENT_MAX_BYTES,
   SKILL_NAME_MAX_LENGTH
 } from '@shared/types/skill'
 import type {
@@ -177,6 +178,18 @@ export interface SkillAgentScopePort {
   >
   getSessionAgentId(sessionId: string): Promise<string | null>
   listSessions(): Promise<Array<{ id: string; agentId: string }>>
+}
+
+export interface RuntimeSkillContentIdentity {
+  agentId: string
+  sourceType: SkillSourceType
+  sourceId: string
+  skillName: string
+}
+
+export type RuntimeSkillViewResult = SkillViewResult & {
+  /** Main-process evidence only. AgentToolManager removes it from the provider-visible result. */
+  contentIdentity?: RuntimeSkillContentIdentity
 }
 
 interface ScopedSkillCatalog {
@@ -1474,36 +1487,8 @@ export class SkillService implements SkillServicePort {
     }
 
     try {
-      const confinedSkillPath = await this.resolvePhysicalSkillPath(
-        metadata.skillRoot,
-        metadata.path
-      )
-      if (!confinedSkillPath) {
-        logger.warn('[SkillService] Refusing to load a Skill manifest outside its physical root.', {
-          agentId,
-          name,
-          skillPath: metadata.path
-        })
-        return null
-      }
-      // Check file size before reading to prevent memory exhaustion
-      const stats = await fs.promises.stat(confinedSkillPath)
-      if (stats.size > SKILL_CONFIG.SKILL_FILE_MAX_SIZE) {
-        console.error(
-          `[SkillService] Skill file too large: ${stats.size} bytes (max: ${SKILL_CONFIG.SKILL_FILE_MAX_SIZE})`
-        )
-        return null
-      }
-
-      const rawContent = await fs.promises.readFile(confinedSkillPath, 'utf-8')
-      const { content } = matter(rawContent)
-      const renderedContent = this.replacePathVariables(content, metadata, agentId)
-      const runtimeInstructions = await this.buildRuntimeInstructions(metadata, agentId)
-
-      const skillContent: SkillContent = {
-        name,
-        content: [renderedContent.trim(), runtimeInstructions].filter(Boolean).join('\n\n')
-      }
+      const skillContent = await this.buildEffectiveSkillContent(agentId, metadata)
+      if (!skillContent) return null
 
       // Discovery may have refreshed the caches while we were reading from disk;
       // only cache when this skill's metadata entry is still the one we read from.
@@ -1514,6 +1499,37 @@ export class SkillService implements SkillServicePort {
     } catch (error) {
       console.error(`[SkillService] Error loading skill content for ${name}:`, error)
       return null
+    }
+  }
+
+  private async buildEffectiveSkillContent(
+    agentId: string,
+    metadata: SkillMetadata
+  ): Promise<SkillContent | null> {
+    const confinedSkillPath = await this.resolvePhysicalSkillPath(metadata.skillRoot, metadata.path)
+    if (!confinedSkillPath) {
+      logger.warn('[SkillService] Refusing to load a Skill manifest outside its physical root.', {
+        agentId,
+        name: metadata.name,
+        skillPath: metadata.path
+      })
+      return null
+    }
+
+    const stats = await fs.promises.stat(confinedSkillPath)
+    if (stats.size > SKILL_CONFIG.SKILL_FILE_MAX_SIZE) {
+      throw new Error(
+        `[SkillService] Skill file too large: ${stats.size} bytes (max: ${SKILL_CONFIG.SKILL_FILE_MAX_SIZE})`
+      )
+    }
+
+    const rawContent = await fs.promises.readFile(confinedSkillPath, 'utf-8')
+    const { content } = matter(rawContent)
+    const renderedContent = this.replacePathVariables(content, metadata, agentId)
+    const runtimeInstructions = await this.buildRuntimeInstructions(metadata, agentId)
+    return {
+      name: metadata.name,
+      content: [renderedContent.trim(), runtimeInstructions].filter(Boolean).join('\n\n')
     }
   }
 
@@ -1530,14 +1546,19 @@ export class SkillService implements SkillServicePort {
     name: string,
     options?: { filePath?: string; conversationId?: string }
   ): Promise<SkillViewResult> {
-    return await this.viewSkillInAgentScope(BUILTIN_SKILL_AGENT_ID, name, options)
+    const { contentIdentity: _contentIdentity, ...result } = await this.viewSkillInAgentScope(
+      BUILTIN_SKILL_AGENT_ID,
+      name,
+      options
+    )
+    return result
   }
 
   private async viewSkillInAgentScope(
     agentId: string,
     name: string,
     options?: { filePath?: string; conversationId?: string }
-  ): Promise<SkillViewResult> {
+  ): Promise<RuntimeSkillViewResult> {
     const metadataCache = this.getMetadataCacheForAgent(agentId)
     await this.ensureAgentCatalogDiscovered(agentId)
 
@@ -1625,40 +1646,34 @@ export class SkillService implements SkillServicePort {
       }
     }
 
+    const contentIdentity = this.buildSkillContentIdentity(agentId, metadata)
     try {
-      const confinedSkillPath = await this.resolvePhysicalSkillPath(
-        metadata.skillRoot,
-        metadata.path
-      )
-      if (!confinedSkillPath) {
+      const skillContent = await this.buildEffectiveSkillContent(agentId, metadata)
+      if (!skillContent) {
         return {
           success: false,
-          error: 'Skill manifest is outside the physical skill root'
+          error: 'Skill manifest could not be loaded safely'
         }
       }
-      const stats = await fs.promises.stat(confinedSkillPath)
-      if (stats.size > SKILL_CONFIG.SKILL_FILE_MAX_SIZE) {
-        const errorMessage = `[SkillService] Skill file too large: ${stats.size} bytes (max: ${SKILL_CONFIG.SKILL_FILE_MAX_SIZE})`
-        console.error(errorMessage)
+      const effectiveContentBytes = Buffer.byteLength(skillContent.content, 'utf8')
+      if (effectiveContentBytes > SKILL_EFFECTIVE_CONTENT_MAX_BYTES) {
         return {
           success: false,
-          error: errorMessage
+          error: `Effective Skill content exceeds ${SKILL_EFFECTIVE_CONTENT_MAX_BYTES} bytes and cannot be activated inline`
         }
       }
-
-      const rawContent = await fs.promises.readFile(confinedSkillPath, 'utf-8')
-      const { content } = matter(rawContent)
       return {
         success: true,
         name: metadata.name,
         category: metadata.category ?? null,
         skillRoot: metadata.skillRoot,
         filePath: null,
-        content: this.replacePathVariables(content, metadata, agentId),
+        content: skillContent.content,
         platforms: metadata.platforms,
         metadata: metadata.metadata,
         linkedFiles: await this.listSkillLinkedFiles(metadata.skillRoot),
-        isPinned
+        isPinned,
+        contentIdentity
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
@@ -1669,8 +1684,30 @@ export class SkillService implements SkillServicePort {
       })
       return {
         success: false,
-        error: `Failed to load skill view: ${errorMessage}`
+        error: errorMessage.startsWith('[SkillService] Skill file too large:')
+          ? errorMessage
+          : `Failed to load skill view: ${errorMessage}`
       }
+    }
+  }
+
+  private buildSkillContentIdentity(
+    agentId: string,
+    metadata: SkillMetadata
+  ): RuntimeSkillContentIdentity {
+    const state = this.getStoredManagementState()
+    const item =
+      this.getAgentManagementState(state, agentId).skills[metadata.name] ??
+      this.createDefaultManagementItem(metadata.name, agentId)
+    return {
+      agentId,
+      sourceType: metadata.readOnly ? 'builtin' : item.source.type,
+      sourceId: metadata.readOnly
+        ? metadata.skillRoot
+        : metadata.ownerPluginId
+          ? metadata.skillRoot
+          : item.canonicalPath || metadata.skillRoot,
+      skillName: metadata.name
     }
   }
 
@@ -2035,7 +2072,7 @@ export class SkillService implements SkillServicePort {
     metadata: SkillMetadata,
     agentId: string = BUILTIN_SKILL_AGENT_ID
   ): Promise<string> {
-    const scripts = (await this.listSkillScriptsForAgent(agentId, metadata.name)).filter(
+    const scripts = (await this.listSkillScriptsFromMetadata(agentId, metadata)).filter(
       (script) => script.enabled
     )
     const lines = [
@@ -4099,6 +4136,13 @@ export class SkillService implements SkillServicePort {
       return []
     }
 
+    return await this.listSkillScriptsFromMetadata(normalizedAgentId, metadata)
+  }
+
+  private async listSkillScriptsFromMetadata(
+    agentId: string,
+    metadata: SkillMetadata
+  ): Promise<SkillScriptDescriptor[]> {
     const scriptsDir = path.join(metadata.skillRoot, 'scripts')
     if (!(await this.pathExists(scriptsDir))) {
       return []
@@ -4106,14 +4150,14 @@ export class SkillService implements SkillServicePort {
     const confinedScriptsDir = await this.resolvePhysicalSkillPath(metadata.skillRoot, scriptsDir)
     if (!confinedScriptsDir) {
       logger.warn('[SkillService] Ignoring a scripts directory outside the physical Skill root.', {
-        agentId: normalizedAgentId,
-        name,
+        agentId,
+        name: metadata.name,
         scriptsDir
       })
       return []
     }
 
-    const extension = await this.getSkillExtensionForAgent(normalizedAgentId, name)
+    const extension = await this.getSkillExtensionForAgent(agentId, metadata.name)
     const descriptors = (
       await this.collectScriptDescriptors(confinedScriptsDir, metadata.skillRoot)
     ).map((script) => {

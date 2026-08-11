@@ -43,19 +43,20 @@
 
 ## P0b: Safe Runtime View
 
-- [ ] Extract the canonical fresh-resolving effective-content builder.
-- [ ] Return body plus runtime instructions from root `skill_view`.
-- [ ] Add exact result size/context checks, strict Journal outcome validation, and a strictly
+- [x] Extract the canonical fresh-resolving effective-content builder.
+- [x] Return body plus runtime instructions from root `skill_view`.
+- [x] Add exact result size/context checks, strict Journal outcome validation, and a strictly
       persisted canonical `tool_result` before activation.
-- [ ] Make later transcript settlement reuse and verify the same tool-result fact.
-- [ ] Add the Run-local projection registry and overlap-aware root-view confirmation.
-- [ ] Require a strict schema-6 Skill-bearing manifest before the next provider request.
-- [ ] Refresh only tools/allow-list after successful activation.
-- [ ] Remove the duplicate leading-system body projection.
-- [ ] Preserve supporting-file view and bound repeated root views.
-- [ ] Add settlement ordering, manifest failure, all activation-source overlaps, repeat-view, and
+- [x] Make later transcript settlement reuse and verify the same tool-result fact.
+- [x] Add the Run-local projection registry, strict pause/resume recovery, and overlap-aware
+      root-view confirmation.
+- [x] Require a strict schema-6 Skill-bearing manifest before the next provider request.
+- [x] Refresh only tools/allow-list after successful activation.
+- [x] Remove the duplicate leading-system body projection.
+- [x] Preserve supporting-file view and bound repeated root views.
+- [x] Add settlement ordering, manifest failure, all activation-source overlaps, repeat-view, and
       supporting-file tests.
-- [ ] Review and commit the runtime-view slice.
+- [x] Review and commit the runtime-view slice.
 
 ## P0b: Message And Session Projection
 

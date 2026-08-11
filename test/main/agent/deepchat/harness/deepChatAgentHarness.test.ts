@@ -306,6 +306,7 @@ function createMockSqlitePresenter() {
     deleteByMessageIds: vi.fn()
   }
   let deepchatTapeEntriesTable: any
+  let tapeIncarnationSequence = 0
   let memoryIngestionProjectionCurrent = false
   let memoryIngestionProjectionMaxEntryId = 0
   let memoryIngestionProjectionRows: any[] = []
@@ -364,7 +365,21 @@ function createMockSqlitePresenter() {
     deepchatTapeEntriesTable: (deepchatTapeEntriesTable = {
       runInTransaction: vi.fn((operation: () => unknown) => operation()),
       isInTransaction: vi.fn(() => false),
-      ensureBootstrapAnchor: vi.fn(),
+      ensureBootstrapAnchor: vi.fn((sessionId: string) => {
+        if (
+          tapeEntries.some((entry) => entry.session_id === sessionId && entry.kind === 'anchor')
+        ) {
+          return
+        }
+        deepchatTapeEntriesTable.appendAnchor({
+          sessionId,
+          name: 'session/start',
+          source: { type: 'session', id: sessionId, seq: 0 },
+          state: { owner: 'human' },
+          meta: { tapeIncarnationId: `test-tape-${++tapeIncarnationSequence}` },
+          idempotent: true
+        })
+      }),
       append: vi.fn((input: any) => {
         const provenanceKey =
           input.provenanceKey ??
@@ -448,6 +463,17 @@ function createMockSqlitePresenter() {
         return tapeEntries.filter(
           (entry) => entry.session_id === sessionId && selected.has(entry.entry_id)
         )
+      }),
+      getBootstrapIncarnation: vi.fn((sessionId: string) => {
+        const row = tapeEntries.find(
+          (entry) =>
+            entry.session_id === sessionId &&
+            entry.kind === 'anchor' &&
+            entry.name === 'session/start'
+        )
+        if (!row) return undefined
+        const meta = JSON.parse(row.meta_json) as Record<string, unknown>
+        return typeof meta.tapeIncarnationId === 'string' ? meta.tapeIncarnationId : undefined
       }),
       getViewManifestEventsByMessage: vi.fn((sessionId: string, messageId: string) =>
         tapeEntries.filter(
@@ -5293,7 +5319,7 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
-    it('keeps initial and skill-refresh prompt phases around compaction in fixed order', async () => {
+    it('keeps the base prompt stable after compaction and Memory assembly', async () => {
       const order: string[] = []
       const systemEnvPrompt = vi.mocked(buildSystemEnvPrompt)
       const skillService = getSkillServiceMock()
@@ -5389,17 +5415,11 @@ describe('DeepChatAgentHarness', () => {
 
       let initialSystemPrompt = ''
       let initialMessages: any[] = []
-      let refreshedSystemPrompt = ''
       ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params: any) => {
         order.push('provider-request')
         initialMessages = params.run.messages
         initialSystemPrompt = String(params.run.messages[0]?.content ?? '')
-        const refreshed = await params.refreshSystemPrompt(
-          ['skill-a'],
-          params.run.resources.toolDefinitions
-        )
-        refreshedSystemPrompt = typeof refreshed === 'string' ? refreshed : refreshed.prompt
-        order.push('skill-refresh-complete')
+        expect(params.refreshSystemPrompt).toBeUndefined()
         return { status: 'completed' }
       })
 
@@ -5414,20 +5434,16 @@ describe('DeepChatAgentHarness', () => {
         'compaction-prepare',
         'compaction-apply',
         'memory',
-        'provider-request',
-        'skill-refresh-complete'
+        'provider-request'
       ])
-      expect(systemEnvPrompt).toHaveBeenCalledTimes(2)
-      const [initialBaseOrder, refreshedBaseOrder] = systemEnvPrompt.mock.invocationCallOrder
+      expect(systemEnvPrompt).toHaveBeenCalledTimes(1)
+      const [initialBaseOrder] = systemEnvPrompt.mock.invocationCallOrder
       expect(initialBaseOrder).toBeLessThan(prepareCompaction.mock.invocationCallOrder[0])
       expect(applyCompaction.mock.invocationCallOrder[0]).toBeLessThan(
         buildInjection.mock.invocationCallOrder[0]
       )
       expect(buildInjection.mock.invocationCallOrder[0]).toBeLessThan(
         (processStream as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
-      )
-      expect((processStream as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
-        refreshedBaseOrder
       )
       expect(initialSystemPrompt).toContain('BASE_PHASE_CONTENT')
       expect(initialSystemPrompt).not.toContain('SUMMARY_PHASE_CONTENT')
@@ -5438,9 +5454,7 @@ describe('DeepChatAgentHarness', () => {
       })
       expect(String(initialMessages[1].content)).toContain('RECONSTRUCTION_PHASE_CONTENT')
       expect(String(initialMessages.at(-1)?.content)).toContain('MEMORY_PHASE_CONTENT')
-      expect(refreshedSystemPrompt).toContain('SKILL_PHASE_CONTENT')
-      expect(refreshedSystemPrompt).not.toContain('SUMMARY_PHASE_CONTENT')
-      expect(refreshedSystemPrompt).not.toContain('MEMORY_PHASE_CONTENT')
+      expect(initialSystemPrompt).not.toContain('SKILL_PHASE_CONTENT')
       expect(buildInjection).toHaveBeenCalledTimes(1)
     })
 
@@ -11058,7 +11072,7 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
-    it('assembles resume context after compaction and preserves base-only round refresh', async () => {
+    it('assembles resume context after compaction without rebuilding the base prompt', async () => {
       const order: string[] = []
       const systemEnvPrompt = vi.mocked(buildSystemEnvPrompt)
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
@@ -11161,25 +11175,11 @@ describe('DeepChatAgentHarness', () => {
       expect(checkpoint).toContain('RESUME_SUMMARY_CONTENT')
       expect(checkpoint).toContain('RESUME_RECONSTRUCTION_CONTENT')
       expect(String(ownerUser?.content)).toContain('RESUME_MEMORY_CONTENT')
-
-      order.length = 0
-      const refreshed = await streamParams.refreshSystemPrompt(
-        undefined,
-        streamParams.run.resources.toolDefinitions
-      )
-      const refreshedSystemPrompt = typeof refreshed === 'string' ? refreshed : refreshed.prompt
-      expect(order).toEqual([])
-      expect(systemEnvPrompt).toHaveBeenCalledTimes(2)
-      expect((processStream as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]).toBeLessThan(
-        systemEnvPrompt.mock.invocationCallOrder[1]
-      )
-      expect(refreshedSystemPrompt).not.toContain('## Conversation Summary')
-      expect(refreshedSystemPrompt).not.toContain('## Tape Handoff State')
-      expect(refreshedSystemPrompt).not.toContain('## Relevant Memories')
+      expect(streamParams.refreshSystemPrompt).toBeUndefined()
       expect(buildInjection).toHaveBeenCalledTimes(1)
     })
 
-    it('keeps runtime-activated skills when rebuilding resume resources', async () => {
+    it('does not trust stale runtime Skill state when rebuilding resume resources', async () => {
       const skillService = getSkillServiceMock()
       skillService.getMetadataList.mockResolvedValue([
         { name: 'runtime-skill', description: 'Runtime skill' }
@@ -11199,10 +11199,15 @@ describe('DeepChatAgentHarness', () => {
       await expect(answerPendingQuestion()).resolves.toEqual({ resumed: true })
 
       expect(toolService.getAllToolDefinitions).toHaveBeenCalledWith(
-        expect.objectContaining({ activeSkillNames: ['runtime-skill'] })
+        expect.objectContaining({ activeSkillNames: [] })
       )
-      expect(streamParams.run.resources.activeSkillNames).toEqual(['runtime-skill'])
-      expect(String(streamParams.run.messages[0]?.content ?? '')).toContain('RUNTIME_SKILL_BODY')
+      expect(streamParams.run.resources.activeSkillNames).toEqual([])
+      expect(String(streamParams.run.messages[0]?.content ?? '')).not.toContain(
+        'RUNTIME_SKILL_BODY'
+      )
+      expect(skillService.getActiveSkills).toHaveBeenCalledTimes(1)
+      expect(providerSettings.resolveDeepChatAgentConfig).toHaveBeenCalledTimes(2)
+      expect(instance.getRuntimeActivatedSkills()).toEqual([])
     })
 
     it('handles question_option and resumes assistant message', async () => {

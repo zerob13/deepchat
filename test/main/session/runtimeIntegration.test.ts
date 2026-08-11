@@ -64,12 +64,25 @@ function createMockSqlitePresenter() {
   const pendingInputsStore = new Map<string, any>()
   const assistantBlocksStore = new Map<string, any[]>()
   const tapeEntries: any[] = []
+  let tapeIncarnationSequence = 0
   let messagesList: any[] = []
 
   const tapeTable = {
     runInTransaction: vi.fn((operation: () => unknown) => operation()),
     isInTransaction: vi.fn(() => false),
-    ensureBootstrapAnchor: vi.fn(),
+    ensureBootstrapAnchor: vi.fn((sessionId: string) => {
+      if (tapeEntries.some((entry) => entry.session_id === sessionId && entry.kind === 'anchor')) {
+        return
+      }
+      tapeTable.appendAnchor({
+        sessionId,
+        name: 'session/start',
+        source: { type: 'session', id: sessionId, seq: 0 },
+        state: { owner: 'human' },
+        meta: { tapeIncarnationId: `test-tape-${++tapeIncarnationSequence}` },
+        idempotent: true
+      })
+    }),
     append: vi.fn((input: any) => {
       if (input.idempotent && input.provenanceKey) {
         const existing = tapeEntries.find(
@@ -121,6 +134,17 @@ function createMockSqlitePresenter() {
       return tapeEntries.filter(
         (entry) => entry.session_id === sessionId && requestedIds.has(entry.entry_id)
       )
+    }),
+    getBootstrapIncarnation: vi.fn((sessionId: string) => {
+      const row = tapeEntries.find(
+        (entry) =>
+          entry.session_id === sessionId &&
+          entry.kind === 'anchor' &&
+          entry.name === 'session/start'
+      )
+      if (!row) return undefined
+      const meta = JSON.parse(row.meta_json) as Record<string, unknown>
+      return typeof meta.tapeIncarnationId === 'string' ? meta.tapeIncarnationId : undefined
     }),
     getViewManifestEventsByMessage: vi.fn((sessionId: string, messageId: string) =>
       tapeEntries.filter(

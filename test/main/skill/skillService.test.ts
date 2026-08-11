@@ -885,6 +885,9 @@ describe('SkillService', () => {
       expect(pluginSkillContent?.content).toContain('Plugin root: `/plugins/fixture`')
       expect(pluginSkillContent?.content).toContain(`Arch: \`${process.arch}\``)
       expect(pluginSkillContent?.content).toContain('Owner: `com.deepchat.plugins.fixture`')
+      expect(
+        (await skillService.viewSkillForAgent('deepchat', 'plugin-skill')).contentIdentity?.sourceId
+      ).toBe('/plugins/fixture/plugin-skill')
 
       ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)
       await skillService.setActiveSkills('plugin-conv', ['plugin-skill'])
@@ -1184,7 +1187,7 @@ describe('SkillService', () => {
       ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)
       await skillService.setActiveSkills('conv-view', ['test-skill'])
 
-      const result = await skillService.viewSkill('test-skill', {
+      const result = await skillService.viewSkillForAgent('deepchat', 'test-skill', {
         conversationId: 'conv-view'
       })
 
@@ -1201,6 +1204,33 @@ describe('SkillService', () => {
         { kind: 'reference', path: 'references/guide.md' },
         { kind: 'script', path: 'scripts/run.py' }
       ])
+      expect(result.content).toContain('# Skill body')
+      expect(result.content).toContain('## DeepChat Runtime Context')
+      expect(result.content).toContain('scripts/run.py (python)')
+      expect(result.contentIdentity).toEqual(
+        expect.objectContaining({
+          agentId: 'deepchat',
+          skillName: 'test-skill'
+        })
+      )
+    })
+
+    it('freshly resolves the root view instead of reusing cached effective content', async () => {
+      await skillService.loadSkillContent('test-skill')
+      ;(matter as unknown as Mock).mockReturnValue({
+        data: {
+          name: 'test-skill',
+          description: 'Test',
+          platforms: ['macos']
+        },
+        content: '# Updated skill body'
+      })
+
+      const result = await skillService.viewSkill('test-skill')
+
+      expect(result.success).toBe(true)
+      expect(result.content).toContain('# Updated skill body')
+      expect(result.content).not.toContain('# Skill body\n\n')
     })
 
     it('does not pin a skill after viewing the main SKILL.md in a new-agent session', async () => {
@@ -1244,6 +1274,9 @@ describe('SkillService', () => {
           isPinned: false
         })
       )
+      expect(result.content).toBe('# Guide')
+      expect(result.content).not.toContain('DeepChat Runtime Context')
+      expect(result.contentIdentity).toBeUndefined()
       expect(await skillService.getActiveSkills('conv-view-file-only')).toEqual([])
       expect(publishDeepchatEventMock).not.toHaveBeenCalledWith(
         'skills.session.changed',
@@ -1295,6 +1328,20 @@ describe('SkillService', () => {
         expect.stringContaining('/test-skill/SKILL.md'),
         'utf-8'
       )
+    })
+
+    it('rejects oversized effective content without truncating it', async () => {
+      ;(matter as unknown as Mock).mockReturnValue({
+        data: { name: 'test-skill', description: 'Test' },
+        content: 'x'.repeat(512 * 1024 + 1)
+      })
+
+      const result = await skillService.viewSkill('test-skill')
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Effective Skill content exceeds 524288 bytes and cannot be activated inline'
+      })
     })
 
     it('rejects file paths outside the skill root', async () => {

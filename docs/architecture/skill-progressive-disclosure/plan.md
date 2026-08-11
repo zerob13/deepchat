@@ -126,10 +126,12 @@ For each new execution:
 9. pass refs and projection hashes through loop state and ViewManifest assembly;
 10. run the existing final preflight and strict schema-6 manifest commit before provider dispatch.
 
-Continuation carries the exact Run-bound refs through tool rounds, overflow recovery, and
-in-process permission pause. Existing crash recovery parks the interrupted Run; an explicit action
-after restart creates a new Run and deliberately repeats fresh resolution. No Session-global
-"latest Skill context" cache is introduced.
+Continuation carries exact refs through tool rounds and overflow recovery in one Run. Permission
+pause/resume creates a new Run for the same assistant-message execution; it restores runtime-view
+refs only from strict facts that match that message's persisted blocks and rebuilds a new Run-local
+registry without reading Skill files. A newly submitted, regenerated, or edited message is a new
+execution and deliberately repeats fresh resolution. No Session-global "latest Skill context"
+cache is introduced.
 
 Historical message projection replaces an expanded message body with a bounded `[Used skill: ...]`
 marker after the owning active turn. Tape retains the original message Skill refs and

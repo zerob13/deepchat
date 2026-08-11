@@ -14,6 +14,8 @@ import type {
 
 export const SKILL_ARCHIVE_MAX_INPUT_BYTES = 200 * 1024 * 1024
 export const SKILL_NAME_MAX_LENGTH = 255
+export const SKILL_EFFECTIVE_CONTENT_MAX_BYTES = 512 * 1024
+export const SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES = SKILL_EFFECTIVE_CONTENT_MAX_BYTES + 256 * 1024
 
 /**
  * Skill metadata extracted from SKILL.md frontmatter.

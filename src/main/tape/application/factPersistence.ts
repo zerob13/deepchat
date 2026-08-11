@@ -15,6 +15,11 @@ import {
   readTapeToolStatus
 } from '@/tape/domain/effectiveSemantics'
 import { hashJson } from '@/tape/domain/viewManifest'
+import {
+  readSkillContextEvidence,
+  type TapeSkillContextEvidenceInput
+} from '@/tape/domain/skillContext'
+import { canonicalJsonStringifyData } from '@/tape/domain/canonicalJson'
 
 export { tapeEntryToMessageRecord } from '@/tape/domain/effectiveSemantics'
 export type { TapeFactSource } from '@/tape/domain/facts'
@@ -33,9 +38,11 @@ interface TapeMessageRecordAppendOptions {
   toolRevisionIndex?: TapeToolRevisionIndex
 }
 
-interface TapeToolFactAppendOptions {
+export interface TapeToolFactAppendOptions {
   reason?: string
   supersedesEntryId?: number
+  skillContextEvidence?: TapeSkillContextEvidenceInput
+  allowStoredSkillContextEvidence?: boolean
 }
 
 interface PreparedTapeToolFact {
@@ -131,7 +138,7 @@ function buildMessageReplacementProvenanceKey(
   return `message:${record.id}:revision:${record.updatedAt}${orderRevision}`
 }
 
-function buildToolFactProvenanceKey(
+export function buildToolFactProvenanceKey(
   kind: 'tool_call' | 'tool_result',
   messageId: string,
   toolCallId: string,
@@ -305,9 +312,18 @@ export function appendTapeToolFact(
   const { prepared } = described
 
   table.ensureBootstrapAnchor(input.sessionId)
-  const meta = options.reason
+  const baseMeta = options.reason
     ? { source, role: 'assistant', status: block.status, reason: options.reason }
     : { source, role: 'assistant', status: block.status }
+  const meta = options.skillContextEvidence
+    ? {
+        ...baseMeta,
+        skillContextEvidence: readSkillContextEvidence({
+          schemaVersion: 1,
+          ...options.skillContextEvidence
+        })
+      }
+    : baseMeta
   return table.append({
     sessionId: input.sessionId,
     kind: prepared.kind,
@@ -329,6 +345,59 @@ export function appendTapeToolFact(
     createdAt: block.timestamp,
     idempotent: true
   })
+}
+
+export function assertTapeToolFactPhysicalEnvelope(
+  row: DeepChatTapeEntryRow,
+  input: TapeToolFactInput,
+  source: TapeFactSource,
+  options: TapeToolFactAppendOptions = {}
+): void {
+  const described = describeTapeToolFact(input)
+  if (!described) throw new Error('Tape tool fact input is not appendable.')
+  const { prepared } = described
+  const baseMeta = options.reason
+    ? { source, role: 'assistant', status: input.block.status, reason: options.reason }
+    : { source, role: 'assistant', status: input.block.status }
+  const storedMeta = parseTapeJsonObject(row.meta_json)
+  let expectedMeta: Record<string, unknown> = baseMeta
+  if (options.skillContextEvidence) {
+    expectedMeta = {
+      ...baseMeta,
+      skillContextEvidence: readSkillContextEvidence({
+        schemaVersion: 1,
+        ...options.skillContextEvidence
+      })
+    }
+  } else if (options.allowStoredSkillContextEvidence && storedMeta.skillContextEvidence) {
+    expectedMeta = {
+      ...baseMeta,
+      skillContextEvidence: readSkillContextEvidence(storedMeta.skillContextEvidence)
+    }
+  }
+  const expectedProvenanceKey = buildToolFactProvenanceKey(
+    prepared.kind,
+    input.messageId,
+    prepared.toolCallId,
+    prepared.payload,
+    options.supersedesEntryId
+  )
+  const expectedPayload = parseTapeJsonObject(JSON.stringify(prepared.payload))
+  if (
+    row.session_id !== input.sessionId ||
+    row.kind !== prepared.kind ||
+    row.name !== prepared.name ||
+    row.source_type !== input.provenance.source ||
+    row.source_id !== input.provenance.sourceId ||
+    row.source_seq !== input.provenance.sequence ||
+    row.provenance_key !== expectedProvenanceKey ||
+    row.created_at !== input.block.timestamp ||
+    canonicalJsonStringifyData(parseTapeJsonObject(row.payload_json)) !==
+      canonicalJsonStringifyData(expectedPayload) ||
+    canonicalJsonStringifyData(storedMeta) !== canonicalJsonStringifyData(expectedMeta)
+  ) {
+    throw new Error('Tape tool fact physical envelope is corrupt.')
+  }
 }
 
 function appendToolFactInputsWithRevisionIndex(

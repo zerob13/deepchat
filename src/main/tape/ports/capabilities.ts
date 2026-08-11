@@ -16,6 +16,12 @@ import type {
   TapeSkillMaterializationReceipt
 } from '../domain/skillMaterialization'
 import type {
+  TapeRuntimeSkillViewContextReceipt,
+  TapeRuntimeSkillViewRecoveryInput,
+  TapeSkillViewResultFactInput,
+  TapeSkillViewResultFactReceipt
+} from '../domain/skillContext'
+import type {
   CommitExecutionDispatchInput,
   CommitExecutionRunStartedInput,
   CommitExecutionRunTerminalInput,
@@ -74,6 +80,20 @@ export interface TapeToolFactWriter {
   appendToolFact(input: TapeToolFactInput): Promise<TapeEntryRef>
 }
 
+export interface TapeIncarnationReader {
+  getTapeIncarnationId(sessionId: string): string
+}
+
+export interface TapeSkillViewResultFactWriter {
+  appendSkillViewResultFact(input: TapeSkillViewResultFactInput): TapeSkillViewResultFactReceipt
+}
+
+export interface TapeRuntimeSkillViewContextReader {
+  recoverRuntimeSkillViewContexts(
+    input: TapeRuntimeSkillViewRecoveryInput
+  ): TapeRuntimeSkillViewContextReceipt[]
+}
+
 export interface TapeSkillMaterializationWriter {
   materializeSkillContexts(
     inputs: readonly TapeSkillMaterializationInput[]
@@ -111,6 +131,9 @@ export interface DeepChatLoopTapePort
     TapeViewManifestReader,
     TapeViewManifestWriter,
     TapeToolFactWriter,
+    TapeIncarnationReader,
+    TapeSkillViewResultFactWriter,
+    TapeRuntimeSkillViewContextReader,
     TapeProviderAttemptWriter,
     TapeProviderAttemptReader,
     ExecutionJournalWriter {}

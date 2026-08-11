@@ -99,7 +99,13 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
       name: 'code-review',
       filePath: null,
       content: '# Code Review',
-      isPinned: false
+      isPinned: false,
+      contentIdentity: {
+        agentId: 'agent-a',
+        sourceType: 'created',
+        sourceId: '/skills/code-review',
+        skillName: 'code-review'
+      }
     }
     skillService.viewSkill.mockResolvedValue(viewResult)
     skillService.viewSkillForAgent.mockResolvedValue(viewResult)
@@ -160,6 +166,29 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     const names = defs.map((def) => def.function.name)
     expect(names).toContain(CHAT_SETTINGS_TOOL_NAMES.toggle)
     expect(skillService.getActiveSkills).not.toHaveBeenCalled()
+  })
+
+  it('propagates settings catalog failures only for fail-closed refreshes', async () => {
+    skillService.getActiveSkillsAllowedTools.mockRejectedValue(
+      new Error('Skill policy unavailable')
+    )
+    const manager = buildManager()
+    const context = {
+      chatMode: 'agent' as const,
+      supportsVision: false,
+      agentWorkspacePath: null,
+      conversationId: 'conv-1',
+      activeSkillNames: [CHAT_SETTINGS_SKILL_NAME]
+    }
+
+    await expect(manager.getAllToolDefinitions(context)).resolves.not.toContainEqual(
+      expect.objectContaining({
+        function: expect.objectContaining({ name: CHAT_SETTINGS_TOOL_NAMES.toggle })
+      })
+    )
+    await expect(
+      manager.getAllToolDefinitions({ ...context, requireCompleteCatalog: true })
+    ).rejects.toThrow('Skill policy unavailable')
   })
 
   it('includes skill_run when an active skill exposes runnable scripts', async () => {
@@ -274,27 +303,75 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
       name: 'deepchat-settings',
       filePath: null,
       content: '# Skill',
-      isPinned: false
+      isPinned: false,
+      contentIdentity: {
+        agentId: 'agent-a',
+        sourceType: 'created',
+        sourceId: '/skills/deepchat-settings',
+        skillName: 'deepchat-settings'
+      }
     })
 
     const manager = buildManager()
-    const result = (await manager.callTool(
-      'skill_view',
-      { name: 'deepchat-settings' },
-      'conv-1'
-    )) as { content: string; rawData?: { toolResult?: unknown } }
+    const commitDispatch = vi.fn()
+    const result = (await manager.callTool('skill_view', { name: 'deepchat-settings' }, 'conv-1', {
+      activeSkillNames: [],
+      commitDispatch
+    })) as { content: string; rawData?: { toolResult?: unknown } }
 
     const content = JSON.parse(result.content) as Record<string, unknown>
     expect(content.isPinned).toBe(false)
     expect(content.activeForCurrentMessage).toBe(true)
     expect(content.activatedForMessage).toBe(true)
     expect(content.activationScope).toBe('message')
+    expect(content.contentIdentity).toBeUndefined()
     expect(skillService.setActiveSkills).not.toHaveBeenCalled()
+    expect(commitDispatch).toHaveBeenCalledOnce()
+    expect(commitDispatch).toHaveBeenCalledWith({
+      toolName: 'skill_view',
+      toolSource: 'agent',
+      normalizedArguments: { name: 'deepchat-settings' },
+      target: { serverName: 'agent-skills', originalName: 'skill_view' }
+    })
     expect(result.rawData?.toolResult).toEqual({
       activationApplied: true,
       activationSource: 'skill_md',
-      activatedSkill: 'deepchat-settings'
+      activatedSkill: 'deepchat-settings',
+      skillContext: {
+        agentId: 'agent-a',
+        sourceType: 'created',
+        sourceId: '/skills/deepchat-settings',
+        skillName: 'deepchat-settings'
+      }
     })
+  })
+
+  it('confirms an already-active root view without returning or dispatching its body again', async () => {
+    skillService.getActiveSkills.mockResolvedValue(['deepchat-settings'])
+    const manager = buildManager()
+    const commitDispatch = vi.fn()
+
+    const result = (await manager.callTool('skill_view', { name: 'deepchat-settings' }, 'conv-1', {
+      activeSkillNames: ['deepchat-settings'],
+      commitDispatch
+    })) as { content: string; rawData?: { toolResult?: unknown } }
+
+    expect(JSON.parse(result.content)).toEqual({
+      success: true,
+      name: 'deepchat-settings',
+      isPinned: true,
+      activeForCurrentMessage: true,
+      activatedForMessage: false,
+      activationScope: 'none',
+      message: 'Skill is already active for the current message.'
+    })
+    expect(result.content).not.toContain('# Skill')
+    expect(result.rawData?.toolResult).toEqual({
+      activationApplied: false,
+      activationSource: 'none'
+    })
+    expect(skillService.viewSkillForAgent).not.toHaveBeenCalled()
+    expect(commitDispatch).not.toHaveBeenCalled()
   })
 
   it('does not mark linked file views as skill activations', async () => {
@@ -309,16 +386,19 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     })
 
     const manager = buildManager()
+    const commitDispatch = vi.fn()
     const result = (await manager.callTool(
       'skill_view',
       { name: 'deepchat-settings', file_path: 'references/guide.md' },
-      'conv-1'
+      'conv-1',
+      { activeSkillNames: [], commitDispatch }
     )) as { rawData?: { toolResult?: unknown } }
 
     expect(result.rawData?.toolResult).toEqual({
       activationApplied: false,
       activationSource: 'file'
     })
+    expect(commitDispatch).not.toHaveBeenCalled()
   })
 
   it('rejects skill_manage create requests without content before calling the presenter', async () => {

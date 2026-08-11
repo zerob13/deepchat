@@ -2,11 +2,12 @@ import { createHash } from 'crypto'
 import { canonicalJsonStringifyData, hashJsonData } from './canonicalJson'
 import type { DeepChatTapeSkillMaterializationRef } from '@shared/types/tape-view-manifest'
 import { isSkillSourceType, type SkillSourceType } from '@shared/types/skillManagement'
+import { SKILL_EFFECTIVE_CONTENT_MAX_BYTES } from '@shared/types/skill'
 import type { DeepChatTapeEntryRow } from './entry'
 
 export const SKILL_MATERIALIZATION_NAME = 'skill/materialized' as const
 export const SKILL_MATERIALIZATION_SCHEMA_VERSION = 1 as const
-export const MAX_SKILL_MATERIALIZATION_BODY_BYTES = 512 * 1024
+export const MAX_SKILL_MATERIALIZATION_BODY_BYTES = SKILL_EFFECTIVE_CONTENT_MAX_BYTES
 export const MAX_SKILL_MATERIALIZATION_BATCH_COUNT = 64
 export const MAX_SKILL_MATERIALIZATION_BATCH_BYTES = 2 * 1024 * 1024
 

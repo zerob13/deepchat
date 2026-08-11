@@ -1,9 +1,76 @@
 import type { DeepChatTapeSkillContext } from '@shared/types/tape-view-manifest'
 import { isSkillSourceType } from '@shared/types/skillManagement'
+import { SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES } from '@shared/types/skill'
+import type { DeepChatTapeEntryRow } from './entry'
+import type { TapeSkillIdentity } from './skillMaterialization'
+import {
+  buildExecutionOperationKey,
+  buildToolOutcomeData,
+  normalizeExecutionOperationIdentity,
+  parseExecutionJournalFact,
+  type ExecutionOperationIdentity
+} from './executionJournal'
+import { hashJsonData } from './canonicalJson'
 
 const HASH = /^[a-f0-9]{64}$/
 const MAX_ID_BYTES = 1024
 const MAX_SOURCE_REFS = 64
+export const MAX_SKILL_CONTEXTS_PER_VIEW = 64
+export const MAX_SKILL_VIEW_RESULT_FACT_BYTES = SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES
+
+export interface TapeSkillViewResultFactInput {
+  sessionId: string
+  expectedTapeIncarnationId: string
+  messageId: string
+  orderSeq: number
+  blockIndex: number
+  toolCallId: string
+  toolName: 'skill_view'
+  responseText: string
+  timestamp: number
+  identity: TapeSkillIdentity
+  operation: ExecutionOperationIdentity
+  outcomeEntryId: number
+}
+
+export interface TapeSkillViewResultFactReceipt {
+  sessionId: string
+  entryId: number
+  tapeIncarnationId: string
+  contentHash: string
+}
+
+export interface TapeRuntimeSkillViewProjection {
+  toolCallId: string
+  responseText: string
+  blockIndex: number
+  timestamp: number
+}
+
+export interface TapeRuntimeSkillViewRecoveryInput {
+  sessionId: string
+  messageId: string
+  messageOrderSeq: number
+  expectedTapeIncarnationId: string
+  projections: readonly TapeRuntimeSkillViewProjection[]
+}
+
+export interface TapeRuntimeSkillViewContextReceipt {
+  identity: TapeSkillIdentity
+  toolCallId: string
+  entryId: number
+  tapeIncarnationId: string
+  contentHash: string
+}
+
+export interface TapeSkillContextEvidence {
+  schemaVersion: 1
+  identity: TapeSkillIdentity
+  operation: ExecutionOperationIdentity
+  outcomeEntryId: number
+}
+
+export type TapeSkillContextEvidenceInput = Omit<TapeSkillContextEvidence, 'schemaVersion'>
 
 function id(value: unknown): value is string {
   return (
@@ -17,8 +84,122 @@ function positive(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
+export function readSkillContentIdentity(value: unknown): TapeSkillIdentity {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('Skill content identity is invalid.')
+  }
+  const identity = value as Record<string, unknown>
+  if (
+    Object.keys(identity).sort().join('\0') !==
+      ['agentId', 'skillName', 'sourceId', 'sourceType'].sort().join('\0') ||
+    !id(identity.agentId) ||
+    !isSkillSourceType(identity.sourceType) ||
+    !id(identity.sourceId) ||
+    !id(identity.skillName)
+  ) {
+    throw new TypeError('Skill content identity is invalid.')
+  }
+  return {
+    agentId: identity.agentId,
+    sourceType: identity.sourceType,
+    sourceId: identity.sourceId,
+    skillName: identity.skillName
+  }
+}
+
+export function readSkillContextEvidence(value: unknown): TapeSkillContextEvidence {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('Skill context evidence is invalid.')
+  }
+  const evidence = value as Record<string, unknown>
+  if (
+    Object.keys(evidence).sort().join('\0') !==
+      ['identity', 'operation', 'outcomeEntryId', 'schemaVersion'].sort().join('\0') ||
+    evidence.schemaVersion !== 1 ||
+    !positive(evidence.outcomeEntryId)
+  ) {
+    throw new TypeError('Skill context evidence is invalid.')
+  }
+  return {
+    schemaVersion: 1,
+    identity: readSkillContentIdentity(evidence.identity),
+    operation: normalizeExecutionOperationIdentity(
+      evidence.operation as ExecutionOperationIdentity
+    ),
+    outcomeEntryId: evidence.outcomeEntryId
+  }
+}
+
+export function validateRuntimeSkillJournalChain(input: {
+  sessionId: string
+  messageId: string
+  toolCallId: string
+  responseText: string
+  evidence: unknown
+  dispatchRow: DeepChatTapeEntryRow
+  outcomeRow: DeepChatTapeEntryRow
+}): TapeSkillContextEvidence {
+  const evidence = readSkillContextEvidence(input.evidence)
+  if (evidence.operation.providerToolCallId !== input.toolCallId) {
+    throw new Error('Runtime Skill-view Journal operation does not match its tool result.')
+  }
+  let result: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(input.responseText) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error()
+    result = parsed as Record<string, unknown>
+  } catch {
+    throw new Error('Runtime Skill-view result envelope is invalid.')
+  }
+  if (
+    result.success !== true ||
+    typeof result.name !== 'string' ||
+    result.name !== evidence.identity.skillName ||
+    typeof result.content !== 'string' ||
+    !result.content ||
+    result.activatedForMessage !== true ||
+    result.activationScope !== 'message' ||
+    result.activationEvidenceVersion !== 1
+  ) {
+    throw new Error('Runtime Skill-view result does not match its activation identity.')
+  }
+  const dispatch = parseExecutionJournalFact(input.dispatchRow)
+  const outcome = parseExecutionJournalFact(input.outcomeRow)
+  const expected = buildToolOutcomeData({
+    sessionId: input.sessionId,
+    messageId: input.messageId,
+    operation: evidence.operation,
+    responseText: input.responseText,
+    isError: false
+  })
+  if (
+    dispatch.type !== 'execution/dispatch_committed' ||
+    dispatch.sessionId !== input.sessionId ||
+    dispatch.messageId !== input.messageId ||
+    buildExecutionOperationKey(dispatch.operation) !==
+      buildExecutionOperationKey(expected.operation) ||
+    dispatch.toolName !== 'skill_view' ||
+    dispatch.toolSource !== 'agent' ||
+    dispatch.target.serverName !== 'agent-skills' ||
+    dispatch.target.originalName !== 'skill_view' ||
+    dispatch.argumentsHash !== hashJsonData({ name: evidence.identity.skillName }) ||
+    dispatch.entryId >= outcome.entryId ||
+    outcome.type !== 'execution/tool_outcome' ||
+    outcome.entryId !== evidence.outcomeEntryId ||
+    outcome.sessionId !== input.sessionId ||
+    outcome.messageId !== input.messageId ||
+    buildExecutionOperationKey(outcome.operation) !==
+      buildExecutionOperationKey(expected.operation) ||
+    outcome.responseHash !== expected.responseHash ||
+    outcome.isError
+  ) {
+    throw new Error('Runtime Skill-view Journal chain does not match its exact result.')
+  }
+  return evidence
+}
+
 export function validateSchema6SkillContexts(value: unknown): DeepChatTapeSkillContext[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_SKILL_CONTEXTS_PER_VIEW) {
     throw new TypeError('Schema-6 Skill contexts must contain between 1 and 64 entries.')
   }
   const identities = new Set<string>()

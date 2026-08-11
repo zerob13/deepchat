@@ -2606,24 +2606,38 @@ describe('processStream', () => {
     expect(finalizedBlocks[0].tool_call.response).toBe('Sunny, 72F')
   })
 
-  it('refreshes tools and system prompt for the next loop iteration after skill_view activates a skill', async () => {
+  it('refreshes tools without replacing the system prompt after skill_view activates a skill', async () => {
     let callCount = 0
     const toolService = {
       ...createMockToolService(),
       callTool: vi
         .fn()
-        .mockResolvedValueOnce({
-          content:
-            '{"success":true,"name":"deepchat-settings","isPinned":false,"activeForCurrentMessage":true,"activatedForMessage":true,"activationScope":"message"}',
-          rawData: {
-            toolCallId: 'tc1',
+        .mockImplementationOnce(async (request, options) => {
+          options?.commitDispatch?.({
+            toolName: request.function.name,
+            toolSource: 'agent',
+            normalizedArguments: { name: 'deepchat-settings' },
+            target: { serverName: 'agent-skills', originalName: 'skill_view' }
+          })
+          return {
             content:
               '{"success":true,"name":"deepchat-settings","isPinned":false,"activeForCurrentMessage":true,"activatedForMessage":true,"activationScope":"message"}',
-            isError: false,
-            toolResult: {
-              activationApplied: true,
-              activationSource: 'skill_md',
-              activatedSkill: 'deepchat-settings'
+            rawData: {
+              toolCallId: 'tc1',
+              content:
+                '{"success":true,"name":"deepchat-settings","isPinned":false,"activeForCurrentMessage":true,"activatedForMessage":true,"activationScope":"message"}',
+              isError: false,
+              toolResult: {
+                activationApplied: true,
+                activationSource: 'skill_md',
+                activatedSkill: 'deepchat-settings',
+                skillContext: {
+                  agentId: 'deepchat',
+                  sourceType: 'created',
+                  sourceId: '/skills/deepchat-settings',
+                  skillName: 'deepchat-settings'
+                }
+              }
             }
           }
         })
@@ -2647,7 +2661,7 @@ describe('processStream', () => {
     const resolveTools = vi
       .fn()
       .mockResolvedValue([makeTool('skill_view'), makeTool('deepchat_settings_set_theme')])
-    const refreshSystemPrompt = vi.fn().mockResolvedValue('  refreshed skill prompt\n')
+    const commitRuntimeSkillView = vi.fn().mockResolvedValue(undefined)
 
     const coreStream = vi.fn(
       function (messages, _modelId, _modelConfig, _temperature, _maxTokens, tools) {
@@ -2669,7 +2683,14 @@ describe('processStream', () => {
           })()
         }
         if (callCount === 2) {
-          expect(messages[0]).toEqual({ role: 'system', content: '  refreshed skill prompt\n' })
+          expect(messages[0]).toEqual({ role: 'user', content: 'Hello' })
+          expect(messages).toContainEqual(
+            expect.objectContaining({
+              role: 'tool',
+              tool_call_id: 'tc1',
+              content: expect.stringContaining('deepchat-settings')
+            })
+          )
           expect(tools.map((tool) => tool.function.name)).toEqual([
             'skill_view',
             'deepchat_settings_set_theme'
@@ -2700,12 +2721,13 @@ describe('processStream', () => {
       toolExecution: createToolExecutionPort(toolService),
       toolCatalog: { resolve: resolveTools },
       tools: [makeTool('skill_view')],
-      refreshSystemPrompt,
       controls: {
         activateSkill,
-        getActiveSkillNames
+        getActiveSkillNames,
+        commitRuntimeSkillView
       }
     })
+    const initialPromptAssembly = params.run.resources.promptAssembly
 
     const promise = processStream(params)
     await vi.runAllTimersAsync()
@@ -2714,28 +2736,103 @@ describe('processStream', () => {
     expect(activateSkill).toHaveBeenCalledWith('deepchat-settings')
     expect(getActiveSkillNames).toHaveBeenCalled()
     expect(resolveTools).toHaveBeenCalledTimes(1)
-    expect(resolveTools).toHaveBeenCalledWith({ activeSkillNames: ['deepchat-settings'] })
-    expect(refreshSystemPrompt).toHaveBeenCalledTimes(1)
-    expect(refreshSystemPrompt).toHaveBeenCalledWith(
-      ['deepchat-settings'],
-      [
-        expect.objectContaining({ function: expect.objectContaining({ name: 'skill_view' }) }),
-        expect.objectContaining({
-          function: expect.objectContaining({ name: 'deepchat_settings_set_theme' })
-        })
-      ]
-    )
+    expect(resolveTools).toHaveBeenCalledWith({
+      activeSkillNames: ['deepchat-settings'],
+      failClosed: true
+    })
+    expect(commitRuntimeSkillView).toHaveBeenCalledBefore(activateSkill)
     expect(coreStream).toHaveBeenCalledTimes(3)
     expect(toolService.callTool).toHaveBeenCalledTimes(2)
-    expect(params.run.resources.promptAssembly).toMatchObject({
-      prompt: '  refreshed skill prompt\n',
-      sections: [
-        expect.objectContaining({
-          kind: 'effective_system_prompt',
-          degradationCodes: ['legacy_prompt_provenance']
-        })
-      ]
+    expect(params.run.resources.promptAssembly).toBe(initialPromptAssembly)
+  })
+
+  it('does not start another provider request when post-activation tool refresh fails', async () => {
+    const responseText = JSON.stringify({
+      success: true,
+      name: 'deepchat-settings',
+      content: '# Effective Skill body',
+      activatedForMessage: true,
+      activationScope: 'message',
+      activationEvidenceVersion: 1
     })
+    const toolService = {
+      ...createMockToolService(),
+      callTool: vi.fn().mockImplementation(async (request, options) => {
+        options?.commitDispatch?.({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: { name: 'deepchat-settings' },
+          target: { serverName: 'agent-skills', originalName: 'skill_view' }
+        })
+        return {
+          content: responseText,
+          rawData: {
+            toolCallId: request.id,
+            content: responseText,
+            isError: false,
+            toolResult: {
+              activationApplied: true,
+              activationSource: 'skill_md',
+              activatedSkill: 'deepchat-settings',
+              skillContext: {
+                agentId: 'deepchat',
+                sourceType: 'created',
+                sourceId: '/skills/deepchat-settings',
+                skillName: 'deepchat-settings'
+              }
+            }
+          }
+        }
+      })
+    } as unknown as ToolServicePort
+    const activeSkillNames: string[] = []
+    const activateSkill = vi.fn(async (skillName: string) => {
+      activeSkillNames.push(skillName)
+      return [...activeSkillNames]
+    })
+    const coreStream = vi.fn(function () {
+      return (async function* () {
+        yield {
+          type: 'tool_call_start',
+          tool_call_id: 'tc1',
+          tool_call_name: 'skill_view'
+        } as LLMCoreStreamEvent
+        yield {
+          type: 'tool_call_end',
+          tool_call_id: 'tc1',
+          tool_call_arguments_complete: '{"name":"deepchat-settings"}'
+        } as LLMCoreStreamEvent
+        yield { type: 'stop', stop_reason: 'tool_use' } as LLMCoreStreamEvent
+      })()
+    }) as unknown as ProcessParams['coreStream']
+    const resolveTools = vi.fn().mockRejectedValue(new Error('catalog unavailable'))
+    const params = createParams({
+      coreStream,
+      toolExecution: createToolExecutionPort(toolService),
+      toolCatalog: { resolve: resolveTools },
+      tools: [makeTool('skill_view')],
+      shouldYieldForPendingInput: () => true,
+      controls: {
+        activateSkill,
+        getActiveSkillNames: () => [...activeSkillNames],
+        commitRuntimeSkillView: vi.fn().mockResolvedValue(undefined)
+      }
+    })
+
+    const promise = processStream(params)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toMatchObject({
+      status: 'error',
+      stopReason: 'provider_error',
+      errorMessage: 'catalog unavailable'
+    })
+
+    expect(activateSkill).toHaveBeenCalledOnce()
+    expect(resolveTools).toHaveBeenCalledWith({
+      activeSkillNames: ['deepchat-settings'],
+      failClosed: true
+    })
+    expect(coreStream).toHaveBeenCalledOnce()
   })
 
   it('does not refresh tools after linked-file skill_view reads', async () => {

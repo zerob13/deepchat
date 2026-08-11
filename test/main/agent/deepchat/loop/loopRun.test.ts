@@ -3,10 +3,14 @@ import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import {
   advanceRequestSequence,
   bindActiveRequestContract,
+  collectRuntimeSkillViewProjections,
   createLoopRun,
   enterLogicalRound,
-  enterPhysicalAttempt
+  enterPhysicalAttempt,
+  registerRuntimeSkillContext,
+  resolveRuntimeSkillContextsForRequest
 } from '@/agent/deepchat/loop/loopRun'
+import { hashSkillEffectiveContent } from '@/tape/domain/skillMaterialization'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
 
 function createRun(sessionId: string, initialRequestSeq = 0) {
@@ -197,6 +201,195 @@ describe('LoopRun', () => {
     })
 
     expect(run.resources.promptAssembly).toBe(promptAssembly)
+  })
+
+  it('binds runtime Skill evidence only to requests that project its exact tool result', () => {
+    const run = createRun('session')
+    const responseText = '{"success":true,"content":"effective Skill body"}'
+    const contentHash = hashSkillEffectiveContent(responseText)
+    run.resources.tapeIncarnationId = 'incarnation-1'
+
+    registerRuntimeSkillContext(run, {
+      identity: {
+        agentId: 'agent-1',
+        sourceType: 'created',
+        sourceId: '/skills/skill-1',
+        skillName: 'skill-1'
+      },
+      toolCallId: 'tool-call-1',
+      entryId: 12,
+      tapeIncarnationId: 'incarnation-1',
+      contentHash
+    })
+
+    expect(() => resolveRuntimeSkillContextsForRequest(run, run.messages)).toThrow(
+      'missing from the provider request projection'
+    )
+    const projected = resolveRuntimeSkillContextsForRequest(run, [
+      ...run.messages,
+      { role: 'tool', tool_call_id: 'tool-call-1', content: responseText }
+    ])
+    expect(projected).toEqual([
+      expect.objectContaining({
+        activationScope: 'runtime_view',
+        skillName: 'skill-1',
+        projectedContentHash: contentHash,
+        authoritativeRef: {
+          kind: 'tool_result',
+          entryId: 12,
+          contentHash
+        }
+      })
+    ])
+
+    expect(() =>
+      resolveRuntimeSkillContextsForRequest(run, [
+        { role: 'tool', tool_call_id: 'tool-call-1', content: 'drifted' }
+      ])
+    ).toThrow('projection drifted')
+    expect(() =>
+      resolveRuntimeSkillContextsForRequest(run, [
+        { role: 'tool', tool_call_id: 'tool-call-1', content: responseText },
+        { role: 'tool', tool_call_id: 'tool-call-1', content: responseText }
+      ])
+    ).toThrow('ambiguous')
+  })
+
+  it('does not inspect provider history when no runtime Skill context is registered', () => {
+    const run = createRun('session')
+    const inaccessibleMessages = new Proxy([] as never[], {
+      get() {
+        throw new Error('provider history was inspected')
+      }
+    })
+
+    expect(resolveRuntimeSkillContextsForRequest(run, inaccessibleMessages)).toEqual([])
+  })
+
+  it('does not inspect provider history when the current message has no runtime Skill view', () => {
+    const inaccessibleMessages = new Proxy([] as never[], {
+      get() {
+        throw new Error('provider history was inspected')
+      }
+    })
+
+    expect(collectRuntimeSkillViewProjections(inaccessibleMessages, [])).toEqual([])
+  })
+
+  it('accepts exact runtime Skill evidence reuse and rejects conflicting evidence', () => {
+    const run = createRun('session')
+    run.resources.tapeIncarnationId = 'incarnation-1'
+    const input = {
+      identity: {
+        agentId: 'agent-1',
+        sourceType: 'created' as const,
+        sourceId: '/skills/skill-1',
+        skillName: 'skill-1'
+      },
+      toolCallId: 'tool-call-1',
+      entryId: 12,
+      tapeIncarnationId: 'incarnation-1',
+      contentHash: 'a'.repeat(64)
+    }
+
+    registerRuntimeSkillContext(run, input)
+    registerRuntimeSkillContext(run, input)
+    expect(run.resources.runtimeSkillContexts).toHaveLength(1)
+    expect(() => registerRuntimeSkillContext(run, { ...input, entryId: 13 })).toThrow(
+      'conflicting evidence'
+    )
+    expect(() =>
+      registerRuntimeSkillContext(run, { ...input, tapeIncarnationId: 'incarnation-2' })
+    ).toThrow('another Session Tape incarnation')
+  })
+
+  it('discovers only versioned root skill_view projections for continuation recovery', () => {
+    const responseText = JSON.stringify({
+      success: true,
+      name: 'skill-1',
+      content: 'effective body',
+      activatedForMessage: true,
+      activationScope: 'message',
+      activationEvidenceVersion: 1
+    })
+    const messages = [
+      {
+        role: 'assistant' as const,
+        content: '',
+        tool_calls: [
+          {
+            id: 'tool-call-1',
+            type: 'function' as const,
+            function: { name: 'skill_view', arguments: '{"name":"skill-1"}' }
+          }
+        ]
+      },
+      { role: 'tool' as const, tool_call_id: 'tool-call-1', content: responseText },
+      {
+        role: 'tool' as const,
+        tool_call_id: 'legacy-tool-call',
+        content: JSON.stringify({ activatedForMessage: true, activationScope: 'message' })
+      }
+    ]
+    const currentBlocks = [
+      {
+        type: 'tool_call' as const,
+        content: '',
+        status: 'success' as const,
+        timestamp: 1,
+        tool_call: {
+          id: 'tool-call-1',
+          name: 'skill_view',
+          params: '{"name":"skill-1"}',
+          response: responseText
+        }
+      }
+    ]
+
+    expect(collectRuntimeSkillViewProjections(messages, currentBlocks)).toEqual([
+      {
+        toolCallId: 'tool-call-1',
+        responseText,
+        blockIndex: 0,
+        timestamp: 1
+      }
+    ])
+    expect(() =>
+      collectRuntimeSkillViewProjections(
+        [
+          messages[0],
+          messages[1],
+          { role: 'tool', tool_call_id: 'tool-call-1', content: responseText }
+        ],
+        currentBlocks
+      )
+    ).toThrow('invalid or ambiguous')
+
+    expect(() =>
+      collectRuntimeSkillViewProjections(messages, [
+        {
+          ...currentBlocks[0],
+          tool_call: { ...currentBlocks[0].tool_call, id: 'current-message-call' }
+        }
+      ])
+    ).toThrow('missing from continuation')
+    const oversizedResponse = JSON.stringify({
+      activatedForMessage: true,
+      activationScope: 'message',
+      activationEvidenceVersion: 1,
+      content: 'x'.repeat(768 * 1024)
+    })
+    expect(() =>
+      collectRuntimeSkillViewProjections(
+        [],
+        [
+          {
+            ...currentBlocks[0],
+            tool_call: { ...currentBlocks[0].tool_call, response: oversizedResponse }
+          }
+        ]
+      )
+    ).toThrow('recovery byte limit')
   })
 
   it('fails explicitly instead of wrapping an exhausted request sequence', () => {

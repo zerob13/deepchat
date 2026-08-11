@@ -9,7 +9,10 @@ import {
   type TapeSkillMaterializationInput
 } from '@/tape/domain/skillMaterialization'
 import { TapeSkillMaterializationService } from '@/tape/application/skillMaterializationService'
-import type { DeepChatTapeEntryRow } from '@/tape/domain/entry'
+import { TapeFactService } from '@/tape/application/factService'
+import { ExecutionJournalService } from '@/tape/application/executionJournalService'
+import type { DeepChatTapeAppendInput, DeepChatTapeEntryRow } from '@/tape/domain/entry'
+import type { ExecutionOperationIdentity } from '@/tape/domain/executionJournal'
 
 const hash = hashSkillEffectiveContent('fixture')
 
@@ -89,6 +92,107 @@ function createMaterializationStore() {
       failNextAppend = true
     }
   }
+}
+
+function createSkillViewFactStore() {
+  const rows: DeepChatTapeEntryRow[] = []
+  let tapeIncarnationId = 'incarnation-1'
+  const store = {
+    ensureBootstrapAnchor: () => undefined,
+    getBootstrapIncarnation: () => tapeIncarnationId,
+    append: (input: DeepChatTapeAppendInput) => {
+      const existing = input.provenanceKey
+        ? rows.find(
+            (row) =>
+              row.session_id === input.sessionId && row.provenance_key === input.provenanceKey
+          )
+        : undefined
+      if (existing && input.idempotent) return existing
+      const row: DeepChatTapeEntryRow = {
+        session_id: input.sessionId,
+        entry_id: rows.length + 1,
+        kind: input.kind,
+        name: input.name ?? null,
+        source_type: input.source?.type ?? null,
+        source_id: input.source?.id ?? null,
+        source_seq: input.source?.seq ?? null,
+        provenance_key: input.provenanceKey ?? null,
+        payload_json: JSON.stringify(input.payload),
+        meta_json: JSON.stringify(input.meta ?? {}),
+        created_at: input.createdAt ?? 100 + rows.length
+      }
+      rows.push(row)
+      return row
+    },
+    appendEvent: () => {
+      throw new Error('unexpected event append')
+    },
+    appendExecutionJournalEvent: (input: any) =>
+      store.append({
+        ...input,
+        kind: 'event',
+        payload: { name: input.name, data: input.data }
+      }),
+    getByEntryIds: (sessionId: string, entryIds: readonly number[]) => {
+      const selected = new Set(entryIds)
+      return rows.filter((row) => row.session_id === sessionId && selected.has(row.entry_id))
+    },
+    getByProvenanceKey: (sessionId: string, provenanceKey: string) =>
+      rows.find((row) => row.session_id === sessionId && row.provenance_key === provenanceKey),
+    runInTransaction: <T>(operation: () => T): T => {
+      const snapshot = structuredClone(rows)
+      try {
+        return operation()
+      } catch (error) {
+        rows.splice(0, rows.length, ...snapshot)
+        throw error
+      }
+    },
+    isInTransaction: () => false
+  }
+  return {
+    rows,
+    store,
+    setTapeIncarnationId: (value: string) => {
+      tapeIncarnationId = value
+    }
+  }
+}
+
+const SKILL_VIEW_OPERATION: ExecutionOperationIdentity = {
+  runId: '11111111-1111-4111-8111-111111111111',
+  requestSeq: 1,
+  providerToolCallId: 'tool-call-1'
+}
+
+function commitSkillViewOutcome(
+  store: ReturnType<typeof createSkillViewFactStore>['store'],
+  responseText: string
+): { operation: ExecutionOperationIdentity; outcomeEntryId: number } {
+  const journal = new ExecutionJournalService(() => store as never)
+  journal.commitRunStarted({
+    sessionId: 'session-1',
+    runId: SKILL_VIEW_OPERATION.runId,
+    messageId: 'assistant-1',
+    runKind: 'loop'
+  })
+  journal.commitDispatch({
+    sessionId: 'session-1',
+    messageId: 'assistant-1',
+    operation: SKILL_VIEW_OPERATION,
+    toolName: 'skill_view',
+    toolSource: 'agent',
+    normalizedArguments: { name: 'review' },
+    target: { serverName: 'agent-skills', originalName: 'skill_view' }
+  })
+  const outcome = journal.commitToolOutcome({
+    sessionId: 'session-1',
+    messageId: 'assistant-1',
+    operation: SKILL_VIEW_OPERATION,
+    responseText,
+    isError: false
+  })
+  return { operation: SKILL_VIEW_OPERATION, outcomeEntryId: outcome.entryId }
 }
 
 describe('Tape Skill materialization domain', () => {
@@ -214,6 +318,212 @@ describe('Tape Skill materialization capability', () => {
 
     expect(() => service.materializeSkillContexts([input()])).toThrow(/payload hash is corrupt/)
     expect(rows).toEqual([])
+  })
+})
+
+describe('Tape runtime Skill-view result capability', () => {
+  const viewInput = {
+    sessionId: 'session-1',
+    expectedTapeIncarnationId: 'incarnation-1',
+    messageId: 'assistant-1',
+    orderSeq: 2,
+    blockIndex: 0,
+    toolCallId: 'tool-call-1',
+    toolName: 'skill_view' as const,
+    responseText: JSON.stringify({
+      success: true,
+      name: 'review',
+      content: 'effective Skill body',
+      activatedForMessage: true,
+      activationScope: 'message',
+      activationEvidenceVersion: 1
+    }),
+    timestamp: 123,
+    identity: {
+      agentId: 'deepchat',
+      sourceType: 'created' as const,
+      sourceId: '/skills/review',
+      skillName: 'review'
+    }
+  }
+
+  it('strictly commits and reuses the same ordinary tool-result occurrence', async () => {
+    const { rows, store } = createSkillViewFactStore()
+    const service = new TapeFactService({ getEntryStore: () => store as never })
+    const strictInput = { ...viewInput, ...commitSkillViewOutcome(store, viewInput.responseText) }
+
+    const first = service.appendSkillViewResultFact(strictInput)
+    const second = service.appendSkillViewResultFact(strictInput)
+    const ordinary = await service.appendToolFact({
+      sessionId: viewInput.sessionId,
+      messageId: viewInput.messageId,
+      orderSeq: viewInput.orderSeq,
+      blockIndex: viewInput.blockIndex,
+      block: {
+        type: 'tool_call',
+        content: '',
+        status: 'success',
+        timestamp: viewInput.timestamp,
+        tool_call: {
+          id: viewInput.toolCallId,
+          name: viewInput.toolName,
+          params: '{"name":"skill-1"}',
+          response: viewInput.responseText
+        }
+      },
+      provenance: {
+        source: 'tool_result',
+        sourceId: `${viewInput.messageId}:${viewInput.toolCallId}`,
+        sequence: viewInput.blockIndex
+      }
+    })
+
+    expect(second).toEqual(first)
+    expect(ordinary.entryId).toBe(first.entryId)
+    expect(rows.filter((row) => row.kind === 'tool_result')).toHaveLength(1)
+    expect(JSON.parse(rows.find((row) => row.entry_id === first.entryId)!.payload_json)).toEqual({
+      messageId: viewInput.messageId,
+      orderSeq: viewInput.orderSeq,
+      toolCallId: viewInput.toolCallId,
+      response: viewInput.responseText
+    })
+  })
+
+  it('fails closed on stored envelope corruption and Tape incarnation drift', () => {
+    const { rows, store, setTapeIncarnationId } = createSkillViewFactStore()
+    const service = new TapeFactService({ getEntryStore: () => store as never })
+    const strictInput = { ...viewInput, ...commitSkillViewOutcome(store, viewInput.responseText) }
+    const receipt = service.appendSkillViewResultFact(strictInput)
+    const resultRow = rows.find((row) => row.entry_id === receipt.entryId)!
+    resultRow.payload_json = '{}'
+
+    expect(() => service.appendSkillViewResultFact(strictInput)).toThrow('envelope is corrupt')
+
+    resultRow.payload_json = JSON.stringify({
+      messageId: viewInput.messageId,
+      orderSeq: viewInput.orderSeq,
+      toolCallId: viewInput.toolCallId,
+      response: viewInput.responseText
+    })
+    setTapeIncarnationId('incarnation-2')
+    expect(() => service.appendSkillViewResultFact(strictInput)).toThrow('incarnation changed')
+  })
+
+  it('rejects oversized UTF-8 results before writing to Tape', () => {
+    const { rows, store } = createSkillViewFactStore()
+    const service = new TapeFactService({ getEntryStore: () => store as never })
+
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        responseText: '🌍'.repeat((768 * 1024) / 4 + 1),
+        operation: SKILL_VIEW_OPERATION,
+        outcomeEntryId: 1
+      })
+    ).toThrow('768 KiB')
+    expect(rows).toEqual([])
+  })
+
+  it('requires the exact successful Journal outcome before appending a result fact', () => {
+    const { rows, store } = createSkillViewFactStore()
+    const service = new TapeFactService({ getEntryStore: () => store as never })
+    const evidence = commitSkillViewOutcome(store, viewInput.responseText)
+
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        ...evidence,
+        outcomeEntryId: 999
+      })
+    ).toThrow('Journal outcome is missing')
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        ...evidence,
+        outcomeEntryId: rows.find((row) => row.name === 'execution/run_started')!.entry_id
+      })
+    ).toThrow('does not match its exact result')
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        ...evidence,
+        responseText: JSON.stringify({
+          ...JSON.parse(viewInput.responseText),
+          content: 'drifted effective Skill body'
+        })
+      })
+    ).toThrow('does not match its exact result')
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        ...evidence,
+        messageId: 'assistant-other'
+      })
+    ).toThrow('does not match its exact result')
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        ...evidence,
+        operation: {
+          ...evidence.operation,
+          runId: '22222222-2222-4222-8222-222222222222'
+        }
+      })
+    ).toThrow('Journal dispatch is missing')
+
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        ...evidence,
+        identity: { ...viewInput.identity, skillName: 'other-skill' }
+      })
+    ).toThrow('does not match its activation identity')
+
+    const mismatchedResult = JSON.stringify({
+      success: true,
+      name: 'other-skill',
+      content: 'effective Skill body',
+      activatedForMessage: true,
+      activationScope: 'message',
+      activationEvidenceVersion: 1
+    })
+    const { store: mismatchedResultStore } = createSkillViewFactStore()
+    const mismatchedResultService = new TapeFactService({
+      getEntryStore: () => mismatchedResultStore as never
+    })
+    const mismatchedResultEvidence = commitSkillViewOutcome(mismatchedResultStore, mismatchedResult)
+    expect(() =>
+      mismatchedResultService.appendSkillViewResultFact({
+        ...viewInput,
+        ...mismatchedResultEvidence,
+        responseText: mismatchedResult
+      })
+    ).toThrow('does not match its activation identity')
+
+    const dispatchRow = rows.find((row) => row.name === 'execution/dispatch_committed')!
+    const dispatchPayload = dispatchRow.payload_json
+    const driftedDispatchPayload = JSON.parse(dispatchPayload)
+    driftedDispatchPayload.data.argumentsHash = '0'.repeat(64)
+    dispatchRow.payload_json = JSON.stringify(driftedDispatchPayload)
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        ...evidence
+      })
+    ).toThrow('Journal chain does not match its exact result')
+
+    driftedDispatchPayload.data.argumentsHash = JSON.parse(dispatchPayload).data.argumentsHash
+    driftedDispatchPayload.data.target.serverName = 'other-server'
+    dispatchRow.payload_json = JSON.stringify(driftedDispatchPayload)
+    expect(() =>
+      service.appendSkillViewResultFact({
+        ...viewInput,
+        ...evidence
+      })
+    ).toThrow('Journal chain does not match its exact result')
+    dispatchRow.payload_json = dispatchPayload
+
+    expect(rows.filter((row) => row.kind === 'tool_result')).toEqual([])
   })
 })
 

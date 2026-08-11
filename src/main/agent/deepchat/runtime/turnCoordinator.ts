@@ -62,7 +62,7 @@ import {
   buildTapeChatView,
   buildTapeResumeView
 } from './tapeViewAssembler'
-import type { DeepChatToolResolver } from './toolResolver'
+import type { DeepChatToolCatalogSnapshot, DeepChatToolResolver } from './toolResolver'
 import type { ToolOutputGuard, ToolOutputGuardResult } from './toolOutputGuard'
 import type { ResumeBudgetToolCall } from './turnResumeContract'
 import { parseMessageMetadata } from '@/session/usageStats'
@@ -244,7 +244,11 @@ export class TurnCoordinator {
         )
     )
     this.ports.runLifecycle.assertCurrentInstance(sessionId, instance)
-    const activeSkillNames = resolveEffectiveActiveSkillNames(sessionActiveSkillNames, instance)
+    const requestedActiveSkillNames = resolveEffectiveActiveSkillNames(
+      sessionActiveSkillNames,
+      instance
+    )
+    let toolCatalogSnapshot: DeepChatToolCatalogSnapshot | undefined
     const resolvedTools = await this.runPreStreamStep(
       { sessionId, messageId, step: 'tool-definitions', signal },
       () =>
@@ -252,11 +256,21 @@ export class TurnCoordinator {
           this.ports.toolResolver.loadToolDefinitionsForSession(
             sessionId,
             projectDir,
-            activeSkillNames,
-            instance
+            requestedActiveSkillNames,
+            instance,
+            (snapshot) => {
+              toolCatalogSnapshot = snapshot
+            }
           ),
           signal
         )
+    )
+    if (!toolCatalogSnapshot) {
+      throw new Error('Tool catalog resolution did not publish its authority snapshot.')
+    }
+    const activeSkillNames = [...toolCatalogSnapshot.activeSkillNames]
+    const effectiveSessionActiveSkillNames = sessionActiveSkillNames.filter((skillName) =>
+      activeSkillNames.includes(skillName)
     )
     const strictDeepChatChild =
       this.ports.identity.getSessionKind(sessionId) === 'subagent' &&
@@ -282,7 +296,7 @@ export class TurnCoordinator {
             configuredPrompt: generationSettings.systemPrompt,
             toolDefinitions: tools,
             activeSkillNames,
-            sessionActiveSkillNames,
+            sessionActiveSkillNames: effectiveSessionActiveSkillNames,
             contextLength: generationSettings.contextLength,
             commandShell
           }),
@@ -298,7 +312,8 @@ export class TurnCoordinator {
       contextBudgetLength,
       maxTokens,
       activeSkillNames,
-      sessionActiveSkillNames,
+      sessionActiveSkillNames: effectiveSessionActiveSkillNames,
+      toolCatalogSnapshot,
       taskContractContext,
       tools,
       toolReserveTokens,
@@ -527,18 +542,15 @@ export class TurnCoordinator {
         return complete({ requestId: null, messageId: null, attachmentPreparation })
       }
       const {
-        generationSettings,
         useContextBudget,
         interleavedReasoning,
         contextBudgetLength,
         maxTokens,
-        activeSkillNames: effectiveActiveSkillNames,
-        sessionActiveSkillNames,
         taskContractContext,
         tools,
+        toolCatalogSnapshot,
         toolReserveTokens,
         commandShell,
-        basePromptAssembler,
         basePromptAssembly: unguardedBasePromptAssembly
       } = await this.prepareTurnResources({
         sessionId,
@@ -865,6 +877,7 @@ export class TurnCoordinator {
           promptPreview: content.text,
           search,
           tools,
+          toolCatalogSnapshot,
           commandShell,
           baseSystemPrompt,
           basePromptAssembly,
@@ -875,20 +888,6 @@ export class TurnCoordinator {
           providerReplayProjector,
           abortController: preStreamAbortController,
           maxProviderRounds: context?.maxProviderRounds,
-          refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
-            const refreshedBasePrompt = await basePromptAssembler.assembleWithProvenance({
-              sessionId: toAppSessionId(sessionId),
-              configuredPrompt: generationSettings.systemPrompt,
-              toolDefinitions: refreshedTools,
-              activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames,
-              sessionActiveSkillNames,
-              contextLength: generationSettings.contextLength,
-              commandShell
-            })
-            return shouldGuardAttachmentText
-              ? appendAttachmentTextSafetySection(refreshedBasePrompt)
-              : refreshedBasePrompt
-          },
           interleavedReasoning,
           viewContext: {
             taskType: 'chat',
@@ -1227,6 +1226,7 @@ export class TurnCoordinator {
     if (!instance.tryBeginResume(messageId)) {
       return false
     }
+    instance.replaceRuntimeActivatedSkills([])
     let preStreamAbortController: AbortController | null = null
     let preStreamAbortSignal: AbortSignal | undefined
     let streamRunId: string | undefined
@@ -1274,18 +1274,15 @@ export class TurnCoordinator {
         providerModelFacts.capabilitySnapshot.searchExecution === 'provider'
       const projectDir = this.ports.sessionSettings.resolveProjectDir(sessionId, undefined, instance)
       const {
-        generationSettings,
         useContextBudget,
         interleavedReasoning,
         contextBudgetLength,
         maxTokens,
-        activeSkillNames: effectiveActiveSkillNames,
-        sessionActiveSkillNames,
         taskContractContext,
         tools,
+        toolCatalogSnapshot,
         toolReserveTokens,
         commandShell,
-        basePromptAssembler,
         basePromptAssembly: unguardedBasePromptAssembly
       } = await this.prepareTurnResources({
         sessionId,
@@ -1297,7 +1294,6 @@ export class TurnCoordinator {
       })
       let basePromptAssembly = unguardedBasePromptAssembly
       let baseSystemPrompt = basePromptAssembly.prompt
-      let shouldGuardAttachmentText = false
       let resumeTargetOrderSeq: number | undefined
       const preparedInput = await this.ports.inputPreparationCoordinator.prepareExisting({
         ensureHistory: () =>
@@ -1324,7 +1320,6 @@ export class TurnCoordinator {
           ),
         prepareIntent: async (historyRecords) => {
           if (historyContainsUntrustedAttachmentText(historyRecords)) {
-            shouldGuardAttachmentText = true
             basePromptAssembly = appendAttachmentTextSafetySection(unguardedBasePromptAssembly)
             baseSystemPrompt = basePromptAssembly.prompt
           }
@@ -1544,6 +1539,7 @@ export class TurnCoordinator {
           taskContractContext,
           abortController: preStreamAbortController,
           tools,
+          toolCatalogSnapshot,
           commandShell,
           baseSystemPrompt,
           basePromptAssembly,
@@ -1553,20 +1549,6 @@ export class TurnCoordinator {
           providerReplayProjector,
           maxProviderRounds: resumeAccounting.maxProviderRounds,
           search,
-          refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
-            const refreshedBasePrompt = await basePromptAssembler.assembleWithProvenance({
-              sessionId: toAppSessionId(sessionId),
-              configuredPrompt: generationSettings.systemPrompt,
-              toolDefinitions: refreshedTools,
-              activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames,
-              sessionActiveSkillNames,
-              contextLength: generationSettings.contextLength,
-              commandShell
-            })
-            return shouldGuardAttachmentText
-              ? appendAttachmentTextSafetySection(refreshedBasePrompt)
-              : refreshedBasePrompt
-          },
           interleavedReasoning,
           viewContext: {
             taskType: 'resume',
@@ -1723,6 +1705,7 @@ export class TurnCoordinator {
         preStreamAbortController ?? undefined
       )
       instance.clearPreStreamTranscriptAnchor()
+      instance.replaceRuntimeActivatedSkills([])
       instance.finishResume(messageId)
     }
   }

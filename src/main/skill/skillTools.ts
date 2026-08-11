@@ -3,14 +3,25 @@ import type {
   SkillListInput,
   SkillListResult,
   SkillManageRequest,
-  SkillManageResult,
-  SkillViewResult
+  SkillManageResult
 } from '@shared/types/skill'
 import { BUILTIN_SKILL_AGENT_ID } from './agentSkillRoots'
 import { buildSkillListResult } from './routingCatalog'
+import type { RuntimeSkillViewResult } from './index'
+
+type SkillToolsServicePort = Pick<
+  SkillServicePort,
+  'getActiveSkills' | 'getMetadataList' | 'manageDraftSkill' | 'resolveSessionAgentId'
+> & {
+  viewSkillForAgent(
+    agentId: string,
+    name: string,
+    options?: { filePath?: string; conversationId?: string }
+  ): Promise<RuntimeSkillViewResult>
+}
 
 export class SkillTools {
-  constructor(private readonly skillService: SkillServicePort) {}
+  constructor(private readonly skillService: SkillToolsServicePort) {}
 
   async handleSkillList(
     conversationId?: string,
@@ -49,7 +60,7 @@ export class SkillTools {
   async handleSkillView(
     conversationId: string | undefined,
     input: { name: string; file_path?: string }
-  ): Promise<SkillViewResult> {
+  ): Promise<RuntimeSkillViewResult> {
     const requestedSkillName = input.name.trim()
     const agentId = conversationId
       ? await this.skillService.resolveSessionAgentId(conversationId)

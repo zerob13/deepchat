@@ -619,6 +619,35 @@ describe('ToolService', () => {
     expect(defs.some((definition) => tapeToolNames.has(definition.function.name))).toBe(false)
   })
 
+  it('propagates Agent catalog failures only for fail-closed resolutions', async () => {
+    const toolService = new ToolService({
+      mcpService: {
+        getAllToolDefinitions: vi.fn().mockResolvedValue([])
+      } as any,
+      skillSettings: { isEnabled: () => false } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+    const agentToolManager = (toolService as any).ensureAgentToolManager(null)
+    vi.spyOn(agentToolManager, 'getAllToolDefinitions').mockRejectedValue(
+      new Error('Agent catalog unavailable')
+    )
+    const context = {
+      chatMode: 'agent' as const,
+      supportsVision: false,
+      agentWorkspacePath: null,
+      conversationId: 'conversation-1'
+    }
+
+    await expect(toolService.getAllToolDefinitions(context)).resolves.toEqual([])
+    await expect(
+      toolService.getAllToolDefinitions({ ...context, requireCompleteCatalog: true })
+    ).rejects.toThrow('Agent catalog unavailable')
+  })
+
   it('keeps ToolService collision resolution behind the DeepChat catalog port', async () => {
     const mcpDefs = [buildToolDefinition('shared', 'mcp')]
     const mcpService = {

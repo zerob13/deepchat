@@ -31,6 +31,12 @@ import type {
   TapeSkillMaterializationReceipt
 } from '../domain/skillMaterialization'
 import type {
+  TapeRuntimeSkillViewContextReceipt,
+  TapeRuntimeSkillViewRecoveryInput,
+  TapeSkillViewResultFactInput,
+  TapeSkillViewResultFactReceipt
+} from '../domain/skillContext'
+import type {
   CommitExecutionDispatchInput,
   CommitExecutionRunStartedInput,
   CommitExecutionRunTerminalInput,
@@ -43,11 +49,14 @@ import type {
   TapeAnchorWriter,
   TapeEffectiveMessageSourceEntry,
   TapeExecutionViewManifestReader,
+  TapeIncarnationReader,
   TapeInspectionReader,
   TapeLifecycleAdmin,
   TapeMessageFactWriter,
   TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
+  TapeRuntimeSkillViewContextReader,
+  TapeSkillViewResultFactWriter,
   TapeSkillMaterializationReader,
   TapeSkillMaterializationWriter,
   ExecutionJournalRecoveryReader,
@@ -119,6 +128,9 @@ export class SessionTape
     TapeLifecycleAdmin,
     ExecutionJournalWriter,
     ExecutionJournalRecoveryReader,
+    TapeIncarnationReader,
+    TapeSkillViewResultFactWriter,
+    TapeRuntimeSkillViewContextReader,
     TapeSkillMaterializationWriter,
     TapeSkillMaterializationReader
 {
@@ -172,6 +184,20 @@ export class SessionTape
 
   appendToolFact(input: TapeToolFactInput): Promise<TapeEntryRef> {
     return this.facts.appendToolFact(input)
+  }
+
+  getTapeIncarnationId(sessionId: string): string {
+    return this.facts.getTapeIncarnationId(sessionId)
+  }
+
+  appendSkillViewResultFact(input: TapeSkillViewResultFactInput): TapeSkillViewResultFactReceipt {
+    return this.facts.appendSkillViewResultFact(input)
+  }
+
+  recoverRuntimeSkillViewContexts(
+    input: TapeRuntimeSkillViewRecoveryInput
+  ): TapeRuntimeSkillViewContextReceipt[] {
+    return this.viewReplay.recoverRuntimeSkillViewContexts(input)
   }
 
   materializeSkillContexts(

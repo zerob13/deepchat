@@ -30,6 +30,7 @@ export type AgentToolProgressUpdate =
 export interface ToolDefinitionContext {
   enabledMcpTools?: string[]
   enabledMcpServerIds?: string[]
+  requireCompleteCatalog?: boolean
   agentId?: string
   disabledAgentTools?: string[]
   chatMode?: 'agent' | 'acp agent'
