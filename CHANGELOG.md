@@ -12,7 +12,7 @@
 - Improved chat and Agent recovery for pending or released inputs, permission outcomes, interrupted sessions, truncated tool calls, transient provider failures, and long-context prompt caching
 - Refined notifications, Steer conversations, Settings, startup visuals, UI controls, motion, scrolling, search, and message actions while reducing renderer and dashboard overhead
 - Added Linux ARM64 packages and a branded macOS installer, hardened updater metadata and native distribution verification, and rebuilt release assembly around reproducible, fail-closed checks
-- Upgraded Electron to 41.10.4, the bundled Node.js runtime to 24.18.0, Light OCR to 0.5.7, and patched YAML and Mermaid security issues
+- Upgraded Electron to 41.10.4, the bundled Node.js runtime to 24.18.0, Light OCR to 0.5.7, and patched DOMPurify, Nano ID, YAML, and Mermaid security issues
 - 新增主动式多 Agent 协作，支持实时子会话、进度控制、结果回传、持久化执行日志，以及受契约约束的委派恢复
 - 新增内置本地 `deepchat` CLI，覆盖推理、媒体生成、OCR、产物管理、Agent 运行、Provider 与模型管理、设置、Skills 和 MCP 操作
 - 扩展 Agent Memory，新增具备时间感知能力的 Directives、可持久生效的纠正与删除、增量维护，以及更可靠的向量存储与恢复机制
@@ -24,7 +24,7 @@
 - 改进待处理或已释放输入、权限结果、中断会话、截断工具调用、瞬时 Provider 故障和长上下文提示词缓存的恢复与可靠性
 - 优化通知反馈、Steer 对话、设置页、启动视觉、UI 控件、动效、滚动、搜索和消息操作，并降低渲染器与 Dashboard 开销
 - 新增 Linux ARM64 安装包和品牌化 macOS 安装器，强化更新元数据与原生分发校验，并以可复现、失败即关闭的检查重构发布组装流程
-- 将 Electron 升级至 41.10.4、内置 Node.js 运行时升级至 24.18.0、Light OCR 升级至 0.5.7，并修复 YAML 与 Mermaid 安全问题
+- 将 Electron 升级至 41.10.4、内置 Node.js 运行时升级至 24.18.0、Light OCR 升级至 0.5.7，并修复 DOMPurify、Nano ID、YAML 与 Mermaid 安全问题
 
 ## v1.1.0-beta.12 (2026-08-07)
 - Added proactive multi-Agent collaboration with live child Sessions, progress tracking, controls, and result handoff

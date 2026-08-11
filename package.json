@@ -252,7 +252,8 @@
   },
   "pnpm": {
     "overrides": {
-      "monaco-editor>dompurify": "3.4.12",
+      "monaco-editor>dompurify": "3.4.13",
+      "postcss>nanoid": "3.3.17",
       "typescript": "npm:typescript-native-bridge@6.0.3-bridge.7.tsgo.7.0.2"
     },
     "onlyBuiltDependencies": [
