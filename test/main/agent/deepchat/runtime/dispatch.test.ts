@@ -43,7 +43,10 @@ import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekRespo
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
 import { ExecutionJournalError } from '@/tape/domain/executionJournal'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
-import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  TOOL_SEARCH_AGENT_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_SERVER_NAME
+} from '@shared/agentTools'
 import {
   MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH,
   assertIssuedToolSurfaceExecutionContext,
@@ -124,7 +127,16 @@ function makeAgentTool(
 ): MCPToolDefinition {
   return {
     ...makeTool(name, execution),
-    source: 'agent'
+    source: 'agent',
+    ...(name === TOOL_SEARCH_AGENT_TOOL_NAME
+      ? {
+          server: {
+            name: TOOL_SEARCH_AGENT_TOOL_SERVER_NAME,
+            icons: '',
+            description: 'Tool Surface discovery'
+          }
+        }
+      : {})
   }
 }
 

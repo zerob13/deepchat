@@ -19,11 +19,7 @@ import type {
   DeepChatTapeReplaySlice
 } from '@shared/types/tape-replay'
 import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '../domain/entry'
-import type {
-  TapeEntryRef,
-  TapeMessageReplacementOptions,
-  TapeToolFactInput
-} from '../domain/facts'
+import type { TapeMessageReplacementOptions, TapeToolFactInput } from '../domain/facts'
 import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
 import type {
   CommitExecutionDispatchInput,
@@ -47,6 +43,7 @@ import type {
   ExecutionJournalWriter,
   TapeRawEntryReader,
   TapeReconciliationPort,
+  TapeToolFactAppendReceipt,
   TapeToolFactWriter,
   TapeTranscriptReader,
   TapeMemoryViewManifestInspection,
@@ -163,7 +160,7 @@ export class SessionTape
     return this.facts.appendMessageRetraction(record, reason)
   }
 
-  appendToolFact(input: TapeToolFactInput): Promise<TapeEntryRef> {
+  appendToolFact(input: TapeToolFactInput): Promise<TapeToolFactAppendReceipt> {
     return this.facts.appendToolFact(input)
   }
 

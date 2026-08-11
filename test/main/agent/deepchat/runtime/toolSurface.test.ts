@@ -33,12 +33,15 @@ import {
   createToolSurfaceExecutionBatch,
   createToolSurfaceSnapshot,
   mergeToolSurfaceActivationCandidates,
+  mergeToolSurfaceActivationEvidence,
   projectToolSurfaceActiveEntries,
   type ToolSurfaceActivationCandidate,
+  type ToolSurfaceActivationEvidence,
   type ToolSurfaceDefinitionIdentity,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
 import { buildProviderVisibleToolDefinitionsHash } from '@/tape/domain/executionContract'
+import { TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION } from '@/tape/domain/toolSurfaceFacts'
 
 const SERVER_ID = '22222222-2222-4222-8222-222222222222'
 const BINDING_HASH = 'a'.repeat(64)
@@ -156,6 +159,19 @@ function activationCandidate(
     ...definitionIdentity(stableTargetKey),
     ...overrides
   }
+}
+
+function activationEvidence(
+  candidate: ToolSurfaceActivationCandidate,
+  toolResult: ToolSurfaceActivationEvidence['toolResult'] = {
+    sessionId: candidate.sessionId,
+    tapeIncarnationId: '00000000-0000-4000-8000-000000000001',
+    entryId: candidate.requestSeq * 100 + candidate.toolCallOrdinalWithinBatch + 1,
+    payloadHashVersion: TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION,
+    payloadHash: 'f'.repeat(64)
+  }
+): ToolSurfaceActivationEvidence {
+  return { ...candidate, toolResult }
 }
 
 describe('canonical Tool Surface catalog', () => {
@@ -1223,6 +1239,86 @@ describe('Tool Surface activation candidate merge', () => {
     ])
   })
 
+  it('retains the earliest durable ToolSearch result reference and rejects conflicting receipts', () => {
+    const earliest = activationEvidence(activationCandidate('target-a'))
+    const later = activationEvidence(
+      activationCandidate('target-a', { toolCallOrdinalWithinBatch: 1 }),
+      { ...earliest.toolResult, entryId: earliest.toolResult.entryId + 1 }
+    )
+
+    expect(mergeToolSurfaceActivationEvidence(candidateScope, [[later, earliest]])).toEqual([
+      earliest
+    ])
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationEvidence(candidateScope, [
+          [
+            earliest,
+            {
+              ...earliest,
+              toolResult: { ...earliest.toolResult, payloadHash: 'e'.repeat(64) }
+            }
+          ]
+        ]),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationEvidence(candidateScope, [
+          [
+            earliest,
+            activationEvidence(activationCandidate('target-b'), {
+              ...earliest.toolResult,
+              tapeIncarnationId: '00000000-0000-4000-8000-000000000002'
+            })
+          ]
+        ]),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationEvidence(candidateScope, [
+          [
+            earliest,
+            activationEvidence(
+              activationCandidate('target-b', { resultRank: 1 }),
+              { ...earliest.toolResult, entryId: earliest.toolResult.entryId + 1 }
+            )
+          ]
+        ]),
+      'conflicting_tool'
+    )
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationEvidence(candidateScope, [
+          [
+            earliest,
+            activationEvidence(
+              activationCandidate('target-b', { toolCallOrdinalWithinBatch: 1 }),
+              earliest.toolResult
+            )
+          ]
+        ]),
+      'conflicting_tool'
+    )
+
+    let propertyReads = 0
+    const proxiedToolResult = new Proxy(earliest.toolResult, {
+      get: (target, property, receiver) => {
+        propertyReads += 1
+        return Reflect.get(target, property, receiver)
+      }
+    })
+    expectSurfaceError(
+      () =>
+        mergeToolSurfaceActivationEvidence(candidateScope, [
+          [{ ...earliest, toolResult: proxiedToolResult }]
+        ]),
+      'invalid_definition'
+    )
+    expect(propertyReads).toBe(0)
+  })
+
   it('does not retain unbounded search or provider metadata', () => {
     const candidate = {
       ...activationCandidate('target-a'),
@@ -1771,14 +1867,14 @@ describe('Tool Surface production selection', () => {
       originRequestSeq: number,
       toolCallOrdinalWithinBatch = 0,
       resultRank = 0
-    ): ToolSurfaceActivationCandidate => {
+    ): ToolSurfaceActivationEvidence => {
       const entry = byName.get(name)!
-      return {
+      return activationEvidence({
         ...request(originRequestSeq),
         ...definitionIdentity(entry.stableTargetKey, entry.canonicalToolDefinitionHash),
         toolCallOrdinalWithinBatch,
         resultRank
-      }
+      })
     }
     const initial = build(1)
     selected.controller.admit(initial)
@@ -2100,13 +2196,13 @@ describe('Tool Surface production selection', () => {
     const initial = build(1)
     selected.controller.admit(initial)
     const hiddenEntry = byName.get('hidden')!
-    const candidate: ToolSurfaceActivationCandidate = {
+    const candidate = activationEvidence({
       ...request(1),
       stableTargetKey: hiddenEntry.stableTargetKey,
       canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
       toolCallOrdinalWithinBatch: 0,
       resultRank: 0
-    }
+    })
 
     selected.controller.stageActivationBatch([candidate])
     expect(() => selected.controller.stageActivationBatch([structuredClone(candidate)])).not.toThrow()
@@ -2141,11 +2237,7 @@ describe('Tool Surface production selection', () => {
       originRequestSeq: 1,
       decisions: [
         {
-          ...request(1),
-          stableTargetKey: hiddenEntry.stableTargetKey,
-          canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
-          toolCallOrdinalWithinBatch: 0,
-          resultRank: 0,
+          ...candidate,
           accepted: true
         }
       ]
@@ -2196,12 +2288,12 @@ describe('Tool Surface production selection', () => {
     expectSurfaceError(
       () =>
         full.stageActivationBatch([
-          {
+          activationEvidence({
             ...request(1),
             ...definitionIdentity('outside'),
             toolCallOrdinalWithinBatch: 0,
             resultRank: 0
-          }
+          })
         ]),
       'invalid_definition'
     )
@@ -2227,32 +2319,32 @@ describe('Tool Surface production selection', () => {
     expectSurfaceError(
       () =>
         selected.controller.stageActivationBatch([
-          {
+          activationEvidence({
             ...request(1),
             runId: 'wrong-run',
             ...definitionIdentity(hiddenEntry.stableTargetKey, hiddenEntry.canonicalToolDefinitionHash),
             toolCallOrdinalWithinBatch: 0,
             resultRank: 0
-          }
+          })
         ]),
       'invalid_definition'
     )
     expectSurfaceError(
       () =>
         selected.controller.stageActivationBatch([
-          {
+          activationEvidence({
             ...request(1),
             ...definitionIdentity(hiddenEntry.stableTargetKey, 'b'.repeat(64)),
             toolCallOrdinalWithinBatch: 0,
             resultRank: 0
-          }
+          })
         ]),
       'conflicting_tool'
     )
     expectSurfaceError(
       () =>
         selected.controller.stageActivationBatch([
-          {
+          activationEvidence({
             ...request(2),
             ...definitionIdentity(
               hiddenEntry.stableTargetKey,
@@ -2260,7 +2352,7 @@ describe('Tool Surface production selection', () => {
             ),
             toolCallOrdinalWithinBatch: 0,
             resultRank: 0
-          }
+          })
         ]),
       'invalid_definition'
     )
@@ -2268,7 +2360,7 @@ describe('Tool Surface production selection', () => {
     expectSurfaceError(
       () =>
         selected.controller.stageActivationBatch([
-          {
+          activationEvidence({
             ...request(1),
             ...definitionIdentity(
               outsideEntry.stableTargetKey,
@@ -2276,7 +2368,7 @@ describe('Tool Surface production selection', () => {
             ),
             toolCallOrdinalWithinBatch: 0,
             resultRank: 0
-          }
+          })
         ]),
       'conflicting_tool'
     )

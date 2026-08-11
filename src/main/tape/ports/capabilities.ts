@@ -22,7 +22,8 @@ import type {
 import type {
   CreateTapeToolCatalogFactInput,
   CreateTapeToolSurfaceFactInput,
-  TapeToolCatalogFactReference
+  TapeToolCatalogFactReference,
+  TapeToolResultFactReference
 } from '../domain/toolSurfaceFacts'
 
 export type TapeMigrationState = 'none' | 'ready'
@@ -93,8 +94,13 @@ export interface TapeToolSurfaceViewWriter {
   commitToolSurfaceView(input: CommitTapeToolSurfaceViewInput): TapeToolSurfaceViewCommitReceipt
 }
 
+export interface TapeToolFactAppendReceipt extends TapeEntryRef {
+  /** Present only for a ToolSearch result in a canonical Tape incarnation. */
+  readonly toolResult: TapeToolResultFactReference | null
+}
+
 export interface TapeToolFactWriter {
-  appendToolFact(input: TapeToolFactInput): Promise<TapeEntryRef>
+  appendToolFact(input: TapeToolFactInput): Promise<TapeToolFactAppendReceipt>
 }
 
 export interface TapeProviderAttemptWriter {

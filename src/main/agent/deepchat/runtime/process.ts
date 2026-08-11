@@ -1,4 +1,5 @@
 import logger from '@shared/logger'
+import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { PermissionRequestPayload } from '@shared/types/core/llm-events'
@@ -40,6 +41,11 @@ import {
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
 import type { OutputSink } from '@/agent/deepchat/loop/ports'
 import { buildTapeToolFactInputs } from '@/tape/application/factPersistence'
+import type { TapeToolResultFactReference } from '@/tape/domain/toolSurfaceFacts'
+import type {
+  ToolSurfaceActivationCandidate,
+  ToolSurfaceActivationEvidence
+} from '@/agent/deepchat/runtime/toolSurface'
 import {
   createOpaquePromptAssembly,
   reconcilePromptAssembly
@@ -65,6 +71,11 @@ type ToolRoundBatch = {
   requestSeq: number
   executionContract: DeepChatExecutionContract | null
   toolSurface: LoopRunRequestToolSurfaceBinding | null
+}
+type PendingToolSurfaceCandidateRelease = {
+  readonly candidates: readonly ToolSurfaceActivationCandidate[]
+  readonly toolCallIdByOrdinal: ReadonlyMap<number, string>
+  readonly release: (evidence: readonly ToolSurfaceActivationEvidence[]) => void
 }
 
 function getLatestErrorMessage(state: StreamState): string | null {
@@ -884,7 +895,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
 
   logger.info(`[ProcessStream] start session=${io.sessionId} message=${io.messageId}`)
   let eventCount = 0
-  let pendingToolSurfaceCandidateRelease: (() => void) | null = null
+  let pendingToolSurfaceCandidateRelease: PendingToolSurfaceCandidateRelease | null = null
   const commits: DeepChatLoopCommitCallbacks<StreamState, ProcessResult, ProcessResult> = {
     updateOutput: ({ outcome }) => {
       if (outcome === 'halted' || firstProviderRoundReady || state.blocks.length === 0) {
@@ -900,9 +911,9 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
       }
     },
     afterRoundPersisted: async ({ outcome }) => {
-      const releaseToolSurfaceCandidates = pendingToolSurfaceCandidateRelease
+      const pendingCandidateRelease = pendingToolSurfaceCandidateRelease
       pendingToolSurfaceCandidateRelease = null
-      if (releaseToolSurfaceCandidates && outcome !== 'continue') {
+      if (pendingCandidateRelease && outcome !== 'continue') {
         throw new Error('Terminal tool settlement cannot release Tool Surface candidates.')
       }
       const transcriptPersisted = echo.flush()
@@ -910,9 +921,13 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
       const record = io.messageStore.getMessage(run.messageId)
       if (!record) return
       let toolFactsPersisted = true
+      const toolResultBySourceId = new Map<string, TapeToolResultFactReference>()
       try {
         for (const input of buildTapeToolFactInputs(record)) {
-          await params.io.tapeToolFactWriter.appendToolFact(input)
+          const receipt = await params.io.tapeToolFactWriter.appendToolFact(input)
+          if (input.provenance.source === 'tool_result' && receipt.toolResult) {
+            toolResultBySourceId.set(input.provenance.sourceId, receipt.toolResult)
+          }
         }
       } catch (error) {
         toolFactsPersisted = false
@@ -922,7 +937,25 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           }`
         )
       }
-      if (toolFactsPersisted && !io.abortSignal.aborted) releaseToolSurfaceCandidates?.()
+      if (toolFactsPersisted && pendingCandidateRelease && !io.abortSignal.aborted) {
+        const evidence: ToolSurfaceActivationEvidence[] = []
+        for (const candidate of pendingCandidateRelease.candidates) {
+          const toolCallId = pendingCandidateRelease.toolCallIdByOrdinal.get(
+            candidate.toolCallOrdinalWithinBatch
+          )
+          const toolResult = toolCallId
+            ? toolResultBySourceId.get(`${record.id}:${toolCallId}`)
+            : undefined
+          if (!toolResult) {
+            logger.warn(
+              '[ProcessStream] ToolSearch activation was not released because its durable result receipt is unavailable.'
+            )
+            return
+          }
+          evidence.push({ ...candidate, toolResult })
+        }
+        pendingCandidateRelease.release(evidence)
+      }
     },
     settleTurn: ({ outcome }) => {
       revokeActiveRequestToolSurface(run)
@@ -1378,8 +1411,21 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               throw new Error('A Tool Surface candidate release is already pending.')
             }
             const activationCandidates = executed.toolSurfaceActivationCandidates
-            pendingToolSurfaceCandidateRelease = () =>
-              batch.toolSurface!.releaseActivationCandidates(activationCandidates)
+            const toolCallIdByOrdinal = new Map<number, string>()
+            for (const candidate of activationCandidates) {
+              const toolCall = batch.toolCalls[candidate.toolCallOrdinalWithinBatch]
+              if (!toolCall || toolCall.name !== TOOL_SEARCH_AGENT_TOOL_NAME) {
+                throw new Error(
+                  'Tool Surface activation candidate lost its originating ToolSearch call.'
+                )
+              }
+              toolCallIdByOrdinal.set(candidate.toolCallOrdinalWithinBatch, toolCall.id)
+            }
+            pendingToolSurfaceCandidateRelease = {
+              candidates: activationCandidates,
+              toolCallIdByOrdinal,
+              release: batch.toolSurface.releaseActivationCandidates
+            }
           }
 
           return {

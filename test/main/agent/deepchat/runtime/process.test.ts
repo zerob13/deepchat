@@ -30,7 +30,10 @@ import { resolveToolOffloadPath } from '@/agent/shared/storage/sessionPaths'
 import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
 import { createDeepSeekReplayJson } from '../../../../fixtures/deepseekResponses'
 import { POSIX_COMMAND_SHELL } from '../../../../helpers/commandShell'
-import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
+import {
+  TOOL_SEARCH_AGENT_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_SERVER_NAME
+} from '@shared/agentTools'
 import {
   buildCanonicalToolCatalog,
   createPolicySelectedToolSurfaceRun,
@@ -62,6 +65,9 @@ import {
   buildExecutionContract,
   buildExecutionContractBinding
 } from '@/tape/domain/executionContract'
+import type { TapeToolFactInput } from '@/tape/domain/facts'
+import { TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION } from '@/tape/domain/toolSurfaceFacts'
+import type { TapeToolFactAppendReceipt } from '@/tape/ports/capabilities'
 
 function expectDeepchatEvent(eventName: string, payload: Record<string, unknown>): void {
   expect(publishDeepchatEventMock).toHaveBeenCalledWith(eventName, expect.objectContaining(payload))
@@ -130,6 +136,26 @@ function createMockMessageStore() {
   } as any
 }
 
+function tapeToolFactReceipt(
+  input: TapeToolFactInput,
+  entryId = 1
+): TapeToolFactAppendReceipt {
+  return {
+    sessionId: input.sessionId,
+    entryId,
+    toolResult:
+      input.provenance.source === 'tool_result'
+        ? {
+            sessionId: input.sessionId,
+            tapeIncarnationId: '00000000-0000-4000-8000-000000000001',
+            entryId,
+            payloadHashVersion: TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION,
+            payloadHash: 'f'.repeat(64)
+          }
+        : null
+  }
+}
+
 function makeTool(name: string): MCPToolDefinition {
   return {
     execution: TOOL_EXECUTION.write,
@@ -143,16 +169,21 @@ function makeTool(name: string): MCPToolDefinition {
   }
 }
 
-function createProcessToolSurfaceHarness() {
-  const hidden = {
-    ...makeTool('hidden'),
+function createProcessToolSurfaceHarness(hiddenNames: readonly string[] = ['hidden']) {
+  const hiddenDefinitions = hiddenNames.map((name) => ({
+    ...makeTool(name),
     source: 'agent' as const,
     execution: TOOL_EXECUTION.read.parallel
-  }
+  }))
   const toolSearch = {
     ...makeTool(TOOL_SEARCH_AGENT_TOOL_NAME),
     source: 'agent' as const,
-    execution: TOOL_EXECUTION.read.parallel
+    execution: TOOL_EXECUTION.read.parallel,
+    server: {
+      name: TOOL_SEARCH_AGENT_TOOL_SERVER_NAME,
+      icons: '',
+      description: 'Tool Surface discovery'
+    }
   }
   const toolSearchDefinitionTokens = buildCanonicalToolCatalog([toolSearch]).definitionTokens
   const policy: ToolSurfaceShadowPolicy = {
@@ -173,22 +204,25 @@ function createProcessToolSurfaceHarness() {
     toolSearchPromptTokens: 0
   }
   const selected = createPolicySelectedToolSurfaceRun({
-    ceilingDefinitions: [hidden],
-    initialEligibleDefinitions: [hidden],
+    ceilingDefinitions: hiddenDefinitions,
+    initialEligibleDefinitions: hiddenDefinitions,
     toolSearchDefinition: toolSearch,
     policy,
     coreStableTargetKeys: []
   })
   const snapshot = selected.controller.build({
     request: { sessionId: 's1', messageId: 'm1', runId: RUN_ID, requestSeq: 1 },
-    eligibleDefinitions: [hidden],
+    eligibleDefinitions: hiddenDefinitions,
     toolSearchAvailable: true
   })
   selected.controller.admit(snapshot)
-  const hiddenEntry = selected.controller.ceiling.catalog.entries.find(
-    (entry) => entry.target.providerVisibleName === 'hidden'
-  )!
-  return { selected, snapshot, hiddenEntry }
+  const hiddenEntries = hiddenNames.map(
+    (name) =>
+      selected.controller.ceiling.catalog.entries.find(
+        (entry) => entry.target.providerVisibleName === name
+      )!
+  )
+  return { selected, snapshot, hiddenEntry: hiddenEntries[0], hiddenEntries }
 }
 
 function createMockToolService(responses: Record<string, string> = {}): ToolServicePort {
@@ -251,10 +285,7 @@ describe('processStream', () => {
     messageStore = createMockMessageStore()
     commitRunTerminal = vi.fn()
     tapeToolFactWriter = {
-      appendToolFact: vi.fn(async (input) => ({
-        sessionId: input.sessionId,
-        entryId: 1
-      }))
+      appendToolFact: vi.fn(async (input) => tapeToolFactReceipt(input))
     }
     executionJournalWriter = {
       commitDispatch: vi.fn(() => ({ sessionId: 's1', entryId: 1, created: true })),
@@ -371,7 +402,7 @@ describe('processStream', () => {
     })
     tapeToolFactWriter.appendToolFact.mockImplementation(async (input) => {
       order.push(`tape:${input.provenance.source}`)
-      return { sessionId: input.sessionId, entryId: 1 }
+      return tapeToolFactReceipt(input)
     })
     publishDeepchatEventMock.mockImplementation((eventName: string) => {
       if (eventName === 'chat.stream.updated') {
@@ -897,13 +928,155 @@ describe('processStream', () => {
       expect(result.status).toBe('completed')
       expect(harness.releaseActivationCandidates).toHaveBeenCalledOnce()
       expect(harness.releaseActivationCandidates).toHaveBeenCalledWith([
-        expect.objectContaining({ stableTargetKey: harness.hiddenEntry.stableTargetKey })
+        expect.objectContaining({
+          stableTargetKey: harness.hiddenEntry.stableTargetKey,
+          toolResult: expect.objectContaining({
+            tapeIncarnationId: '00000000-0000-4000-8000-000000000001',
+            payloadHash: 'f'.repeat(64)
+          })
+        })
       ])
       expect(order.indexOf('activation:release')).toBeGreaterThan(order.indexOf('message:update'))
       expect(order.indexOf('activation:release')).toBeGreaterThan(order.indexOf('tape:tool_result'))
       expect(() => harness.getIssuedContext()?.submitActivationCandidates([])).toThrow(
         /no longer active/
       )
+    })
+
+    it('binds parallel ToolSearch candidates to assistant-order physical receipts', async () => {
+      const { selected, snapshot, hiddenEntries } = createProcessToolSurfaceHarness([
+        'hidden-first',
+        'hidden-second'
+      ])
+      const releaseActivationCandidates = vi.fn(selected.controller.stageActivationBatch)
+      const run = createLoopRun({
+        runId: RUN_ID,
+        sessionId: toAppSessionId('s1'),
+        messageId: 'm1',
+        abortController: new AbortController(),
+        messages: [{ role: 'user', content: 'Find two tools' }],
+        streamState: createState(),
+        resources: {
+          toolDefinitions: selected.controller.ceiling.entries.map((entry) => entry.definition),
+          activeSkillNames: [],
+          commandShell: POSIX_COMMAND_SHELL,
+          toolSurfaceMode: 'full'
+        },
+        initialRequestSeq: 1
+      })
+      bindActiveRequestToolSurface(run, 1, snapshot, releaseActivationCandidates)
+      const toolService = createMockToolService()
+      const completionOrder: string[] = []
+      let markSecondStarted!: () => void
+      const secondStarted = new Promise<void>((resolve) => {
+        markSecondStarted = resolve
+      })
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions
+        const context = executionOptions.toolSurfaceContext!
+        const entry = hiddenEntries[context.toolCallOrdinalWithinBatch]
+        executionOptions.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'test-server', originalName: request.function.name }
+        })
+        executionOptions.registerOutcomeProjection?.(() =>
+          context.submitActivationCandidates([
+            {
+              ...snapshot.request,
+              stableTargetKey: entry.stableTargetKey,
+              canonicalToolDefinitionHash: entry.canonicalToolDefinitionHash,
+              toolCallOrdinalWithinBatch: context.toolCallOrdinalWithinBatch,
+              resultRank: 0
+            }
+          ])
+        )
+        if (request.id === 'search-first') {
+          await secondStarted
+        } else {
+          markSecondStarted()
+        }
+        completionOrder.push(request.id)
+        const content = JSON.stringify({
+          results: [
+            {
+              name: entry.target.providerVisibleName,
+              source: 'DeepChat',
+              description: 'Found tool',
+              effect: entry.execution.effect,
+              state: 'pending'
+            }
+          ]
+        })
+        return {
+          content,
+          rawData: { toolCallId: request.id, content, isError: false }
+        }
+      })
+      tapeToolFactWriter.appendToolFact.mockImplementation(async (input) => {
+        const first = input.provenance.sourceId.endsWith(':search-first')
+        const receipt = tapeToolFactReceipt(input, first ? 101 : 202)
+        return receipt.toolResult
+          ? {
+              ...receipt,
+              toolResult: {
+                ...receipt.toolResult,
+                payloadHash: (first ? 'a' : 'b').repeat(64)
+              }
+            }
+          : receipt
+      })
+      const params = createParams({
+        run,
+        toolExecution: createToolExecutionPort(toolService),
+        coreStream: createScriptedCoreStream([
+          [
+            {
+              type: 'tool_call_start',
+              tool_call_id: 'search-first',
+              tool_call_name: TOOL_SEARCH_AGENT_TOOL_NAME
+            },
+            {
+              type: 'tool_call_end',
+              tool_call_id: 'search-first',
+              tool_call_arguments_complete: '{}'
+            },
+            {
+              type: 'tool_call_start',
+              tool_call_id: 'search-second',
+              tool_call_name: TOOL_SEARCH_AGENT_TOOL_NAME
+            },
+            {
+              type: 'tool_call_end',
+              tool_call_id: 'search-second',
+              tool_call_arguments_complete: '{}'
+            },
+            { type: 'stop', stop_reason: 'tool_use' }
+          ],
+          [
+            { type: 'text', content: 'Done' },
+            { type: 'stop', stop_reason: 'complete' }
+          ]
+        ])
+      })
+
+      const result = await processStream(params)
+
+      expect(result.status).toBe('completed')
+      expect(completionOrder).toEqual(['search-second', 'search-first'])
+      expect(releaseActivationCandidates).toHaveBeenCalledWith([
+        expect.objectContaining({
+          toolCallOrdinalWithinBatch: 0,
+          stableTargetKey: hiddenEntries[0].stableTargetKey,
+          toolResult: expect.objectContaining({ entryId: 101, payloadHash: 'a'.repeat(64) })
+        }),
+        expect.objectContaining({
+          toolCallOrdinalWithinBatch: 1,
+          stableTargetKey: hiddenEntries[1].stableTargetKey,
+          toolResult: expect.objectContaining({ entryId: 202, payloadHash: 'b'.repeat(64) })
+        })
+      ])
     })
 
     it('revokes an unused ToolSearch View after a terminal provider response', async () => {
@@ -972,6 +1145,20 @@ describe('processStream', () => {
       )
     })
 
+    it('does not release ToolSearch candidates without a physical result receipt', async () => {
+      const harness = createToolSearchProcessHarness()
+      tapeToolFactWriter.appendToolFact.mockImplementation(async (input) => ({
+        ...tapeToolFactReceipt(input),
+        toolResult: null
+      }))
+
+      const result = await processStream(harness.params)
+
+      expect(result.status).toBe('completed')
+      expect(tapeToolFactWriter.appendToolFact).toHaveBeenCalled()
+      expect(harness.releaseActivationCandidates).not.toHaveBeenCalled()
+    })
+
     it('discards ToolSearch candidates when cancellation arrives during tool fact persistence', async () => {
       const harness = createToolSearchProcessHarness()
       let releaseFactWrite!: () => void
@@ -985,7 +1172,7 @@ describe('processStream', () => {
       tapeToolFactWriter.appendToolFact.mockImplementationOnce(async (input) => {
         markFactWriteStarted()
         await factWriteGate
-        return { sessionId: input.sessionId, entryId: 1 }
+        return tapeToolFactReceipt(input)
       })
 
       const processPromise = processStream(harness.params)

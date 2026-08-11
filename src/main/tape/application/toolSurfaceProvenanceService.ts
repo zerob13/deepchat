@@ -2,11 +2,7 @@ import type { DeepChatTapeViewManifest } from '@shared/types/tape-view-manifest'
 import { TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { stripToolExecutionContract, type MCPToolDefinition } from '@shared/types/core/mcp'
 import { canonicalJsonStringifyData } from '../domain/canonicalJson'
-import {
-  TAPE_INCARNATION_META_KEY,
-  type DeepChatTapeEntryRow,
-  type TapeEventAppendInput
-} from '../domain/entry'
+import { type DeepChatTapeEntryRow, type TapeEventAppendInput } from '../domain/entry'
 import {
   buildExecutionToolCeiling,
   buildExecutionToolTargetKey,
@@ -37,9 +33,8 @@ import type {
   TapeToolSurfaceViewCommitReceipt,
   TapeToolSurfaceViewWriter
 } from '../ports/capabilities'
+import { readCanonicalTapeIncarnationId } from './common'
 import { buildTapeViewManifestProvenanceKey, type TapeViewReplayService } from './viewReplayService'
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 export type ToolSurfaceProvenanceErrorCode = 'invalid_input' | 'corruption' | 'persistence_failed'
 
@@ -81,10 +76,6 @@ function canonicalJsonEquals(raw: string, expected: unknown): boolean {
   } catch {
     return false
   }
-}
-
-function isUuid(value: unknown): value is string {
-  return typeof value === 'string' && UUID_PATTERN.test(value)
 }
 
 function canonicalEventRowMatches(
@@ -160,26 +151,6 @@ function surfaceProvenanceKey(
   request: CreateTapeToolSurfaceFactInput['request']
 ): string {
   return `view:tool-surface:v1:${tapeIncarnationId}:${request.sessionId}:${request.messageId}:${request.runId}:${request.requestSeq}`
-}
-
-function readTapeIncarnationId(row: DeepChatTapeEntryRow): string | null {
-  if (
-    row.entry_id !== 1 ||
-    row.kind !== 'anchor' ||
-    row.name !== 'session/start' ||
-    row.source_type !== 'session' ||
-    row.source_id !== row.session_id ||
-    row.source_seq !== 0
-  ) {
-    return null
-  }
-  try {
-    const meta = JSON.parse(row.meta_json) as Record<string, unknown>
-    const value = meta[TAPE_INCARNATION_META_KEY]
-    return isUuid(value) ? value : null
-  } catch {
-    return null
-  }
 }
 
 function sameCatalogEntry(
@@ -494,7 +465,7 @@ export class ToolSurfaceProvenanceService implements TapeToolSurfaceViewWriter {
         const { manifest, catalog } = prepared
         table.ensureBootstrapAnchor(manifest.sessionId)
         const firstEntry = table.getFirstEntriesBySessions([manifest.sessionId])[0]
-        const tapeIncarnationId = firstEntry ? readTapeIncarnationId(firstEntry) : null
+        const tapeIncarnationId = firstEntry ? readCanonicalTapeIncarnationId(firstEntry) : null
         if (!tapeIncarnationId) {
           throw new ToolSurfaceProvenanceCorruptionError(
             `Session ${manifest.sessionId} has no canonical Tape incarnation.`

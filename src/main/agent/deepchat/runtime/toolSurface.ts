@@ -19,6 +19,10 @@ import {
   buildExecutionToolTargetKey,
   buildProviderVisibleToolDefinitionsHash
 } from '@/tape/domain/executionContract'
+import {
+  TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION,
+  type TapeToolResultFactReference
+} from '@/tape/domain/toolSurfaceFacts'
 import { estimateToolDefinitionTokens } from './contextBuilder'
 
 export const TOOL_SURFACE_CATALOG_SCHEMA_VERSION = 1
@@ -43,6 +47,7 @@ export const MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH =
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_TOOL_SURFACE_REQUEST_ID_BYTES = 1_024
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const TOOL_SURFACE_SELECTION_REASONS = Object.freeze([
   'full-catalog',
   'policy-required',
@@ -218,7 +223,7 @@ export type ToolSurfaceActivationRejectionCode =
   | 'total-surface-count-cap'
   | 'total-surface-token-cap'
 
-export interface ToolSurfaceActivationDecision extends ToolSurfaceActivationCandidate {
+export interface ToolSurfaceActivationDecision extends ToolSurfaceActivationEvidence {
   readonly accepted: boolean
   readonly rejectionCode?: ToolSurfaceActivationRejectionCode
 }
@@ -237,7 +242,7 @@ export interface ToolSurfaceRunController {
     readonly eligibleDefinitions: readonly MCPToolDefinition[]
     readonly toolSearchAvailable?: boolean
   }): ToolSurfaceSnapshot
-  stageActivationBatch(candidates: readonly ToolSurfaceActivationCandidate[]): void
+  stageActivationBatch(candidates: readonly ToolSurfaceActivationEvidence[]): void
   admit(snapshot: ToolSurfaceSnapshot): void
 }
 
@@ -283,6 +288,10 @@ export interface ToolSurfaceActivationCandidate extends ToolSurfaceDefinitionIde
   readonly requestSeq: number
   readonly toolCallOrdinalWithinBatch: number
   readonly resultRank: number
+}
+
+export interface ToolSurfaceActivationEvidence extends ToolSurfaceActivationCandidate {
+  readonly toolResult: TapeToolResultFactReference
 }
 
 export interface ToolSurfaceExecutionContext {
@@ -1070,14 +1079,76 @@ function copyActivationCandidate(candidate: unknown): ToolSurfaceActivationCandi
   }
 }
 
+function copyActivationEvidence(evidence: unknown): ToolSurfaceActivationEvidence {
+  const candidate = copyActivationCandidate(evidence)
+  const value = requirePlainDataRecord(evidence, 'Tool Surface activation evidence')
+  const toolResult = requirePlainDataRecord(
+    readOwnDataProperty(value, 'toolResult', 'Tool Surface activation evidence'),
+    'Tool Surface result fact reference'
+  )
+  const sessionId = readOwnDataProperty(
+    toolResult,
+    'sessionId',
+    'Tool Surface result fact reference'
+  )
+  const tapeIncarnationId = readOwnDataProperty(
+    toolResult,
+    'tapeIncarnationId',
+    'Tool Surface result fact reference'
+  )
+  const entryId = readOwnDataProperty(
+    toolResult,
+    'entryId',
+    'Tool Surface result fact reference'
+  )
+  const payloadHashVersion = readOwnDataProperty(
+    toolResult,
+    'payloadHashVersion',
+    'Tool Surface result fact reference'
+  )
+  const payloadHash = readOwnDataProperty(
+    toolResult,
+    'payloadHash',
+    'Tool Surface result fact reference'
+  )
+  if (
+    Object.getOwnPropertyNames(toolResult).length !== 5 ||
+    sessionId !== candidate.sessionId ||
+    !isBoundedRequestIdentity(sessionId) ||
+    typeof tapeIncarnationId !== 'string' ||
+    !UUID_PATTERN.test(tapeIncarnationId) ||
+    typeof entryId !== 'number' ||
+    !Number.isSafeInteger(entryId) ||
+    entryId <= 0 ||
+    payloadHashVersion !== TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION ||
+    typeof payloadHash !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(payloadHash)
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface activation evidence has an invalid result fact reference.',
+      'invalid_definition'
+    )
+  }
+  return {
+    ...candidate,
+    toolResult: {
+      sessionId,
+      tapeIncarnationId,
+      entryId,
+      payloadHashVersion,
+      payloadHash
+    }
+  }
+}
+
 function readActivationDecision(value: unknown): {
-  readonly candidate: ToolSurfaceActivationCandidate
+  readonly candidate: ToolSurfaceActivationEvidence
   readonly accepted: unknown
   readonly rejectionCode: unknown
 } {
   const decision = requirePlainDataRecord(value, 'Tool Surface activation decision')
   return {
-    candidate: copyActivationCandidate(decision),
+    candidate: copyActivationEvidence(decision),
     accepted: readOwnDataProperty(decision, 'accepted', 'Tool Surface activation decision'),
     rejectionCode: readOwnDataProperty(
       decision,
@@ -1313,6 +1384,111 @@ export function mergeToolSurfaceActivationCandidates(
     merged.push(candidate)
   }
   return Object.freeze(merged)
+}
+
+export function mergeToolSurfaceActivationEvidence(
+  scope: ToolSurfaceCandidateScope,
+  evidenceBatches: readonly (readonly ToolSurfaceActivationEvidence[])[]
+): readonly ToolSurfaceActivationEvidence[] {
+  const batches = readDataArray(
+    evidenceBatches,
+    'Tool Surface activation evidence batches',
+    MAX_TOOL_SURFACE_CANDIDATE_BATCHES
+  )
+  let evidenceCount = 0
+  const evidence: ToolSurfaceActivationEvidence[] = []
+  for (const batchValue of batches) {
+    const batch = readDataArray(
+      batchValue,
+      'Tool Surface activation evidence batch',
+      MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+    )
+    evidenceCount += batch.length
+    if (
+      !Number.isSafeInteger(evidenceCount) ||
+      evidenceCount > MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation evidence merge exceeds its candidate limit.',
+        'limit_exceeded'
+      )
+    }
+    for (const item of batch) evidence.push(copyActivationEvidence(item))
+  }
+
+  const mergedCandidates = mergeToolSurfaceActivationCandidates(scope, [evidence])
+  evidence.sort(compareActivationCandidateOrder)
+  const firstEvidenceByTarget = new Map<string, ToolSurfaceActivationEvidence>()
+  const evidenceByCoordinate = new Map<string, ToolSurfaceActivationEvidence>()
+  const toolResultBySearchCall = new Map<string, string>()
+  const searchCallByToolResult = new Map<string, string>()
+  const tapeIncarnationId = evidence[0]?.toolResult.tapeIncarnationId
+  for (const item of evidence) {
+    if (item.toolResult.tapeIncarnationId !== tapeIncarnationId) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation evidence crosses Tape incarnations.',
+        'conflicting_tool'
+      )
+    }
+    const searchCall = canonicalJsonStringifyData([
+      item.requestSeq,
+      item.toolCallOrdinalWithinBatch
+    ])
+    const physicalReference = canonicalJsonStringifyData(item.toolResult)
+    const physicalLocation = canonicalJsonStringifyData([
+      item.toolResult.sessionId,
+      item.toolResult.tapeIncarnationId,
+      item.toolResult.entryId
+    ])
+    const previousPhysicalReference = toolResultBySearchCall.get(searchCall)
+    const previousSearchCall = searchCallByToolResult.get(physicalLocation)
+    if (
+      (previousPhysicalReference !== undefined &&
+        previousPhysicalReference !== physicalReference) ||
+      (previousSearchCall !== undefined && previousSearchCall !== searchCall)
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation evidence does not map one ToolSearch call to one result fact.',
+        'conflicting_tool'
+      )
+    }
+    toolResultBySearchCall.set(searchCall, physicalReference)
+    searchCallByToolResult.set(physicalLocation, searchCall)
+    const coordinate = canonicalJsonStringifyData([
+      item.requestSeq,
+      item.toolCallOrdinalWithinBatch,
+      item.resultRank,
+      item.stableTargetKey
+    ])
+    const previousCoordinate = evidenceByCoordinate.get(coordinate)
+    if (
+      previousCoordinate &&
+      canonicalJsonStringifyData(previousCoordinate.toolResult) !==
+        canonicalJsonStringifyData(item.toolResult)
+    ) {
+      throw new ToolSurfaceError(
+        'Tool Surface activation evidence contains conflicting result fact references.',
+        'conflicting_tool'
+      )
+    }
+    evidenceByCoordinate.set(coordinate, item)
+    if (!firstEvidenceByTarget.has(item.stableTargetKey)) {
+      firstEvidenceByTarget.set(item.stableTargetKey, item)
+    }
+  }
+  return Object.freeze(
+    mergedCandidates.map((candidate) => {
+      const item = firstEvidenceByTarget.get(candidate.stableTargetKey)
+      if (!item) {
+        throw new ToolSurfaceError(
+          'Tool Surface activation evidence lost a merged candidate.',
+          'invalid_definition'
+        )
+      }
+      Object.freeze(item.toolResult)
+      return Object.freeze(item)
+    })
+  )
 }
 
 function freezeShadowDecision(decision: ToolSurfaceShadowDecision): ToolSurfaceShadowDecision {
@@ -2003,7 +2179,7 @@ export function createToolSurfaceSnapshot(input: {
   }
   const activationTargets = new Set<string>()
   const activationDecisions: ToolSurfaceActivationDecision[] = []
-  let previousActivationCandidate: ToolSurfaceActivationCandidate | null = null
+  let previousActivationCandidate: ToolSurfaceActivationEvidence | null = null
   for (const decisionInput of activationDecisionInputs) {
     const decision = readActivationDecision(decisionInput)
     const candidate = decision.candidate
@@ -2300,7 +2476,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
     ceiling.catalog.entries.map((entry) => [entry.stableTargetKey, entry])
   )
   let latestAdmittedRequest: ToolSurfaceRequestIdentity | null = null
-  let pendingCandidates: readonly ToolSurfaceActivationCandidate[] | null = null
+  let pendingCandidates: readonly ToolSurfaceActivationEvidence[] | null = null
   let pendingOriginRequest: ToolSurfaceRequestIdentity | null = null
   let pendingFingerprint: string | null = null
   let admittedActivationBatches = 0
@@ -2311,7 +2487,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
     {
       readonly baseLedger: ToolSurfaceActivationLedger
       readonly nextLedger: ToolSurfaceActivationLedger
-      readonly pendingCandidates: readonly ToolSurfaceActivationCandidate[] | null
+      readonly pendingCandidates: readonly ToolSurfaceActivationEvidence[] | null
       readonly pendingFingerprint: string | null
       readonly appendedTargets: number
     }
@@ -2337,8 +2513,8 @@ export function createPolicySelectedToolSurfaceRun(input: {
         )
       }
       const origin = latestAdmittedRequest
-      const merged = mergeToolSurfaceActivationCandidates(origin, [
-        candidateBatch as readonly ToolSurfaceActivationCandidate[]
+      const merged = mergeToolSurfaceActivationEvidence(origin, [
+        candidateBatch as readonly ToolSurfaceActivationEvidence[]
       ])
       const originRequestSeq = merged[0].requestSeq
       if (merged.some((candidate) => candidate.requestSeq !== originRequestSeq)) {
@@ -2496,7 +2672,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
           totalTokens += ceilingEntry.definitionTokens
         }
         decisions.push({
-          ...copyActivationCandidate(candidate),
+          ...copyActivationEvidence(candidate),
           accepted: !rejectionCode,
           ...(rejectionCode ? { rejectionCode } : {})
         })

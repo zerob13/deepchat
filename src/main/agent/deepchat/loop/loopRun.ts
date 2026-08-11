@@ -7,7 +7,7 @@ import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/c
 import {
   assertIssuedToolSurfaceSnapshot,
   revokeToolSurfaceExecutionEligibility,
-  type ToolSurfaceActivationCandidate,
+  type ToolSurfaceActivationEvidence,
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
 
@@ -35,7 +35,7 @@ export interface LoopRunRequestToolSurfaceBinding {
   readonly requestSeq: number
   readonly snapshot: ToolSurfaceSnapshot
   readonly releaseActivationCandidates: (
-    candidates: readonly ToolSurfaceActivationCandidate[]
+    candidates: readonly ToolSurfaceActivationEvidence[]
   ) => void
 }
 
@@ -178,7 +178,7 @@ export function bindActiveRequestToolSurface(
   run: LoopRun<unknown>,
   requestSeq: number,
   snapshot: ToolSurfaceSnapshot,
-  releaseActivationCandidates: (candidates: readonly ToolSurfaceActivationCandidate[]) => void
+  releaseActivationCandidates: (candidates: readonly ToolSurfaceActivationEvidence[]) => void
 ): LoopRunRequestToolSurfaceBinding {
   if (requestSeq !== run.requestSeq) {
     throw new Error('Tool Surface request sequence does not match the active request.')
