@@ -2286,6 +2286,12 @@ export async function createMainProcessControl(dependencies: {
       skillSettings,
       agentSettings,
       ensureInitialized: ensureSkillServicesInitialized,
+      assertSessionActiveSkillsMutable: async (conversationId) => {
+        const state = await deepChatAgentHarness.getSessionState(conversationId)
+        if (state?.status === 'generating') {
+          throw new Error('Cannot change Session Skills while the session is generating.')
+        }
+      },
       recordSettingsActivity: (input) => settingsDatabase.recordSettingsActivity(input)
     })
     const mcpRoutes = createMcpRoutes({

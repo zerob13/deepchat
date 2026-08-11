@@ -53,6 +53,7 @@ export function createSkillRoutes(deps: {
   skillSettings: SkillSettingsPort
   agentSettings: AgentSkillImportAgentPort
   ensureInitialized(): Promise<void>
+  assertSessionActiveSkillsMutable(conversationId: string): Promise<void>
   recordSettingsActivity(input: SettingsActivityInput): Promise<unknown>
 }): DeepchatRouteMap {
   const { skillService, skillSyncService } = deps
@@ -353,6 +354,7 @@ export function createSkillRoutes(deps: {
       skillsSetActiveRoute.name,
       async (rawInput) => {
         const input = skillsSetActiveRoute.input.parse(rawInput)
+        await deps.assertSessionActiveSkillsMutable(input.conversationId)
         const skills = await skillService.setActiveSkills(input.conversationId, input.skills)
         recordActivity({
           category: 'knowledge',
