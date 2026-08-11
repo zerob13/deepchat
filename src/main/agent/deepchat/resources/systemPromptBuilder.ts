@@ -62,6 +62,7 @@ export interface SystemPromptBuildInput {
   toolDefinitions: MCPToolDefinition[]
   activeSkillNamesOverride?: string[]
   sessionActiveSkillNamesOverride?: string[]
+  sessionSkillBodiesOverride?: readonly Readonly<{ name: string; content: string }>[]
   contextLength?: number
   orchestrationPolicy?: OrchestrationPolicy
   resourceInstance: DeepChatAgentInstance
@@ -277,7 +278,18 @@ export async function buildSystemPromptAssemblyWithSkills(
     : ''
 
   let skillsPrompt = ''
-  if (skillsEnabled && normalizedActiveSkills.length > 0) {
+  if (skillsEnabled && input.sessionSkillBodiesOverride !== undefined) {
+    const overrideNames = input.sessionSkillBodiesOverride.map((skill) => skill.name)
+    if (
+      new Set(overrideNames).size !== overrideNames.length ||
+      overrideNames.some((name) => !normalizedSessionActiveSkills.includes(name)) ||
+      normalizedSessionActiveSkills.some((name) => !overrideNames.includes(name))
+    ) {
+      throw new Error('Session Skill body projection does not match the active Skill set.')
+    }
+    const skillSections = input.sessionSkillBodiesOverride.map(renderSessionSkillBody)
+    skillsPrompt = buildPinnedSkillsPrompt(skillSections, true)
+  } else if (skillsEnabled && normalizedActiveSkills.length > 0) {
     stepStartedAt = Date.now()
     const skillSections: string[] = []
     for (const skillName of normalizedActiveSkills) {
@@ -287,7 +299,7 @@ export async function buildSystemPromptAssemblyWithSkills(
           : null
         const content = skill?.content?.trim()
         if (content) {
-          skillSections.push(`### ${skillName}\n${content}`)
+          skillSections.push(renderSessionSkillBody({ name: skillName, content }))
         } else {
           pinnedSkillsDegradations.push('pinned_skill_unavailable')
         }
@@ -574,13 +586,22 @@ function buildSkillsMetadataPrompt(
   return hasContent ? lines.join('\n') : ''
 }
 
-function buildPinnedSkillsPrompt(skillSections: string[]): string {
+export function renderSessionSkillBody(skill: Readonly<{ name: string; content: string }>): string {
+  if (!skill.name || skill.name !== skill.name.trim() || !skill.content) {
+    throw new Error('Session Skill body projection is invalid.')
+  }
+  return [`### ${skill.name}`, skill.content].join('\n')
+}
+
+function buildPinnedSkillsPrompt(skillSections: string[], sessionPersistentOnly = false): string {
   if (skillSections.length === 0) {
     return ''
   }
   return [
     '## Active Skills',
-    'These skills are active for the current message context. Some may be manually pinned for the conversation; others may have been activated by `skill_view` for this message/tool loop only. Follow them when relevant.',
+    sessionPersistentOnly
+      ? 'These Session Skills are persistent context for this conversation. Follow them when relevant.'
+      : 'These skills are active for the current message context. Some may be manually pinned for the conversation; others may have been activated by `skill_view` for this message/tool loop only. Follow them when relevant.',
     '',
     skillSections.join('\n\n')
   ].join('\n')

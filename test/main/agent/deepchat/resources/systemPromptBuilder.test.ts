@@ -403,6 +403,77 @@ describe('DeepChat system prompt builder', () => {
     }
   })
 
+  it('renders exact Session Skill overrides without reading cached Skill content', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false)
+    vi.mocked(fs.promises.readFile).mockRejectedValue(
+      Object.assign(new Error('missing'), { code: 'ENOENT' })
+    )
+    const loadSkillContent = vi.fn()
+    const instance = {
+      getRuntimeState: () => ({ providerId: 'openai', modelId: 'gpt-4o' }),
+      hasProjectDir: () => false
+    } as unknown as DeepChatAgentInstance
+    const dependencies = {
+      providerSettings: {} as unknown as ProviderSettingsPort,
+      skillSettings: {
+        isEnabled: () => true,
+        isDraftSuggestionsEnabled: () => false
+      },
+      providerCatalogPort: {
+        getProviderModels: () => [{ id: 'gpt-4o', name: 'GPT-4o' }],
+        getCustomModels: () => []
+      },
+      skillService: {
+        resolveSessionAgentId: vi.fn().mockResolvedValue('writer'),
+        getMetadataList: vi.fn().mockResolvedValue([
+          { name: 'skill-a', description: 'Skill A' },
+          { name: 'skill-b', description: 'Skill B' }
+        ]),
+        getActiveSkills: vi.fn(),
+        loadSkillContent
+      },
+      toolService: { buildToolSystemPrompt: vi.fn().mockReturnValue('') },
+      assertCurrent: vi.fn(),
+      isAcpBackedSubagentSession: () => false,
+      resolveProjectDir: () => null,
+      logSlowStep: vi.fn()
+    }
+
+    const assembly = await buildSystemPromptAssemblyWithSkills(dependencies, {
+      sessionId: 'session-1',
+      basePrompt: '',
+      toolDefinitions: [],
+      activeSkillNamesOverride: ['skill-a'],
+      sessionActiveSkillNamesOverride: ['skill-a'],
+      sessionSkillBodiesOverride: [{ name: 'skill-a', content: 'exact materialized body' }],
+      commandShell: POSIX_COMMAND_SHELL,
+      resourceInstance: instance
+    })
+
+    expect(loadSkillContent).not.toHaveBeenCalled()
+    expect(assembly.sections.find((section) => section.kind === 'pinned_skills')?.content).toBe(
+      [
+        '## Active Skills',
+        'These Session Skills are persistent context for this conversation. Follow them when relevant.',
+        '',
+        '### skill-a',
+        'exact materialized body'
+      ].join('\n')
+    )
+    await expect(
+      buildSystemPromptAssemblyWithSkills(dependencies, {
+        sessionId: 'session-1',
+        basePrompt: '',
+        toolDefinitions: [],
+        activeSkillNamesOverride: ['skill-a'],
+        sessionActiveSkillNamesOverride: ['skill-a'],
+        sessionSkillBodiesOverride: [{ name: 'skill-b', content: 'wrong body' }],
+        commandShell: POSIX_COMMAND_SHELL,
+        resourceInstance: instance
+      })
+    ).rejects.toThrow('does not match the active Skill set')
+  })
+
   it('observes model, tool prompt, and package script changes on the next assembly', async () => {
     let modelName = 'Model One'
     let toolPrompt = 'TOOL PROMPT ONE'

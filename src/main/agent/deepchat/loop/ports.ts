@@ -212,6 +212,7 @@ export interface BasePromptAssemblyInput {
   toolDefinitions: readonly MCPToolDefinition[]
   activeSkillNames: readonly string[]
   sessionActiveSkillNames: readonly string[]
+  sessionSkillBodiesOverride?: readonly Readonly<{ name: string; content: string }>[]
   contextLength: number
   commandShell: ResolvedCommandShell
 }

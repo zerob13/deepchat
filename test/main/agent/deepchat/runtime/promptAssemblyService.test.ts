@@ -113,6 +113,7 @@ describe('PromptAssemblyService', () => {
     const toolDefinitions = [] as never[]
     const activeSkillNames = ['skill-a']
     const sessionActiveSkillNames = ['session-skill']
+    const sessionSkillBodiesOverride = [{ name: 'session-skill', content: 'body' }]
 
     const assembled = await service.createBasePromptAssembler(instance).assemble({
       sessionId: SESSION_ID,
@@ -120,6 +121,7 @@ describe('PromptAssemblyService', () => {
       toolDefinitions,
       activeSkillNames,
       sessionActiveSkillNames,
+      sessionSkillBodiesOverride,
       contextLength: 8_000,
       commandShell: POSIX_COMMAND_SHELL
     })
@@ -132,6 +134,9 @@ describe('PromptAssemblyService', () => {
     expect(input.activeSkillNamesOverride).not.toBe(activeSkillNames)
     expect(input.sessionActiveSkillNamesOverride).toEqual(sessionActiveSkillNames)
     expect(input.sessionActiveSkillNamesOverride).not.toBe(sessionActiveSkillNames)
+    expect(input.sessionSkillBodiesOverride).toEqual(sessionSkillBodiesOverride)
+    expect(input.sessionSkillBodiesOverride).not.toBe(sessionSkillBodiesOverride)
+    expect(input.sessionSkillBodiesOverride[0]).not.toBe(sessionSkillBodiesOverride[0])
     expect(input.contextLength).toBe(8_000)
     expect(input.toolDefinitions).not.toBe(toolDefinitions)
   })

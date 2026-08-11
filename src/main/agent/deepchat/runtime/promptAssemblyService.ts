@@ -68,6 +68,7 @@ export class PromptAssemblyService {
     resourceInstance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance,
     routingContext: {
       sessionActiveSkillNamesOverride?: string[]
+      sessionSkillBodiesOverride?: readonly Readonly<{ name: string; content: string }>[]
       contextLength?: number
     } = {}
   ): Promise<string> {
@@ -77,6 +78,13 @@ export class PromptAssemblyService {
       toolDefinitions,
       activeSkillNamesOverride,
       ...routingContext,
+      ...(routingContext.sessionSkillBodiesOverride
+        ? {
+            sessionSkillBodiesOverride: routingContext.sessionSkillBodiesOverride.map((skill) => ({
+              ...skill
+            }))
+          }
+        : {}),
       orchestrationPolicy: this.deps.orchestrationPolicy.resolveOrchestrationPolicy(sessionId),
       commandShell,
       resourceInstance
@@ -92,6 +100,7 @@ export class PromptAssemblyService {
     resourceInstance = this.deps.registry.getOrHydrateScope(toAppSessionId(sessionId)).instance,
     routingContext: {
       sessionActiveSkillNamesOverride?: string[]
+      sessionSkillBodiesOverride?: readonly Readonly<{ name: string; content: string }>[]
       contextLength?: number
     } = {}
   ): Promise<DeepChatPromptAssembly> {
@@ -101,6 +110,13 @@ export class PromptAssemblyService {
       toolDefinitions,
       activeSkillNamesOverride,
       ...routingContext,
+      ...(routingContext.sessionSkillBodiesOverride
+        ? {
+            sessionSkillBodiesOverride: routingContext.sessionSkillBodiesOverride.map((skill) => ({
+              ...skill
+            }))
+          }
+        : {}),
       orchestrationPolicy: this.deps.orchestrationPolicy.resolveOrchestrationPolicy(sessionId),
       commandShell,
       resourceInstance
@@ -119,6 +135,7 @@ export class PromptAssemblyService {
           expectedInstance,
           {
             sessionActiveSkillNamesOverride: [...input.sessionActiveSkillNames],
+            sessionSkillBodiesOverride: input.sessionSkillBodiesOverride,
             contextLength: input.contextLength
           }
         ),
@@ -132,6 +149,7 @@ export class PromptAssemblyService {
           expectedInstance,
           {
             sessionActiveSkillNamesOverride: [...input.sessionActiveSkillNames],
+            sessionSkillBodiesOverride: input.sessionSkillBodiesOverride,
             contextLength: input.contextLength
           }
         )
@@ -150,6 +168,7 @@ export class PromptAssemblyService {
           checkpoint: buildContextCheckpoint(input.summaryText, input.reconstructionAnchor),
           memory: contribution.memory,
           directives: contribution.directives,
+          messageSkillActiveTurnContext: null,
           memoryIncluded: Boolean(contribution.memory.content),
           directivesIncluded: Boolean(contribution.directives.content)
         }

@@ -39,6 +39,10 @@ export { estimateMessagesTokens } from '@shared/utils/messageTokens'
 
 const AUDIO_TOKEN_ESTIMATE = 512
 const UNKNOWN_ASSISTANT_ERROR = 'Unknown error'
+const MAX_HISTORICAL_SKILL_MARKER_INPUT_NAMES = 64
+const MAX_HISTORICAL_SKILL_MARKER_NAMES = 8
+const MAX_HISTORICAL_SKILL_NAME_CHARACTERS = 48
+const HISTORICAL_SKILL_MARKER_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
 const KNOWN_ERROR_REASON_TEXT: Record<string, string> = {
   'common.error.userCanceledGeneration': 'User canceled generation',
   'common.error.sessionInterrupted':
@@ -262,6 +266,31 @@ function parseUserRecordContent(content: string): SendMessageInput {
   } catch {
     return { text: content, files: [] }
   }
+}
+
+function buildHistoricalSkillMarker(activeSkills: readonly string[] | undefined): string | null {
+  if (!activeSkills?.length) return null
+  const names = Array.from(
+    new Set(
+      activeSkills
+        .slice(0, MAX_HISTORICAL_SKILL_MARKER_INPUT_NAMES)
+        .map((name) =>
+          Array.from(
+            name
+              .normalize('NFC')
+              .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+          )
+            .slice(0, MAX_HISTORICAL_SKILL_NAME_CHARACTERS)
+            .join('')
+        )
+        .filter((name) => HISTORICAL_SKILL_MARKER_NAME_PATTERN.test(name))
+    )
+  )
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+    .slice(0, MAX_HISTORICAL_SKILL_MARKER_NAMES)
+  return names.length > 0 ? `[Used skill: ${names.join(', ')}]` : null
 }
 
 export function isContextHistoryRecord(record: ChatMessageRecord): boolean {
@@ -904,13 +933,14 @@ function recordToChatMessagesWithoutProviderReplay(
 
   if (record.role === 'user') {
     const parsed = parseUserRecordContent(record.content)
+    const leadingContext = userLeadingContext ?? buildHistoricalSkillMarker(parsed.activeSkills)
     const message: ChatMessage = {
       role: 'user',
       content: buildUserMessageContent(parsed, supportsVision, supportsAudioInput, {
         includeImageData: false,
         includeAudioData: true,
         includeFileContent: false,
-        leadingContext: userLeadingContext
+        leadingContext
       })
     }
     return hasPromptMessageContent(message) ? [message] : []
@@ -1364,7 +1394,8 @@ function buildCacheAwareLeadingMessages(
 function buildActiveTurnLeadingContext(context: ContextRuntimeContributions): string | null {
   const sections = [
     context.memoryIncluded ? context.memory.content : null,
-    context.directivesIncluded ? context.directives.content : null
+    context.directivesIncluded ? context.directives.content : null,
+    context.messageSkillActiveTurnContext
   ].filter((value): value is string => Boolean(value))
   return sections.length > 0 ? sections.join('\n\n') : null
 }

@@ -13,7 +13,10 @@ import {
   recordToChatMessages,
   truncateContext
 } from '@/agent/deepchat/runtime/contextBuilder'
-import { buildContextCheckpoint } from '@/agent/deepchat/runtime/contextContributions'
+import {
+  buildContextCheckpoint,
+  setMessageSkillActiveTurnContext
+} from '@/agent/deepchat/runtime/contextContributions'
 import { TRUNCATED_TOOL_CALL_ERROR } from '@/agent/deepchat/runtime/dispatch'
 import { approximateTokenSize } from 'tokenx'
 import {
@@ -2150,6 +2153,50 @@ function createCacheAwareContributions(input?: {
 }
 
 describe('cache-aware context assembly', () => {
+  it('expands message Skill context only for the active turn and leaves a bounded history marker', () => {
+    const historical = {
+      ...makeUserRecord(1, 'old request'),
+      content: JSON.stringify({
+        text: 'old request',
+        files: [],
+        activeSkills: [
+          'z-skill',
+          `a-${'😀'.repeat(60)}`,
+          'line\nbreak',
+          'z-skill',
+          ...Array.from({ length: 70 }, (_, index) => `overflow-${index}`)
+        ]
+      })
+    }
+    const historyMessages = recordToChatMessages(historical, false)
+    expect(String(historyMessages[0]?.content)).toMatch(/^\[Used skill: /)
+    expect(String(historyMessages[0]?.content)).toContain('\n\nold request')
+    expect(String(historyMessages[0]?.content)).not.toContain('😀')
+    expect(String(historyMessages[0]?.content)).not.toContain('line')
+    expect(String(historyMessages[0]?.content).length).toBeLessThan(500)
+
+    const contextContributions = setMessageSkillActiveTurnContext(
+      createCacheAwareContributions({
+        memory: '<context-data kind="memory">memory</context-data>',
+        directives: '<runtime-directives>directive</runtime-directives>'
+      }),
+      '<message-skill-context>exact body</message-skill-context>'
+    )
+    const result = buildCacheAwareContextWithMetadata(
+      's1',
+      { text: 'current request', files: [], activeSkills: ['current-skill'] },
+      'System',
+      10_000,
+      100,
+      createMockMessageStore([historical]),
+      false,
+      { historyRecords: [historical], contextContributions }
+    )
+    const activeContent = String(result.messages.at(-1)?.content)
+    expect(activeContent).toContain('<message-skill-context>exact body</message-skill-context>')
+    expect(activeContent).not.toContain('[Used skill: current-skill]')
+  })
+
   it('keeps untrusted checkpoint and memory outside system while preserving append order', () => {
     const records = [
       makeUserRecord(1, 'first user'),
