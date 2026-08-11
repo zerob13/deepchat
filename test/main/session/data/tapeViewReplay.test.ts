@@ -12,6 +12,7 @@ import {
   SessionTape,
   createTapeViewManifest,
   appendMessageRecordToTape,
+  appendMessageRetractionToTape,
   appendToolFactsToTape,
   buildRequestRefs,
   DeepChatTapeEntriesTable,
@@ -73,6 +74,53 @@ function commitRuntimeSkillOutcome(
 }
 
 describe('SessionTape view and replay', () => {
+  it('resolves an effective user-message source through the indexed message history', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const user = createRecord({ id: 'u1', orderSeq: 1, role: 'user', status: 'sent' })
+    const pending = createRecord({ id: 'u2', orderSeq: 2, role: 'user', status: 'pending' })
+    const assistant = createRecord({
+      id: 'a1',
+      orderSeq: 3,
+      role: 'assistant',
+      status: 'sent'
+    })
+    appendMessageRecordToTape(table as any, user, 'live')
+    appendMessageRecordToTape(table as any, pending, 'live')
+    appendMessageRecordToTape(table as any, assistant, 'live')
+
+    const userEntryId = entries.find(
+      (entry) => entry.kind === 'message' && entry.source_id === user.id
+    )!.entry_id
+    const pendingEntryId = entries.find(
+      (entry) => entry.kind === 'message' && entry.source_id === pending.id
+    )!.entry_id
+    expect(service.getEffectiveUserMessageSourceEntryId('s1', user.id)).toBe(userEntryId)
+    // Pending steer messages are valid active-turn sources until the claim is settled.
+    expect(service.getEffectiveUserMessageSourceEntryId('s1', pending.id)).toBe(pendingEntryId)
+    expect(service.getEffectiveUserMessageSourceEntryId('s1', assistant.id)).toBeNull()
+    expect(table.getBySessionExcludingContext).not.toHaveBeenCalled()
+
+    appendMessageRetractionToTape(table as any, user, 'deleted')
+    expect(service.getEffectiveUserMessageSourceEntryId('s1', user.id)).toBeNull()
+  })
+
+  it('fails closed on a malformed user-message source envelope', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    table.append({
+      sessionId: 's1',
+      kind: 'message',
+      name: 'message/user',
+      source: { type: 'message', id: 'u1', seq: 0 },
+      payload: { record: createRecord({ id: 'another-id', orderSeq: 1 }) }
+    })
+
+    expect(() => service.getEffectiveUserMessageSourceEntryId('s1', 'u1')).toThrow(
+      /physical envelope/
+    )
+  })
+
   it('recovers runtime Skill identity only from its strict tool-result fact', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
@@ -199,6 +247,7 @@ describe('SessionTape view and replay', () => {
     const sourceRow = table.append({
       sessionId: 's1',
       kind: 'message',
+      name: 'message/user',
       source: { type: 'message', id: 'u1', seq: 1 },
       payload: { record: createRecord({ id: 'u1', orderSeq: 1 }) }
     })

@@ -48,6 +48,7 @@ import type {
   TapeAnchorReader,
   TapeAnchorWriter,
   TapeEffectiveMessageSourceEntry,
+  TapeEffectiveUserMessageSourceReader,
   TapeExecutionViewManifestReader,
   TapeIncarnationReader,
   TapeInspectionReader,
@@ -120,6 +121,7 @@ export class SessionTape
     TapeNonContextEntryReader,
     TapeReconciliationPort,
     TapeViewManifestReader,
+    TapeEffectiveUserMessageSourceReader,
     TapeExecutionViewManifestReader,
     TapeViewManifestWriter,
     TapeAnchorReader,
@@ -267,6 +269,10 @@ export class SessionTape
     messageId?: string
   ): TapeViewManifestAssemblySources {
     return this.viewReplay.getViewManifestSourceMaps(sessionId, messageId)
+  }
+
+  getEffectiveUserMessageSourceEntryId(sessionId: string, messageId: string): number | null {
+    return this.viewReplay.getEffectiveUserMessageSourceEntryId(sessionId, messageId)
   }
 
   appendViewManifest(manifest: DeepChatTapeViewManifest): DeepChatTapeEntryRow {

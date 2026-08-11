@@ -25,6 +25,7 @@ export interface TapeEntryStore {
   getBySession(sessionId: string): DeepChatTapeEntryRow[]
   getBySessionExcludingContext(sessionId: string): DeepChatTapeEntryRow[]
   getByEntryIds(sessionId: string, entryIds: readonly number[]): DeepChatTapeEntryRow[]
+  getMessageSourceEntries(sessionId: string, messageId: string): DeepChatTapeEntryRow[]
   getViewManifestEventsByMessage(sessionId: string, messageId: string): DeepChatTapeEntryRow[]
   getMaxEventSourceSeq(
     sessionId: string,

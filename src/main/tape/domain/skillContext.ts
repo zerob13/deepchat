@@ -285,7 +285,10 @@ export function validateSchema6SkillContexts(value: unknown): DeepChatTapeSkillC
         ref.agentId !== context.agentId ||
         ref.sourceType !== context.sourceType ||
         ref.sourceId !== context.sourceId ||
-        ref.skillName !== context.skillName
+        ref.skillName !== context.skillName ||
+        (context.activationScope === 'message'
+          ? context.sourceEntryIds.length !== 1
+          : context.sourceEntryIds.length !== 0)
       ) {
         throw new TypeError('Invalid materialized Skill context.')
       }

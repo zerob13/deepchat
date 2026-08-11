@@ -135,6 +135,16 @@ function createMockSqlitePresenter() {
         (entry) => entry.session_id === sessionId && requestedIds.has(entry.entry_id)
       )
     }),
+    getMessageSourceEntries: vi.fn((sessionId: string, messageId: string) =>
+      tapeEntries.filter(
+        (entry) =>
+          entry.session_id === sessionId &&
+          entry.source_type === 'message' &&
+          entry.source_id === messageId &&
+          (entry.kind === 'message' ||
+            (entry.kind === 'event' && entry.name === 'message/retracted'))
+      )
+    ),
     getBootstrapIncarnation: vi.fn((sessionId: string) => {
       const row = tapeEntries.find(
         (entry) =>

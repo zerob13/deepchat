@@ -13,6 +13,7 @@ import type {
 } from '@shared/types/tape-replay'
 import { SUMMARY_ANCHOR_NAMES, type DeepChatTapeEntryRow } from '../domain/entry'
 import { buildEffectiveTapeView } from '../domain/effectiveView'
+import { readTapeMessageRetractionId, tapeEntryToMessageRecord } from '../domain/effectiveSemantics'
 import {
   collectEntryIds,
   hashString,
@@ -211,6 +212,49 @@ export class TapeViewReplayService {
 
   private get table() {
     return this.providers.getEntryStore()
+  }
+
+  getEffectiveUserMessageSourceEntryId(sessionId: string, messageId: string): number | null {
+    if (!sessionId.trim() || !messageId.trim()) {
+      throw new Error('User-message Tape source identity is invalid.')
+    }
+    const rows = this.table.getMessageSourceEntries(sessionId, messageId)
+    for (const row of rows) {
+      if (
+        row.session_id !== sessionId ||
+        row.source_type !== 'message' ||
+        row.source_id !== messageId
+      ) {
+        throw new Error('User-message Tape source history is invalid.')
+      }
+      if (row.kind === 'message') {
+        const record = tapeEntryToMessageRecord(row)
+        if (
+          !record ||
+          row.name !== `message/${record.role}` ||
+          record.sessionId !== sessionId ||
+          record.id !== messageId
+        ) {
+          throw new Error('User-message Tape source physical envelope is invalid.')
+        }
+      } else if (
+        row.kind !== 'event' ||
+        row.name !== 'message/retracted' ||
+        readTapeMessageRetractionId(row) !== messageId
+      ) {
+        throw new Error('User-message Tape source history is invalid.')
+      }
+    }
+    const effective = buildEffectiveTapeView(rows, { includePending: true }).messageEntries
+    if (effective.length === 0) return null
+    if (
+      effective.length !== 1 ||
+      effective[0].record.sessionId !== sessionId ||
+      effective[0].record.id !== messageId
+    ) {
+      throw new Error('User-message Tape source resolution is ambiguous.')
+    }
+    return effective[0].record.role === 'user' ? effective[0].entryId : null
   }
 
   private requireRuntimeSkillJournalEvidence(input: {
@@ -710,6 +754,23 @@ export class TapeViewReplayService {
         if (sourceEntryId > manifest.latestEntryId || !evidenceRows.has(sourceEntryId)) {
           throw new Error('Schema-6 Skill context source evidence is missing.')
         }
+      }
+      if (context.activationScope === 'message') {
+        const sourceRow = evidenceRows.get(context.sourceEntryIds[0])
+        const sourceRecord = sourceRow ? tapeEntryToMessageRecord(sourceRow) : null
+        if (
+          context.sourceEntryIds.length !== 1 ||
+          !sourceRow ||
+          sourceRow.source_type !== 'message' ||
+          sourceRow.source_id !== sourceRecord?.id ||
+          sourceRow.name !== 'message/user' ||
+          sourceRecord?.sessionId !== manifest.sessionId ||
+          sourceRecord.role !== 'user'
+        ) {
+          throw new Error('Schema-6 message Skill source is not a user-message fact.')
+        }
+      } else if (context.activationScope === 'session' && context.sourceEntryIds.length !== 0) {
+        throw new Error('Schema-6 Session Skill context must not claim message sources.')
       }
     }
   }

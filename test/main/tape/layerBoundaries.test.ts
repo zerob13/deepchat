@@ -518,7 +518,7 @@ describe('Tape layer boundaries', () => {
     expect(declaredMembers).not.toContain('readSkillMaterialization')
   })
 
-  it('does not activate the inert Skill materialization foundation from production consumers', async () => {
+  it('confines Skill materialization authority to the dedicated runtime bridge', async () => {
     const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
     const callSites = listTypeScriptSources(MAIN_SOURCE_ROOT, fs)
       .filter((file) => !isInside(TAPE_ROOT, file))
@@ -529,7 +529,7 @@ describe('Tape layer boundaries', () => {
           : []
       })
 
-    expect(callSites).toEqual([])
+    expect(callSites).toEqual(['agent/deepchat/runtime/skillContextMaterializer.ts'])
   })
 
   it.each([

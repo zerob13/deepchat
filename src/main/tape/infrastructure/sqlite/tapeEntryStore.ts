@@ -824,6 +824,20 @@ export class DeepChatTapeEntriesTable
     return this.getByEntryIds(sessionId, [entryId])[0]
   }
 
+  getMessageSourceEntries(sessionId: string, messageId: string): DeepChatTapeEntryRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND source_type = 'message'
+           AND source_id = ?
+           AND (kind = 'message' OR (kind = 'event' AND name = 'message/retracted'))
+         ORDER BY entry_id ASC`
+      )
+      .all(sessionId, messageId) as DeepChatTapeEntryRow[]
+  }
+
   getBootstrapIncarnation(sessionId: string): string | undefined {
     const row = this.db
       .prepare(
