@@ -118,3 +118,21 @@
 - [x] Require the dispatch commit capability in the harness-internal execution port type.
 - [x] Add focused query, payload-minimization, and port-contract coverage.
 - [x] Run required validation, review unstaged and staged diffs, commit, and push normally.
+
+## 11. Journal v2 Programmatic Extension
+
+- [ ] Add discriminated provider and nested identities without rewriting historical v1 facts.
+- [ ] Reserve bounded contiguous plan-index child ordinals before approval/T1; reject caller-,
+      materialization-, completion-order, reuse, and payload conflicts.
+- [ ] Bind canonical target, definition, argument, and capability hashes with strict conflict checks.
+- [ ] Add process-live parent-operation control and authoritative settlement receipts across CLI.
+- [ ] Derive invocation grants after the outer call exists, arm only after new parent T1, and bind
+      settlement to the canonical outer-result hash.
+- [ ] Reject unarmed grants and foreground CLI yield/detach paths before they can outlive outer T2.
+- [ ] Enforce outer/child T1/T2/projection causality and reject outer T2/`run_terminal` while any
+      Programmatic T1 remains unmatched.
+- [ ] Recheck all child capability, TaskContract, authority, approval, quota, and abort gates.
+- [ ] Persist no raw args/results/errors, MCP envelopes, binary data, or temporary paths.
+- [ ] Add focused failure-matrix, terminal-fence failpoint, corruption, crash, and v1/v2
+      compatibility tests.
+- [ ] Perform a severity-ranked review before each commit and do not push.
