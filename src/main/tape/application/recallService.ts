@@ -1,4 +1,3 @@
-import logger from 'electron-log'
 import type {
   AgentTapeAnchorsOptions,
   AgentTapeContextEntry,
@@ -155,9 +154,7 @@ export class TapeRecallService {
         }
       } catch (error) {
         skipProjectionSearch = true
-        logger.warn(
-          `[Tape] projection fast-path search failed; falling back to effective search: ${String(error)}`
-        )
+        console.warn('[Tape] Projection search failed; using effective search:', error)
       }
     }
 
@@ -178,9 +175,7 @@ export class TapeRecallService {
         .search(sessionId, query, searchInput)
         .map((row) => this.toProjectedSearchResult(row, rowByEntryId.get(row.entry_id)))
     } catch (error) {
-      logger.warn(
-        `[Tape] projection search failed; falling back to effective search: ${String(error)}`
-      )
+      console.warn('[Tape] Projection search failed; using effective search:', error)
       return searchEffectiveTapeRows(rows, query, searchInput).map((row) =>
         this.toSearchResult(row)
       )
@@ -335,9 +330,7 @@ export class TapeRecallService {
         }
       }
     } catch (error) {
-      logger.warn(
-        `[Tape] linked projection search failed; using read-only Tape fallback: ${String(error)}`
-      )
+      console.warn('[Tape] Linked projection search failed; using read-only fallback:', error)
       uncoveredSources = sources
     }
 

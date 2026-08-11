@@ -11,13 +11,6 @@ import { DEFAULT_IMPORTANT_HOOK_EVENTS } from '../../../src/shared/hooksNotifica
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
 
 vi.mock('child_process', () => ({ spawn: spawnMock }))
-vi.mock('electron-log', () => ({
-  default: {
-    warn: vi.fn(),
-    info: vi.fn(),
-    error: vi.fn()
-  }
-}))
 
 import { expandHookCommandPlaceholders, HookService, truncateText } from '../../../src/main/hook'
 import {
@@ -70,6 +63,7 @@ describe('HookService helpers', () => {
   })
 
   it('normalizeHooksNotificationsConfig sanitizes hook entries', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const normalized = normalizeHooksNotificationsConfig({
       hooks: [
         {
@@ -104,6 +98,7 @@ describe('HookService helpers', () => {
       })
     )
     expect(normalized.hooks[1].id).toBeTruthy()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('extra'))
   })
 
   it('normalizeHooksNotificationsConfig resets legacy config to defaults', () => {
@@ -117,7 +112,12 @@ describe('HookService helpers', () => {
   })
 
   it('normalizeHooksNotificationsConfig falls back to defaults for invalid input', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     expect(normalizeHooksNotificationsConfig(null)).toEqual(createDefaultHooksNotificationsConfig())
+    expect(warn).toHaveBeenCalledWith(
+      '[HooksNotifications] Invalid config, using defaults:',
+      expect.stringContaining('expected object')
+    )
   })
 
   it('normalizeHooksNotificationsConfig only enables hooks for boolean true', () => {
@@ -444,12 +444,14 @@ describe('HookService delivery ordering', () => {
   })
 
   it('keeps delivering after a hook command fails to spawn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const spawnError = new Error('spawn failed')
     const { service } = createHarness([
       enabledHook('broken', ['PostToolUse']),
       enabledHook('healthy', ['PostToolUse'])
     ])
     spawnMock.mockImplementationOnce(() => {
-      throw new Error('spawn failed')
+      throw spawnError
     })
 
     service.notify(toolEvent('session-1', 'first'))
@@ -458,6 +460,7 @@ describe('HookService delivery ordering', () => {
     await flush()
 
     expect(spawnMock).toHaveBeenCalledTimes(4)
+    expect(warn).toHaveBeenCalledWith('[HooksNotifications] Hook "broken" failed:', spawnError)
   })
 
   it('stops delivering queued events once the service is stopped', async () => {

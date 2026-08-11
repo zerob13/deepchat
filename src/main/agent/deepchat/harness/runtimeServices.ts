@@ -32,9 +32,11 @@ import type { TranscriptMutationCoordinator } from '@/agent/deepchat/runtime/tra
 import type { TurnCoordinator } from '@/agent/deepchat/runtime/turnCoordinator'
 import type {
   DeepChatEventPublisher,
-  DeepChatSessionUpdatePublisher
+  DeepChatSessionUpdatePublisher,
+  RunJournalObserver
 } from '@/agent/deepchat/runtime/types'
 import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
+import type { MonotonicClock } from '@/lib/monotonicTime'
 
 export type DeepChatHarnessSkillPort = Pick<
   SkillServicePort,
@@ -75,6 +77,8 @@ export interface DeepChatHarnessDependencies {
   interactionContinuationAdmission: InteractionContinuationAdmissionPort
   taskContractContext: DeepChatTaskContractContextPort
   commandShell: Pick<CommandShellService, 'resolveForTurn' | 'resolveProfile'>
+  runJournalObserver?: RunJournalObserver
+  diagnosticNow?: MonotonicClock
 }
 
 /**
