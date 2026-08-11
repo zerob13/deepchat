@@ -139,8 +139,9 @@ materialization facts for audit and same-execution recovery; compaction does not
 bodies.
 
 Remove the dormant mention fallback that writes ordinary message selection into Session state.
-Stop first-message Session creation from copying message Skill refs into persistent active state.
-Existing Session active state remains accepted and projected.
+Preserve the verified regular-session path, which already forwards first-message Skill refs through
+`startInitialTurn` without persisting them. Detached and subagent creation keep their explicit
+Session-active assignment semantics. Existing Session active state remains accepted and projected.
 
 ## Compatibility UI
 

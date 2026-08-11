@@ -69,8 +69,9 @@
 - [x] Record Skill-context refs and projection hashes in strict Skill-bearing ViewManifests.
 - [x] Leave bounded historical markers without persisting full bodies in transcript history.
 - [x] Enforce one complete body per Skill per request.
-- [ ] Stop first-message selection from becoming Session active state.
-- [ ] Remove the dormant persistent mention fallback.
+- [x] Verify regular first-message selection remains message-scoped while preserving explicit
+      detached and subagent Session-active assignment.
+- [x] Remove the dormant persistent mention fallback.
 - [ ] Add continuation/new-execution, source drift, deduplication, recovery, and semantic tests.
 - [ ] Review and commit the projection slice.
 
