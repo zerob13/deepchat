@@ -103,6 +103,31 @@ function createV5Fixture(permissionMode: 'default' | 'auto_approve' = 'default')
   }
 }
 
+function createSkillContext() {
+  return {
+    activationScope: 'message' as const,
+    agentId: 'deepchat',
+    sourceType: 'builtin' as const,
+    sourceId: 'builtin-skills',
+    skillName: 'review',
+    authoritativeRef: {
+      kind: 'materialization' as const,
+      entryId: 6,
+      tapeIncarnationId: 'tape-1',
+      agentId: 'deepchat',
+      sourceType: 'builtin' as const,
+      sourceId: 'builtin-skills',
+      skillName: 'review',
+      effectiveContentHash: 'a'.repeat(64)
+    },
+    providerRole: 'user' as const,
+    sourceEntryIds: [5],
+    projectedContentHash: 'a'.repeat(64),
+    projectionVersion: 1,
+    deduplicationSource: 'message' as const
+  }
+}
+
 describe('tapeViewManifest', () => {
   it('hashes JSON with stable object key ordering', () => {
     expect(hashJson({ b: 1, a: { d: 4, c: 3 } })).toBe(hashJson({ a: { c: 3, d: 4 }, b: 1 }))
@@ -303,6 +328,95 @@ describe('tapeViewManifest', () => {
 
     expect(normalizeStoredTapeViewManifest(withoutContract, 's1')).toBeNull()
     expect(createTapeViewManifest({ ...input, executionContract: undefined }).schemaVersion).toBe(4)
+  })
+
+  it('creates hash-v4 Skill manifests with or without a matching execution contract', () => {
+    const { input, executionContract } = createV5Fixture()
+    const skillInput = {
+      ...input,
+      runId: executionContract.request.runId,
+      tapeIncarnationId: 'tape-1',
+      skillContexts: [createSkillContext()]
+    }
+
+    const withContract = createTapeViewManifest(skillInput)
+    const withoutContract = createTapeViewManifest({ ...skillInput, executionContract: undefined })
+
+    expect(withContract).toMatchObject({ schemaVersion: 6, hashVersion: 4 })
+    expect(withContract.executionContract).toBe(executionContract)
+    expect(withoutContract).toMatchObject({ schemaVersion: 6, hashVersion: 4 })
+    expect(withoutContract).not.toHaveProperty('executionContract')
+    expect(verifyTapeViewManifestHash(withContract)).toBe('valid')
+    expect(verifyTapeViewManifestHash(withoutContract)).toBe('valid')
+    expect(verifyTapeViewManifestHash({ ...createTapeViewManifest(input), hashVersion: 4 })).toBe(
+      'invalid'
+    )
+    expect(normalizeStoredTapeViewManifest(JSON.parse(JSON.stringify(withContract)), 's1')).toEqual(
+      withContract
+    )
+  })
+
+  it('fails closed on malformed or mismatched Skill-manifest identity', () => {
+    const { input, executionContract } = createV5Fixture()
+    const skillInput = {
+      ...input,
+      runId: executionContract.request.runId,
+      tapeIncarnationId: 'tape-1',
+      skillContexts: [createSkillContext()]
+    }
+    const manifest = createTapeViewManifest(skillInput)
+
+    expect(() => createTapeViewManifest({ ...skillInput, runId: 'different-run' })).toThrow(
+      /request identity/
+    )
+    expect(() => createTapeViewManifest({ ...input, requireDurableManifest: true })).toThrow(
+      /requires Skill contexts/
+    )
+    expect(
+      normalizeStoredTapeViewManifest(
+        {
+          ...manifest,
+          skillContexts: [{ ...manifest.skillContexts[0], sourceType: 'unknown' }]
+        },
+        's1'
+      )
+    ).toBeNull()
+    expect(verifyTapeViewManifestHash({ ...manifest, runId: 'different-run' })).toBe('invalid')
+    expect(() =>
+      createTapeViewManifest({
+        ...skillInput,
+        skillContexts: [
+          {
+            ...createSkillContext(),
+            projectedContentHash: 'b'.repeat(64)
+          }
+        ]
+      })
+    ).toThrow(/materialized Skill context/)
+    expect(() =>
+      createTapeViewManifest({
+        ...skillInput,
+        skillContexts: [
+          {
+            activationScope: 'runtime_view',
+            agentId: 'deepchat',
+            sourceType: 'builtin',
+            sourceId: 'builtin-skills',
+            skillName: 'review',
+            authoritativeRef: {
+              kind: 'tool_result',
+              entryId: 6,
+              contentHash: 'a'.repeat(64)
+            },
+            providerRole: 'tool',
+            sourceEntryIds: [],
+            projectedContentHash: 'b'.repeat(64),
+            projectionVersion: 1,
+            deduplicationSource: 'runtime_view'
+          }
+        ]
+      })
+    ).toThrow(/runtime-view Skill context/)
   })
 
   it('keeps execution metadata out of provider-view tool hashes', () => {

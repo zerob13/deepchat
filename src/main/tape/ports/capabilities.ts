@@ -11,6 +11,11 @@ import type {
 } from '../domain/facts'
 import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
 import type {
+  TapeSkillMaterializationInput,
+  TapeSkillMaterializationRef,
+  TapeSkillMaterializationReceipt
+} from '../domain/skillMaterialization'
+import type {
   CommitExecutionDispatchInput,
   CommitExecutionRunStartedInput,
   CommitExecutionRunTerminalInput,
@@ -53,12 +58,30 @@ export interface TapeViewManifestReader {
   listViewManifestsByMessage(sessionId: string, messageId: string): DeepChatTapeViewManifestRecord[]
 }
 
+export interface TapeExecutionViewManifestReader {
+  getViewManifestByExecutionBinding(input: {
+    sessionId: string
+    runId: string
+    requestSeq: number
+  }): DeepChatTapeViewManifestRecord | null
+}
+
 export interface TapeViewManifestWriter {
   appendViewManifest(manifest: DeepChatTapeViewManifest): void
 }
 
 export interface TapeToolFactWriter {
   appendToolFact(input: TapeToolFactInput): Promise<TapeEntryRef>
+}
+
+export interface TapeSkillMaterializationWriter {
+  materializeSkillContexts(
+    inputs: readonly TapeSkillMaterializationInput[]
+  ): TapeSkillMaterializationReceipt[]
+}
+
+export interface TapeSkillMaterializationReader {
+  readSkillMaterialization(ref: TapeSkillMaterializationRef): TapeSkillMaterializationReceipt
 }
 
 export interface TapeProviderAttemptWriter {
@@ -101,7 +124,7 @@ export interface TapeMessageFactWriter {
   appendMessageRetraction(record: ChatMessageRecord, reason: string): number
 }
 
-export interface TapeRawEntryReader {
+export interface TapeNonContextEntryReader {
   getBySession(sessionId: string): DeepChatTapeEntryRow[]
 }
 

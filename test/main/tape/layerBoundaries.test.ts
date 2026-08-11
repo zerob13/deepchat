@@ -491,6 +491,47 @@ describe('Tape layer boundaries', () => {
     expect(violations).toEqual([])
   })
 
+  it('keeps Skill materialization authority out of the provider-loop Tape port', async () => {
+    const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const sourceText = fs.readFileSync(TAPE_CAPABILITIES_MODULE + '.ts', 'utf8')
+    const sourceFile = ts.createSourceFile(
+      TAPE_CAPABILITIES_MODULE + '.ts',
+      sourceText,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    )
+    const declaration = sourceFile.statements.find(
+      (statement): statement is ts.InterfaceDeclaration =>
+        ts.isInterfaceDeclaration(statement) && statement.name.text === 'DeepChatLoopTapePort'
+    )
+    const inheritedCapabilities =
+      declaration?.heritageClauses
+        ?.flatMap((clause) => clause.types)
+        .map((type) => type.expression.getText(sourceFile)) ?? []
+    const declaredMembers =
+      declaration?.members.map((member) => member.name?.getText(sourceFile) ?? '') ?? []
+
+    expect(inheritedCapabilities).not.toContain('TapeSkillMaterializationWriter')
+    expect(inheritedCapabilities).not.toContain('TapeSkillMaterializationReader')
+    expect(declaredMembers).not.toContain('materializeSkillContexts')
+    expect(declaredMembers).not.toContain('readSkillMaterialization')
+  })
+
+  it('does not activate the inert Skill materialization foundation from production consumers', async () => {
+    const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const callSites = listTypeScriptSources(MAIN_SOURCE_ROOT, fs)
+      .filter((file) => !isInside(TAPE_ROOT, file))
+      .flatMap((file) => {
+        const source = fs.readFileSync(file, 'utf8')
+        return /\.(?:materializeSkillContexts|readSkillMaterialization)\s*\(/.test(source)
+          ? [relativeToMain(file)]
+          : []
+      })
+
+    expect(callSites).toEqual([])
+  })
+
   it.each([
     ['Session', '@/session/data/transcript'],
     ['Agent', '@/agent/deepchat/runtime/process'],

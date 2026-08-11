@@ -113,6 +113,25 @@ function createMockSqlitePresenter() {
     getBySession: vi.fn((sessionId: string) =>
       tapeEntries.filter((entry) => entry.session_id === sessionId)
     ),
+    getBySessionExcludingContext: vi.fn((sessionId: string) =>
+      tapeEntries.filter((entry) => entry.session_id === sessionId && entry.kind !== 'context')
+    ),
+    getByEntryIds: vi.fn((sessionId: string, entryIds: readonly number[]) => {
+      const requestedIds = new Set(entryIds)
+      return tapeEntries.filter(
+        (entry) => entry.session_id === sessionId && requestedIds.has(entry.entry_id)
+      )
+    }),
+    getViewManifestEventsByMessage: vi.fn((sessionId: string, messageId: string) =>
+      tapeEntries.filter(
+        (entry) =>
+          entry.session_id === sessionId &&
+          entry.kind === 'event' &&
+          entry.name === 'view/assembled' &&
+          entry.source_type === 'runtime_event' &&
+          entry.source_id === messageId
+      )
+    ),
     getMaxEventSourceSeq: vi.fn(
       (sessionId: string, name: string, sourceType: string, sourceId: string) =>
         Math.max(

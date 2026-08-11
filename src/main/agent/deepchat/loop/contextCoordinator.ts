@@ -453,6 +453,7 @@ export interface ProviderAttemptInput<TSelection> {
   manifest: ProviderAttemptManifestPort<TSelection>
   executionContract?: ProviderAttemptExecutionContractPort
   strictViewContract?: boolean
+  requireDurableManifest?: boolean
   rateGate: ProviderRateGatePort
   provider: ProviderAttemptStreamPort
   outcome: ProviderAttemptOutcomePort
@@ -675,7 +676,7 @@ export class DeepChatContextCoordinator {
         })
       } catch (error) {
         if (executionContract) {
-          if (input.strictViewContract) {
+          if (input.strictViewContract || input.requireDurableManifest) {
             reportManifestError(error)
             throw error
           }
@@ -689,6 +690,7 @@ export class DeepChatContextCoordinator {
           )
         } else {
           reportManifestError(error)
+          if (input.requireDurableManifest) throw error
         }
       }
       bindActiveRequestContract(input.run, requestSeq, executionContract)

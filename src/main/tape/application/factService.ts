@@ -119,8 +119,9 @@ export class TapeFactService
   }
 
   getMessageRecords(sessionId: string): ChatMessageRecord[] {
-    return buildEffectiveTapeView(this.table.getBySession(sessionId), { includePending: true })
-      .messageRecords
+    return buildEffectiveTapeView(this.table.getBySessionExcludingContext(sessionId), {
+      includePending: true
+    }).messageRecords
   }
 
   appendAnchor(input: TapeAnchorAppendInput): DeepChatTapeEntryRow {

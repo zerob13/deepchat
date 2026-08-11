@@ -78,6 +78,7 @@ function createAttemptInput(options?: {
   buildExecutionContract?: (input: any) => any
   viewContext?: false
   strictViewContract?: boolean
+  requireDurableManifest?: boolean
 }) {
   const run = createRun()
   const order: string[] = []
@@ -132,6 +133,7 @@ function createAttemptInput(options?: {
       supportsAudioInput: true,
       traceDebugEnabled: true,
       strictViewContract: options?.strictViewContract,
+      requireDurableManifest: options?.requireDurableManifest,
       viewContext:
         options?.viewContext === false
           ? undefined
@@ -533,6 +535,37 @@ describe('DeepChatContextCoordinator', () => {
       requestSeq: 1,
       executionContract: null
     })
+  })
+
+  it('requires Skill-bearing manifest durability without requiring an ExecutionContract', async () => {
+    const optionalContract = createAttemptInput({
+      requireDurableManifest: true,
+      buildExecutionContract: () => {
+        throw new Error('optional contract unavailable')
+      }
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(optionalContract.input))
+    ).resolves.toEqual([
+      { type: 'text', content: 'ok' },
+      { type: 'stop', stop_reason: 'complete' }
+    ])
+    expect(optionalContract.manifests).toHaveLength(1)
+    expect(optionalContract.manifests[0].executionContract).toBeUndefined()
+    expect(optionalContract.providerRequests[0].executionContract).toBeNull()
+
+    const missingManifest = createAttemptInput({
+      requireDurableManifest: true,
+      appendManifest: () => {
+        throw new Error('required Skill manifest unavailable')
+      }
+    })
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(missingManifest.input))
+    ).rejects.toThrow('required Skill manifest unavailable')
+    expect(missingManifest.providerRequests).toHaveLength(0)
+    expect(missingManifest.order).not.toContain('rate')
   })
 
   it.each([

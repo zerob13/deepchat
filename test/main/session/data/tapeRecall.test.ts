@@ -20,6 +20,8 @@ import {
   createRecord,
   createTapeService
 } from './tapeTestHarness'
+import { TapeSkillMaterializationService } from '@/tape/application/skillMaterializationService'
+import { hashSkillEffectiveContent } from '@/tape/domain/skillMaterialization'
 
 function providerAttemptProvenance(overrides: Record<string, unknown> = {}) {
   return {
@@ -675,6 +677,61 @@ describe('SessionTape recall', () => {
     })
     expect(exhaustedContext.entries).toEqual([])
     expect(exhaustedContext.matchedEntryIds).toEqual([])
+  })
+
+  it('keeps physical context facts out of fallback search and context windows', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    const first = table.append({
+      sessionId: 's1',
+      kind: 'message',
+      name: 'message/user',
+      source: { type: 'message', id: 'm1', seq: 0 },
+      payload: {
+        record: createRecord({
+          id: 'm1',
+          orderSeq: 1,
+          content: JSON.stringify({ text: 'visible before', files: [], links: [] })
+        })
+      },
+      meta: { status: 'sent' }
+    })
+    const hidden = table.append({
+      sessionId: 's1',
+      kind: 'context',
+      name: 'skill/materialized',
+      source: { type: 'runtime_event', id: 'skill-source', seq: 0 },
+      payload: { effectiveContent: 'private-skill-materialization-needle' },
+      meta: {}
+    })
+    const second = table.append({
+      sessionId: 's1',
+      kind: 'message',
+      name: 'message/user',
+      source: { type: 'message', id: 'm2', seq: 0 },
+      payload: {
+        record: createRecord({
+          id: 'm2',
+          orderSeq: 2,
+          content: JSON.stringify({ text: 'visible after', files: [], links: [] })
+        })
+      },
+      meta: { status: 'sent' }
+    })
+
+    expect(service.search('s1', 'private-skill-materialization-needle')).toEqual([])
+    expect(service.getBySession('s1').some((entry) => entry.kind === 'context')).toBe(false)
+    expect(service.getContext('s1', [hidden.entry_id])).toMatchObject({
+      requestedEntryIds: [hidden.entry_id],
+      matchedEntryIds: [],
+      entries: []
+    })
+    expect(
+      service
+        .getContext('s1', [first.entry_id], { before: 0, after: 2 })
+        .entries.map((entry) => entry.entryId)
+    ).toEqual([first.entry_id, second.entry_id])
+    expect(service.getEffectiveMessageSourceSpan('s1', [hidden.entry_id])).toEqual([])
   })
 
   it('projects user message attachment metadata into search text and refs', () => {
@@ -2027,6 +2084,59 @@ describe('SessionTape recall', () => {
             'new linked marker'
           )
         ).toEqual([])
+      } finally {
+        db.close()
+      }
+    }
+  )
+
+  itIfSqlite(
+    `keeps materialized Skill bodies out of linked search and context${sqliteAvailable ? '' : ` (${sqliteSkipReason})`}`,
+    () => {
+      const db = new DatabaseCtor(':memory:')
+      try {
+        const table = new DeepChatTapeEntriesTable(db)
+        table.createTable()
+        table.ensureBootstrapAnchor('child-context')
+        const tapeIncarnationId = table.getBootstrapIncarnation('child-context')!
+        const materialization = new TapeSkillMaterializationService({
+          getSkillMaterializationStore: () => table
+        })
+        const fixtureHash = hashSkillEffectiveContent('fixture')
+        materialization.materializeSkillContexts([
+          {
+            sessionId: 'child-context',
+            expectedTapeIncarnationId: tapeIncarnationId,
+            agentId: 'agent-1',
+            sourceType: 'builtin',
+            sourceId: 'skill-source',
+            skillName: 'linked-isolation',
+            effectiveContent: 'must-not-enter-linked-reads',
+            builderVersion: 'test-builder',
+            renderedManifestHash: fixtureHash,
+            scriptInventoryHash: fixtureHash
+          }
+        ])
+        const visibleEntry = table.appendEvent({
+          sessionId: 'child-context',
+          name: 'child/visible',
+          data: { marker: 'linked-visible-marker' }
+        })
+        const source = {
+          sessionId: 'child-context',
+          maxEntryId: table.getMaxEntryId('child-context')
+        }
+
+        expect(
+          table.searchEffectiveSourcesAtHeads([source], 'must-not-enter-linked-reads')
+        ).toEqual([])
+        const contextRows = table.getEffectiveContextRowsAtHead(source, [visibleEntry.entry_id], {
+          before: 10,
+          after: 10,
+          limit: 20
+        })
+        expect(contextRows.some((row) => row.kind === 'context')).toBe(false)
+        expect(JSON.stringify(contextRows)).not.toContain('must-not-enter-linked-reads')
       } finally {
         db.close()
       }

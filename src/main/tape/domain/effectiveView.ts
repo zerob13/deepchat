@@ -183,6 +183,10 @@ export function buildEffectiveTapeView(
   const eventRows: DeepChatTapeEntryRow[] = []
 
   for (const row of [...rows].sort((left, right) => left.entry_id - right.entry_id)) {
+    // Context facts are behavioral evidence, never transcript/effective/search content.
+    if (row.kind === 'context') {
+      continue
+    }
     if (row.kind === 'anchor') {
       anchorRows.push(row)
       continue

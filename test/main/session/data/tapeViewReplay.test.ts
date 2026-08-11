@@ -1,6 +1,10 @@
 import type { TapeViewManifestBuildInput } from '@/tape/domain/viewManifest'
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import {
+  buildTapeSkillMaterializationRef,
+  hashSkillEffectiveContent
+} from '@/tape/domain/skillMaterialization'
+import {
   describe,
   expect,
   it,
@@ -33,6 +37,224 @@ import {
 } from './tapeTestHarness'
 
 describe('SessionTape view and replay', () => {
+  it('strictly binds materialized Skill evidence to one execution occurrence', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    table.ensureBootstrapAnchor('s1')
+    const tapeIncarnationId = table.getBootstrapIncarnation('s1')!
+    const sourceRow = table.append({
+      sessionId: 's1',
+      kind: 'message',
+      source: { type: 'message', id: 'u1', seq: 1 },
+      payload: { record: createRecord({ id: 'u1', orderSeq: 1 }) }
+    })
+    const effectiveContent = '# Review\n\nFollow the review contract.'
+    const contentHash = hashSkillEffectiveContent(effectiveContent)
+    const receipt = service.materializeSkillContexts([
+      {
+        sessionId: 's1',
+        expectedTapeIncarnationId: tapeIncarnationId,
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'builtin-skills',
+        skillName: 'review',
+        effectiveContent,
+        builderVersion: 'skill-effective-v1',
+        renderedManifestHash: hashSkillEffectiveContent('manifest'),
+        scriptInventoryHash: hashSkillEffectiveContent('scripts')
+      }
+    ])[0]
+    table.getBySession.mockClear()
+    const sourceMaps = service.getViewManifestSourceMaps('s1')
+    expect(sourceMaps.latestEntryId).toBe(receipt.entryId)
+    expect(table.getBySession).not.toHaveBeenCalled()
+    expect(table.getBySessionExcludingContext).toHaveBeenCalledWith('s1')
+    const { sessionId: _sessionId, ...authoritativeRef } = buildTapeSkillMaterializationRef(receipt)
+    const baseInput: TapeViewManifestBuildInput = {
+      sessionId: 's1',
+      messageId: 'a1',
+      requestSeq: 2,
+      taskType: 'chat',
+      policy: 'legacy_context_v1',
+      policyVersion: 1,
+      messages: [{ role: 'user', content: effectiveContent }],
+      tools: [],
+      latestEntryId: receipt.entryId,
+      anchorEntryIds: [1],
+      included: [],
+      excluded: [],
+      tokenBudget: {
+        contextLength: 1000,
+        requestedMaxTokens: 100,
+        effectiveMaxTokens: 100,
+        reserveTokens: 100,
+        toolReserveTokens: 0
+      },
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      summaryCursorOrderSeq: 1,
+      supportsVision: false,
+      supportsAudioInput: false,
+      traceDebugEnabled: false,
+      runId: 'run-1',
+      tapeIncarnationId,
+      skillContexts: [
+        {
+          activationScope: 'message',
+          agentId: receipt.payload.agentId,
+          sourceType: receipt.payload.sourceType,
+          sourceId: receipt.payload.sourceId,
+          skillName: receipt.payload.skillName,
+          authoritativeRef,
+          providerRole: 'user',
+          sourceEntryIds: [sourceRow.entry_id],
+          projectedContentHash: contentHash,
+          projectionVersion: 1,
+          deduplicationSource: 'message'
+        }
+      ],
+      assembledAt: 200
+    }
+    const manifest = createTapeViewManifest(baseInput)
+    const first = service.appendViewManifest(manifest)
+    const second = service.appendViewManifest(manifest)
+    const laterRetry = service.appendViewManifest(
+      createTapeViewManifest({ ...baseInput, assembledAt: 999 })
+    )
+
+    expect(second.entry_id).toBe(first.entry_id)
+    expect(laterRetry.entry_id).toBe(first.entry_id)
+    expect(
+      service.getViewManifestByExecutionBinding({
+        sessionId: 's1',
+        runId: 'run-1',
+        requestSeq: 2
+      })?.entryId
+    ).toBe(first.entry_id)
+    expect(() =>
+      service.appendViewManifest(createTapeViewManifest({ ...baseInput, modelId: 'other-model' }))
+    ).toThrow(/Conflicting schema-6 ViewManifest binding/)
+    expect(entries.filter((entry) => entry.name === 'view/assembled')).toHaveLength(1)
+
+    table.getBySession.mockClear()
+    table.getViewManifestEventsByMessage.mockClear()
+    const replay = service.exportReplaySlice('s1', 'a1', {
+      requestSeq: 2,
+      includeTapePayloads: true
+    })
+    expect(table.getBySession).not.toHaveBeenCalled()
+    expect(table.getViewManifestEventsByMessage).toHaveBeenCalledWith('s1', 'a1')
+    expect(replay?.integrity).toBe('valid')
+    expect(replay?.refs.skillContextEntryIds).toEqual([sourceRow.entry_id, receipt.entryId])
+    const materializationSnapshot = replay?.entries.find(
+      (entry) => entry.entryId === receipt.entryId
+    )
+    expect(materializationSnapshot).toBeDefined()
+    expect(materializationSnapshot).not.toHaveProperty('payload')
+    expect(JSON.stringify(replay)).not.toContain(effectiveContent)
+
+    entries.find((entry) => entry.entry_id === receipt.entryId)!.payload_json = '{}'
+    expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 2 })?.integrity).toBe('invalid')
+  })
+
+  it('validates runtime Skill-view tool-result evidence and physical manifest identity', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    table.ensureBootstrapAnchor('s1')
+    const tapeIncarnationId = table.getBootstrapIncarnation('s1')!
+    const response = '# Runtime Skill\n\nUse this only in the current loop.'
+    const contentHash = hashSkillEffectiveContent(response)
+    const toolResult = table.append({
+      sessionId: 's1',
+      kind: 'tool_result',
+      source: { type: 'tool_result', id: 'tool-call-1', seq: 0 },
+      payload: { messageId: 'a1', toolCallId: 'tool-call-1', response },
+      meta: { status: 'success' }
+    })
+    const manifest = createTapeViewManifest({
+      sessionId: 's1',
+      messageId: 'a1',
+      requestSeq: 3,
+      taskType: 'tool_loop',
+      policy: 'tool_loop_shadow',
+      policyVersion: null,
+      messages: [{ role: 'tool', content: response, tool_call_id: 'tool-call-1' }],
+      tools: [],
+      latestEntryId: toolResult.entry_id,
+      anchorEntryIds: [1],
+      included: [],
+      excluded: [],
+      tokenBudget: {
+        contextLength: 1000,
+        requestedMaxTokens: 100,
+        effectiveMaxTokens: 100,
+        reserveTokens: 100,
+        toolReserveTokens: 0
+      },
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      summaryCursorOrderSeq: 1,
+      supportsVision: false,
+      supportsAudioInput: false,
+      traceDebugEnabled: false,
+      runId: 'run-2',
+      tapeIncarnationId,
+      skillContexts: [
+        {
+          activationScope: 'runtime_view',
+          agentId: 'deepchat',
+          sourceType: 'builtin',
+          sourceId: 'builtin-skills',
+          skillName: 'runtime-skill',
+          authoritativeRef: { kind: 'tool_result', entryId: toolResult.entry_id, contentHash },
+          providerRole: 'tool',
+          sourceEntryIds: [],
+          projectedContentHash: contentHash,
+          projectionVersion: 1,
+          deduplicationSource: 'runtime_view'
+        }
+      ],
+      assembledAt: 300
+    })
+    const manifestRow = service.appendViewManifest(manifest)
+    manifestRow.source_type = 'message'
+
+    expect(() =>
+      service.getViewManifestByExecutionBinding({
+        sessionId: 's1',
+        runId: 'run-2',
+        requestSeq: 3
+      })
+    ).toThrow(/physical envelope is corrupt/)
+    manifestRow.source_type = 'runtime_event'
+
+    const provenanceKey = manifestRow.provenance_key
+    manifestRow.provenance_key = 'wrong-binding'
+    expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 3 })?.integrity).toBe('invalid')
+    manifestRow.provenance_key = provenanceKey
+
+    const metadata = manifestRow.meta_json
+    manifestRow.meta_json = '{}'
+    expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 3 })?.integrity).toBe('invalid')
+    manifestRow.meta_json = metadata
+
+    manifestRow.created_at += 1
+    expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 3 })?.integrity).toBe('invalid')
+    manifestRow.created_at -= 1
+
+    const bootstrap = entries.find((entry) => entry.name === 'session/start')!
+    bootstrap.meta_json = JSON.stringify({ tapeIncarnationId: 'replacement-incarnation' })
+    expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 3 })?.integrity).toBe('invalid')
+    bootstrap.meta_json = JSON.stringify({ tapeIncarnationId })
+
+    entries.find((entry) => entry.entry_id === toolResult.entry_id)!.payload_json = JSON.stringify({
+      messageId: 'a1',
+      toolCallId: 'tool-call-1',
+      response: 'tampered'
+    })
+    expect(() => service.appendViewManifest(manifest)).toThrow(/tool-result authority is invalid/)
+  })
+
   it('stores and lists view manifests as idempotent tape events', () => {
     const { table, entries } = createTapeTableMock()
     const service = new SessionTape({

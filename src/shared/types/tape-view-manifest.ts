@@ -1,4 +1,5 @@
 import type { DeepChatExecutionContract } from './execution-contract'
+import type { SkillSourceType } from './skillManagement'
 
 export type DeepChatTapeViewTaskType = 'chat' | 'resume' | 'tool_loop'
 
@@ -127,7 +128,66 @@ export interface DeepChatTapeViewManifestV5 extends DeepChatTapeViewManifestBase
   executionContract: DeepChatExecutionContract
 }
 
-export type DeepChatTapeViewManifest = DeepChatTapeViewManifestLegacy | DeepChatTapeViewManifestV5
+export type DeepChatTapeSkillActivationScope = 'message' | 'session' | 'runtime_view'
+export type DeepChatTapeSkillDeduplicationSource = 'session' | 'message' | 'runtime_view'
+
+export interface DeepChatTapeSkillMaterializationRef {
+  kind: 'materialization'
+  entryId: number
+  tapeIncarnationId: string
+  agentId: string
+  sourceType: SkillSourceType
+  sourceId: string
+  skillName: string
+  effectiveContentHash: string
+}
+
+export interface DeepChatTapeSkillToolResultRef {
+  kind: 'tool_result'
+  entryId: number
+  contentHash: string
+}
+
+interface DeepChatTapeSkillContextBase {
+  agentId: string
+  sourceType: SkillSourceType
+  sourceId: string
+  skillName: string
+  sourceEntryIds: number[]
+  projectedContentHash: string
+  projectionVersion: number
+  deduplicationSource: DeepChatTapeSkillDeduplicationSource
+}
+
+export interface DeepChatTapeMaterializedSkillContext extends DeepChatTapeSkillContextBase {
+  activationScope: 'message' | 'session'
+  authoritativeRef: DeepChatTapeSkillMaterializationRef
+  providerRole: 'user' | 'system'
+}
+
+export interface DeepChatTapeRuntimeViewSkillContext extends DeepChatTapeSkillContextBase {
+  activationScope: 'runtime_view'
+  authoritativeRef: DeepChatTapeSkillToolResultRef
+  providerRole: 'tool'
+}
+
+export type DeepChatTapeSkillContext =
+  | DeepChatTapeMaterializedSkillContext
+  | DeepChatTapeRuntimeViewSkillContext
+
+export interface DeepChatTapeViewManifestV6 extends DeepChatTapeViewManifestBase {
+  schemaVersion: 6
+  hashVersion: 4
+  runId: string
+  tapeIncarnationId: string
+  skillContexts: DeepChatTapeSkillContext[]
+  executionContract?: DeepChatExecutionContract
+}
+
+export type DeepChatTapeViewManifest =
+  | DeepChatTapeViewManifestLegacy
+  | DeepChatTapeViewManifestV5
+  | DeepChatTapeViewManifestV6
 
 export type DeepChatTapeViewManifestIntegrity = 'valid' | 'invalid' | 'unverified'
 

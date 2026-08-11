@@ -1,5 +1,17 @@
 # Tape 系统
 
+## 惰性的 Skill materialization fact
+
+Tape 物理支持 `context` entry。`skill/materialized` schema 1 是完整 effective Skill content 的
+保留 canonical fact：它绑定 Session 和 Tape incarnation、按内容寻址，并且只能通过由
+`SessionTape` 组合的窄 materialization reader/writer 访问。generic append 不能伪造该保留 fact name，
+provider loop 也尚未获得该能力；复用会在同步事务内验证 canonical payload 全等和 hash。
+
+`context` 不进入 effective view、transcript、Tape search/context tool、search/Memory projection 或
+fork merge，Replay 导出即使显式请求普通 payload 也只暴露它的 hash/引用元数据。ViewManifest
+schema 6/hash 4 可以把 entry ID 作为证据引用，但 manifest 不成为内容 sidecar；schemas 1–5 的
+hash、Replay 结构和语义保持不变。
+
 Tape 是 Session 同寿命的 append-only fact store，在同一个物理 entry 序列中承载三族语义隔离的事实：
 
 - Context Tape 保存可回放消息事实、anchor、ViewManifest、provider attempt 和 Subagent lineage，

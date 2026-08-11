@@ -20,6 +20,8 @@ import {
   normalizeStoredTapeViewManifest,
   withReplaySliceHash
 } from '../domain/replay'
+import { canonicalJsonStringifyData, hashJsonData } from '../domain/canonicalJson'
+import { readTapeSkillMaterializationRef } from '../domain/skillMaterialization'
 import {
   hashJson,
   TAPE_VIEW_MANIFEST_EVENT_NAME,
@@ -96,6 +98,12 @@ function deriveSelectedMemoryIds(value: unknown): string[] | null {
 
 function readNonNegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function canonicalSchema6Occurrence(
+  manifest: DeepChatTapeViewManifest & { schemaVersion: 6 }
+): string {
+  return canonicalJsonStringifyData({ ...manifest, assembledAt: 0 })
 }
 
 function readContributionTokenMap(value: unknown): TapeMemoryContributionTokenInspection | null {
@@ -197,17 +205,16 @@ export class TapeViewReplayService {
     messageId?: string
   ): TapeViewManifestAssemblySources {
     const table = this.table
-    const rows = table.getBySession(sessionId)
+    const rows = table.getBySessionExcludingContext(sessionId)
     const entryIdByMessageId = new Map<string, number>()
     const toolCallEntryIdByToolId = new Map<string, number>()
     const toolResultEntryIdByToolId = new Map<string, number>()
-    let latestEntryId = 0
+    const latestEntryId = table.getMaxEntryId(sessionId)
     const anchorEntryIds: number[] = []
     let reconstructionAnchorEntryId: number | null = null
     let bootstrapAnchorEntryId: number | null = null
 
     for (const row of rows) {
-      latestEntryId = Math.max(latestEntryId, row.entry_id)
       if (row.kind === 'anchor') {
         anchorEntryIds.push(row.entry_id)
         if (isReconstructionAnchorName(row.name)) {
@@ -269,6 +276,32 @@ export class TapeViewReplayService {
   appendViewManifest(manifest: DeepChatTapeViewManifest): DeepChatTapeEntryRow {
     const table = this.table
     table.ensureBootstrapAnchor(manifest.sessionId)
+    if (manifest.schemaVersion === 6) {
+      return table.runInTransaction(() => {
+        if (verifyTapeViewManifestHash(manifest) !== 'valid') {
+          throw new Error('Schema-6 ViewManifest integrity is invalid.')
+        }
+        if (table.getBootstrapIncarnation(manifest.sessionId) !== manifest.tapeIncarnationId) {
+          throw new Error('Schema-6 ViewManifest Tape incarnation does not match the Session Tape.')
+        }
+        this.validateSchema6Evidence(manifest)
+        const provenanceKey = this.schema6ProvenanceKey(manifest)
+        const row = table.getByProvenanceKey(manifest.sessionId, provenanceKey)
+        if (row) {
+          return this.requireEqualSchema6ManifestRow(row, manifest, provenanceKey)
+        }
+        return this.requireEqualSchema6ManifestRow(
+          this.appendViewManifestEvent(manifest),
+          manifest,
+          provenanceKey
+        )
+      })
+    }
+    return this.appendViewManifestEvent(manifest)
+  }
+
+  private appendViewManifestEvent(manifest: DeepChatTapeViewManifest): DeepChatTapeEntryRow {
+    const table = this.table
     return table.appendEvent({
       sessionId: manifest.sessionId,
       name: TAPE_VIEW_MANIFEST_EVENT_NAME,
@@ -277,7 +310,10 @@ export class TapeViewReplayService {
         id: manifest.messageId,
         seq: manifest.requestSeq
       },
-      provenanceKey: `view:${manifest.sessionId}:${manifest.messageId}:${manifest.requestSeq}:${manifest.hashes.manifestHash}`,
+      provenanceKey:
+        manifest.schemaVersion === 6
+          ? this.schema6ProvenanceKey(manifest)
+          : `view:${manifest.sessionId}:${manifest.messageId}:${manifest.requestSeq}:${manifest.hashes.manifestHash}`,
       data: {
         manifest
       },
@@ -293,23 +329,184 @@ export class TapeViewReplayService {
     })
   }
 
+  private schema6ProvenanceKey(manifest: DeepChatTapeViewManifest & { schemaVersion: 6 }): string {
+    return this.schema6BindingProvenanceKey(manifest)
+  }
+
+  private schema6BindingProvenanceKey(input: {
+    sessionId: string
+    tapeIncarnationId: string
+    runId: string
+    requestSeq: number
+  }): string {
+    return `view6:${hashJsonData({
+      sessionId: input.sessionId,
+      tapeIncarnationId: input.tapeIncarnationId,
+      runId: input.runId,
+      requestSeq: input.requestSeq
+    })}`
+  }
+
+  private requireEqualSchema6ManifestRow(
+    row: DeepChatTapeEntryRow,
+    manifest: DeepChatTapeViewManifest & { schemaVersion: 6 },
+    provenanceKey: string
+  ): DeepChatTapeEntryRow {
+    const record = this.toViewManifestRecord(row)
+    if (
+      !record ||
+      record.manifest.schemaVersion !== 6 ||
+      verifyTapeViewManifestHash(record.manifest) !== 'valid'
+    ) {
+      throw new Error('Malformed row occupies the schema-6 ViewManifest binding.')
+    }
+    this.requireValidStoredSchema6Occurrence(row, record.manifest, provenanceKey)
+    if (record.manifest.hashes.manifestHash !== manifest.hashes.manifestHash) {
+      throw new Error('Conflicting schema-6 ViewManifest binding.')
+    }
+    if (canonicalSchema6Occurrence(record.manifest) !== canonicalSchema6Occurrence(manifest)) {
+      throw new Error('Schema-6 ViewManifest canonical retry is not equal.')
+    }
+    return row
+  }
+
+  private requireSchema6ManifestEnvelope(
+    row: DeepChatTapeEntryRow,
+    manifest: DeepChatTapeViewManifest & { schemaVersion: 6 },
+    provenanceKey: string
+  ): void {
+    const expectedPayload = { name: TAPE_VIEW_MANIFEST_EVENT_NAME, data: { manifest } }
+    const expectedMeta = {
+      viewId: manifest.viewId,
+      requestSeq: manifest.requestSeq,
+      taskType: manifest.taskType,
+      policy: manifest.policy,
+      policyVersion: manifest.policyVersion
+    }
+    if (
+      row.kind !== 'event' ||
+      row.name !== TAPE_VIEW_MANIFEST_EVENT_NAME ||
+      row.source_type !== 'runtime_event' ||
+      row.source_id !== manifest.messageId ||
+      row.source_seq !== manifest.requestSeq ||
+      row.provenance_key !== provenanceKey ||
+      row.created_at !== manifest.assembledAt ||
+      canonicalJsonStringifyData(parseJsonObject(row.payload_json)) !==
+        canonicalJsonStringifyData(expectedPayload) ||
+      canonicalJsonStringifyData(parseJsonObject(row.meta_json)) !==
+        canonicalJsonStringifyData(expectedMeta)
+    ) {
+      throw new Error('Schema-6 ViewManifest physical envelope is corrupt.')
+    }
+  }
+
+  private requireValidStoredSchema6Occurrence(
+    row: DeepChatTapeEntryRow,
+    manifest: DeepChatTapeViewManifest & { schemaVersion: 6 },
+    provenanceKey = this.schema6ProvenanceKey(manifest)
+  ): void {
+    if (
+      verifyTapeViewManifestHash(manifest) !== 'valid' ||
+      this.table.getBootstrapIncarnation(manifest.sessionId) !== manifest.tapeIncarnationId
+    ) {
+      throw new Error('Schema-6 ViewManifest occurrence identity is invalid.')
+    }
+    this.requireSchema6ManifestEnvelope(row, manifest, provenanceKey)
+    this.validateSchema6Evidence(manifest)
+  }
+
+  private validateSchema6Evidence(manifest: DeepChatTapeViewManifest & { schemaVersion: 6 }): void {
+    const table = this.table
+    const evidenceRows = new Map(
+      table
+        .getByEntryIds(
+          manifest.sessionId,
+          collectEntryIds(
+            manifest.skillContexts.flatMap((context) => [
+              context.authoritativeRef.entryId,
+              ...context.sourceEntryIds
+            ])
+          )
+        )
+        .map((row) => [row.entry_id, row])
+    )
+    for (const context of manifest.skillContexts) {
+      const authoritativeRef = context.authoritativeRef
+      if (authoritativeRef.entryId > manifest.latestEntryId) {
+        throw new Error('Schema-6 Skill context references content after the View head.')
+      }
+      const authoritativeRow = evidenceRows.get(authoritativeRef.entryId)
+      if (!authoritativeRow) {
+        throw new Error('Schema-6 Skill context authority is missing.')
+      }
+
+      if (authoritativeRef.kind === 'materialization') {
+        if (authoritativeRef.tapeIncarnationId !== manifest.tapeIncarnationId) {
+          throw new Error('Schema-6 Skill materialization belongs to another Tape incarnation.')
+        }
+        readTapeSkillMaterializationRef(authoritativeRow, {
+          sessionId: manifest.sessionId,
+          ...authoritativeRef
+        })
+      } else {
+        const payload = parseJsonObject(authoritativeRow.payload_json)
+        if (
+          authoritativeRow.kind !== 'tool_result' ||
+          authoritativeRow.source_type !== 'tool_result' ||
+          readToolFactStatus(authoritativeRow) !== 'success' ||
+          typeof payload.response !== 'string' ||
+          hashString(payload.response) !== authoritativeRef.contentHash
+        ) {
+          throw new Error('Schema-6 Skill tool-result authority is invalid.')
+        }
+      }
+
+      for (const sourceEntryId of context.sourceEntryIds) {
+        if (sourceEntryId > manifest.latestEntryId || !evidenceRows.has(sourceEntryId)) {
+          throw new Error('Schema-6 Skill context source evidence is missing.')
+        }
+      }
+    }
+  }
+
   listViewManifestsByMessage(
     sessionId: string,
     messageId: string
   ): DeepChatTapeViewManifestRecord[] {
     const table = this.table
     return table
-      .getBySession(sessionId)
-      .filter(
-        (row) =>
-          row.kind === 'event' &&
-          row.name === TAPE_VIEW_MANIFEST_EVENT_NAME &&
-          row.source_type === 'runtime_event' &&
-          row.source_id === messageId
-      )
+      .getViewManifestEventsByMessage(sessionId, messageId)
       .map((row) => this.toViewManifestRecord(row))
       .filter((record): record is DeepChatTapeViewManifestRecord => Boolean(record))
       .sort((left, right) => right.requestSeq - left.requestSeq || right.entryId - left.entryId)
+  }
+
+  getViewManifestByExecutionBinding(input: {
+    sessionId: string
+    runId: string
+    requestSeq: number
+  }): DeepChatTapeViewManifestRecord | null {
+    if (!input.sessionId.trim() || !input.runId.trim() || !isPositiveInteger(input.requestSeq)) {
+      throw new Error('Schema-6 ViewManifest execution binding is invalid.')
+    }
+    const tapeIncarnationId = this.table.getBootstrapIncarnation(input.sessionId)
+    if (!tapeIncarnationId) return null
+    const provenanceKey = this.schema6BindingProvenanceKey({ ...input, tapeIncarnationId })
+    const row = this.table.getByProvenanceKey(input.sessionId, provenanceKey)
+    if (!row) return null
+    const record = this.toViewManifestRecord(row)
+    if (
+      !record ||
+      record.manifest.schemaVersion !== 6 ||
+      record.manifest.runId !== input.runId ||
+      record.manifest.requestSeq !== input.requestSeq ||
+      record.manifest.tapeIncarnationId !== tapeIncarnationId ||
+      verifyTapeViewManifestHash(record.manifest) !== 'valid'
+    ) {
+      throw new Error('Schema-6 ViewManifest execution binding is corrupt.')
+    }
+    this.requireValidStoredSchema6Occurrence(row, record.manifest, provenanceKey)
+    return record
   }
 
   exportReplaySlice(
@@ -342,7 +539,7 @@ export class TapeViewReplayService {
       throw new Error('requestSeq must be a positive integer.')
     }
 
-    const rows = this.table.getBySession(sessionId)
+    const rows = this.table.getBySessionExcludingContext(sessionId)
     const manifestRows = rows.filter(
       (row) =>
         row.kind === 'event' &&
@@ -452,6 +649,15 @@ export class TapeViewReplayService {
     const contributionSourceEntryIds = collectEntryIds(
       manifest.included.flatMap((ref) => ref.sourceEntryIds ?? [])
     )
+    const skillContextEntryIds =
+      manifest.schemaVersion === 6
+        ? collectEntryIds(
+            manifest.skillContexts.flatMap((context) => [
+              context.authoritativeRef.entryId,
+              ...context.sourceEntryIds
+            ])
+          )
+        : []
     const anchorEntryIds = collectEntryIds([
       ...manifest.anchorEntryIds,
       ...contributionSourceEntryIds
@@ -460,12 +666,24 @@ export class TapeViewReplayService {
       manifestRecord.entryId,
       ...includedEntryIds,
       ...excludedEntryIds,
-      ...anchorEntryIds
+      ...anchorEntryIds,
+      ...skillContextEntryIds
     ])
-    const entries = table
-      .getBySession(sessionId)
-      .filter((row) => selectedEntryIds.has(row.entry_id))
-      .map((row) => this.toReplayEntrySnapshot(row, options.includeTapePayloads === true))
+    const selectedRows = table.getByEntryIds(sessionId, [...selectedEntryIds])
+    const entries = selectedRows.map((row) =>
+      this.toReplayEntrySnapshot(row, options.includeTapePayloads === true)
+    )
+    const foundEntryIds = new Set(entries.map((entry) => entry.entryId))
+    let skillEvidenceValid = skillContextEntryIds.every((entryId) => foundEntryIds.has(entryId))
+    if (skillEvidenceValid && manifest.schemaVersion === 6) {
+      try {
+        const manifestRow = selectedRows.find((row) => row.entry_id === manifestRecord.entryId)
+        if (!manifestRow) throw new Error('Schema-6 ViewManifest occurrence is missing.')
+        this.requireValidStoredSchema6Occurrence(manifestRow, manifest)
+      } catch {
+        skillEvidenceValid = false
+      }
+    }
 
     const trace = this.findReplayTrace(sessionId, messageId, manifestRecord.requestSeq)
     const createdAt = Date.now()
@@ -490,13 +708,14 @@ export class TapeViewReplayService {
         manifestEntryId: manifestRecord.entryId,
         includedEntryIds,
         excludedEntryIds,
-        anchorEntryIds
+        anchorEntryIds,
+        ...(manifest.schemaVersion === 6 ? { skillContextEntryIds } : {})
       },
       hashes: {
         manifestHash: manifest.hashes.manifestHash,
         sliceHash: ''
       },
-      integrity: manifestRecord.integrity,
+      integrity: skillEvidenceValid ? manifestRecord.integrity : 'invalid',
       createdAt
     }
 
@@ -573,7 +792,7 @@ export class TapeViewReplayService {
       createdAt: row.created_at
     }
 
-    if (includePayloads) {
+    if (includePayloads && row.kind !== 'context') {
       snapshot.payload = parseJsonObject(row.payload_json)
       snapshot.meta = parseJsonObject(row.meta_json)
     }

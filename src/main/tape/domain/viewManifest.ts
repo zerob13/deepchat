@@ -11,10 +11,13 @@ import type {
   DeepChatTapeViewManifestLegacy,
   DeepChatTapeViewPolicy,
   DeepChatTapeViewManifestV5,
+  DeepChatTapeViewManifestV6,
+  DeepChatTapeSkillContext,
   DeepChatTapeViewSyntheticContribution,
   DeepChatTapeViewTaskType,
   DeepChatTapeViewTokenBudget
 } from '@shared/types/tape-view-manifest'
+import { validateSchema6SkillContexts } from './skillContext'
 import { estimateMessagesTokens } from '@shared/utils/messageTokens'
 import { hashJson, hashJsonData } from './canonicalJson'
 import {
@@ -75,6 +78,10 @@ export type TapeViewManifestBuildInput = {
   supportsAudioInput: boolean
   traceDebugEnabled: boolean
   executionContract?: DeepChatExecutionContract
+  runId?: string
+  tapeIncarnationId?: string
+  skillContexts?: DeepChatTapeSkillContext[]
+  requireDurableManifest?: boolean
   assembledAt?: number
 }
 
@@ -131,6 +138,7 @@ export function resolveTapeViewManifestPolicy(
 const TAPE_VIEW_MANIFEST_LEGACY_HASH_VERSION = 2
 /** Current hash version for contract-bearing ViewManifest values. */
 export const TAPE_VIEW_MANIFEST_HASH_VERSION = 3
+export const TAPE_VIEW_MANIFEST_SKILL_HASH_VERSION = 4
 
 function buildManifestHashable(manifest: DeepChatTapeViewManifest): Record<string, unknown> {
   const hashable: Record<string, unknown> = { ...manifest }
@@ -151,13 +159,16 @@ function buildManifestHashV3(manifest: DeepChatTapeViewManifest): string {
   return hashJsonData(buildManifestHashable(manifest))
 }
 
-function executionContractMatchesManifest(manifest: DeepChatTapeViewManifestV5): boolean {
+function executionContractMatchesManifest(
+  manifest: DeepChatTapeViewManifestV5 | DeepChatTapeViewManifestV6
+): boolean {
   const contract = manifest.executionContract
   return (
     isDeepChatExecutionContract(contract) &&
     contract.request.sessionId === manifest.sessionId &&
     contract.request.messageId === manifest.messageId &&
     contract.request.requestSeq === manifest.requestSeq &&
+    (manifest.schemaVersion !== 6 || contract.request.runId === manifest.runId) &&
     contract.provenance.providerId === manifest.meta.providerId &&
     contract.provenance.modelId === manifest.meta.modelId &&
     contract.provenance.promptHash === manifest.hashes.promptHash &&
@@ -185,7 +196,8 @@ function requireExecutionContractMatchesInput(
   if (
     contract.request.sessionId !== input.sessionId ||
     contract.request.messageId !== input.messageId ||
-    contract.request.requestSeq !== input.requestSeq
+    contract.request.requestSeq !== input.requestSeq ||
+    (input.runId !== undefined && contract.request.runId !== input.runId)
   ) {
     throw new TypeError('Execution contract request identity does not match the View request.')
   }
@@ -206,7 +218,8 @@ function requireExecutionContractMatchesInput(
 
 function finalizeManifest<T extends DeepChatTapeViewManifest>(draft: T): T {
   const manifestHash =
-    draft.hashVersion === TAPE_VIEW_MANIFEST_HASH_VERSION
+    draft.hashVersion === TAPE_VIEW_MANIFEST_HASH_VERSION ||
+    draft.hashVersion === TAPE_VIEW_MANIFEST_SKILL_HASH_VERSION
       ? buildManifestHashV3(draft)
       : buildManifestHashV2(draft)
   return {
@@ -241,12 +254,21 @@ export function verifyTapeViewManifestHash(
   manifest: DeepChatTapeViewManifest
 ): DeepChatTapeViewManifestIntegrity {
   if (manifest.hashVersion === TAPE_VIEW_MANIFEST_LEGACY_HASH_VERSION) {
-    if (Number(manifest.schemaVersion) === 5) return 'invalid'
+    if (manifest.schemaVersion < 1 || manifest.schemaVersion > 4) return 'invalid'
     return buildManifestHashV2(manifest) === manifest.hashes.manifestHash ? 'valid' : 'invalid'
   }
   if (manifest.hashVersion === TAPE_VIEW_MANIFEST_HASH_VERSION) {
     if (manifest.schemaVersion !== 5 || !executionContractMatchesManifest(manifest))
       return 'invalid'
+    const manifestHash = buildManifestHashV3(manifest)
+    return manifestHash === manifest.hashes.manifestHash &&
+      manifest.viewId === `view_${manifestHash.slice(0, 16)}`
+      ? 'valid'
+      : 'invalid'
+  }
+  if (manifest.hashVersion === TAPE_VIEW_MANIFEST_SKILL_HASH_VERSION) {
+    if (manifest.schemaVersion !== 6) return 'invalid'
+    if (manifest.executionContract && !executionContractMatchesManifest(manifest)) return 'invalid'
     const manifestHash = buildManifestHashV3(manifest)
     return manifestHash === manifest.hashes.manifestHash &&
       manifest.viewId === `view_${manifestHash.slice(0, 16)}`
@@ -296,6 +318,31 @@ export function createTapeViewManifest(
       traceDebugEnabled: input.traceDebugEnabled
     },
     assembledAt
+  }
+
+  if (input.skillContexts?.length || input.requireDurableManifest) {
+    if (!input.skillContexts?.length)
+      throw new TypeError('A durable Skill manifest requires Skill contexts.')
+    if (!input.runId?.trim() || !input.tapeIncarnationId?.trim()) {
+      throw new TypeError('Skill-bearing ViewManifest requires run and Tape incarnation identity.')
+    }
+    const promptHash = buildProviderMessagesHash(input.messages)
+    const toolDefinitionsHash = buildProviderVisibleToolDefinitionsHash(input.tools)
+    const executionContract =
+      input.executionContract === undefined
+        ? undefined
+        : requireExecutionContractMatchesInput(input, promptHash, toolDefinitionsHash)
+    const draft: DeepChatTapeViewManifestV6 = {
+      schemaVersion: 6,
+      hashVersion: TAPE_VIEW_MANIFEST_SKILL_HASH_VERSION,
+      ...common,
+      runId: input.runId,
+      tapeIncarnationId: input.tapeIncarnationId,
+      skillContexts: structuredClone(validateSchema6SkillContexts(input.skillContexts)),
+      hashes: { promptHash, toolDefinitionsHash, manifestHash: '' },
+      ...(executionContract ? { executionContract } : {})
+    }
+    return finalizeManifest(draft)
   }
 
   if (input.executionContract !== undefined) {

@@ -9,6 +9,7 @@ import type {
 } from '../domain/entry'
 import type { ExecutionJournalEventName } from '../domain/executionJournal'
 import type { ContractTapeEventName } from '../domain/contractFacts'
+import type { TapeSkillMaterializationPayload } from '../domain/skillMaterialization'
 
 export interface TapeMutationProjection {
   applyAppendedEntry(row: DeepChatTapeEntryRow, previousSessionMaxEntryId: number): boolean
@@ -22,6 +23,9 @@ export interface TapeEntryStore {
   appendAnchor(input: TapeAnchorAppendInput): DeepChatTapeEntryRow
   appendEvent(input: TapeEventAppendInput): DeepChatTapeEntryRow
   getBySession(sessionId: string): DeepChatTapeEntryRow[]
+  getBySessionExcludingContext(sessionId: string): DeepChatTapeEntryRow[]
+  getByEntryIds(sessionId: string, entryIds: readonly number[]): DeepChatTapeEntryRow[]
+  getViewManifestEventsByMessage(sessionId: string, messageId: string): DeepChatTapeEntryRow[]
   getMaxEventSourceSeq(
     sessionId: string,
     name: string,
@@ -30,7 +34,10 @@ export interface TapeEntryStore {
   ): number
   getSubagentLineageEvents(sessionId: string): DeepChatTapeEntryRow[]
   getFirstEntriesBySessions(sessionIds: string[]): DeepChatTapeEntryRow[]
-  getBySessionUpToEntryId(sessionId: string, maxEntryId: number): DeepChatTapeEntryRow[]
+  getBySessionUpToEntryIdExcludingContext(
+    sessionId: string,
+    maxEntryId: number
+  ): DeepChatTapeEntryRow[]
   listMemoryViewManifestAnchorsByAgent(
     agentId: string,
     options?: { sessionId?: string; limit?: number; messageId?: string }
@@ -72,6 +79,10 @@ export interface TapeBootstrapStore {
   ensureBootstrapAnchor(sessionId: string): void
 }
 
+export interface TapeIncarnationReader {
+  getBootstrapIncarnation(sessionId: string): string | undefined
+}
+
 /** Strict Journal persistence is intentionally absent from the generic Context Tape store port. */
 export interface ExecutionJournalPersistenceStore
   extends TapeTransactionRunner, TapeBootstrapStore {
@@ -89,6 +100,20 @@ export interface ContractPersistenceStore extends TapeTransactionRunner, TapeBoo
   ): DeepChatTapeEntryRow
   getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
   getFirstEntriesBySessions(sessionIds: string[]): DeepChatTapeEntryRow[]
+}
+
+/** The reserved Skill context namespace is writable only through the strict materialization path. */
+export interface SkillMaterializationPersistenceStore
+  extends TapeTransactionRunner, TapeBootstrapStore, TapeIncarnationReader {
+  appendSkillMaterialization(input: {
+    sessionId: string
+    sourceId: string
+    provenanceKey: string
+    payload: TapeSkillMaterializationPayload
+    payloadHash: string
+  }): DeepChatTapeEntryRow
+  getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
+  getByEntryId(sessionId: string, entryId: number): DeepChatTapeEntryRow | undefined
 }
 
 export interface TapeEntryLifecycleStore {

@@ -29,17 +29,17 @@
 
 ## P0b: Tape Foundation
 
-- [ ] Add the forward-compatible physical `context` kind and canonical Skill materialization
+- [x] Add the forward-compatible physical `context` kind and canonical Skill materialization
       payload with per-body, count, and aggregate byte limits.
-- [ ] Add narrow materialization writer and runtime reader capabilities.
-- [ ] Add transactional strict payload equality and corruption handling for provenance-key reuse.
-- [ ] Add ViewManifest schema 6/hash 4 with Skill contexts and optional ExecutionContract.
-- [ ] Add Run/request/incarnation binding, independent durable-manifest policy, and runtime reader.
-- [ ] Exclude materialization facts from effective views, transcript, search, Tape tools, Memory,
+- [x] Add narrow materialization writer and runtime reader capabilities.
+- [x] Add transactional strict payload equality and corruption handling for provenance-key reuse.
+- [x] Add ViewManifest schema 6/hash 4 with Skill contexts and optional ExecutionContract.
+- [x] Add Run/request/incarnation binding, independent durable-manifest policy, and runtime reader.
+- [x] Exclude materialization facts from effective views, transcript, search, Tape tools, Memory,
       ordinary renderer projection, and fork merge.
-- [ ] Add old-reader compatibility, schema/hash, corruption, reset, isolation, and native SQLite
+- [x] Add old-reader compatibility, schema/hash, corruption, reset, isolation, and native SQLite
       tests.
-- [ ] Review and commit the Tape Foundation slice.
+- [x] Review and commit the Tape Foundation slice.
 
 ## P0b: Safe Runtime View
 

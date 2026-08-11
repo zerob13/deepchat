@@ -139,6 +139,18 @@ function createTapeTableMock() {
         payload: { name: input.name, data: input.data }
       })
     ),
+    appendSkillMaterialization: vi.fn((input: any) =>
+      table.append({
+        sessionId: input.sessionId,
+        kind: 'context',
+        name: 'skill/materialized',
+        source: { type: 'runtime_event', id: input.sourceId, seq: 0 },
+        provenanceKey: input.provenanceKey,
+        payload: input.payload,
+        meta: { payloadHash: input.payloadHash },
+        idempotent: true
+      })
+    ),
     appendExecutionJournalEvent: vi.fn((input: any) =>
       table.append({
         ...input,
@@ -195,6 +207,39 @@ function createTapeTableMock() {
     getBySession: vi.fn((sessionId: string) =>
       entries.filter((entry) => entry.session_id === sessionId)
     ),
+    getBySessionExcludingContext: vi.fn((sessionId: string) =>
+      entries.filter((entry) => entry.session_id === sessionId && entry.kind !== 'context')
+    ),
+    getByEntryIds: vi.fn((sessionId: string, entryIds: readonly number[]) => {
+      const selected = new Set(entryIds)
+      return entries.filter(
+        (entry) => entry.session_id === sessionId && selected.has(entry.entry_id)
+      )
+    }),
+    getViewManifestEventsByMessage: vi.fn((sessionId: string, messageId: string) =>
+      entries.filter(
+        (entry) =>
+          entry.session_id === sessionId &&
+          entry.kind === 'event' &&
+          entry.name === 'view/assembled' &&
+          entry.source_type === 'runtime_event' &&
+          entry.source_id === messageId
+      )
+    ),
+    getByEntryId: vi.fn((sessionId: string, entryId: number) =>
+      entries.find((entry) => entry.session_id === sessionId && entry.entry_id === entryId)
+    ),
+    getBootstrapIncarnation: vi.fn((sessionId: string) => {
+      const row = entries.find(
+        (entry) =>
+          entry.session_id === sessionId &&
+          entry.kind === 'anchor' &&
+          entry.name === 'session/start'
+      )
+      if (!row) return undefined
+      const value = JSON.parse(row.meta_json) as Record<string, unknown>
+      return typeof value.tapeIncarnationId === 'string' ? value.tapeIncarnationId : undefined
+    }),
     getMaxEventSourceSeq: vi.fn(
       (sessionId: string, name: string, sourceType: string, sourceId: string) =>
         Math.max(
@@ -238,8 +283,11 @@ function createTapeTableMock() {
         })
         .sort((left, right) => left.session_id.localeCompare(right.session_id))
     ),
-    getBySessionUpToEntryId: vi.fn((sessionId: string, maxEntryId: number) =>
-      entries.filter((entry) => entry.session_id === sessionId && entry.entry_id <= maxEntryId)
+    getBySessionUpToEntryIdExcludingContext: vi.fn((sessionId: string, maxEntryId: number) =>
+      entries.filter(
+        (entry) =>
+          entry.session_id === sessionId && entry.entry_id <= maxEntryId && entry.kind !== 'context'
+      )
     ),
     getMaxEntryId: vi.fn((sessionId: string) =>
       Math.max(

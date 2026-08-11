@@ -440,6 +440,25 @@ function createMockSqlitePresenter() {
       getBySession: vi.fn((sessionId: string) =>
         tapeEntries.filter((entry) => entry.session_id === sessionId)
       ),
+      getBySessionExcludingContext: vi.fn((sessionId: string) =>
+        tapeEntries.filter((entry) => entry.session_id === sessionId && entry.kind !== 'context')
+      ),
+      getByEntryIds: vi.fn((sessionId: string, entryIds: readonly number[]) => {
+        const selected = new Set(entryIds)
+        return tapeEntries.filter(
+          (entry) => entry.session_id === sessionId && selected.has(entry.entry_id)
+        )
+      }),
+      getViewManifestEventsByMessage: vi.fn((sessionId: string, messageId: string) =>
+        tapeEntries.filter(
+          (entry) =>
+            entry.session_id === sessionId &&
+            entry.kind === 'event' &&
+            entry.name === 'view/assembled' &&
+            entry.source_type === 'runtime_event' &&
+            entry.source_id === messageId
+        )
+      ),
       getMaxEventSourceSeq: vi.fn(
         (sessionId: string, name: string, sourceType: string, sourceId: string) =>
           Math.max(
@@ -1913,7 +1932,7 @@ describe('DeepChatAgentHarness', () => {
         userRecord('u1', 1, 'Read package metadata.'),
         assistantRecord('a1', 2, [toolBlock('tool-1')])
       ])
-      sqlitePresenter.deepchatTapeEntriesTable.getBySession.mockClear()
+      sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext.mockClear()
 
       const window = getMemoryCoordinator().buildExtractionWindow('s1', 0, 2)
 
@@ -1923,7 +1942,9 @@ describe('DeepChatAgentHarness', () => {
           visibleTextChars: 'User: Read package metadata.'.length
         })
       )
-      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext
+      ).toHaveBeenCalledTimes(1)
     })
 
     it('rebuilds memory ingestion projection once and uses bounded range reads afterward', () => {
@@ -1975,15 +1996,19 @@ describe('DeepChatAgentHarness', () => {
         })
       )
       expect(replaceSession).toHaveBeenCalledTimes(1)
-      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext
+      ).toHaveBeenCalledTimes(1)
 
-      sqlitePresenter.deepchatTapeEntriesTable.getBySession.mockClear()
+      sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext.mockClear()
       const rangeWindow = getMemoryCoordinator().buildExtractionWindow('s1', 0, 2)
 
       expect(rangeWindow).toEqual(rebuiltWindow)
       expect(replaceSession).toHaveBeenCalledTimes(1)
       expect(readCurrentRange).toHaveBeenCalledTimes(2)
-      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).not.toHaveBeenCalled()
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext
+      ).not.toHaveBeenCalled()
     })
 
     it('falls back to the authoritative Tape view when projection validation fails', () => {
@@ -1996,7 +2021,7 @@ describe('DeepChatAgentHarness', () => {
         replaceSession: vi.fn(),
         invalidateSession
       }
-      sqlitePresenter.deepchatTapeEntriesTable.getBySession.mockClear()
+      sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext.mockClear()
 
       const window = getMemoryCoordinator().buildExtractionWindow('s1', 0, 1)
 
@@ -2007,13 +2032,17 @@ describe('DeepChatAgentHarness', () => {
         })
       )
       expect(invalidateSession).toHaveBeenCalledWith('s1')
-      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext
+      ).toHaveBeenCalledTimes(1)
 
       expect(getMemoryCoordinator().buildExtractionWindow('s1', 0, 1)).toBeNull()
       expect(
         sqlitePresenter.deepchatMemoryIngestionProjectionTable.readCurrentRange
       ).toHaveBeenCalledTimes(1)
-      expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext
+      ).toHaveBeenCalledTimes(1)
     })
 
     it('cools repeated projection rebuild failures and recovers after the retry window', () => {
@@ -2059,19 +2088,23 @@ describe('DeepChatAgentHarness', () => {
             current = false
           })
         }
-        sqlitePresenter.deepchatTapeEntriesTable.getBySession.mockClear()
+        sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext.mockClear()
 
         const fallback = getMemoryCoordinator().buildExtractionWindow('s1', 0, 1)
         expect(fallback.chunks.every((chunk: any) => chunk.cursorCommitOrderSeq === null)).toBe(
           true
         )
         expect(replaceSession).toHaveBeenCalledTimes(1)
-        expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+        expect(
+          sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext
+        ).toHaveBeenCalledTimes(1)
 
         expect(getMemoryCoordinator().buildExtractionWindow('s1', 0, 1)).toBeNull()
         expect(readCurrentRange).toHaveBeenCalledTimes(1)
         expect(replaceSession).toHaveBeenCalledTimes(1)
-        expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(1)
+        expect(
+          sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext
+        ).toHaveBeenCalledTimes(1)
 
         now.mockReturnValue(31_000)
         failReplacement = false
@@ -2081,7 +2114,9 @@ describe('DeepChatAgentHarness', () => {
 
         expect(getMemoryCoordinator().buildExtractionWindow('s1', 0, 1)).toEqual(recovered)
         expect(readCurrentRange).toHaveBeenCalledTimes(3)
-        expect(sqlitePresenter.deepchatTapeEntriesTable.getBySession).toHaveBeenCalledTimes(2)
+        expect(
+          sqlitePresenter.deepchatTapeEntriesTable.getBySessionExcludingContext
+        ).toHaveBeenCalledTimes(2)
       } finally {
         now.mockRestore()
       }

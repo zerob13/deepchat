@@ -287,7 +287,10 @@ Skill-bearing requests use ViewManifest schema version 6 and hash version 4. Sch
 `runId` and non-empty `skillContexts` when full Skill content is projected. Each Skill context
 records activation scope, canonical Agent/Skill identity, authoritative materialization or strict
 `tool_result` entry ref, triggering message entry ref where applicable, role, exact
-projected-content hash, projection version, and selected deduplication source. An
+projected-effective-content hash, projection version, and selected deduplication source. That hash
+must equal the authoritative materialization or tool-result content hash; provider-message
+wrappers remain covered by the whole-prompt hash instead of creating an unbacked second content
+identity. An
 `ExecutionContract` is optional in schema 6 but, when present, must satisfy the same immutable
 request/provenance checks as schema 5.
 

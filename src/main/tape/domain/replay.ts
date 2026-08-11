@@ -6,6 +6,7 @@ import type {
 import type { DeepChatTapeReplaySlice } from '@shared/types/tape-replay'
 import { isDeepChatExecutionContract } from './executionContract'
 import { hashJson } from './viewManifest'
+import { validateSchema6SkillContexts } from './skillContext'
 
 const VIEW_POLICIES = new Set([
   'cache_aware_context_v1',
@@ -33,6 +34,7 @@ const SCHEMA_V3_ENTRY_REASONS = new Set([
   'memory_context'
 ])
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/
+const BOUNDED_IDENTITY_BYTES = 1024
 
 const VIEW_EXCLUDED_REASONS = new Set([
   'before_summary_cursor',
@@ -142,9 +144,10 @@ function hasExecutionContractForSchema(
   value: Record<string, unknown>,
   schemaVersion: DeepChatTapeViewManifest['schemaVersion']
 ): boolean {
-  if (schemaVersion !== 5) return value.executionContract === undefined
+  if (schemaVersion !== 5 && schemaVersion !== 6) return value.executionContract === undefined
+  if (schemaVersion === 6 && value.executionContract === undefined) return true
   if (
-    value.hashVersion !== 3 ||
+    value.hashVersion !== (schemaVersion === 5 ? 3 : 4) ||
     !isDeepChatExecutionContract(value.executionContract) ||
     !isRecordObject(value.meta) ||
     !isRecordObject(value.hashes)
@@ -157,12 +160,21 @@ function hasExecutionContractForSchema(
     contract.request.sessionId === value.sessionId &&
     contract.request.messageId === value.messageId &&
     contract.request.requestSeq === value.requestSeq &&
+    (schemaVersion !== 6 || contract.request.runId === value.runId) &&
     contract.provenance.providerId === value.meta.providerId &&
     contract.provenance.modelId === value.meta.modelId &&
     contract.provenance.promptHash === value.hashes.promptHash &&
     contract.provenance.providerVisibleToolDefinitionsHash === value.hashes.toolDefinitionsHash &&
     typeof value.hashes.manifestHash === 'string' &&
     value.viewId === `view_${value.hashes.manifestHash.slice(0, 16)}`
+  )
+}
+
+function isBoundedIdentity(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    Buffer.byteLength(value, 'utf8') <= BOUNDED_IDENTITY_BYTES
   )
 }
 
@@ -176,7 +188,8 @@ export function isTapeViewManifest(
     value.schemaVersion === 2 ||
     value.schemaVersion === 3 ||
     value.schemaVersion === 4 ||
-    value.schemaVersion === 5
+    value.schemaVersion === 5 ||
+    value.schemaVersion === 6
       ? value.schemaVersion
       : null
   if (schemaVersion === null) return false
@@ -215,6 +228,18 @@ export function isTapeViewManifest(
     ]) &&
     hasStringFields(value.hashes, ['promptHash', 'toolDefinitionsHash', 'manifestHash']) &&
     isViewManifestMeta(value.meta) &&
+    (schemaVersion !== 6 ||
+      (value.hashVersion === 4 &&
+        isBoundedIdentity(value.runId) &&
+        isBoundedIdentity(value.tapeIncarnationId) &&
+        (() => {
+          try {
+            validateSchema6SkillContexts(value.skillContexts)
+            return true
+          } catch {
+            return false
+          }
+        })())) &&
     hasExecutionContractForSchema(value, schemaVersion) &&
     typeof value.assembledAt === 'number'
   )
