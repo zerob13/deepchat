@@ -651,6 +651,8 @@ export class DeepChatLoopRunner {
               configuredPrompt: generationSettings.systemPrompt,
               toolDefinitions: refreshedTools,
               activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames),
+              sessionActiveSkillNames: streamSessionActiveSkillNames,
+              contextLength: generationSettings.contextLength,
               commandShell: loopRun.resources.commandShell
             })
         },

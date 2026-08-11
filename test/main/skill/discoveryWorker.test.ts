@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { discoverSkillMetadataInWorker } from '../../../src/main/skill/discoveryWorker'
+import { SKILL_NAME_MAX_LENGTH } from '../../../src/shared/types/skill'
 
 const tempDirs: string[] = []
 
@@ -81,6 +82,67 @@ describe('discoverSkillMetadataInWorker', () => {
     expect(result.skills).toEqual([])
     expect(result.warnings).toContainEqual(
       expect.objectContaining({ type: 'unsafe-name', declaredName: '../../outside' })
+    )
+  })
+
+  it('rejects manifest names beyond the shared catalog limit', async () => {
+    const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const os = await vi.importActual<typeof import('node:os')>('node:os')
+    const path = await vi.importActual<typeof import('node:path')>('node:path')
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deepchat-skill-worker-'))
+    tempDirs.push(rootDir)
+    const skillDir = path.join(rootDir, 'too-long')
+    const declaredName = `a${'b'.repeat(SKILL_NAME_MAX_LENGTH)}`
+    fs.mkdirSync(skillDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      ['---', `name: ${declaredName}`, 'description: Too long', '---', '', '# Too Long'].join('\n'),
+      'utf-8'
+    )
+
+    const result = await discoverSkillMetadataInWorker({
+      skillsDir: rootDir,
+      sidecarDirName: '.deepchat-meta',
+      maxDepth: 10
+    })
+
+    expect(result.skills).toEqual([])
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ type: 'unsafe-name', declaredName })
+    )
+  })
+
+  it('rejects non-string descriptions before they enter discovery', async () => {
+    const fs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const os = await vi.importActual<typeof import('node:os')>('node:os')
+    const path = await vi.importActual<typeof import('node:path')>('node:path')
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deepchat-skill-worker-'))
+    tempDirs.push(rootDir)
+    const skillDir = path.join(rootDir, 'invalid-description')
+    fs.mkdirSync(skillDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: invalid-description',
+        'description:',
+        '  text: not-a-string',
+        '---',
+        '',
+        '# Invalid'
+      ].join('\n'),
+      'utf-8'
+    )
+
+    const result = await discoverSkillMetadataInWorker({
+      skillsDir: rootDir,
+      sidecarDirName: '.deepchat-meta',
+      maxDepth: 10
+    })
+
+    expect(result.skills).toEqual([])
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ type: 'invalid-frontmatter', dirName: 'invalid-description' })
     )
   })
 

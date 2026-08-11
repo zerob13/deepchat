@@ -5029,7 +5029,8 @@ describe('DeepChatAgentHarness', () => {
       expect(systemPrompt).toContain('- skill-a')
       expect(systemPrompt).toContain('`skill_view`')
       expect(systemPrompt).not.toContain('`skill_control`')
-      expect(systemPrompt).toContain('desc-a')
+      expect(systemPrompt).not.toContain('desc-a')
+      expect(systemPrompt).toContain('Skill A body')
     })
 
     it('composes the direct ACP production adapters with full prompt, manifest, file fallback, and rate UI parity', async () => {

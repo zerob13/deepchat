@@ -24,6 +24,12 @@ import {
 } from './agentFffSearchHandler'
 import { FffSearchService, type FffSearchMetadata } from '@/platform/fileSearch/fffSearchService'
 import { SkillTools } from '../../skill/skillTools'
+import {
+  SKILL_LIST_CURSOR_MAX_BYTES,
+  SKILL_LIST_DEFAULT_LIMIT,
+  SKILL_LIST_MAX_LIMIT,
+  SKILL_LIST_QUERY_MAX_BYTES
+} from '../../skill/routingCatalog'
 import { SkillExecutionService } from '../../skill/skillExecutionService'
 import { parseQuestionToolInput, questionToolSchema, QUESTION_TOOL_NAME } from './questionTool'
 import {
@@ -52,6 +58,7 @@ import {
   CRON_JOB_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME,
+  SKILL_LIST_AGENT_TOOL_NAME,
   assertAgentToolExposure,
   isTapeToolName,
   type AgentToolExposure
@@ -305,7 +312,28 @@ export class AgentToolManager {
   }
 
   private readonly skillSchemas = {
-    skill_list: z.object({}),
+    skill_list: z.object({
+      query: z
+        .string()
+        .max(SKILL_LIST_QUERY_MAX_BYTES)
+        .optional()
+        .describe(
+          'Optional local lexical search over skill names, categories, and descriptions (up to 256 Unicode characters).'
+        ),
+      cursor: z
+        .string()
+        .max(SKILL_LIST_CURSOR_MAX_BYTES)
+        .optional()
+        .describe('Opaque cursor from a previous skill_list response.'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(SKILL_LIST_MAX_LIMIT)
+        .optional()
+        .default(SKILL_LIST_DEFAULT_LIMIT)
+        .describe(`Maximum cards to return, up to ${SKILL_LIST_MAX_LIMIT}.`)
+    }),
     skill_view: z.object({
       name: z.string().min(1).describe('Skill name to inspect'),
       file_path: z
@@ -446,9 +474,11 @@ export class AgentToolManager {
     activeSkillNames?: string[]
     subagentCapability?: DeepChatSubagentCapability
     catalogPurpose?: 'runtime' | 'configurable'
+    skillsEnabled?: boolean
   }): Promise<MCPToolDefinition[]> {
     const defs: MCPToolDefinition[] = []
     const isAgentMode = context.chatMode === 'agent'
+    const skillsEnabled = context.skillsEnabled ?? this.isSkillsEnabled()
     const isConfigurableCatalog = context.catalogPurpose === 'configurable'
     const acceptsExposure = (exposure: AgentToolExposure): boolean =>
       !isConfigurableCatalog || exposure === 'user-configurable'
@@ -542,9 +572,16 @@ export class AgentToolManager {
     }
 
     // 3. Skill tools (agent mode only)
-    if (isAgentMode && this.isSkillsEnabled()) {
+    if (isAgentMode && skillsEnabled) {
       const skillDefs = this.getSkillToolDefinitions()
-      appendDefinitions(skillDefs, 'user-configurable')
+      appendDefinitions(
+        skillDefs.filter((definition) => definition.function.name === SKILL_LIST_AGENT_TOOL_NAME),
+        'system-model'
+      )
+      appendDefinitions(
+        skillDefs.filter((definition) => definition.function.name !== SKILL_LIST_AGENT_TOOL_NAME),
+        'user-configurable'
+      )
 
       if (
         context.conversationId &&
@@ -555,7 +592,7 @@ export class AgentToolManager {
     }
 
     // 4. DeepChat settings tools (agent mode only, skill gated)
-    if (isAgentMode && this.isSkillsEnabled() && context.conversationId) {
+    if (isAgentMode && skillsEnabled && context.conversationId) {
       try {
         const activeSkills =
           context.activeSkillNames ??
@@ -2158,7 +2195,7 @@ export class AgentToolManager {
         function: {
           name: 'skill_list',
           description:
-            'List all available skills and their activation status. Skills provide specialized expertise and behavioral guidance.',
+            'Search or browse available skills as bounded routing cards. Use query to find skills omitted from the system catalog and nextCursor to continue.',
           parameters: toDeepChatJsonSchema(schemas.skill_list) as {
             type: string
             properties: Record<string, unknown>
@@ -2511,7 +2548,7 @@ export class AgentToolManager {
     conversationId?: string,
     options?: AgentToolExecutionOptions
   ): Promise<AgentToolCallResult> {
-    if (!this.isSkillsEnabled()) {
+    if (!this.isSkillsEnabled() && toolName !== SKILL_LIST_AGENT_TOOL_NAME) {
       return {
         content: JSON.stringify({
           success: false,
@@ -2524,7 +2561,15 @@ export class AgentToolManager {
     const effectiveActiveSkills = this.normalizeActiveSkillOption(options?.activeSkillNames)
 
     if (toolName === 'skill_list') {
-      const result = await skillTools.handleSkillList(conversationId, effectiveActiveSkills)
+      const validationResult = this.skillSchemas.skill_list.safeParse(args)
+      if (!validationResult.success) {
+        throw new Error(`Invalid arguments for skill_list: ${validationResult.error.message}`)
+      }
+      const result = await skillTools.handleSkillList(
+        conversationId,
+        effectiveActiveSkills,
+        validationResult.data
+      )
       return { content: JSON.stringify(result) }
     }
 

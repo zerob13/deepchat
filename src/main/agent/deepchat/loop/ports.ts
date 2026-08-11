@@ -205,6 +205,8 @@ export interface BasePromptAssemblyInput {
   configuredPrompt: string
   toolDefinitions: readonly MCPToolDefinition[]
   activeSkillNames: readonly string[]
+  sessionActiveSkillNames: readonly string[]
+  contextLength: number
   commandShell: ResolvedCommandShell
 }
 

@@ -35,6 +35,8 @@ export const DEEPCHAT_PROMPT_DEGRADATION_CODES = [
   'agents_file_read_error',
   'skill_agent_unavailable',
   'skill_metadata_unavailable',
+  'skill_catalog_shortened',
+  'skill_catalog_omitted',
   'active_skills_unavailable',
   'pinned_skill_unavailable',
   'pinned_skill_load_failed',

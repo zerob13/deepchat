@@ -282,6 +282,8 @@ export class TurnCoordinator {
             configuredPrompt: generationSettings.systemPrompt,
             toolDefinitions: tools,
             activeSkillNames,
+            sessionActiveSkillNames,
+            contextLength: generationSettings.contextLength,
             commandShell
           }),
           signal
@@ -296,6 +298,7 @@ export class TurnCoordinator {
       contextBudgetLength,
       maxTokens,
       activeSkillNames,
+      sessionActiveSkillNames,
       taskContractContext,
       tools,
       toolReserveTokens,
@@ -530,6 +533,7 @@ export class TurnCoordinator {
         contextBudgetLength,
         maxTokens,
         activeSkillNames: effectiveActiveSkillNames,
+        sessionActiveSkillNames,
         taskContractContext,
         tools,
         toolReserveTokens,
@@ -877,6 +881,8 @@ export class TurnCoordinator {
               configuredPrompt: generationSettings.systemPrompt,
               toolDefinitions: refreshedTools,
               activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames,
+              sessionActiveSkillNames,
+              contextLength: generationSettings.contextLength,
               commandShell
             })
             return shouldGuardAttachmentText
@@ -1274,6 +1280,7 @@ export class TurnCoordinator {
         contextBudgetLength,
         maxTokens,
         activeSkillNames: effectiveActiveSkillNames,
+        sessionActiveSkillNames,
         taskContractContext,
         tools,
         toolReserveTokens,
@@ -1552,6 +1559,8 @@ export class TurnCoordinator {
               configuredPrompt: generationSettings.systemPrompt,
               toolDefinitions: refreshedTools,
               activeSkillNames: activeSkillNames ?? effectiveActiveSkillNames,
+              sessionActiveSkillNames,
+              contextLength: generationSettings.contextLength,
               commandShell
             })
             return shouldGuardAttachmentText

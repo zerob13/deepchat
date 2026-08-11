@@ -44,7 +44,8 @@ import {
   SkillScriptRuntime,
   SkillViewResult,
   SkillLinkedFile,
-  SKILL_ARCHIVE_MAX_INPUT_BYTES
+  SKILL_ARCHIVE_MAX_INPUT_BYTES,
+  SKILL_NAME_MAX_LENGTH
 } from '@shared/types/skill'
 import type {
   AgentSkillManagementState,
@@ -3199,10 +3200,12 @@ export class SkillService implements SkillServicePort {
   ): string {
     const skillsRoot = this.getAgentSkillsRoot(agentId)
     let counter = 1
-    let candidate = `${baseName}-${counter}`
+    let suffix = `-${counter}`
+    let candidate = `${baseName.slice(0, SKILL_NAME_MAX_LENGTH - suffix.length)}${suffix}`
     while (fs.existsSync(path.join(skillsRoot, candidate))) {
       counter += 1
-      candidate = `${baseName}-${counter}`
+      suffix = `-${counter}`
+      candidate = `${baseName.slice(0, SKILL_NAME_MAX_LENGTH - suffix.length)}${suffix}`
     }
     return candidate
   }
@@ -3594,7 +3597,12 @@ export class SkillService implements SkillServicePort {
   }
 
   private isSafeSkillName(name: string): boolean {
-    return SKILL_NAME_PATTERN.test(name) && !name.includes('/') && !name.includes('\\')
+    return (
+      name.length <= SKILL_NAME_MAX_LENGTH &&
+      SKILL_NAME_PATTERN.test(name) &&
+      !name.includes('/') &&
+      !name.includes('\\')
+    )
   }
 
   private assertMutableSkillOwnership(agentId: string, metadata: SkillMetadata): void {

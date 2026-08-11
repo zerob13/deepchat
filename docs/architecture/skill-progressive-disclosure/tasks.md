@@ -11,21 +11,21 @@
 
 ## P0a: Route And Discover
 
-- [ ] Add canonical whitelisted Skill routing cards and stable normalization.
-- [ ] Add the 2-percent/2,000-token budget and Unicode-safe description cap.
-- [ ] Add binary UTF-8 ordering, deterministic shared-cap summaries, name-only, zero-block, and
+- [x] Add canonical whitelisted Skill routing cards and stable normalization.
+- [x] Add the 2-percent/2,000-token budget and Unicode-safe description cap.
+- [x] Add binary UTF-8 ordering, deterministic shared-cap summaries, name-only, zero-block, and
       omission allocation.
-- [ ] Add compact system renderer and bounded render report.
-- [ ] Pass effective context length through prompt assembly without moving final preflight.
-- [ ] Add prompt provenance degradation for catalog shortening/omission.
-- [ ] Extend `skill_list` with optional `query`, `cursor`, and `limit`.
-- [ ] Add deterministic local lexical ranking and catalog-fingerprint-bound pagination.
-- [ ] Add structured JSON routing-card renderer and response token ceiling.
-- [ ] Remove arbitrary metadata and unbounded descriptions from provider results.
-- [ ] Wire Route omission and bounded discovery atomically.
-- [ ] Add boundedness, determinism, Unicode, tiny-window, ranking, cursor, pagination, whitelist,
+- [x] Add compact system renderer and bounded render report.
+- [x] Pass effective context length through prompt assembly without moving final preflight.
+- [x] Add prompt provenance degradation for catalog shortening/omission.
+- [x] Extend `skill_list` with optional `query`, `cursor`, and `limit`.
+- [x] Add deterministic local lexical ranking and catalog-fingerprint-bound pagination.
+- [x] Add structured JSON routing-card renderer and response token ceiling.
+- [x] Remove arbitrary metadata and unbounded descriptions from provider results.
+- [x] Wire Route omission and bounded discovery atomically.
+- [x] Add boundedness, determinism, Unicode, tiny-window, ranking, cursor, pagination, whitelist,
       active-state, refresh, and omitted-Skill tests.
-- [ ] Review and commit the Route/Discover slice.
+- [x] Review and commit the Route/Discover slice.
 
 ## P0b: Tape Foundation
 

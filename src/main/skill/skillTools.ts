@@ -1,63 +1,49 @@
 import type {
   SkillServicePort,
-  SkillListItem,
+  SkillListInput,
+  SkillListResult,
   SkillManageRequest,
   SkillManageResult,
   SkillViewResult
 } from '@shared/types/skill'
 import { BUILTIN_SKILL_AGENT_ID } from './agentSkillRoots'
+import { buildSkillListResult } from './routingCatalog'
 
 export class SkillTools {
   constructor(private readonly skillService: SkillServicePort) {}
 
   async handleSkillList(
     conversationId?: string,
-    activeSkillNames?: string[]
-  ): Promise<{
-    skills: SkillListItem[]
-    pinnedCount: number
-    activeCount: number
-    totalCount: number
-  }> {
+    activeSkillNames?: string[],
+    input: SkillListInput = {}
+  ): Promise<SkillListResult> {
     const resolvedAgentId = conversationId
       ? await this.skillService.resolveSessionAgentId(conversationId)
       : BUILTIN_SKILL_AGENT_ID
     if (!resolvedAgentId) {
-      return { skills: [], pinnedCount: 0, activeCount: 0, totalCount: 0 }
+      return {
+        skills: [],
+        sessionActiveCount: 0,
+        activeForExecutionCount: 0,
+        pinnedCount: 0,
+        activeCount: 0,
+        totalCount: 0,
+        totalMatched: 0,
+        omittedCount: 0
+      }
     }
     const agentId = resolvedAgentId
     const allSkills = await this.skillService.getMetadataList(agentId)
     const listedSkillNames = new Set(allSkills.map((skill) => skill.name))
-    const pinnedSkills = conversationId
+    const sessionActiveSkills = conversationId
       ? (await this.skillService.getActiveSkills(conversationId)).filter((skillName) =>
           listedSkillNames.has(skillName)
         )
       : []
-    // Keep persisted pins separate from current-message activation, while exposing
-    // the effective active state to the model for this tool loop.
     const runtimeSkills = (activeSkillNames ?? []).filter((skillName) =>
       listedSkillNames.has(skillName)
     )
-    const activeSkills = Array.from(new Set([...pinnedSkills, ...runtimeSkills]))
-    const pinnedSet = new Set(pinnedSkills)
-    const activeSet = new Set(activeSkills)
-
-    const skillList = allSkills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      category: skill.category ?? null,
-      platforms: skill.platforms,
-      metadata: skill.metadata,
-      isPinned: pinnedSet.has(skill.name),
-      active: activeSet.has(skill.name)
-    }))
-
-    return {
-      skills: skillList,
-      pinnedCount: pinnedSkills.length,
-      activeCount: activeSkills.length,
-      totalCount: allSkills.length
-    }
+    return buildSkillListResult(allSkills, sessionActiveSkills, runtimeSkills, input)
   }
 
   async handleSkillView(

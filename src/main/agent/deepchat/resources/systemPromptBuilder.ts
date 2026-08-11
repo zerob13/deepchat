@@ -24,6 +24,11 @@ import {
   normalizeOrchestrationPolicy,
   type OrchestrationPolicy
 } from '@shared/orchestration/policy'
+import {
+  projectSkillRoutingCards,
+  renderSkillRoutingCatalog,
+  type SkillRoutingCatalogProjection
+} from '@/skill/routingCatalog'
 
 export type AgentExtensionPolicy = {
   enabledMcpServerIds?: string[] | null
@@ -56,6 +61,8 @@ export interface SystemPromptBuildInput {
   basePrompt: string
   toolDefinitions: MCPToolDefinition[]
   activeSkillNamesOverride?: string[]
+  sessionActiveSkillNamesOverride?: string[]
+  contextLength?: number
   orchestrationPolicy?: OrchestrationPolicy
   resourceInstance: DeepChatAgentInstance
   commandShell: ResolvedCommandShell
@@ -101,8 +108,14 @@ export async function buildSystemPromptAssemblyWithSkills(
   dependencies: SystemPromptBuilderDependencies,
   input: SystemPromptBuildInput
 ): Promise<DeepChatPromptAssembly> {
-  const { sessionId, basePrompt, toolDefinitions, activeSkillNamesOverride, resourceInstance } =
-    input
+  const {
+    sessionId,
+    basePrompt,
+    toolDefinitions,
+    activeSkillNamesOverride,
+    sessionActiveSkillNamesOverride,
+    resourceInstance
+  } = input
   const commandShell = ResolvedCommandShellSchema.parse(input.commandShell)
   dependencies.assertCurrent(sessionId, resourceInstance)
   const normalizedBase = basePrompt?.trim() ?? ''
@@ -151,6 +164,9 @@ export async function buildSystemPromptAssemblyWithSkills(
   }> = []
   let skillMetadataLookupFailed = false
   const activeSkillNames: string[] = activeSkillNamesOverride ? [...activeSkillNamesOverride] : []
+  const sessionActiveSkillNames: string[] = sessionActiveSkillNamesOverride
+    ? [...sessionActiveSkillNamesOverride]
+    : []
   const skillDraftSuggestionsEnabled = dependencies.skillSettings.isDraftSuggestionsEnabled()
 
   if (skillsEnabled) {
@@ -178,7 +194,7 @@ export async function buildSystemPromptAssemblyWithSkills(
     }
     dependencies.logSlowStep(sessionId, 'system-prompt.skills-metadata-load', metadataStartedAt)
 
-    if (!activeSkillNamesOverride) {
+    if (!sessionActiveSkillNamesOverride && !activeSkillNamesOverride) {
       const activeSkillsStartedAt = Date.now()
       try {
         const activeSkills = await skillService.getActiveSkills(sessionId)
@@ -186,6 +202,7 @@ export async function buildSystemPromptAssemblyWithSkills(
           const normalizedName = skillName?.trim()
           if (normalizedName) {
             activeSkillNames.push(normalizedName)
+            sessionActiveSkillNames.push(normalizedName)
           }
         }
       } catch (error) {
@@ -202,7 +219,13 @@ export async function buildSystemPromptAssemblyWithSkills(
   let stepStartedAt = Date.now()
   const normalizedAvailableSkills = normalizeSkillMetadata(availableSkills)
   const availableSkillNames = new Set(normalizedAvailableSkills.map((skill) => skill.name))
-  const requestedActiveSkills = normalizeStringList(activeSkillNames)
+  const requestedActiveSkills = normalizeStringList([
+    ...activeSkillNames,
+    ...sessionActiveSkillNames
+  ])
+  const normalizedSessionActiveSkills = normalizeStringList(sessionActiveSkillNames).filter(
+    (skillName) => skillMetadataLookupFailed || availableSkillNames.has(skillName)
+  )
   const normalizedActiveSkills = skillMetadataLookupFailed
     ? requestedActiveSkills
     : requestedActiveSkills.filter((skillName) => availableSkillNames.has(skillName))
@@ -213,6 +236,12 @@ export async function buildSystemPromptAssemblyWithSkills(
     pinnedSkillsDegradations.push('pinned_skill_unavailable')
   }
   const agentToolNames = getAgentToolNames(toolDefinitions)
+  const skillCapabilities = {
+    canListSkills: agentToolNames.has('skill_list'),
+    canViewSkills: agentToolNames.has('skill_view'),
+    canManageDraftSkills: agentToolNames.has('skill_manage'),
+    canRunSkillScripts: agentToolNames.has('skill_run')
+  }
   const runtimePrompt = buildRuntimeCapabilitiesPrompt({
     hasYoBrowser: toolDefinitions.some(
       (tool) => tool.source === 'agent' && tool.server.name === 'yobrowser'
@@ -220,15 +249,29 @@ export async function buildSystemPromptAssemblyWithSkills(
     hasExec: agentToolNames.has('exec'),
     hasProcess: agentToolNames.has('process')
   })
+  const skillCatalogProjection = skillsEnabled
+    ? renderSkillRoutingCatalog(
+        projectSkillRoutingCards(normalizedAvailableSkills, normalizedSessionActiveSkills),
+        input.contextLength
+      )
+    : null
+  if (
+    skillCatalogProjection?.report.mode === 'summary' ||
+    skillCatalogProjection?.report.mode === 'name_only'
+  ) {
+    skillsMetadataDegradations.push('skill_catalog_shortened')
+  }
+  if (
+    skillCatalogProjection?.report.mode === 'omitted' ||
+    (skillCatalogProjection?.report.mode === 'absent' &&
+      skillCatalogProjection.report.omittedNames.length > 0)
+  ) {
+    skillsMetadataDegradations.push('skill_catalog_omitted')
+  }
   const skillsMetadataPrompt = skillsEnabled
     ? buildSkillsMetadataPrompt(
-        normalizedAvailableSkills,
-        {
-          canListSkills: agentToolNames.has('skill_list'),
-          canViewSkills: agentToolNames.has('skill_view'),
-          canManageDraftSkills: agentToolNames.has('skill_manage'),
-          canRunSkillScripts: agentToolNames.has('skill_run')
-        },
+        skillCatalogProjection,
+        skillCapabilities,
         skillDraftSuggestionsEnabled
       )
     : ''
@@ -467,12 +510,7 @@ function buildVerificationPolicyPrompt(workdir: string | null): string {
 }
 
 function buildSkillsMetadataPrompt(
-  availableSkills: Array<{
-    name: string
-    description: string
-    category?: string | null
-    platforms?: string[]
-  }>,
+  catalogProjection: SkillRoutingCatalogProjection | null,
   capabilities: {
     canListSkills: boolean
     canViewSkills: boolean
@@ -494,11 +532,18 @@ function buildSkillsMetadataPrompt(
   let hasContent = false
 
   if (capabilities.canListSkills || capabilities.canViewSkills) {
-    lines.push(
-      'Before replying, always scan available skills. If any skill plausibly matches the task, call `skill_view` first.'
-    )
+    lines.push('Before replying, always scan available skills.')
+    hasContent = true
+  }
+  if (capabilities.canViewSkills) {
+    lines.push('If any skill plausibly matches the task, call `skill_view` first.')
     lines.push(
       'Viewing a skill root `SKILL.md` activates that skill for the current message/tool loop; it does not pin the skill to the conversation. Viewing linked skill files is read-only and does not activate the skill.'
+    )
+  }
+  if (capabilities.canListSkills) {
+    lines.push(
+      'If the catalog is incomplete or no visible card matches, use `skill_list` with a query before concluding that no relevant skill exists.'
     )
     hasContent = true
   }
@@ -521,27 +566,9 @@ function buildSkillsMetadataPrompt(
     hasContent = true
   }
 
-  if (availableSkills.length > 0) {
-    lines.push('<available_skills>')
-    lines.push(
-      ...availableSkills.map((skill) => {
-        const details: string[] = []
-        if (skill.category) {
-          details.push(`category=${skill.category}`)
-        }
-        if (skill.platforms?.length) {
-          details.push(`platforms=${skill.platforms.join(',')}`)
-        }
-        const suffix = details.length > 0 ? ` [${details.join('; ')}]` : ''
-        return `- ${skill.name}: ${skill.description}${suffix}`
-      })
-    )
-    lines.push('</available_skills>')
+  if (catalogProjection?.content) {
+    lines.push(catalogProjection.content)
     hasContent = true
-  } else if (hasContent) {
-    lines.push('<available_skills>')
-    lines.push('(none)')
-    lines.push('</available_skills>')
   }
 
   return hasContent ? lines.join('\n') : ''

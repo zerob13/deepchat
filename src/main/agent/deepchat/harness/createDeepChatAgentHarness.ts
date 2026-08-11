@@ -485,14 +485,26 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
           runtime.getOrHydrateScope(toAppSessionId(sessionId)).instance,
         getGenerationSettings: async (sessionId, instance) =>
           await sessionSettings.getEffectiveGenerationSettings(sessionId, instance),
-        buildSystemPrompt: async (sessionId, basePrompt, tools, activeSkills, instance) =>
+        buildSystemPrompt: async (
+          sessionId,
+          basePrompt,
+          tools,
+          activeSkills,
+          sessionActiveSkills,
+          contextLength,
+          instance
+        ) =>
           await promptAssembly.build(
             sessionId,
             basePrompt,
             tools,
             await commandShell.resolveForTurn(),
             activeSkills,
-            instance
+            instance,
+            {
+              sessionActiveSkillNamesOverride: sessionActiveSkills,
+              contextLength
+            }
           ),
         emitRateLimitWaitingMessage: (sessionId, messageId, requestId, snapshot) =>
           loopRunner.emitRateLimitWaitingMessage(sessionId, messageId, requestId, snapshot),

@@ -79,6 +79,11 @@ The canonical card never exposes Skill paths, unrestricted frontmatter metadata,
 or the complete description. System-prompt text and tool-result JSON use separate renderers so one
 wire format does not constrain the other. Route uses only `sessionActive`; Discover may decorate
 its JSON card with `activeForExecution` without changing the canonical card or Route bytes.
+Catalog-producing parsers enforce the public 255-character Skill-name boundary, and the routing
+projection rejects invalid external entries defensively so every accepted name-only card fits.
+For model-tool compatibility, Discover temporarily emits deprecated `isPinned`/`active` and
+`pinnedCount`/`activeCount` aliases beside the accurately named fields. These aliases carry no
+additional state and must remain derived from the canonical values until a later versioned removal.
 
 ### Budget
 
@@ -89,14 +94,18 @@ approximate-token budget:
 catalogBudget = min(floor(effectiveContextLength * 0.02), 2,000)
 ```
 
-When the effective context window is unknown or invalid, the budget is 2,000 approximate tokens.
-Descriptions are first capped at 1,024 Unicode code points as a defensive input bound. The final
-bound uses the same `tokenx` approximate-token estimator used by request preflight.
+The Route budget uses the configured model context window even when an endpoint such as ACP bypasses
+DeepChat's local context admission. When that configured window is unknown or invalid, the budget is
+2,000 approximate tokens. Descriptions are first capped at 1,024 Unicode code points as a defensive
+input bound. Normalization inspects only a bounded source prefix before applying that output cap.
+Categories are capped at 128 code points, and at most eight platform labels of 64 code points each
+are kept, so no whitelisted auxiliary field can become an unbounded alternate description. The
+final bound uses the same `tokenx` approximate-token estimator used by request preflight.
 
 If the computed budget cannot fit the minimum wrapper and omission marker, the catalog block is
 absent. The constant-size usage instructions still direct the model to `skill_list`, and the render
-report records every card as omitted with `catalog_block_omitted`. A zero-token budget therefore
-never produces an over-budget wrapper.
+report records every card as omitted, and prompt provenance records `skill_catalog_omitted`. A
+zero-token budget therefore never produces an over-budget wrapper.
 
 The fixed, constant-size Skills usage instructions are outside the catalog budget. They remain
 bounded independently of catalog size.
@@ -108,12 +117,19 @@ binary UTF-8 bytes, not locale-sensitive collation. The allocator does not use r
 provider calls, or model-generated summaries. It applies these deterministic stages:
 
 1. name, capped summary, category, and platform;
-2. name and a fairly allocated short summary, using the largest shared summary code-point cap that
-   fits, found by monotonic binary search; shorter summaries remain unchanged and leftover space is
-   not redistributed;
+2. name and a fairly allocated short summary, using a shared summary code-point cap selected by
+   bounded binary search plus a fixed local scan for the estimator's non-monotonic Unicode edges;
+   shorter summaries remain unchanged and leftover space is not redistributed. The selected result
+   is always checked against the final token bound but is not claimed to be the global maximum for
+   adversarial Unicode. Candidate rendering stops as soon as its line-level token sum exceeds the
+   budget so failed probes never materialize an unbounded catalog string;
 3. name only;
 4. a stable fitting prefix plus an omission marker that names the omitted count and points to
    `skill_list`.
+
+Prompt provenance records `skill_catalog_shortened` for summary or name-only stages and
+`skill_catalog_omitted` when cards are omitted. The render report remains an execution-local
+diagnostic and is not persisted as section identity.
 
 Session-active Skills may be represented name-only in Route because their complete body already
 has a stable system projection. Message-scoped selections and runtime views never mutate the
@@ -140,16 +156,22 @@ interface SkillListInput {
 - Ranking is exact name, normalized name/prefix, existing aliases or keywords when present,
   category, then description text; ties use stable category/name order.
 - The default page size is 10 and the hard maximum is 20.
+- `skill_list` is a system-model discovery capability while Skills are enabled; per-tool user
+  configuration cannot remove the only recovery path for omitted Route cards.
 - Query input is limited to 256 Unicode code points and 1,024 UTF-8 bytes. Cursor input is limited
   to 1,024 UTF-8 bytes.
 - Cursor decoding is validated and bound to the normalized-query hash, routing projection version,
-  and a SHA-256 fingerprint of the normalized catalog snapshot. A catalog change invalidates the
-  cursor instead of silently duplicating or skipping cards.
+  and a SHA-256 fingerprint of the normalized catalog snapshot. The complete cursor payload,
+  including its offset, is authenticated with a process-scoped HMAC and must use canonical
+  base64url encoding. A catalog change, tampering, or process restart invalidates the cursor instead
+  of silently duplicating or skipping cards.
 - Each response has a 2,000 approximate-token ceiling and may return fewer than `limit`.
 - The response contains whitelisted routing cards, `nextCursor`, total match count, and omitted
   count. It never returns arbitrary metadata or an unbounded full description.
 
-Local matching may inspect complete metadata in memory. Only the bounded routing-card projection is
+Local matching may inspect complete metadata in memory. Queried discovery scans complete
+descriptions one at a time, retaining only match state and a fixed-size content hash rather than a
+second normalized copy of the full corpus. Only the bounded routing-card projection is
 provider-visible. Every Skill omitted from Route remains discoverable through browsing or search.
 
 ## Activate Contract

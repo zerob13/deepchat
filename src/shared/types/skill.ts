@@ -13,6 +13,7 @@ import type {
 } from './skillManagement'
 
 export const SKILL_ARCHIVE_MAX_INPUT_BYTES = 200 * 1024 * 1024
+export const SKILL_NAME_MAX_LENGTH = 255
 
 /**
  * Skill metadata extracted from SKILL.md frontmatter.
@@ -215,12 +216,35 @@ export interface SkillState {
  */
 export interface SkillListItem {
   name: string
-  description: string
-  category?: string | null
+  description?: string
+  category?: string
   platforms?: string[]
-  metadata?: Record<string, unknown>
+  sessionActive: boolean
+  activeForExecution: boolean
+  /** @deprecated Use sessionActive. */
   isPinned: boolean
-  active?: boolean
+  /** @deprecated Use activeForExecution. */
+  active: boolean
+}
+
+export interface SkillListInput {
+  query?: string
+  cursor?: string
+  limit?: number
+}
+
+export interface SkillListResult {
+  skills: SkillListItem[]
+  sessionActiveCount: number
+  activeForExecutionCount: number
+  /** @deprecated Use sessionActiveCount. */
+  pinnedCount: number
+  /** @deprecated Use activeForExecutionCount. */
+  activeCount: number
+  totalCount: number
+  totalMatched: number
+  omittedCount: number
+  nextCursor?: string
 }
 
 export interface SkillLinkedFile {
