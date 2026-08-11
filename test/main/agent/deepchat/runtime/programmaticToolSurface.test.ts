@@ -1,0 +1,546 @@
+import path from 'node:path'
+import { describe, expect, it } from 'vitest'
+import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/core/mcp'
+import {
+  MAX_PROGRAMMATIC_TOOL_AUTHORITY_PROJECTION_BYTES,
+  MAX_PROGRAMMATIC_TOOL_BATCH_STEPS,
+  MAX_PROGRAMMATIC_TOOL_CHILDREN,
+  PROGRAMMATIC_TOOL_ADAPTER_MODE,
+  assertIssuedProgrammaticToolCapability,
+  assertIssuedProgrammaticToolSurface,
+  assertProgrammaticToolCapabilityViewActive,
+  buildProgrammaticToolCapabilityV1,
+  buildProgrammaticToolSurfaceV1,
+  preflightProgrammaticToolRunCeilingV1,
+  type ProgrammaticToolCapabilityCeilingsV1,
+  type ProgrammaticToolCapabilityQuotasV1
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
+import {
+  ToolSurfaceError,
+  buildToolSurfaceRunCeiling,
+  createToolSurfaceActivationLedger,
+  createToolSurfaceSnapshot
+} from '@/agent/deepchat/runtime/toolSurface'
+import { buildTaskContract } from '@/tape/domain/taskContract'
+
+const SERVER_ID = '22222222-2222-4222-8222-222222222222'
+const BINDING_HASH = 'a'.repeat(64)
+
+function agentTool(name: string): MCPToolDefinition {
+  return {
+    source: 'agent',
+    execution: TOOL_EXECUTION.read.parallel,
+    type: 'function',
+    function: {
+      name,
+      description: `${name} description`,
+      parameters: { type: 'object', properties: {} }
+    },
+    server: { name: 'agent-tools', icons: '', description: 'Agent tools' }
+  }
+}
+
+function mcpTool(
+  name: string,
+  effect: 'read' | 'write' = 'read',
+  rawMeta?: Record<string, unknown>
+): MCPToolDefinition {
+  return {
+    source: 'mcp',
+    execution: effect === 'read' ? TOOL_EXECUTION.read.parallel : TOOL_EXECUTION.write,
+    type: 'function',
+    function: {
+      name,
+      description: `${name} description`,
+      parameters: { type: 'object', properties: { value: { type: 'string' } } }
+    },
+    server: {
+      id: SERVER_ID,
+      name: 'remote',
+      icons: '',
+      description: 'Remote tools',
+      configGeneration: 1,
+      bindingHash: BINDING_HASH
+    },
+    raw: {
+      name,
+      inputSchema: { type: 'object', properties: { value: { type: 'string' } } },
+      ...(rawMeta ? { _meta: rawMeta } : {})
+    }
+  }
+}
+
+function buildSnapshot(input: {
+  definitions: readonly MCPToolDefinition[]
+  activeNames: readonly string[]
+  eligibleDefinitions?: readonly MCPToolDefinition[]
+  requestSeq?: number
+  policyVersion?: string
+  requestOverrides?: Partial<{
+    sessionId: string
+    messageId: string
+    runId: string
+  }>
+}) {
+  const ceiling = buildToolSurfaceRunCeiling(input.definitions)
+  const activeEntries = ceiling.catalog.entries.filter((entry) =>
+    input.activeNames.includes(entry.target.providerVisibleName)
+  )
+  return createToolSurfaceSnapshot({
+    request: {
+      sessionId: input.requestOverrides?.sessionId ?? 'session-1',
+      messageId: input.requestOverrides?.messageId ?? 'message-1',
+      runId: input.requestOverrides?.runId ?? 'run-1',
+      requestSeq: input.requestSeq ?? 1
+    },
+    policyVersion: input.policyVersion ?? 'programmatic-test-v1',
+    adapterMode: PROGRAMMATIC_TOOL_ADAPTER_MODE,
+    virtualizationTriggered: true,
+    ceiling,
+    eligibleDefinitions: input.eligibleDefinitions ?? input.definitions,
+    activationLedger: createToolSurfaceActivationLedger(activeEntries),
+    selectionReasons: activeEntries.map((entry) => ({
+      stableTargetKey: entry.stableTargetKey,
+      reason: 'core' as const
+    }))
+  })
+}
+
+function buildTaskContext(
+  overrides: {
+    sessionId?: string
+    workspace?: string
+    maxToolEffect?: 'read' | 'write'
+    maxSubagentDepth?: number
+    contractHash?: string
+  } = {}
+) {
+  const contract = buildTaskContract({
+    delegationId: 'delegation-1',
+    turnId: 'turn-1',
+    turnSeq: 1,
+    turnKind: 'initial',
+    parentSessionId: 'parent-1',
+    slotId: 'reviewer',
+    targetAgentId: 'agent-1',
+    title: 'Review boundaries',
+    prompt: 'Inspect the contract boundary.',
+    workspace: { kind: 'path', path: overrides.workspace ?? path.resolve('task-workspace') },
+    handoffFormat: [],
+    maxToolEffect: overrides.maxToolEffect ?? 'write',
+    maxSubagentDepth: overrides.maxSubagentDepth ?? 1
+  })
+  return {
+    contract,
+    localRef: {
+      schemaVersion: 1 as const,
+      sessionId: overrides.sessionId ?? 'session-1',
+      tapeIdentity: 'b'.repeat(64),
+      entryId: 7,
+      contractHash: overrides.contractHash ?? contract.contractHash
+    }
+  }
+}
+
+const ceilings: ProgrammaticToolCapabilityCeilingsV1 = {
+  maxToolEffect: 'write',
+  workspace: { kind: 'runtime_default' },
+  maxSubagentDepth: 0
+}
+
+const quotas: ProgrammaticToolCapabilityQuotasV1 = {
+  maxChildren: MAX_PROGRAMMATIC_TOOL_CHILDREN,
+  maxBatchSteps: MAX_PROGRAMMATIC_TOOL_BATCH_STEPS,
+  maxInputBytes: 1024,
+  maxOutputBytes: 2048,
+  maxDurationMs: 30_000
+}
+
+function expectSurfaceError(run: () => unknown, code: ToolSurfaceError['code']): void {
+  try {
+    run()
+    throw new Error('Expected ToolSurfaceError')
+  } catch (error) {
+    expect(error).toBeInstanceOf(ToolSurfaceError)
+    expect((error as ToolSurfaceError).code).toBe(code)
+  }
+}
+
+describe('Programmatic Tool Surface', () => {
+  it('derives a frozen MCP-only surface disjoint from the provider-active surface', () => {
+    const native = agentTool('exec')
+    const pinned = mcpTool('remote_read')
+    const hiddenRead = mcpTool('remote_search')
+    const hiddenWrite = mcpTool('remote_send', 'write')
+    const snapshot = buildSnapshot({
+      definitions: [hiddenWrite, native, hiddenRead, pinned],
+      activeNames: ['exec', 'remote_read']
+    })
+
+    const surface = buildProgrammaticToolSurfaceV1(snapshot)
+
+    expect(surface.entries.map((entry) => entry.target.providerVisibleName)).toEqual([
+      'remote_search',
+      'remote_send'
+    ])
+    expect(surface.entries.every((entry) => entry.target.source === 'mcp')).toBe(true)
+    expect(surface.entries.some((entry) => entry.target.providerVisibleName === 'exec')).toBe(false)
+    expect(
+      surface.entries.some((entry) => entry.target.providerVisibleName === 'remote_read')
+    ).toBe(false)
+    expect(surface.catalogHash).toBe(snapshot.eligibleCatalog.fullCatalogHash)
+    expect(surface.surfaceHash).toMatch(/^[a-f0-9]{64}$/u)
+    expect(Object.isFrozen(surface)).toBe(true)
+    expect(Object.isFrozen(surface.entries)).toBe(true)
+    expect(Object.isFrozen(surface.entries[0])).toBe(true)
+    expect(Object.isFrozen(surface.entries[0].definition)).toBe(true)
+    expect(() => assertIssuedProgrammaticToolSurface(surface)).not.toThrow()
+  })
+
+  it('keeps surface identity canonical when provider order and input order differ', () => {
+    const exec = agentTool('exec')
+    const read = mcpTool('remote_read')
+    const write = mcpTool('remote_write', 'write')
+    const first = buildSnapshot({
+      definitions: [write, exec, read],
+      activeNames: ['exec']
+    })
+    const second = buildSnapshot({
+      definitions: [read, write, exec],
+      activeNames: ['exec']
+    })
+
+    expect(buildProgrammaticToolSurfaceV1(first).surfaceHash).toBe(
+      buildProgrammaticToolSurfaceV1(second).surfaceHash
+    )
+  })
+
+  it('binds exact request, surfaces, ceilings, quotas, and TaskContract provenance', () => {
+    const snapshot = buildSnapshot({
+      definitions: [agentTool('exec'), mcpTool('remote_read')],
+      activeNames: ['exec'],
+      requestSeq: 3
+    })
+    const taskContractContext = buildTaskContext()
+    const taskContractRef = taskContractContext.localRef
+
+    const capability = buildProgrammaticToolCapabilityV1({
+      snapshot,
+      taskContractContext,
+      ceilings: { ...ceilings, workspace: { kind: 'path', path: path.resolve('task-workspace') } },
+      quotas
+    })
+
+    expect(capability.adapterMode).toBe(PROGRAMMATIC_TOOL_ADAPTER_MODE)
+    expect(capability.request).toEqual(snapshot.request)
+    expect(capability.entries).toHaveLength(1)
+    expect(capability.catalogHash).toBe(snapshot.eligibleCatalog.fullCatalogHash)
+    expect(capability.programmaticSurfaceHash).toMatch(/^[a-f0-9]{64}$/u)
+    expect(capability.capabilityHash).toMatch(/^[a-f0-9]{64}$/u)
+    expect(capability.taskContractRef).toEqual(taskContractRef)
+    expect(capability.ceilings).toEqual({
+      ...ceilings,
+      workspace: { kind: 'path', path: path.resolve('task-workspace') }
+    })
+    expect(capability.quotas).toEqual(quotas)
+    expect(Object.isFrozen(capability)).toBe(true)
+    expect(Object.isFrozen(capability.request)).toBe(true)
+    expect(Object.isFrozen(capability.taskContractRef)).toBe(true)
+    expect(Object.isFrozen(capability.ceilings.workspace)).toBe(true)
+    expect(() => assertIssuedProgrammaticToolCapability(capability)).not.toThrow()
+  })
+
+  it('rejects effect expansion, cross-Session provenance, and invalid quotas', () => {
+    const snapshot = buildSnapshot({
+      definitions: [agentTool('exec'), mcpTool('remote_send', 'write')],
+      activeNames: ['exec']
+    })
+
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot,
+          taskContractContext: null,
+          ceilings: { ...ceilings, maxToolEffect: 'read' },
+          quotas
+        }),
+      'ineligible_exposure'
+    )
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot,
+          taskContractContext: buildTaskContext({ sessionId: 'another-session' }),
+          ceilings,
+          quotas
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot,
+          taskContractContext: null,
+          ceilings: {
+            ...ceilings,
+            workspace: {
+              kind: 'path',
+              path: `${path.resolve('workspace')}${String.fromCharCode(0)}suffix`
+            }
+          },
+          quotas
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot,
+          taskContractContext: null,
+          ceilings,
+          quotas: { ...quotas, maxChildren: 1, maxBatchSteps: 2 }
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot,
+          taskContractContext: null,
+          ceilings,
+          quotas: { ...quotas, maxChildren: MAX_PROGRAMMATIC_TOOL_CHILDREN + 1 }
+        }),
+      'limit_exceeded'
+    )
+    const inactiveWriteSnapshot = buildSnapshot({
+      definitions: [agentTool('exec'), mcpTool('remote_read'), mcpTool('remote_send', 'write')],
+      eligibleDefinitions: [agentTool('exec'), mcpTool('remote_read')],
+      activeNames: ['exec']
+    })
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot: inactiveWriteSnapshot,
+          taskContractContext: null,
+          ceilings: { ...ceilings, maxToolEffect: 'read' },
+          quotas
+        }),
+      'ineligible_exposure'
+    )
+  })
+
+  it('binds policy and all runtime authority inputs into capability identity', () => {
+    const definitions = [agentTool('exec'), mcpTool('remote_read')]
+    const baseInput = {
+      taskContractContext: null,
+      ceilings,
+      quotas
+    } as const
+    const build = (
+      snapshotOverrides: Parameters<typeof buildSnapshot>[0],
+      capabilityOverrides: Partial<typeof baseInput> = {}
+    ) =>
+      buildProgrammaticToolCapabilityV1({
+        snapshot: buildSnapshot(snapshotOverrides),
+        ...baseInput,
+        ...capabilityOverrides
+      }).capabilityHash
+    const baseSnapshot = { definitions, activeNames: ['exec'] }
+    const baseHash = build(baseSnapshot)
+    const variants = [
+      build({ ...baseSnapshot, policyVersion: 'programmatic-test-v2' }),
+      build({ ...baseSnapshot, requestSeq: 2 }),
+      build({
+        ...baseSnapshot,
+        requestOverrides: { sessionId: 'session-2' }
+      }),
+      build({
+        ...baseSnapshot,
+        requestOverrides: { messageId: 'message-2' }
+      }),
+      build({
+        ...baseSnapshot,
+        requestOverrides: { runId: 'run-2' }
+      }),
+      build(baseSnapshot, { ceilings: { ...ceilings, maxSubagentDepth: 1 } }),
+      build(baseSnapshot, {
+        ceilings: { ...ceilings, workspace: { kind: 'path', path: path.resolve('workspace') } }
+      }),
+      build(baseSnapshot, {
+        quotas: {
+          ...quotas,
+          maxChildren: quotas.maxChildren - 1,
+          maxBatchSteps: quotas.maxBatchSteps - 1
+        }
+      }),
+      build(baseSnapshot, { quotas: { ...quotas, maxBatchSteps: quotas.maxBatchSteps - 1 } }),
+      build(baseSnapshot, { quotas: { ...quotas, maxInputBytes: quotas.maxInputBytes - 1 } }),
+      build(baseSnapshot, { quotas: { ...quotas, maxOutputBytes: quotas.maxOutputBytes - 1 } }),
+      build(baseSnapshot, { quotas: { ...quotas, maxDurationMs: quotas.maxDurationMs - 1 } }),
+      build({
+        definitions: [
+          agentTool('exec'),
+          mcpTool('remote_read', 'write')
+        ],
+        activeNames: ['exec']
+      }),
+      build({
+        definitions: [agentTool('exec'), mcpTool('remote_read', 'read', { revision: 2 })],
+        activeNames: ['exec']
+      })
+    ]
+
+    expect(new Set(variants).size).toBe(variants.length)
+    expect(variants.every((hash) => hash !== baseHash)).toBe(true)
+  })
+
+  it('validates TaskContract ceilings and canonical workspace paths in memory', () => {
+    const snapshot = buildSnapshot({
+      definitions: [agentTool('exec'), mcpTool('remote_read')],
+      activeNames: ['exec']
+    })
+    const taskWorkspace = path.resolve('task-workspace')
+    const taskContext = buildTaskContext({
+      workspace: taskWorkspace,
+      maxToolEffect: 'read',
+      maxSubagentDepth: 0
+    })
+    const build = (overrides: Partial<ProgrammaticToolCapabilityCeilingsV1>) =>
+      buildProgrammaticToolCapabilityV1({
+        snapshot,
+        taskContractContext: taskContext,
+        ceilings: {
+          maxToolEffect: 'read',
+          workspace: { kind: 'path', path: path.join(taskWorkspace, 'child', '..', 'child') },
+          maxSubagentDepth: 0,
+          ...overrides
+        },
+        quotas
+      })
+
+    expect(build({}).ceilings.workspace).toEqual({
+      kind: 'path',
+      path: path.join(taskWorkspace, 'child')
+    })
+    expectSurfaceError(
+      () => build({ maxToolEffect: 'write' }),
+      'ineligible_exposure'
+    )
+    expectSurfaceError(
+      () => build({ workspace: { kind: 'path', path: path.resolve('outside') } }),
+      'ineligible_exposure'
+    )
+    expectSurfaceError(
+      () => build({ maxSubagentDepth: 1 }),
+      'ineligible_exposure'
+    )
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot,
+          taskContractContext: null,
+          ceilings: { ...ceilings, workspace: { kind: 'path', path: 'relative/path' } },
+          quotas
+        }),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot,
+          taskContractContext: buildTaskContext({ contractHash: 'c'.repeat(64) }),
+          ceilings,
+          quotas
+        }),
+      'invalid_definition'
+    )
+    const secondTaskContext = {
+      ...taskContext,
+      localRef: { ...taskContext.localRef, entryId: taskContext.localRef.entryId + 1 }
+    }
+    const firstTaskCapability = build({})
+    const secondTaskCapability = buildProgrammaticToolCapabilityV1({
+      snapshot,
+      taskContractContext: secondTaskContext,
+      ceilings: firstTaskCapability.ceilings,
+      quotas
+    })
+    expect(secondTaskCapability.capabilityHash).not.toBe(firstTaskCapability.capabilityHash)
+  })
+
+  it('preflights the maximum Run programmatic projection before adapter admission', () => {
+    const exec = agentTool('exec')
+    const remoteTools = Array.from({ length: 300 }, (_, index) =>
+      mcpTool(`remote_${String(index).padStart(3, '0')}_${'x'.repeat(900)}`)
+    )
+    const snapshot = buildSnapshot({
+      definitions: [exec, ...remoteTools],
+      eligibleDefinitions: [exec, remoteTools[0]],
+      activeNames: ['exec']
+    })
+    expect(buildProgrammaticToolSurfaceV1(snapshot).entries).toHaveLength(1)
+    expectSurfaceError(
+      () =>
+        preflightProgrammaticToolRunCeilingV1({
+          ceiling: snapshot.ceiling
+        }),
+      'limit_exceeded'
+    )
+    expect(MAX_PROGRAMMATIC_TOOL_AUTHORITY_PROJECTION_BYTES).toBe(1024 * 1024)
+  })
+
+  it('separates capability issuance from active provider-View authority', () => {
+    const capability = buildProgrammaticToolCapabilityV1({
+      snapshot: buildSnapshot({
+        definitions: [agentTool('exec'), mcpTool('remote_read')],
+        activeNames: ['exec']
+      }),
+      taskContractContext: null,
+      ceilings,
+      quotas
+    })
+
+    expect(() => assertIssuedProgrammaticToolCapability(capability)).not.toThrow()
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(capability),
+      'invalid_definition'
+    )
+  })
+
+  it('rejects forged snapshots, surfaces, and capabilities', () => {
+    expectSurfaceError(
+      () => buildProgrammaticToolSurfaceV1({} as never),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () => assertIssuedProgrammaticToolSurface({}),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () => assertIssuedProgrammaticToolCapability({}),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () => buildProgrammaticToolCapabilityV1({} as never),
+      'invalid_definition'
+    )
+    const nativeSnapshot = createToolSurfaceSnapshot({
+      request: { sessionId: 'session-1', messageId: 'message-1', runId: 'run-1', requestSeq: 1 },
+      policyVersion: 'native-test-v1',
+      virtualizationTriggered: true,
+      ceiling: buildToolSurfaceRunCeiling([]),
+      eligibleDefinitions: [],
+      activationLedger: createToolSurfaceActivationLedger([])
+    })
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot: nativeSnapshot,
+          taskContractContext: null,
+          ceilings,
+          quotas
+        }),
+      'ineligible_exposure'
+    )
+  })
+})

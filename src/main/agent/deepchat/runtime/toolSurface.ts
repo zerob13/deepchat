@@ -65,6 +65,11 @@ const TOOL_SURFACE_SELECTION_REASONS = Object.freeze([
   'search-result',
   'tool-search'
 ] as const)
+const TOOL_SURFACE_ADAPTER_MODES = Object.freeze([
+  'direct-native',
+  'native-activation',
+  'cli-programmatic'
+] as const)
 const TOOL_SURFACE_ACTIVATION_REJECTION_CODES = Object.freeze([
   'ineligible',
   'definition-drift',
@@ -155,6 +160,11 @@ export type ToolSurfaceSelectionReason =
   | 'search-result'
   | 'tool-search'
 
+export type ToolSurfaceAdapterMode =
+  | 'direct-native'
+  | 'native-activation'
+  | 'cli-programmatic'
+
 export type ToolSurfaceShadowTriggerReason =
   | 'none'
   | 'tool-count'
@@ -226,6 +236,7 @@ export interface ToolSurfaceSnapshot {
   readonly orderingVersion: typeof TOOL_SURFACE_ORDERING_VERSION
   readonly request: ToolSurfaceRequestIdentity
   readonly policyVersion: string
+  readonly adapterMode: ToolSurfaceAdapterMode
   readonly virtualizationTriggered: boolean
   readonly ceiling: ToolSurfaceRunCeiling
   readonly eligibleCatalog: CanonicalToolCatalog
@@ -285,6 +296,7 @@ export interface ToolSurfaceSnapshotActivation {
 export interface ToolSurfaceRunController {
   readonly ceiling: ToolSurfaceRunCeiling
   readonly policyVersion: string
+  readonly adapterMode: ToolSurfaceAdapterMode
   readonly virtualizationTriggered: boolean
   build(input: {
     readonly request: ToolSurfaceRequestIdentity
@@ -439,6 +451,21 @@ export function revokeToolSurfaceExecutionEligibility(snapshot: ToolSurfaceSnaps
   revokedToolSurfaceExecutionSnapshots.add(snapshot)
 }
 
+export function assertActiveToolSurfaceSnapshot(
+  snapshot: unknown
+): asserts snapshot is ToolSurfaceSnapshot {
+  assertIssuedToolSurfaceSnapshot(snapshot)
+  if (
+    !admittedToolSurfaceSnapshots.has(snapshot) ||
+    revokedToolSurfaceExecutionSnapshots.has(snapshot)
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface is not bound to an active provider View.',
+      'invalid_definition'
+    )
+  }
+}
+
 export interface ToolSurfaceCandidateScope {
   readonly sessionId: string
   readonly messageId: string
@@ -481,16 +508,7 @@ export interface ToolSurfaceExecutionBatch {
 }
 
 export function claimToolSurfaceExecution(snapshot: unknown): asserts snapshot is ToolSurfaceSnapshot {
-  assertIssuedToolSurfaceSnapshot(snapshot)
-  if (
-    !admittedToolSurfaceSnapshots.has(snapshot) ||
-    revokedToolSurfaceExecutionSnapshots.has(snapshot)
-  ) {
-    throw new ToolSurfaceError(
-      'Tool Surface execution is not bound to an active provider View.',
-      'invalid_definition'
-    )
-  }
+  assertActiveToolSurfaceSnapshot(snapshot)
   if (executionBatchIssuedToolSurfaceSnapshots.has(snapshot)) {
     throw new ToolSurfaceError(
       'Tool Surface execution was already claimed for this provider View.',
@@ -2659,6 +2677,12 @@ function validateToolSurfaceRunCeiling(ceiling: ToolSurfaceRunCeiling): void {
   }
 }
 
+export function assertIssuedToolSurfaceRunCeiling(
+  ceiling: unknown
+): asserts ceiling is ToolSurfaceRunCeiling {
+  validateToolSurfaceRunCeiling(ceiling as ToolSurfaceRunCeiling)
+}
+
 function isToolSurfaceSelectionReason(value: unknown): value is ToolSurfaceSelectionReason {
   return (
     typeof value === 'string' &&
@@ -2704,6 +2728,7 @@ function isToolSearchCatalogEntry(entry: CanonicalToolCatalogEntry): boolean {
 export function createToolSurfaceSnapshot(input: {
   readonly request: ToolSurfaceRequestIdentity
   readonly policyVersion: string
+  readonly adapterMode?: ToolSurfaceAdapterMode
   readonly virtualizationTriggered: boolean
   readonly ceiling: ToolSurfaceRunCeiling
   readonly eligibleDefinitions: readonly MCPToolDefinition[]
@@ -2745,6 +2770,19 @@ export function createToolSurfaceSnapshot(input: {
     throw new ToolSurfaceError('Tool Surface snapshot identity is invalid.', 'invalid_definition')
   }
   validateToolSurfaceRunCeiling(input.ceiling)
+  const adapterMode =
+    input.adapterMode ??
+    (input.virtualizationTriggered ? 'native-activation' : 'direct-native')
+  if (
+    !(TOOL_SURFACE_ADAPTER_MODES as readonly string[]).includes(adapterMode) ||
+    (adapterMode === 'direct-native' && input.virtualizationTriggered) ||
+    (adapterMode !== 'direct-native' && !input.virtualizationTriggered)
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface adapter mode conflicts with its virtualization state.',
+      'invalid_definition'
+    )
+  }
 
   const ceilingEntryByTarget = new Map(
     input.ceiling.catalog.entries.map((entry) => [entry.stableTargetKey, entry])
@@ -3048,6 +3086,7 @@ export function createToolSurfaceSnapshot(input: {
     orderingVersion: TOOL_SURFACE_ORDERING_VERSION,
     request: Object.freeze({ ...request }),
     policyVersion: input.policyVersion,
+    adapterMode,
     virtualizationTriggered: input.virtualizationTriggered,
     ceiling: input.ceiling,
     eligibleCatalog: eligible.catalog,
@@ -3107,6 +3146,7 @@ export function createFullToolSurfaceRunController(input: {
   const controller: FullToolSurfaceRunController = {
     ceiling,
     policyVersion: input.policyVersion,
+    adapterMode: 'direct-native',
     virtualizationTriggered: false,
     stageActivationBatch: (candidates) => {
       const candidateBatch = readDataArray(
@@ -3298,6 +3338,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
   const controller: FullToolSurfaceRunController = {
     ceiling,
     policyVersion: input.policy.policyVersion,
+    adapterMode: 'native-activation',
     virtualizationTriggered: true,
     stageActivationBatch: (candidates) => {
       const candidateBatch = readDataArray(
