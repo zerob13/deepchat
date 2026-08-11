@@ -9,6 +9,7 @@
 import type {
   SkillManagementState,
   SkillSyncDirectoryConfig,
+  SkillSourceType,
   UnifiedSkillItem
 } from './skillManagement'
 
@@ -53,6 +54,23 @@ export interface SkillContent {
   name: string
   /** Full SKILL.md content (body after frontmatter) */
   content: string
+}
+
+/** Canonical main-process identity for a Skill body materialized from disk. */
+export interface EffectiveSkillContentIdentity {
+  agentId: string
+  sourceType: SkillSourceType
+  sourceId: string
+  skillName: string
+}
+
+/** Fresh canonical Skill content and evidence used by internal runtime materializers. */
+export interface EffectiveSkillContentResolution {
+  identity: EffectiveSkillContentIdentity
+  effectiveContent: string
+  builderVersion: string
+  renderedManifestHash: string
+  scriptInventoryHash: string
 }
 
 export type SkillRuntimePreference = 'auto' | 'system' | 'builtin'
@@ -323,6 +341,10 @@ export interface SkillServicePort {
   // Content loading
   loadSkillContent(name: string): Promise<SkillContent | null>
   loadSkillContent(agentId: string, name: string): Promise<SkillContent | null>
+  resolveFreshEffectiveSkillContents(
+    agentId: string,
+    names: readonly string[]
+  ): Promise<EffectiveSkillContentResolution[]>
   viewSkillForAgent(
     agentId: string,
     name: string,

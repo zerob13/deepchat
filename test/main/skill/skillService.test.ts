@@ -150,7 +150,8 @@ vi.mock('node:child_process', () => ({
   )
 }))
 
-vi.mock('node:crypto', () => ({
+vi.mock('node:crypto', async () => ({
+  ...(await vi.importActual<typeof import('node:crypto')>('node:crypto')),
   randomUUID: vi.fn().mockReturnValue('12345678-1234-1234-1234-123456789abc')
 }))
 
@@ -1129,6 +1130,76 @@ describe('SkillService', () => {
 
       expect(content?.content).not.toContain('${SKILL_ROOT}')
       expect(content?.content).not.toContain('${SKILLS_DIR}')
+    })
+
+    it('resolves the same canonical effective content as a root skill view', async () => {
+      await skillService.discoverSkills()
+
+      const view = await skillService.viewSkill('test-skill')
+      const [resolved] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
+        'test-skill'
+      ])
+
+      expect(view.success).toBe(true)
+      expect(resolved.effectiveContent).toBe(view.content)
+    })
+
+    it('resolves fresh disk content despite a populated content cache', async () => {
+      await skillService.discoverSkills()
+      const cached = await skillService.loadSkillContent('test-skill')
+      expect(cached?.content).toContain('Skill content here')
+      ;(matter as unknown as Mock).mockReturnValue({
+        data: { name: 'test-skill', description: 'Test' },
+        content: '# Fresh disk edit'
+      })
+
+      const [resolved] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
+        'test-skill'
+      ])
+
+      expect(resolved.effectiveContent).toContain('Fresh disk edit')
+      expect((await skillService.loadSkillContent('test-skill'))?.content).toBe(cached?.content)
+    })
+
+    it('returns deterministic canonical identity and evidence hashes', async () => {
+      await skillService.discoverSkills()
+
+      const [first] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
+        'test-skill'
+      ])
+      const [second] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
+        'test-skill'
+      ])
+
+      expect(second).toEqual(first)
+      expect(first.identity).toMatchObject({ agentId: 'deepchat', skillName: 'test-skill' })
+      expect(first.builderVersion).toBe('skill-effective-content-v1')
+      expect(first.renderedManifestHash).toMatch(/^[a-f0-9]{64}$/)
+      expect(first.scriptInventoryHash).toMatch(/^[a-f0-9]{64}$/)
+    })
+
+    it('fails clearly when a selected visible skill disappeared from disk', async () => {
+      await skillService.discoverSkills()
+      ;(fs.promises.stat as Mock).mockRejectedValueOnce(
+        Object.assign(new Error('ENOENT: missing manifest'), { code: 'ENOENT' })
+      )
+
+      await expect(
+        skillService.resolveFreshEffectiveSkillContents('deepchat', ['test-skill'])
+      ).rejects.toThrow('Failed to resolve requested Skill "test-skill": ENOENT: missing manifest')
+    })
+
+    it('fails closed when the catalog changes during a fresh resolve', async () => {
+      await skillService.discoverSkills()
+      const stat = fs.promises.stat as Mock
+      stat.mockImplementationOnce(async (...args: Parameters<typeof fs.promises.stat>) => {
+        await skillService.discoverSkills('deepchat')
+        return (fs.statSync as Mock)(...args)
+      })
+
+      await expect(
+        skillService.resolveFreshEffectiveSkillContents('deepchat', ['test-skill'])
+      ).rejects.toThrow('catalog changed while effective content was being resolved')
     })
   })
 

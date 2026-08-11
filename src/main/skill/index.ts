@@ -2,7 +2,7 @@ import { app, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import matter from 'gray-matter'
 import type { SkillSettingsPort } from './settings'
@@ -44,6 +44,8 @@ import {
   SkillScriptRuntime,
   SkillViewResult,
   SkillLinkedFile,
+  EffectiveSkillContentIdentity,
+  EffectiveSkillContentResolution,
   SKILL_ARCHIVE_MAX_INPUT_BYTES,
   SKILL_EFFECTIVE_CONTENT_MAX_BYTES,
   SKILL_NAME_MAX_LENGTH
@@ -70,6 +72,7 @@ import {
 
 const execFileAsync = promisify(execFile)
 const READ_ONLY_BUNDLED_SKILL_NAMES = new Set(['deepchat-cli'])
+const EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION = 'skill-effective-content-v1'
 
 /**
  * Skill system configuration constants
@@ -180,12 +183,7 @@ export interface SkillAgentScopePort {
   listSessions(): Promise<Array<{ id: string; agentId: string }>>
 }
 
-export interface RuntimeSkillContentIdentity {
-  agentId: string
-  sourceType: SkillSourceType
-  sourceId: string
-  skillName: string
-}
+export type RuntimeSkillContentIdentity = EffectiveSkillContentIdentity
 
 export type RuntimeSkillViewResult = SkillViewResult & {
   /** Main-process evidence only. AgentToolManager removes it from the provider-visible result. */
@@ -197,6 +195,17 @@ interface ScopedSkillCatalog {
   contentCache: Map<string, SkillContent>
   discoveryPromise: Promise<SkillMetadata[]> | null
   discovered: boolean
+}
+
+interface EffectiveSkillContentBuild {
+  skillContent: SkillContent
+  renderedManifest: string
+  scriptInventory: Array<{
+    relativePath: string
+    runtime: SkillScriptRuntime
+    enabled: boolean
+    description?: string
+  }>
 }
 
 interface SkillDirectoryInstallContext {
@@ -1487,8 +1496,9 @@ export class SkillService implements SkillServicePort {
     }
 
     try {
-      const skillContent = await this.buildEffectiveSkillContent(agentId, metadata)
-      if (!skillContent) return null
+      const build = await this.buildEffectiveSkillContent(agentId, metadata)
+      if (!build) return null
+      const skillContent = build.skillContent
 
       // Discovery may have refreshed the caches while we were reading from disk;
       // only cache when this skill's metadata entry is still the one we read from.
@@ -1505,7 +1515,7 @@ export class SkillService implements SkillServicePort {
   private async buildEffectiveSkillContent(
     agentId: string,
     metadata: SkillMetadata
-  ): Promise<SkillContent | null> {
+  ): Promise<EffectiveSkillContentBuild | null> {
     const confinedSkillPath = await this.resolvePhysicalSkillPath(metadata.skillRoot, metadata.path)
     if (!confinedSkillPath) {
       logger.warn('[SkillService] Refusing to load a Skill manifest outside its physical root.', {
@@ -1525,12 +1535,75 @@ export class SkillService implements SkillServicePort {
 
     const rawContent = await fs.promises.readFile(confinedSkillPath, 'utf-8')
     const { content } = matter(rawContent)
-    const renderedContent = this.replacePathVariables(content, metadata, agentId)
-    const runtimeInstructions = await this.buildRuntimeInstructions(metadata, agentId)
+    const renderedContent = this.replacePathVariables(content, metadata, agentId).trim()
+    const scripts = await this.listSkillScriptsFromMetadata(agentId, metadata)
+    const runtimeInstructions = this.buildRuntimeInstructions(metadata, scripts)
+    const scriptInventory = scripts.map(({ relativePath, runtime, enabled, description }) => ({
+      relativePath,
+      runtime,
+      enabled,
+      ...(description ? { description } : {})
+    }))
     return {
-      name: metadata.name,
-      content: [renderedContent.trim(), runtimeInstructions].filter(Boolean).join('\n\n')
+      skillContent: {
+        name: metadata.name,
+        content: [renderedContent, runtimeInstructions].filter(Boolean).join('\n\n')
+      },
+      renderedManifest: renderedContent,
+      scriptInventory
     }
+  }
+
+  async resolveFreshEffectiveSkillContents(
+    agentId: string,
+    names: readonly string[]
+  ): Promise<EffectiveSkillContentResolution[]> {
+    const normalizedAgentId = await this.requireAgentScope(agentId)
+    await this.ensureAgentCatalogDiscovered(normalizedAgentId)
+    const metadataCache = this.getMetadataCacheForAgent(normalizedAgentId)
+
+    return await Promise.all(
+      names.map(async (name) => {
+        const metadata = metadataCache.get(name)
+        if (!metadata || !this.isSkillVisible(metadata, normalizedAgentId)) {
+          throw new Error(`[SkillService] Requested visible Skill "${name}" is no longer available`)
+        }
+
+        try {
+          // Intentionally bypass contentCache: materialization must describe current disk state.
+          const build = await this.buildEffectiveSkillContent(normalizedAgentId, metadata)
+          if (!build) {
+            throw new Error('manifest could not be loaded safely')
+          }
+          if (
+            metadataCache.get(name) !== metadata ||
+            !this.isSkillVisible(metadata, normalizedAgentId)
+          ) {
+            throw new Error('catalog changed while effective content was being resolved')
+          }
+          if (
+            Buffer.byteLength(build.skillContent.content, 'utf8') >
+            SKILL_EFFECTIVE_CONTENT_MAX_BYTES
+          ) {
+            throw new Error(`effective content exceeds ${SKILL_EFFECTIVE_CONTENT_MAX_BYTES} bytes`)
+          }
+          return {
+            identity: this.buildSkillContentIdentity(normalizedAgentId, metadata),
+            effectiveContent: build.skillContent.content,
+            builderVersion: EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION,
+            renderedManifestHash: this.hashSkillEvidence(build.renderedManifest),
+            scriptInventoryHash: this.hashSkillEvidence(JSON.stringify(build.scriptInventory))
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          throw new Error(`[SkillService] Failed to resolve requested Skill "${name}": ${message}`)
+        }
+      })
+    )
+  }
+
+  private hashSkillEvidence(value: string): string {
+    return createHash('sha256').update(value, 'utf8').digest('hex')
   }
 
   async viewSkillForAgent(
@@ -1648,13 +1721,14 @@ export class SkillService implements SkillServicePort {
 
     const contentIdentity = this.buildSkillContentIdentity(agentId, metadata)
     try {
-      const skillContent = await this.buildEffectiveSkillContent(agentId, metadata)
-      if (!skillContent) {
+      const build = await this.buildEffectiveSkillContent(agentId, metadata)
+      if (!build) {
         return {
           success: false,
           error: 'Skill manifest could not be loaded safely'
         }
       }
+      const skillContent = build.skillContent
       const effectiveContentBytes = Buffer.byteLength(skillContent.content, 'utf8')
       if (effectiveContentBytes > SKILL_EFFECTIVE_CONTENT_MAX_BYTES) {
         return {
@@ -2068,13 +2142,11 @@ export class SkillService implements SkillServicePort {
       )
   }
 
-  private async buildRuntimeInstructions(
+  private buildRuntimeInstructions(
     metadata: SkillMetadata,
-    agentId: string = BUILTIN_SKILL_AGENT_ID
-  ): Promise<string> {
-    const scripts = (await this.listSkillScriptsFromMetadata(agentId, metadata)).filter(
-      (script) => script.enabled
-    )
+    scriptInventory: SkillScriptDescriptor[]
+  ): string {
+    const scripts = scriptInventory.filter((script) => script.enabled)
     const lines = [
       '## DeepChat Runtime Context',
       `- Skill root: \`${metadata.skillRoot}\`.`,
