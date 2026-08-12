@@ -209,6 +209,7 @@ import { SessionTranslation } from '@/session/sessionTranslation'
 import { createSessionRoutes } from '@/session/routes'
 import { createAgentRoutes } from '@/agent/routes'
 import { createPromptRoutes } from '@/agent/promptRoutes'
+import { createSkillExecutionAuthorityTapePort } from '@/tape/application/capabilityAdapters'
 import { AgentSessionExportService } from '../exporter/agentSessionExporter'
 import { createInMemoryServerFactory } from '../mcp/inMemoryServers/builder'
 import {
@@ -1269,7 +1270,7 @@ export async function createMainProcessControl(dependencies: {
     liveDelegation: createLivePort(() => liveDelegationService),
     skills: skillService,
     skillExecutionAuthority: new SkillExecutionAuthorityResolver({
-      tape: sessionData.tapeStore,
+      tape: createSkillExecutionAuthorityTapePort(sessionData.tapeStore),
       environments: skillService
     }),
     browser: yoBrowserPresenter.toolHandler,

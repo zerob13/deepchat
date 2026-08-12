@@ -1,6 +1,10 @@
 import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
+import {
+  createSkillContextTapePort,
+  createSkillExecutionAuthorityTapePort
+} from '@/tape/application/capabilityAdapters'
 
 const MAIN_SOURCE_ROOT = path.resolve(process.cwd(), 'src/main')
 const TAPE_ROOT = path.join(MAIN_SOURCE_ROOT, 'tape')
@@ -533,6 +537,38 @@ describe('Tape layer boundaries', () => {
       'agent/deepchat/runtime/skillContextMaterializer.ts',
       'skill/skillExecutionAuthority.ts'
     ])
+  })
+
+  it('narrows Skill Tape collaborators to their runtime capability sets', () => {
+    const source = {
+      getTapeIncarnationId: vi.fn(),
+      materializeSkillContexts: vi.fn(),
+      readSkillMaterialization: vi.fn(),
+      getEffectiveUserMessageSourceEntryId: vi.fn(),
+      getLatestViewManifestByRunBinding: vi.fn(),
+      getViewManifestByExecutionBinding: vi.fn(),
+      appendMessageRecord: vi.fn()
+    }
+
+    const contextPort = createSkillContextTapePort(source)
+    const authorityPort = createSkillExecutionAuthorityTapePort(source)
+
+    expect(Object.isFrozen(contextPort)).toBe(true)
+    expect(Object.keys(contextPort).sort()).toEqual([
+      'getEffectiveUserMessageSourceEntryId',
+      'getLatestViewManifestByRunBinding',
+      'getTapeIncarnationId',
+      'materializeSkillContexts',
+      'readSkillMaterialization'
+    ])
+    expect(Object.isFrozen(authorityPort)).toBe(true)
+    expect(Object.keys(authorityPort).sort()).toEqual([
+      'getTapeIncarnationId',
+      'getViewManifestByExecutionBinding',
+      'readSkillMaterialization'
+    ])
+    expect('appendMessageRecord' in contextPort).toBe(false)
+    expect('appendMessageRecord' in authorityPort).toBe(false)
   })
 
   it.each([
