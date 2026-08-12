@@ -63,6 +63,12 @@ type SkillSearchRecord = {
   descriptionHash: string
 }
 
+type CachedSkillSearchDescription = {
+  source: string
+  normalized: string
+  hash: string
+}
+
 type SkillListCursor = {
   v: typeof SKILL_LIST_CURSOR_VERSION
   q: string
@@ -75,6 +81,7 @@ type SignedSkillListCursor = SkillListCursor & {
 }
 
 const SKILL_LIST_CURSOR_HMAC_KEY = randomBytes(32)
+const SKILL_SEARCH_DESCRIPTION_CACHE = new WeakMap<SkillMetadata, CachedSkillSearchDescription>()
 
 function compareBinaryText(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
@@ -503,6 +510,21 @@ function readSearchMetadataValues(metadata: Record<string, unknown> | undefined)
   return [...new Set(result)].sort(compareBinaryText)
 }
 
+function readSearchDescription(metadata: SkillMetadata | undefined): CachedSkillSearchDescription {
+  if (!metadata || typeof metadata.description !== 'string') {
+    return { source: '', normalized: '', hash: hashText('') }
+  }
+  const cached = SKILL_SEARCH_DESCRIPTION_CACHE.get(metadata)
+  if (cached?.source === metadata.description) return cached
+  const result = {
+    source: metadata.description,
+    normalized: normalizeSearchText(metadata.description),
+    hash: hashText(metadata.description)
+  }
+  SKILL_SEARCH_DESCRIPTION_CACHE.set(metadata, result)
+  return result
+}
+
 function buildSearchRecords(
   skills: readonly SkillMetadata[],
   sessionActiveSkillNames: readonly string[],
@@ -519,14 +541,14 @@ function buildSearchRecords(
   }
   return [...cardByName.values()].map((card) => {
     const metadata = metadataByName.get(card.name)
-    const description = typeof metadata?.description === 'string' ? metadata.description : ''
+    const description = query ? readSearchDescription(metadata) : null
     return {
       card,
       normalizedName: normalizeSearchText(card.name),
       normalizedCategory: normalizeSearchText(card.category ?? ''),
       normalizedAliases: query ? readSearchMetadataValues(metadata?.metadata) : [],
-      descriptionMatches: query ? normalizeSearchText(description).includes(query) : false,
-      descriptionHash: query ? hashText(description) : ''
+      descriptionMatches: description?.normalized.includes(query) ?? false,
+      descriptionHash: description?.hash ?? ''
     }
   })
 }

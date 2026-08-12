@@ -224,6 +224,27 @@ describe('skill routing catalog', () => {
     ).toThrow('does not match the current query and catalog')
   })
 
+  it('invalidates cached search evidence when a metadata object changes in place', () => {
+    const first = metadata('first', 'needle first version')
+    const skills = [first, metadata('second', 'needle second')]
+    const firstPage = buildSkillListResult(skills, [], [], { query: 'needle', limit: 1 })
+
+    expect(firstPage.nextCursor).toBeTypeOf('string')
+    expect(buildSkillListResult(skills, [], [], { query: 'needle', limit: 1 }).skills).toEqual(
+      firstPage.skills
+    )
+
+    first.description = 'needle revised version'
+
+    expect(() =>
+      buildSkillListResult(skills, [], [], {
+        query: 'needle',
+        cursor: firstPage.nextCursor,
+        limit: 1
+      })
+    ).toThrow('does not match the current query and catalog')
+  })
+
   it('invalidates cursors when execution-active discovery decoration changes', () => {
     const skills = [metadata('first', 'first'), metadata('second', 'second')]
     const firstPage = buildSkillListResult(skills, [], ['first'], { limit: 1 })
