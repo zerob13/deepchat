@@ -1253,6 +1253,46 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
   })
 
+  it('replaces the Programmatic View and capability after context recovery', async () => {
+    const tools = programmaticDefinitions()
+    const surface = createProgrammaticToolSurfacePort(tools)
+    const fixture = createAttemptInput({
+      tools,
+      toolSurface: surface.port,
+      providerEvents: [
+        [{ type: 'error', error_message: 'context overflow' }],
+        [
+          { type: 'text', content: 'recovered' },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
+      ]
+    })
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(surface.build.mock.calls.map(([input]) => input.requestSeq)).toEqual([1, 2])
+    expect(surface.buildCapability).toHaveBeenCalledTimes(2)
+    expect(surface.admit.mock.calls.map(([input]) => input.requestSeq)).toEqual([1, 2])
+    expect(surface.snapshots).toHaveLength(2)
+    expect(surface.capabilities).toHaveLength(2)
+    expect(surface.snapshots[1]).not.toBe(surface.snapshots[0])
+    expect(surface.capabilities[1]).not.toBe(surface.capabilities[0])
+    expect(fixture.manifestToolSurfaceRefs).toEqual(surface.snapshots)
+    expect(fixture.manifestProgrammaticCapabilityRefs).toEqual(surface.capabilities)
+    expect(fixture.providerToolSurfaceRefs).toEqual(surface.snapshots)
+    expect(fixture.run.activeRequestToolSurface).toMatchObject({
+      requestSeq: 2,
+      snapshot: surface.snapshots[1],
+      programmaticCapability: surface.capabilities[1]
+    })
+    expect(() =>
+      assertProgrammaticToolCapabilityViewActive(surface.capabilities[0], surface.snapshots[0])
+    ).toThrow(/active provider View/)
+    expect(() =>
+      assertProgrammaticToolCapabilityViewActive(surface.capabilities[1], surface.snapshots[1])
+    ).not.toThrow()
+  })
+
   it('runs pressure recovery before manifesting the provider request', async () => {
     const fixture = createAttemptInput()
     const preflight = vi

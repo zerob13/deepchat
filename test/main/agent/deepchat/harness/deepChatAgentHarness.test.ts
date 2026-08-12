@@ -7607,6 +7607,8 @@ describe('DeepChatAgentHarness', () => {
       expect(agent.getToolSurfaceShadowDiagnostics('s-acp-regular')).toBeNull()
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(callArgs.run.resources.toolSurfaceMode).toBe('legacy')
+      expect(callArgs.run.activeRequestToolSurface).toBeNull()
       expect(callArgs.run.resources.toolDefinitions).toEqual(tools)
       expect(callArgs.run.messages[0].role).toBe('system')
     })

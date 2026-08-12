@@ -42,22 +42,22 @@
 - [x] Add bounded hash-valid catalog/provider surface facts and exclude them from View/Memory/search.
 - [x] Atomically write strict V5 facts, keep honest V4 fail-open diagnostics, and recover strict
       deferred dispatch only from unique exact evidence.
-- [ ] Cover small/full, large/virtualized, retry, recovery, revocation, Skill, crash, and ACP cases.
-- [ ] Review and commit each Native Activation slice; do not push.
+- [x] Cover small/full, large/virtualized, retry, recovery, revocation, Skill, crash, and ACP cases.
+- [x] Review and commit each Native Activation slice; do not push.
 
 ## Dual Surface
 
-- [ ] Freeze the Run Tool Ceiling and one adapter mode per Run.
-- [ ] Build one immutable snapshot per `requestSeq` and reuse it for physical retries.
-- [ ] Assemble mutually exclusive Provider Active and Programmatic surfaces with all exclusions.
-- [ ] Add `ProgrammaticToolCapabilityV1` with exact identity, hashes, projection, ceilings, quotas,
+- [x] Freeze the Run Tool Ceiling and one adapter mode per Run.
+- [x] Build one immutable snapshot per `requestSeq` and reuse it for physical retries.
+- [x] Assemble mutually exclusive Provider Active and Programmatic surfaces with all exclusions.
+- [x] Add `ProgrammaticToolCapabilityV1` with exact identity, hashes, projection, ceilings, quotas,
       and versions.
-- [ ] Keep the complete live Programmatic target/hash set within hard bounds; allow truncation only
+- [x] Keep the complete live Programmatic target/hash set within hard bounds; allow truncation only
       in the durable projection, and use the frozen Run ceiling to reject oversized sets before
       adapter admission so a later View cannot overflow.
-- [ ] Keep V5 ExecutionContract ceilings provider-visible only and ACP excluded.
-- [ ] Cover revocation, definition drift, recovery, and no-within-Run-adapter-switch behavior.
-- [ ] Perform a severity review before commit; do not push.
+- [x] Keep V5 ExecutionContract ceilings provider-visible only and ACP excluded.
+- [x] Cover revocation, definition drift, recovery, and no-within-Run-adapter-switch behavior.
+- [x] Perform a severity review before commit; do not push.
 
 ## CLI Programmatic and Three Adapters
 
