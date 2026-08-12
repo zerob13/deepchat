@@ -2,17 +2,17 @@ import fs from 'fs'
 import path from 'path'
 import { spawn } from 'child_process'
 import logger from '@shared/logger'
-import type {
-  SkillRuntimePreference,
-  SkillRuntimePolicy,
-  SkillScriptRuntime
+import {
+  SKILL_RUN_MAX_ARGUMENTS,
+  SKILL_RUN_MAX_ARGUMENT_CHARS,
+  SKILL_RUN_MAX_STDIN_CHARS,
+  SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS,
+  type SkillRuntimePreference,
+  type SkillRuntimePolicy,
+  type SkillScriptRuntime
 } from '@shared/types/skill'
 import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
-import {
-  RTK_ENABLED_SETTING_KEY,
-  rtkRuntimeService
-} from '@/agent/shared/process/rtkRuntimeService'
-import { getShellEnvironment, mergeCommandEnvironment } from '@/agent/shared/process/shellEnvHelper'
+import { mergeCommandEnvironment } from '@/agent/shared/process/shellEnvHelper'
 import {
   createUtf8OutputDecoderPair,
   prepareProcessEnvForUtf8Output,
@@ -22,7 +22,6 @@ import { resolveSessionDir } from '@/agent/shared/storage/sessionPaths'
 import { resolveUsableSpawnCwd } from '@/agent/shared/process/spawnGuard'
 import { terminateProcessTree } from '@/agent/shared/process/processTree'
 import { RuntimeHelper } from '@/lib/runtimeHelper'
-import type { SettingsStore } from '@/config/settingsStore'
 import type { CommandShellDialect, ResolvedCommandShell } from '@shared/commandShell'
 import type { ResolvedSkillExecutionAuthority } from './skillExecutionAuthority'
 import {
@@ -35,6 +34,7 @@ const DEFAULT_TIMEOUT_MS = 120000
 const FOREGROUND_OFFLOAD_THRESHOLD = 10000
 const FOREGROUND_PREVIEW_CHARS = 12000
 const FOREGROUND_KILL_GRACE_MS = 2000
+const RUNTIME_PATH_MAX_ENTRIES = 256
 
 export interface SkillRunRequest {
   skill: string
@@ -99,11 +99,9 @@ interface ForegroundExecutionResult {
 
 export class SkillExecutionService {
   private readonly runtimeHelper = RuntimeHelper.getInstance()
-  private readonly settings: Pick<SettingsStore, 'get'>
   private readonly resolveConversationWorkdir?: (conversationId: string) => Promise<string | null>
 
-  constructor(settings: Pick<SettingsStore, 'get'>, options: SkillExecutionServiceOptions = {}) {
-    this.settings = settings
+  constructor(options: SkillExecutionServiceOptions = {}) {
     this.resolveConversationWorkdir = options.resolveConversationWorkdir
     this.runtimeHelper.initializeRuntimes()
   }
@@ -113,6 +111,7 @@ export class SkillExecutionService {
     authority: ResolvedSkillExecutionAuthority,
     options: SkillRunOptions
   ): Promise<SkillExecutionResult> {
+    this.assertInputWithinLimits(input)
     options.signal?.throwIfAborted()
     await options.assertAuthorityCurrent()
     const tree = await materializeSkillExecutionPackageTree(authority.executionPackage)
@@ -125,7 +124,8 @@ export class SkillExecutionService {
           authority,
           tree,
           options.conversationId,
-          options.commandShell
+          options.commandShell,
+          options.signal
         ),
         options.commandShell
       )
@@ -246,12 +246,28 @@ export class SkillExecutionService {
     }
   }
 
+  private assertInputWithinLimits(input: SkillRunRequest): void {
+    const args = input.args ?? []
+    if (
+      args.length > SKILL_RUN_MAX_ARGUMENTS ||
+      args.some((argument) => argument.length > SKILL_RUN_MAX_ARGUMENT_CHARS) ||
+      args.reduce((total, argument) => total + argument.length, 0) >
+        SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS
+    ) {
+      throw new Error('Skill execution arguments exceed the supported input limits.')
+    }
+    if ((input.stdin?.length ?? 0) > SKILL_RUN_MAX_STDIN_CHARS) {
+      throw new Error('Skill execution stdin exceeds the supported input limit.')
+    }
+  }
+
   private async buildSpawnPlan(
     input: SkillRunRequest,
     authority: ResolvedSkillExecutionAuthority,
     tree: MaterializedSkillExecutionPackageTree,
     conversationId: string,
-    commandShell: ResolvedCommandShell
+    commandShell: ResolvedCommandShell,
+    signal?: AbortSignal
   ): Promise<SpawnPlan> {
     if (input.skill !== authority.identity.skillName) {
       throw new Error('Skill execution request does not match its request-bound package authority.')
@@ -262,10 +278,8 @@ export class SkillExecutionService {
       throw new Error(`Skill script "${script.relativePath}" is disabled`)
     }
 
-    const shellEnv = await getShellEnvironment()
     const executionCwd = await this.resolveExecutionCwd(conversationId, tree.packageRoot)
     const mergedEnv = mergeCommandEnvironment({
-      shellEnv,
       overrides: {
         ...authority.environment,
         SKILL_ROOT: tree.packageRoot,
@@ -277,7 +291,8 @@ export class SkillExecutionService {
       script,
       authority.executionPackage.runtimePolicy,
       mergedEnv,
-      commandShell
+      commandShell,
+      signal
     )
     const args = this.buildRuntimeArgs(runtime, script, tree.packageRoot, input.args ?? [])
 
@@ -386,7 +401,8 @@ export class SkillExecutionService {
     script: MaterializedSkillScript,
     runtimePolicy: SkillRuntimePolicy,
     env: Record<string, string>,
-    commandShell: ResolvedCommandShell
+    commandShell: ResolvedCommandShell,
+    signal?: AbortSignal
   ): Promise<RuntimeCommand> {
     if (script.runtime === 'shell') {
       if (commandShell.profile !== 'posix' && commandShell.profile !== 'git-bash') {
@@ -396,15 +412,16 @@ export class SkillExecutionService {
     }
 
     if (script.runtime === 'node') {
-      return await this.resolveNodeRuntime(runtimePolicy.node, env)
+      return await this.resolveNodeRuntime(runtimePolicy.node, env, signal)
     }
 
-    return await this.resolvePythonRuntime(runtimePolicy.python, env)
+    return await this.resolvePythonRuntime(runtimePolicy.python, env, signal)
   }
 
   private async resolvePythonRuntime(
     preference: SkillRuntimePreference,
-    env: Record<string, string>
+    env: Record<string, string>,
+    signal?: AbortSignal
   ): Promise<RuntimeCommand> {
     if (preference === 'builtin') {
       const bundledUv = this.getBundledRuntimeCommand('uv')
@@ -415,15 +432,16 @@ export class SkillExecutionService {
     }
 
     if (preference === 'system') {
-      const system = await this.findSystemPythonRuntime(env)
+      const system = await this.findSystemPythonRuntime(env, signal)
       if (!system) {
         throw new Error('No compatible system Python runtime found for this skill')
       }
       return system
     }
 
-    if (await this.hasCommand('uv', ['--version'], env)) {
-      return { command: 'uv', mode: 'uv' }
+    const systemUv = await this.resolveSystemCommand('uv', env, signal)
+    if (systemUv) {
+      return { command: systemUv, mode: 'uv' }
     }
 
     const bundledUv = this.getBundledRuntimeCommand('uv')
@@ -431,7 +449,7 @@ export class SkillExecutionService {
       return { command: bundledUv, mode: 'uv' }
     }
 
-    const fallback = await this.findSystemPythonRuntime(env)
+    const fallback = await this.findSystemPythonRuntime(env, signal)
     if (!fallback) {
       throw new Error('No compatible Python runtime found for this skill')
     }
@@ -440,7 +458,8 @@ export class SkillExecutionService {
 
   private async resolveNodeRuntime(
     preference: SkillRuntimePreference,
-    env: Record<string, string>
+    env: Record<string, string>,
+    signal?: AbortSignal
   ): Promise<RuntimeCommand> {
     if (preference === 'builtin') {
       const bundledNode = this.getBundledRuntimeCommand('node')
@@ -451,14 +470,16 @@ export class SkillExecutionService {
     }
 
     if (preference === 'system') {
-      if (!(await this.hasCommand('node', ['--version'], env))) {
+      const systemNode = await this.resolveSystemCommand('node', env, signal)
+      if (!systemNode) {
         throw new Error('System node runtime is not available')
       }
-      return { command: 'node', mode: 'node' }
+      return { command: systemNode, mode: 'node' }
     }
 
-    if (await this.hasCommand('node', ['--version'], env)) {
-      return { command: 'node', mode: 'node' }
+    const systemNode = await this.resolveSystemCommand('node', env, signal)
+    if (systemNode) {
+      return { command: systemNode, mode: 'node' }
     }
 
     const bundledNode = this.getBundledRuntimeCommand('node')
@@ -469,23 +490,19 @@ export class SkillExecutionService {
   }
 
   private async findSystemPythonRuntime(
-    env: Record<string, string>
+    env: Record<string, string>,
+    signal?: AbortSignal
   ): Promise<RuntimeCommand | null> {
-    const candidates: Array<{ command: string; probeArgs: string[]; argsPrefix?: string[] }> =
+    const candidates: Array<{ command: string; argsPrefix?: string[] }> =
       process.platform === 'win32'
-        ? [
-            { command: 'python', probeArgs: ['--version'] },
-            { command: 'py', probeArgs: ['-3', '--version'], argsPrefix: ['-3'] }
-          ]
-        : [
-            { command: 'python3', probeArgs: ['--version'] },
-            { command: 'python', probeArgs: ['--version'] }
-          ]
+        ? [{ command: 'python' }, { command: 'py', argsPrefix: ['-3'] }]
+        : [{ command: 'python3' }, { command: 'python' }]
 
     for (const candidate of candidates) {
-      if (await this.hasCommand(candidate.command, candidate.probeArgs, env)) {
+      const executable = await this.resolveSystemCommand(candidate.command, env, signal)
+      if (executable) {
         return {
-          command: candidate.command,
+          command: executable,
           argsPrefix: candidate.argsPrefix,
           mode: 'python'
         }
@@ -775,8 +792,7 @@ export class SkillExecutionService {
       }
       return {
         ...plan,
-        shellCommand: undefined,
-        env: await rtkRuntimeService.prepareExecutionEnv(plan.env)
+        shellCommand: undefined
       }
     }
 
@@ -786,8 +802,7 @@ export class SkillExecutionService {
       }
       return {
         ...plan,
-        shellCommand: undefined,
-        env: await rtkRuntimeService.prepareExecutionEnv(plan.env)
+        shellCommand: undefined
       }
     }
 
@@ -795,25 +810,7 @@ export class SkillExecutionService {
       throw new Error('Shell-capable skill plan is missing a serialized command')
     }
 
-    const prepared = await rtkRuntimeService.prepareShellCommand(
-      plan.shellCommand,
-      plan.env,
-      this.settings.get<boolean>(RTK_ENABLED_SETTING_KEY) !== false
-    )
-
-    if (!prepared.rewritten) {
-      return {
-        ...plan,
-        env: prepared.env
-      }
-    }
-
-    return {
-      ...plan,
-      env: prepared.env,
-      shellCommand: prepared.command,
-      spawnMode: 'shell'
-    }
+    return plan
   }
 
   private buildShellCommand(
@@ -850,22 +847,52 @@ export class SkillExecutionService {
     return resolved === command ? null : resolved
   }
 
-  private async hasCommand(
+  private async resolveSystemCommand(
     command: string,
-    args: string[],
-    env: Record<string, string>
-  ): Promise<boolean> {
-    return await new Promise((resolve) => {
-      const child = spawn(command, args, {
-        env,
-        stdio: 'ignore',
-        shell: false,
-        windowsHide: true
-      })
+    env: Record<string, string>,
+    signal?: AbortSignal
+  ): Promise<string | null> {
+    signal?.throwIfAborted()
+    const pathValue = Object.entries(env).find(([key]) => key.toUpperCase() === 'PATH')?.[1]
+    if (!pathValue) return null
+    const platformPath = process.platform === 'win32' ? path.win32 : path.posix
+    const pathEntries = pathValue
+      .split(platformPath.delimiter, RUNTIME_PATH_MAX_ENTRIES)
+      .map((entry) => entry.trim().replace(/^"(.*)"$/, '$1'))
+      .filter((entry) => platformPath.isAbsolute(entry))
+    const pathExtValue = Object.entries(env).find(([key]) => key.toUpperCase() === 'PATHEXT')?.[1]
+    const extensions =
+      process.platform !== 'win32' || platformPath.extname(command)
+        ? ['']
+        : (pathExtValue || '.COM;.EXE')
+            .split(';')
+            .map((extension) => extension.trim().toUpperCase())
+            .filter((extension) => extension === '.COM' || extension === '.EXE')
 
-      child.on('error', () => resolve(false))
-      child.on('close', (code) => resolve(code === 0))
-    })
+    for (const directory of pathEntries) {
+      for (const extension of extensions) {
+        signal?.throwIfAborted()
+        const candidate = platformPath.resolve(directory, `${command}${extension}`)
+        let resolved: string
+        let stat: fs.Stats
+        try {
+          resolved = await fs.promises.realpath(candidate)
+          signal?.throwIfAborted()
+          stat = await fs.promises.stat(resolved)
+          signal?.throwIfAborted()
+          await fs.promises.access(
+            resolved,
+            process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK
+          )
+        } catch {
+          signal?.throwIfAborted()
+          continue
+        }
+        if (stat.isFile()) return resolved
+      }
+    }
+
+    return null
   }
 
   private createForegroundOutputPath(conversationId: string, prefix: string): string | null {

@@ -8,6 +8,7 @@ import { SkillExecutionService } from '../../../src/main/skill/skillExecutionSer
 import type { ResolvedSkillExecutionAuthority } from '../../../src/main/skill/skillExecutionAuthority'
 import type { MaterializedSkillExecutionPackageTree } from '../../../src/main/skill/skillExecutionPackageTree'
 import { createTapeSkillMaterializationPayload } from '../../../src/main/tape/domain/skillMaterialization'
+import { SKILL_RUN_MAX_ARGUMENTS } from '../../../src/shared/types/skill'
 import {
   CMD_COMMAND_SHELL,
   GIT_BASH_COMMAND_SHELL,
@@ -25,15 +26,6 @@ vi.mock('electron', () => ({
     getPath: () => '/mock/userData'
   }
 }))
-
-vi.mock('@/agent/shared/process/shellEnvHelper', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/agent/shared/process/shellEnvHelper')>()
-
-  return {
-    ...actual,
-    getShellEnvironment: vi.fn().mockResolvedValue({ PATH: '/shell/bin' })
-  }
-})
 
 vi.mock('@/agent/shared/process/rtkRuntimeService', () => ({
   RTK_ENABLED_SETTING_KEY: 'rtkEnabled',
@@ -67,7 +59,6 @@ vi.mock('@/skill/skillExecutionPackageTree', async (importOriginal) => {
 
 import { spawn } from 'child_process'
 import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
-import { getShellEnvironment } from '@/agent/shared/process/shellEnvHelper'
 import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
 import { terminateProcessTree } from '@/agent/shared/process/processTree'
 import { materializeSkillExecutionPackageTree } from '@/skill/skillExecutionPackageTree'
@@ -85,7 +76,6 @@ describe('SkillExecutionService', () => {
     vi.mocked(spawn).mockReset()
     vi.mocked(terminateProcessTree).mockReset()
     vi.mocked(terminateProcessTree).mockResolvedValue(true)
-    vi.mocked(getShellEnvironment).mockResolvedValue({ PATH: '/shell/bin' })
     vi.spyOn(fs, 'existsSync').mockReturnValue(false)
     vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined)
     vi.mocked(fs.promises.stat).mockResolvedValue({
@@ -168,14 +158,9 @@ describe('SkillExecutionService', () => {
     vi.mocked(materializeSkillExecutionPackageTree).mockResolvedValue(packageTree)
 
     resolveConversationWorkdir = vi.fn().mockResolvedValue('/workspace/session')
-    service = new SkillExecutionService(
-      {
-        get: vi.fn().mockReturnValue(true)
-      } as never,
-      {
-        resolveConversationWorkdir
-      }
-    )
+    service = new SkillExecutionService({
+      resolveConversationWorkdir
+    })
   })
 
   afterEach(() => {
@@ -197,22 +182,63 @@ describe('SkillExecutionService', () => {
     ...overrides
   })
 
-  it('hides the Windows console for runtime availability probes', async () => {
-    const child = new EventEmitter()
-    vi.mocked(spawn).mockReturnValue(child as never)
+  it('resolves an exact runtime path without executing a pre-commit probe', async () => {
+    vi.spyOn(fs.promises, 'realpath').mockResolvedValueOnce('/runtime/bin/node')
+    vi.mocked(fs.promises.stat).mockResolvedValueOnce({ isFile: () => true } as never)
+    vi.spyOn(fs.promises, 'access').mockResolvedValueOnce(undefined)
 
-    const available = (service as never).hasCommand('uv.exe', ['--version'], {
-      PATH: 'C:\\runtime'
+    const executable = await (service as never).resolveSystemCommand('node', {
+      PATH: '/runtime/bin'
     })
-    child.emit('close', 0)
 
-    await expect(available).resolves.toBe(true)
-    expect(spawn).toHaveBeenCalledWith('uv.exe', ['--version'], {
-      env: { PATH: 'C:\\runtime' },
-      stdio: 'ignore',
-      shell: false,
-      windowsHide: true
+    expect(executable).toBe('/runtime/bin/node')
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('resolves Windows runtimes with case-insensitive environment keys and safe PATHEXT entries', async () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    vi.spyOn(fs.promises, 'realpath').mockResolvedValueOnce('C:\\Runtime\\node.exe')
+    vi.mocked(fs.promises.stat).mockResolvedValueOnce({ isFile: () => true } as never)
+    vi.spyOn(fs.promises, 'access').mockResolvedValueOnce(undefined)
+
+    const executable = await (service as never).resolveSystemCommand('node', {
+      Path: 'C:\\Runtime;C:\\Other',
+      PATHEXT: '.CMD;.EXE'
     })
+
+    expect(executable).toBe('C:\\Runtime\\node.exe')
+    expect(fs.promises.realpath).toHaveBeenCalledWith('C:\\Runtime\\node.EXE')
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('cancels runtime path resolution without starting a process', async () => {
+    const controller = new AbortController()
+    const abortError = new Error('turn cancelled during runtime resolution')
+    abortError.name = 'AbortError'
+    vi.spyOn(fs.promises, 'realpath').mockImplementationOnce(async () => {
+      controller.abort(abortError)
+      return '/runtime/bin/python3'
+    })
+
+    const executable = (service as never).resolveSystemCommand(
+      'python3',
+      { PATH: '/untrusted/bin' },
+      controller.signal
+    )
+
+    await expect(executable).rejects.toBe(abortError)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('does not resolve runtime commands through relative PATH entries', async () => {
+    const realpath = vi.spyOn(fs.promises, 'realpath')
+    const executable = await (service as never).resolveSystemCommand('node', {
+      PATH: 'workspace-bin:./scripts'
+    })
+
+    expect(executable).toBeNull()
+    expect(realpath).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
   })
 
   it('builds spawn plan with session workdir cwd and package root env', async () => {
@@ -228,11 +254,29 @@ describe('SkillExecutionService', () => {
     })
 
     expect(plan.cwd).toBe(resolvePath('/workspace/session'))
-    expect(plan.env.PATH).toContain('/shell/bin')
     expect(plan.env.API_KEY).toBe('secret')
     expect(plan.env.SKILL_ROOT).toBe('/package')
     expect(plan.env.DEEPCHAT_SKILL_ROOT).toBe('/package')
     expect(plan.args).toEqual(['run', '/package/scripts/run.py', '--lang', 'en'])
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('enforces execution input limits at the service boundary', async () => {
+    await expect(
+      service.execute(
+        {
+          skill: 'ocr',
+          script: 'scripts/run.py',
+          args: Array.from({ length: SKILL_RUN_MAX_ARGUMENTS + 1 }, () => '')
+        },
+        authority,
+        executionOptions()
+      )
+    ).rejects.toThrow('arguments exceed')
+
+    expect(assertAuthorityCurrent).not.toHaveBeenCalled()
+    expect(materializeSkillExecutionPackageTree).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
   })
 
   it('uses a session cwd when the conversation workdir is unavailable', async () => {
@@ -279,7 +323,7 @@ describe('SkillExecutionService', () => {
   })
 
   it('falls back to bundled uv for python auto runtime', async () => {
-    vi.spyOn(service as never, 'hasCommand' as never).mockResolvedValue(false)
+    vi.spyOn(service as never, 'resolveSystemCommand' as never).mockResolvedValue(null)
     vi.spyOn(service as never, 'getBundledRuntimeCommand' as never).mockImplementation(
       (command: 'uv' | 'node') => (command === 'uv' ? '/runtime/uv' : null)
     )
@@ -293,7 +337,7 @@ describe('SkillExecutionService', () => {
   })
 
   it('reports unavailable python runtime when uv and system python are missing', async () => {
-    vi.spyOn(service as never, 'hasCommand' as never).mockResolvedValue(false)
+    vi.spyOn(service as never, 'resolveSystemCommand' as never).mockResolvedValue(null)
     vi.spyOn(service as never, 'getBundledRuntimeCommand' as never).mockReturnValue(null)
     vi.spyOn(service as never, 'findSystemPythonRuntime' as never).mockResolvedValue(null)
 
@@ -331,33 +375,21 @@ describe('SkillExecutionService', () => {
     ).resolves.toEqual({ command: GIT_BASH_COMMAND_SHELL.executable, mode: 'shell' })
   })
 
-  it('switches to shell spawn mode when RTK rewrites the command', async () => {
-    vi.mocked(rtkRuntimeService.prepareShellCommand).mockResolvedValueOnce({
-      originalCommand: 'node /skills/ocr/scripts/run.py',
-      command: 'rtk run -- node /skills/ocr/scripts/run.py',
-      env: { PATH: '/shell/bin', API_KEY: 'secret', RTK_DB_PATH: '/mock/rtk.db' },
-      rewritten: true,
-      usedRtk: true,
-      rtkApplied: true,
-      rtkMode: 'rewrite'
-    })
+  it('keeps POSIX skill plans direct without a pre-dispatch RTK rewrite', async () => {
+    const plan = {
+      command: 'node',
+      args: ['/skills/ocr/scripts/run.py'],
+      cwd: '/skills/ocr',
+      env: { PATH: '/shell/bin', API_KEY: 'secret' },
+      shellCommand: 'node /skills/ocr/scripts/run.py',
+      outputPrefix: 'skill_ocr',
+      spawnMode: 'direct' as const
+    }
+    const preparedPlan = await (service as never).preparePlanForExecution(plan, POSIX_COMMAND_SHELL)
 
-    const preparedPlan = await (service as never).preparePlanForExecution(
-      {
-        command: 'node',
-        args: ['/skills/ocr/scripts/run.py'],
-        cwd: '/skills/ocr',
-        env: { PATH: '/shell/bin', API_KEY: 'secret' },
-        shellCommand: 'node /skills/ocr/scripts/run.py',
-        outputPrefix: 'skill_ocr',
-        spawnMode: 'direct'
-      },
-      POSIX_COMMAND_SHELL
-    )
-
-    expect(preparedPlan.spawnMode).toBe('shell')
-    expect(preparedPlan.shellCommand).toBe('rtk run -- node /skills/ocr/scripts/run.py')
-    expect(preparedPlan.env.RTK_DB_PATH).toBe('/mock/rtk.db')
+    expect(preparedPlan).toEqual(plan)
+    expect(rtkRuntimeService.prepareExecutionEnv).not.toHaveBeenCalled()
+    expect(rtkRuntimeService.prepareShellCommand).not.toHaveBeenCalled()
   })
 
   it('rejects scripts that are not declared under scripts directory', async () => {
@@ -563,7 +595,7 @@ describe('SkillExecutionService', () => {
 
     expect(plan.shellCommand).toBeUndefined()
     expect(prepared.spawnMode).toBe('direct')
-    expect(rtkRuntimeService.prepareExecutionEnv).toHaveBeenCalledWith(plan.env)
+    expect(rtkRuntimeService.prepareExecutionEnv).not.toHaveBeenCalled()
     expect(rtkRuntimeService.prepareShellCommand).not.toHaveBeenCalled()
   })
 
@@ -588,7 +620,7 @@ describe('SkillExecutionService', () => {
 
     expect(prepared.spawnMode).toBe('direct')
     expect(prepared.shellCommand).toBeUndefined()
-    expect(rtkRuntimeService.prepareExecutionEnv).toHaveBeenCalledWith(plan.env)
+    expect(rtkRuntimeService.prepareExecutionEnv).not.toHaveBeenCalled()
     expect(rtkRuntimeService.prepareShellCommand).not.toHaveBeenCalled()
   })
 

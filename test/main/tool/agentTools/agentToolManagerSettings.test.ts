@@ -13,6 +13,12 @@ import {
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { SkillExecutionService } from '@/skill/skillExecutionService'
 import { POSIX_COMMAND_SHELL } from '../../../helpers/commandShell'
+import {
+  SKILL_RUN_MAX_ARGUMENTS,
+  SKILL_RUN_MAX_ARGUMENT_CHARS,
+  SKILL_RUN_MAX_STDIN_CHARS,
+  SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS
+} from '@shared/types/skill'
 
 const SKILL_EVIDENCE_HASH = 'a'.repeat(64)
 
@@ -306,6 +312,53 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     expect(resolveSkillExecutionAuthority).not.toHaveBeenCalled()
     expect(execute).not.toHaveBeenCalled()
   })
+
+  it.each([
+    {
+      label: 'argument count',
+      input: { args: Array.from({ length: SKILL_RUN_MAX_ARGUMENTS + 1 }, () => '') }
+    },
+    {
+      label: 'single argument size',
+      input: { args: ['x'.repeat(SKILL_RUN_MAX_ARGUMENT_CHARS + 1)] }
+    },
+    {
+      label: 'total argument size',
+      input: {
+        args: [
+          'x'.repeat(SKILL_RUN_MAX_ARGUMENT_CHARS),
+          'y'.repeat(SKILL_RUN_MAX_ARGUMENT_CHARS),
+          'z'.repeat(SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS - SKILL_RUN_MAX_ARGUMENT_CHARS * 2 + 1)
+        ]
+      }
+    },
+    {
+      label: 'stdin size',
+      input: { stdin: 'x'.repeat(SKILL_RUN_MAX_STDIN_CHARS + 1) }
+    }
+  ])(
+    'rejects skill_run input beyond its $label limit before authority lookup',
+    async ({ input }) => {
+      const manager = buildManager()
+
+      await expect(
+        manager.callTool(
+          'skill_run',
+          { skill: 'ocr', script: 'scripts/run.py', ...input },
+          'conv-1',
+          {
+            runId: 'run-1',
+            requestSeq: 3,
+            manifestHash: 'a'.repeat(64),
+            tapeIncarnationId: 'incarnation-1',
+            commandShell: POSIX_COMMAND_SHELL
+          }
+        )
+      ).rejects.toThrow('Invalid arguments for skill_run')
+
+      expect(resolveSkillExecutionAuthority).not.toHaveBeenCalled()
+    }
+  )
 
   it('resolves file-tool skill roots from the conversation agent catalog only', async () => {
     skillService.getActiveSkills.mockResolvedValue(['scoped-skill'])

@@ -11,7 +11,16 @@ import { app, nativeImage } from 'electron'
 import logger from '@shared/logger'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { ToolCallImagePreview } from '@shared/types/core/mcp'
-import { SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES, type SkillManageResult } from '@shared/types/skill'
+import {
+  SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES,
+  SKILL_NAME_MAX_LENGTH,
+  SKILL_RUN_MAX_ARGUMENTS,
+  SKILL_RUN_MAX_ARGUMENT_CHARS,
+  SKILL_RUN_MAX_STDIN_CHARS,
+  SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS,
+  SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES,
+  type SkillManageResult
+} from '@shared/types/skill'
 import { buildBinaryReadGuidance, shouldRejectAgentBinaryRead } from '@/lib/binaryReadGuard'
 import { AgentFileSystemHandler, type ProtectedDirectoryRule } from './agentFileSystemHandler'
 import { AgentBashHandler, type AgentCommandEnvironmentPort } from './agentBashHandler'
@@ -346,15 +355,35 @@ export class AgentToolManager {
         .describe('Optional file path under the skill root to inspect')
     }),
     skill_run: z.object({
-      skill: z.string().min(1).describe('Active skill name that owns the script'),
+      skill: z
+        .string()
+        .min(1)
+        .max(SKILL_NAME_MAX_LENGTH)
+        .describe('Active skill name that owns the script'),
       script: z
         .string()
         .min(1)
+        .max(SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES)
         .describe(
           'Exact canonical script path from the active skill inventory (scripts/<name>.<ext>)'
         ),
-      args: z.array(z.string()).optional().default([]).describe('Arguments passed to the script'),
-      stdin: z.string().optional().describe('Optional stdin payload sent to the script'),
+      args: z
+        .array(z.string().max(SKILL_RUN_MAX_ARGUMENT_CHARS))
+        .max(SKILL_RUN_MAX_ARGUMENTS)
+        .refine(
+          (args) =>
+            args.reduce((total, argument) => total + argument.length, 0) <=
+            SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS,
+          `Arguments may contain at most ${SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS} characters in total`
+        )
+        .optional()
+        .default([])
+        .describe('Arguments passed to the script'),
+      stdin: z
+        .string()
+        .max(SKILL_RUN_MAX_STDIN_CHARS)
+        .optional()
+        .describe('Optional stdin payload sent to the script'),
       background: z
         .boolean()
         .optional()
@@ -2190,7 +2219,7 @@ export class AgentToolManager {
 
   private getSkillExecutionService(): SkillExecutionService {
     if (!this.skillExecutionService) {
-      this.skillExecutionService = new SkillExecutionService(this.settings, {
+      this.skillExecutionService = new SkillExecutionService({
         resolveConversationWorkdir: (conversationId) =>
           this.getWorkdirForConversation(conversationId)
       })
