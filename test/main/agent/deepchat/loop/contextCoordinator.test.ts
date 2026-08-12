@@ -8,6 +8,12 @@ import {
   createFullToolSurfaceRunController,
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
+import {
+  assertProgrammaticToolCapabilityViewActive,
+  buildProgrammaticToolCapabilityV1,
+  createProgrammaticToolSurfaceRunControllerV1,
+  type ProgrammaticToolCapabilityV1
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { LLMCoreStreamEvent } from '@shared/types/core/llm-events'
@@ -43,6 +49,115 @@ function agentTool(name: string): MCPToolDefinition {
       icons: '',
       description: 'Agent tools'
     }
+  }
+}
+
+function programmaticDefinitions(): MCPToolDefinition[] {
+  return [
+    {
+      source: 'agent',
+      execution: TOOL_EXECUTION.write,
+      type: 'function',
+      function: {
+        name: 'exec',
+        description: 'Execute a shell command',
+        parameters: { type: 'object', properties: {} }
+      },
+      server: {
+        name: 'agent-filesystem',
+        icons: '',
+        description: 'Agent FileSystem tools'
+      }
+    },
+    {
+      source: 'mcp',
+      execution: TOOL_EXECUTION.read.parallel,
+      type: 'function',
+      function: {
+        name: 'remote_read',
+        description: 'Read remotely',
+        parameters: { type: 'object', properties: {} }
+      },
+      server: {
+        id: '66666666-6666-4666-8666-666666666666',
+        name: 'remote-tools',
+        icons: '',
+        description: 'Remote tools',
+        configGeneration: 1,
+        bindingHash: 'f'.repeat(64)
+      },
+      raw: { name: 'remote_read', inputSchema: { type: 'object', properties: {} } }
+    }
+  ]
+}
+
+function createProgrammaticToolSurfacePort(definitions: readonly MCPToolDefinition[]): {
+  port: ProviderAttemptToolSurfacePort
+  build: ReturnType<typeof vi.fn<ProviderAttemptToolSurfacePort['build']>>
+  buildCapability: ReturnType<
+    typeof vi.fn<NonNullable<ProviderAttemptToolSurfacePort['buildProgrammaticCapability']>>
+  >
+  admit: ReturnType<typeof vi.fn<ProviderAttemptToolSurfacePort['admit']>>
+  snapshots: ToolSurfaceSnapshot[]
+  capabilities: ProgrammaticToolCapabilityV1[]
+} {
+  const controller = createProgrammaticToolSurfaceRunControllerV1({
+    ceilingDefinitions: definitions,
+    providerActiveDefinitions: definitions.filter((definition) => definition.source === 'agent'),
+    policyVersion: 'cli-programmatic-test-v1'
+  })
+  const snapshots: ToolSurfaceSnapshot[] = []
+  const capabilities: ProgrammaticToolCapabilityV1[] = []
+  const build = vi.fn<ProviderAttemptToolSurfacePort['build']>(({ requestSeq, tools }) => {
+    const snapshot = controller.build({
+      request: {
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        runId: 'run-1',
+        requestSeq
+      },
+      eligibleDefinitions: tools
+    })
+    snapshots.push(snapshot)
+    return snapshot
+  })
+  const buildCapability = vi.fn<
+    NonNullable<ProviderAttemptToolSurfacePort['buildProgrammaticCapability']>
+  >((snapshot) => {
+    const capability = buildProgrammaticToolCapabilityV1({
+      snapshot,
+      taskContractContext: null,
+      ceilings: {
+        maxToolEffect: 'write',
+        workspace: { kind: 'runtime_default' },
+        maxSubagentDepth: 0
+      },
+      quotas: {
+        maxChildren: 4,
+        maxBatchSteps: 4,
+        maxInputBytes: 1024,
+        maxOutputBytes: 2048,
+        maxDurationMs: 30_000
+      }
+    })
+    capabilities.push(capability)
+    return capability
+  })
+  const admit = vi.fn<ProviderAttemptToolSurfacePort['admit']>(({ snapshot }) => {
+    controller.admit(snapshot)
+  })
+  return {
+    port: {
+      build,
+      buildProgrammaticCapability: buildCapability,
+      admit,
+      releaseActivationCandidates: (candidates) => controller.stageActivationBatch(candidates)
+    },
+    build,
+    buildCapability,
+    admit,
+    snapshots,
+    capabilities
   }
 }
 
@@ -153,6 +268,7 @@ function createAttemptInput(options?: {
   const manifestContractRefs: any[] = []
   const manifestToolRefs: any[] = []
   const manifestToolSurfaceRefs: any[] = []
+  const manifestProgrammaticCapabilityRefs: any[] = []
   const providerContractRefs: any[] = []
   const providerToolSurfaceRefs: any[] = []
   const providerToolRefs: any[] = []
@@ -184,6 +300,7 @@ function createAttemptInput(options?: {
     manifestContractRefs,
     manifestToolRefs,
     manifestToolSurfaceRefs,
+    manifestProgrammaticCapabilityRefs,
     providerContractRefs,
     providerToolSurfaceRefs,
     providerToolRefs,
@@ -280,6 +397,7 @@ function createAttemptInput(options?: {
           manifestContractRefs.push(manifest.executionContract)
           manifestToolRefs.push(manifest.tools)
           manifestToolSurfaceRefs.push(manifest.toolSurfaceSnapshot)
+          manifestProgrammaticCapabilityRefs.push(manifest.programmaticToolCapability)
           manifests.push(structuredClone(manifest))
           options?.appendManifest?.(manifest)
         },
@@ -545,6 +663,107 @@ describe('DeepChatContextCoordinator', () => {
       { logicalRound: 1, requestSeq: 1, physicalAttempt: 1 },
       { logicalRound: 1, requestSeq: 1, physicalAttempt: 2 }
     ])
+  })
+
+  it('reuses one committed Programmatic capability through transient physical retries', async () => {
+    const tools = programmaticDefinitions()
+    const surface = createProgrammaticToolSurfacePort(tools)
+    const transientError = Object.assign(new Error('fetch failed'), {
+      code: 'ECONNRESET',
+      headers: { 'retry-after-ms': '0' }
+    })
+    const fixture = createAttemptInput({
+      tools,
+      toolSurface: surface.port,
+      providerAttempts: [
+        { error: transientError },
+        {
+          events: [
+            { type: 'text', content: 'recovered' },
+            { type: 'stop', stop_reason: 'complete' }
+          ]
+        }
+      ]
+    })
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(surface.build).toHaveBeenCalledOnce()
+    expect(surface.buildCapability).toHaveBeenCalledOnce()
+    expect(surface.admit).toHaveBeenCalledOnce()
+    const [snapshot] = surface.snapshots
+    const [capability] = surface.capabilities
+    expect(fixture.manifestToolSurfaceRefs).toEqual([snapshot])
+    expect(fixture.manifestProgrammaticCapabilityRefs).toEqual([capability])
+    expect(fixture.providerToolSurfaceRefs).toEqual([snapshot, snapshot])
+    expect(
+      fixture.providerToolRefs.map((definitions) =>
+        definitions.map((tool: MCPToolDefinition) => tool.function.name)
+      )
+    ).toEqual([['exec'], ['exec']])
+    expect(fixture.run.activeRequestToolSurface?.programmaticCapability).toBe(capability)
+    expect(() => assertProgrammaticToolCapabilityViewActive(capability, snapshot)).not.toThrow()
+  })
+
+  it('keeps V4 provider fail-open without activating unpersisted Programmatic authority', async () => {
+    const tools = programmaticDefinitions()
+    const surface = createProgrammaticToolSurfacePort(tools)
+    const persistenceError = new Error('programmatic provenance unavailable')
+    const fixture = createAttemptInput({
+      tools,
+      toolSurface: surface.port,
+      appendManifest: () => {
+        throw persistenceError
+      }
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).resolves.toEqual([
+      { type: 'text', content: 'ok' },
+      { type: 'stop', stop_reason: 'complete' }
+    ])
+
+    const [snapshot] = surface.snapshots
+    const [capability] = surface.capabilities
+    expect(fixture.manifestErrors).toHaveLength(1)
+    expect(fixture.providerRequests).toHaveLength(1)
+    expect(
+      fixture.providerToolRefs[0].map((tool: MCPToolDefinition) => tool.function.name)
+    ).toEqual(['exec'])
+    expect(fixture.run.activeRequestContract?.executionContract).toBeNull()
+    expect(fixture.run.activeRequestToolSurface).not.toHaveProperty('programmaticCapability')
+    expect(() => assertProgrammaticToolCapabilityViewActive(capability, snapshot)).toThrow(
+      /committed provider View provenance/
+    )
+  })
+
+  it('keeps strict V5 Programmatic provenance failure before provider admission', async () => {
+    const tools = programmaticDefinitions()
+    const surface = createProgrammaticToolSurfacePort(tools)
+    const fixture = createAttemptInput({
+      tools,
+      toolSurface: surface.port,
+      strictViewContract: true,
+      appendManifest: () => {
+        throw new Error('programmatic provenance unavailable')
+      }
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow('programmatic provenance unavailable')
+
+    expect(surface.build).toHaveBeenCalledOnce()
+    expect(surface.buildCapability).toHaveBeenCalledOnce()
+    expect(surface.admit).not.toHaveBeenCalled()
+    expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.order).not.toContain('rate')
+    expect(fixture.run.activeRequestContract).toBeNull()
+    expect(fixture.run.activeRequestToolSurface).toBeNull()
+    expect(() =>
+      assertProgrammaticToolCapabilityViewActive(surface.capabilities[0], surface.snapshots[0])
+    ).toThrow(/committed provider View provenance/)
   })
 
   it('uses fallback capabilities without a ViewManifest context', async () => {

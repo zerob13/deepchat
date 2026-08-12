@@ -527,7 +527,7 @@ export function createToolSurfaceExecutionBatch(input: {
   if (
     !admittedToolSurfaceSnapshots.has(input.snapshot) ||
     revokedToolSurfaceExecutionSnapshots.has(input.snapshot) ||
-    !input.snapshot.virtualizationTriggered ||
+    input.snapshot.adapterMode !== 'native-activation' ||
     !input.snapshot.activeEntries.some(
       (entry) => entry.definition.function.name === TOOL_SEARCH_AGENT_TOOL_NAME
     )

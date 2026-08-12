@@ -45,6 +45,7 @@ export const PROGRAMMATIC_TOOL_SURFACE_SCHEMA_VERSION = 1 as const
 export const PROGRAMMATIC_TOOL_CAPABILITY_SCHEMA_VERSION = 1 as const
 export const PROGRAMMATIC_TOOL_CAPABILITY_HASH_VERSION = 1 as const
 export const PROGRAMMATIC_TOOL_ADAPTER_MODE = 'cli-programmatic' as const
+export const PROGRAMMATIC_TOOL_SURFACE_POLICY_VERSION = 'cli-programmatic-v1'
 export const MAX_PROGRAMMATIC_TOOL_SURFACE_ENTRIES = MAX_TOOL_SURFACE_DEFINITIONS
 export const MAX_PROGRAMMATIC_TOOL_AUTHORITY_PROJECTION_BYTES = 1024 * 1024
 export const MAX_PROGRAMMATIC_TOOL_CHILDREN = MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN
@@ -129,6 +130,7 @@ export type ProgrammaticToolTapeProvenanceProjectionV1 = Omit<
 
 const issuedProgrammaticToolSurfaces = new WeakSet<ProgrammaticToolSurfaceV1>()
 const issuedProgrammaticToolCapabilities = new WeakSet<ProgrammaticToolCapabilityV1>()
+const persistedProgrammaticToolCapabilities = new WeakSet<ProgrammaticToolCapabilityV1>()
 const programmaticToolRunPreflights = new WeakMap<
   ToolSurfaceRunCeiling,
   ProgrammaticToolRunCeilingPreflightV1
@@ -635,11 +637,8 @@ export function assertIssuedProgrammaticToolCapability(
   }
 }
 
-/**
- * Proves exact provider-View liveness only. `expectedSnapshot` must come from the runtime-owned
- * active request binding; every target call must still recheck runtime authority.
- */
-export function assertProgrammaticToolCapabilityViewActive(
+/** Proves that a canonical capability was built from this exact prepared provider View. */
+export function assertProgrammaticToolCapabilityViewPrepared(
   capability: unknown,
   expectedSnapshot: unknown
 ): asserts capability is ProgrammaticToolCapabilityV1 {
@@ -648,11 +647,37 @@ export function assertProgrammaticToolCapabilityViewActive(
   const snapshot = programmaticToolCapabilitySnapshots.get(capability)
   if (!snapshot || snapshot !== expectedSnapshot) {
     throw new ToolSurfaceError(
-      'Programmatic capability does not belong to the current provider View.',
+      'Programmatic capability does not belong to the prepared provider View.',
       'invalid_definition'
     )
   }
-  assertActiveToolSurfaceSnapshot(snapshot)
+}
+
+/** Marks the exact capability only after its atomic provider-View transaction has committed. */
+export function markProgrammaticToolCapabilityProvenanceCommitted(
+  capability: unknown,
+  expectedSnapshot: unknown
+): void {
+  assertProgrammaticToolCapabilityViewPrepared(capability, expectedSnapshot)
+  persistedProgrammaticToolCapabilities.add(capability)
+}
+
+/**
+ * Proves exact provider-View liveness only. `expectedSnapshot` must come from the runtime-owned
+ * active request binding; every target call must still recheck runtime authority.
+ */
+export function assertProgrammaticToolCapabilityViewActive(
+  capability: unknown,
+  expectedSnapshot: unknown
+): asserts capability is ProgrammaticToolCapabilityV1 {
+  assertProgrammaticToolCapabilityViewPrepared(capability, expectedSnapshot)
+  if (!persistedProgrammaticToolCapabilities.has(capability)) {
+    throw new ToolSurfaceError(
+      'Programmatic capability has no committed provider View provenance.',
+      'invalid_definition'
+    )
+  }
+  assertActiveToolSurfaceSnapshot(expectedSnapshot)
 }
 
 export function assertIssuedProgrammaticToolSurface(

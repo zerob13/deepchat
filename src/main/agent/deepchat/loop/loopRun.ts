@@ -10,8 +10,12 @@ import {
   type ToolSurfaceActivationEvidence,
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
+import {
+  assertProgrammaticToolCapabilityViewPrepared,
+  type ProgrammaticToolCapabilityV1
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
 
-export type LoopRunToolSurfaceMode = 'legacy' | 'full'
+export type LoopRunToolSurfaceMode = 'legacy' | 'full' | 'cli-programmatic'
 
 export interface LoopRunResources {
   toolDefinitions: MCPToolDefinition[]
@@ -34,6 +38,7 @@ export interface LoopRunRequestContractBinding {
 export interface LoopRunRequestToolSurfaceBinding {
   readonly requestSeq: number
   readonly snapshot: ToolSurfaceSnapshot
+  readonly programmaticCapability?: ProgrammaticToolCapabilityV1
   readonly releaseActivationCandidates: (
     candidates: readonly ToolSurfaceActivationEvidence[]
   ) => void
@@ -178,7 +183,8 @@ export function bindActiveRequestToolSurface(
   run: LoopRun<unknown>,
   requestSeq: number,
   snapshot: ToolSurfaceSnapshot,
-  releaseActivationCandidates: (candidates: readonly ToolSurfaceActivationEvidence[]) => void
+  releaseActivationCandidates: (candidates: readonly ToolSurfaceActivationEvidence[]) => void,
+  programmaticCapability: ProgrammaticToolCapabilityV1 | null = null
 ): LoopRunRequestToolSurfaceBinding {
   if (requestSeq !== run.requestSeq) {
     throw new Error('Tool Surface request sequence does not match the active request.')
@@ -195,7 +201,19 @@ export function bindActiveRequestToolSurface(
   if (typeof releaseActivationCandidates !== 'function') {
     throw new Error('Tool Surface activation release capability is unavailable.')
   }
-  const binding = Object.freeze({ requestSeq, snapshot, releaseActivationCandidates })
+  if (snapshot.adapterMode === 'cli-programmatic') {
+    if (programmaticCapability !== null) {
+      assertProgrammaticToolCapabilityViewPrepared(programmaticCapability, snapshot)
+    }
+  } else if (programmaticCapability !== null) {
+    throw new Error('A non-programmatic Tool Surface cannot bind a Programmatic capability.')
+  }
+  const binding = Object.freeze({
+    requestSeq,
+    snapshot,
+    ...(programmaticCapability ? { programmaticCapability } : {}),
+    releaseActivationCandidates
+  })
   run.activeRequestToolSurface = binding
   return binding
 }

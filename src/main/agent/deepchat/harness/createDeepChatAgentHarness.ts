@@ -484,7 +484,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
             summaryCursorOrderSeq: manifest.summaryCursorOrderSeq,
             supportsVision: manifest.supportsVision,
             supportsAudioInput: manifest.supportsAudioInput,
-            traceDebugEnabled: manifest.traceDebugEnabled
+            traceDebugEnabled: manifest.traceDebugEnabled,
+            programmaticToolCapability: null
           }),
         setStatus: (sessionId, status) => runLifecycle.transitionCurrentStatus(sessionId, status),
         getSessionState: async (sessionId) => await sessionState.get(sessionId),

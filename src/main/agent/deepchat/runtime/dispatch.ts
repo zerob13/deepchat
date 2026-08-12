@@ -2219,7 +2219,7 @@ export async function settleToolBatch(
     throw new Error('Tool batch does not match its request-scoped Tool Surface binding.')
   }
   const toolSurfaceExecutionBatch =
-    toolSurface?.snapshot.virtualizationTriggered === true
+    toolSurface?.snapshot.adapterMode === 'native-activation'
       ? createToolSurfaceExecutionBatch({ snapshot: toolSurface.snapshot })
       : null
   if (toolSurface && !toolSurfaceExecutionBatch) {

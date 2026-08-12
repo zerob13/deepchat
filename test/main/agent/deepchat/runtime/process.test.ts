@@ -44,6 +44,7 @@ import {
   revokeToolSurfaceDeferredDispatch,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
+import { createProgrammaticToolSurfaceRunControllerV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
@@ -1199,6 +1200,73 @@ describe('processStream', () => {
         /not bound to a virtualized ToolSearch View/
       )
       expect(harness.toolService.callTool).not.toHaveBeenCalled()
+    })
+
+    it('settles native Agent tools in CLI Programmatic Views without ToolSearch batching', async () => {
+      const exec = {
+        ...makeTool('exec'),
+        source: 'agent' as const,
+        server: {
+          name: 'agent-filesystem',
+          icons: '',
+          description: 'Agent FileSystem tools'
+        }
+      }
+      const remote = {
+        ...makeTool('remote_read'),
+        source: 'mcp' as const,
+        execution: TOOL_EXECUTION.read.parallel,
+        server: {
+          id: '77777777-7777-4777-8777-777777777777',
+          name: 'remote-tools',
+          icons: '',
+          description: 'Remote tools',
+          configGeneration: 1,
+          bindingHash: '7'.repeat(64)
+        },
+        raw: { name: 'remote_read', inputSchema: { type: 'object', properties: {} } }
+      } satisfies MCPToolDefinition
+      const controller = createProgrammaticToolSurfaceRunControllerV1({
+        ceilingDefinitions: [exec, remote],
+        providerActiveDefinitions: [exec],
+        policyVersion: 'process-cli-programmatic-v1'
+      })
+      const snapshot = controller.build({
+        request: { sessionId: 's1', messageId: 'm1', runId: RUN_ID, requestSeq: 1 },
+        eligibleDefinitions: [exec, remote]
+      })
+      controller.admit(snapshot)
+      const releaseActivationCandidates = vi.fn()
+      const run = createLoopRun({
+        runId: RUN_ID,
+        sessionId: toAppSessionId('s1'),
+        messageId: 'm1',
+        abortController: new AbortController(),
+        messages: [{ role: 'user', content: 'Run a command' }],
+        streamState: createState(),
+        resources: {
+          toolDefinitions: [exec],
+          activeSkillNames: [],
+          commandShell: POSIX_COMMAND_SHELL,
+          toolSurfaceMode: 'cli-programmatic'
+        },
+        initialRequestSeq: 1
+      })
+      bindActiveRequestToolSurface(run, 1, snapshot, releaseActivationCandidates)
+      const toolService = createMockToolService({ exec: 'done' })
+
+      const result = await processStream(
+        createParams({
+          run,
+          coreStream: createToolThenCompleteStream('exec'),
+          toolExecution: createToolExecutionPort(toolService)
+        })
+      )
+
+      expect(result.status).toBe('completed')
+      expect(toolService.callTool).toHaveBeenCalledOnce()
+      expect(toolService.assertToolSurfaceAuthority).toHaveBeenCalledOnce()
+      expect(releaseActivationCandidates).not.toHaveBeenCalled()
     })
 
     it('discards ToolSearch candidates when the settled transcript record is unavailable', async () => {

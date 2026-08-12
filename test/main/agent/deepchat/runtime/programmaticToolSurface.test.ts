@@ -12,6 +12,7 @@ import {
   buildProgrammaticToolCapabilityV1,
   buildProgrammaticToolSurfaceV1,
   createProgrammaticToolSurfaceRunControllerV1,
+  markProgrammaticToolCapabilityProvenanceCommitted,
   preflightProgrammaticToolRunCeilingV1,
   projectProgrammaticToolTapeProvenanceV1,
   type ProgrammaticToolCapabilityCeilingsV1,
@@ -584,6 +585,11 @@ describe('Programmatic Tool Surface', () => {
     )
 
     controller.admit(firstSnapshot)
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(firstCapability, firstSnapshot),
+      'invalid_definition'
+    )
+    markProgrammaticToolCapabilityProvenanceCommitted(firstCapability, firstSnapshot)
     expect(() =>
       assertProgrammaticToolCapabilityViewActive(firstCapability, firstSnapshot)
     ).not.toThrow()
@@ -601,6 +607,7 @@ describe('Programmatic Tool Surface', () => {
       ceilings,
       quotas
     })
+    markProgrammaticToolCapabilityProvenanceCommitted(secondCapability, secondSnapshot)
     controller.admit(secondSnapshot)
 
     expectSurfaceError(
@@ -626,6 +633,7 @@ describe('Programmatic Tool Surface', () => {
       () => assertProgrammaticToolCapabilityViewActive(restoredCapability, restoredSnapshot),
       'invalid_definition'
     )
+    markProgrammaticToolCapabilityProvenanceCommitted(restoredCapability, restoredSnapshot)
     controller.admit(restoredSnapshot)
     expectSurfaceError(
       () => assertProgrammaticToolCapabilityViewActive(secondCapability, secondSnapshot),
@@ -669,6 +677,7 @@ describe('Programmatic Tool Surface', () => {
       ceilings,
       quotas
     })
+    markProgrammaticToolCapabilityProvenanceCommitted(firstCapability, firstSnapshot)
     firstController.admit(firstSnapshot)
     secondController.admit(secondSnapshot)
 
@@ -767,6 +776,7 @@ describe('Programmatic Tool Surface', () => {
       ceilings,
       quotas
     })
+    markProgrammaticToolCapabilityProvenanceCommitted(firstCapability, first)
     const revokedBeforeAdmission = controller.build({
       request: { sessionId: 'session-1', messageId: 'message-1', runId: 'run-1', requestSeq: 3 },
       eligibleDefinitions: [exec, hidden, pinned]

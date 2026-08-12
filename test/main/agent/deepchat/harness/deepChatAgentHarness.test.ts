@@ -66,6 +66,7 @@ import {
 import { buildTaskContract } from '@/tape/domain/taskContract'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import {
+  TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
   TAPE_TOOL_CATALOG_EVENT_NAME,
   TAPE_TOOL_SURFACE_EVENT_NAME
 } from '@/tape/domain/toolSurfaceFacts'
@@ -3121,6 +3122,312 @@ describe('DeepChatAgentHarness', () => {
       expect(surfaceFacts.map((fact: any) => fact.contractBearing)).toEqual([false, false])
       expect(surfaceFacts.map((fact: any) => fact.request.requestSeq)).toEqual([1, 2])
       expect(agent.getToolSurfaceShadowDiagnostics('s1')).toBeNull()
+    })
+
+    it('assembles and persists exact CLI Programmatic provider Views', async () => {
+      const taskContract = buildTaskContract({
+        delegationId: 'delegation-programmatic-surface',
+        turnId: 'turn-programmatic-surface',
+        turnSeq: 1,
+        turnKind: 'initial',
+        parentSessionId: 'parent-1',
+        slotId: 'operator',
+        targetAgentId: 'deepchat',
+        title: 'Use a Programmatic Tool Surface',
+        prompt: 'Use only the delegated capabilities.',
+        workspace: { kind: 'runtime_default' },
+        handoffFormat: [],
+        maxToolEffect: 'write',
+        maxSubagentDepth: 0
+      })
+      sqlitePresenter.newSessionsTable.get.mockImplementation((sessionId: string) =>
+        sessionId === 's1'
+          ? {
+              id: 's1',
+              agent_id: 'deepchat',
+              session_kind: 'subagent',
+              parent_session_id: 'parent-1'
+            }
+          : sessionId === 'parent-1'
+            ? { id: 'parent-1', agent_id: 'deepchat', session_kind: 'regular' }
+            : undefined
+      )
+      vi.mocked(runtimeDependencies.taskContractContext.prepare).mockReturnValue({
+        contract: taskContract,
+        localRef: {
+          schemaVersion: 1,
+          sessionId: 's1',
+          tapeIdentity: 'c'.repeat(64),
+          entryId: 6,
+          contractHash: taskContract.contractHash
+        }
+      })
+      const execTool = {
+        source: 'agent',
+        execution: TOOL_EXECUTION.write,
+        type: 'function',
+        function: {
+          name: 'exec',
+          description: 'Execute a shell command',
+          parameters: { type: 'object', properties: { command: { type: 'string' } } }
+        },
+        server: {
+          name: 'agent-filesystem',
+          icons: '',
+          description: 'Agent FileSystem tools'
+        }
+      } satisfies MCPToolDefinition
+      const questionTool = {
+        source: 'agent',
+        execution: TOOL_EXECUTION.write,
+        type: 'function',
+        function: {
+          name: 'deepchat_question',
+          description: 'Ask the user a question',
+          parameters: { type: 'object', properties: {} }
+        },
+        server: { name: 'agent-tools', icons: '', description: 'Agent tools' }
+      } satisfies MCPToolDefinition
+      const mcpTool = (name: string, effect: 'read' | 'write'): MCPToolDefinition => ({
+        source: 'mcp',
+        execution: effect === 'read' ? TOOL_EXECUTION.read.parallel : TOOL_EXECUTION.write,
+        type: 'function',
+        function: {
+          name,
+          description: `${name} description`,
+          parameters: { type: 'object', properties: { value: { type: 'string' } } }
+        },
+        server: {
+          id: '44444444-4444-4444-8444-444444444444',
+          name: 'remote-tools',
+          icons: '',
+          description: 'Remote tools',
+          configGeneration: 1,
+          bindingHash: 'd'.repeat(64)
+        },
+        raw: {
+          name,
+          inputSchema: { type: 'object', properties: { value: { type: 'string' } } }
+        }
+      })
+      const remoteRead = mcpTool('remote_read', 'read')
+      const remoteWrite = mcpTool('remote_write', 'write')
+      const definitions = [remoteWrite, execTool, remoteRead, questionTool]
+      const inactiveSkillRun = {
+        source: 'agent',
+        execution: TOOL_EXECUTION.write,
+        type: 'function',
+        function: {
+          name: 'skill_run',
+          description: 'Run an inactive skill script',
+          parameters: { type: 'object', properties: {} }
+        },
+        server: { name: 'agent-skills', icons: '', description: 'Agent skill tools' }
+      } satisfies MCPToolDefinition
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue(definitions)
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions: [...definitions, inactiveSkillRun],
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'cli-programmatic')
+      const providerEntryFactNames: string[][] = []
+      const providerToolNamesAtEntry: string[][] = []
+      llmProvider.providerInstance.coreStream.mockImplementation(
+        async function* (
+          _messages,
+          _modelId,
+          _modelConfig,
+          _temperature,
+          _maxTokens,
+          requestTools
+        ) {
+          providerToolNamesAtEntry.push(requestTools.map((tool) => tool.function.name))
+          providerEntryFactNames.push(
+            sqlitePresenter.deepchatTapeEntriesTable
+              .getBySession('s1')
+              .filter((row: any) => row.name.startsWith('view/'))
+              .map((row: any) => row.name)
+          )
+          yield { type: 'stop', stop_reason: 'complete' }
+        }
+      )
+
+      const bindings: LoopRunRequestToolSurfaceBinding[] = []
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        expect(params.run.resources.toolSurfaceMode).toBe('cli-programmatic')
+        for (let view = 0; view < 2; view += 1) {
+          for await (const _event of params.coreStream(
+            params.run.messages,
+            params.modelId,
+            params.modelConfig,
+            params.temperature,
+            params.maxTokens,
+            params.run.resources.toolDefinitions
+          )) {
+          }
+          const binding = params.run.activeRequestToolSurface
+          if (!binding?.programmaticCapability) {
+            throw new Error('Expected a CLI Programmatic capability binding.')
+          }
+          bindings.push(binding)
+        }
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      expect(providerToolNamesAtEntry).toEqual([
+        ['exec', 'deepchat_question'],
+        ['exec', 'deepchat_question']
+      ])
+      expect(providerEntryFactNames).toEqual([
+        [
+          'view/assembled',
+          TAPE_TOOL_CATALOG_EVENT_NAME,
+          TAPE_TOOL_SURFACE_EVENT_NAME,
+          TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME
+        ],
+        [
+          'view/assembled',
+          TAPE_TOOL_CATALOG_EVENT_NAME,
+          TAPE_TOOL_SURFACE_EVENT_NAME,
+          TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
+          'view/assembled',
+          TAPE_TOOL_SURFACE_EVENT_NAME,
+          TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME
+        ]
+      ])
+      expect(bindings).toHaveLength(2)
+      expect(bindings[1].requestSeq).toBe(bindings[0].requestSeq + 1)
+      expect(bindings[0].snapshot.adapterMode).toBe('cli-programmatic')
+      expect(bindings[0].programmaticCapability?.ceilings).toEqual({
+        maxToolEffect: 'write',
+        workspace: { kind: 'runtime_default' },
+        maxSubagentDepth: 0
+      })
+      expect(bindings[0].programmaticCapability?.taskContractRef).toEqual({
+        schemaVersion: 1,
+        sessionId: 's1',
+        tapeIdentity: 'c'.repeat(64),
+        entryId: 6,
+        contractHash: taskContract.contractHash
+      })
+      expect(
+        bindings[0].programmaticCapability?.entries.map((entry) => entry.target.originalName)
+      ).toEqual(['remote_read', 'remote_write'])
+      expect(bindings[1].programmaticCapability).not.toBe(bindings[0].programmaticCapability)
+      expect(bindings[1].programmaticCapability?.request.requestSeq).toBe(
+        bindings[0].programmaticCapability!.request.requestSeq + 1
+      )
+
+      const rows = sqlitePresenter.deepchatTapeEntriesTable.getBySession('s1')
+      const providerFacts = rows
+        .filter((row: any) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)
+        .map((row: any) => JSON.parse(row.payload_json).data)
+      const programmaticFacts = rows
+        .filter((row: any) => row.name === TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME)
+        .map((row: any) => JSON.parse(row.payload_json).data)
+      expect(providerFacts).toHaveLength(2)
+      expect(programmaticFacts).toHaveLength(2)
+      expect(providerFacts.map((fact: any) => fact.adapterMode)).toEqual([
+        'cli-programmatic',
+        'cli-programmatic'
+      ])
+      expect(providerFacts.map((fact: any) => fact.contractBearing)).toEqual([true, true])
+      expect(programmaticFacts.map((fact: any) => fact.capabilityHash)).toEqual(
+        bindings.map((binding) => binding.programmaticCapability!.capabilityHash)
+      )
+      expect(
+        programmaticFacts.map((fact: any) =>
+          fact.entries.map((entry: any) => entry.target.originalName)
+        )
+      ).toEqual([
+        ['remote_read', 'remote_write'],
+        ['remote_read', 'remote_write']
+      ])
+      const manifests = rows
+        .filter((row: any) => row.name === 'view/assembled')
+        .map((row: any) => JSON.parse(row.payload_json).data.manifest)
+      expect(
+        manifests.map((manifest: any) =>
+          manifest.executionContract.ceilings.tools.map(
+            (tool: { target: { originalName: string } }) => tool.target.originalName
+          )
+        )
+      ).toEqual([
+        ['deepchat_question', 'exec'],
+        ['deepchat_question', 'exec']
+      ])
+      for (let index = 0; index < providerFacts.length; index += 1) {
+        const activeTargets = new Set(
+          providerFacts[index].activeEntries.map((entry: any) => entry.stableTargetKey)
+        )
+        expect(
+          programmaticFacts[index].entries.some((entry: any) =>
+            activeTargets.has(entry.stableTargetKey)
+          )
+        ).toBe(false)
+        expect(programmaticFacts[index].request).toEqual(providerFacts[index].request)
+        expect(programmaticFacts[index].catalog).toEqual(providerFacts[index].catalog)
+        expect(programmaticFacts[index].manifestHash).toBe(providerFacts[index].manifestHash)
+      }
+    })
+
+    it('rejects CLI Programmatic admission without canonical Agent exec', async () => {
+      const remoteTool = {
+        source: 'mcp',
+        execution: TOOL_EXECUTION.read.parallel,
+        type: 'function',
+        function: {
+          name: 'remote_read',
+          description: 'Read remotely',
+          parameters: { type: 'object', properties: {} }
+        },
+        server: {
+          id: '55555555-5555-4555-8555-555555555555',
+          name: 'remote-tools',
+          icons: '',
+          description: 'Remote tools',
+          configGeneration: 1,
+          bindingHash: 'e'.repeat(64)
+        },
+        raw: { name: 'remote_read', inputSchema: { type: 'object', properties: {} } }
+      } satisfies MCPToolDefinition
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue([remoteTool])
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions: [remoteTool],
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'cli-programmatic')
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      expect(llmProvider.providerInstance.coreStream).not.toHaveBeenCalled()
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable
+          .getBySession('s1')
+          .filter((row: any) => row.name === 'execution/run_started')
+      ).toEqual([])
+      expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).toHaveBeenCalledWith(
+        'mock-msg-id',
+        expect.stringContaining(
+          'CLI Programmatic Provider Active Surface requires the Agent exec tool.'
+        ),
+        'error',
+        expect.any(String)
+      )
     })
 
     it('keeps full Tool Surfaces within a child TaskContract ceiling', async () => {

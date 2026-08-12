@@ -1236,7 +1236,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           if (toolSurface && toolSurface.requestSeq !== requestSeq) {
             throw new Error('Provider response does not match the active Tool Surface request.')
           }
-          if (run.resources.toolSurfaceMode === 'full' && !toolSurface) {
+          if (run.resources.toolSurfaceMode !== 'legacy' && !toolSurface) {
             throw new Error('Provider response lost its active Tool Surface binding.')
           }
 
@@ -1315,8 +1315,8 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           }
         },
         settleToolBatch: async ({ run, batch }) => {
-          if (run.resources.toolSurfaceMode === 'full' && !batch.toolSurface) {
-            throw new Error('Full Tool Surface Run lost its provider View dispatch capability.')
+          if (run.resources.toolSurfaceMode !== 'legacy' && !batch.toolSurface) {
+            throw new Error('Managed Tool Surface Run lost its provider View dispatch capability.')
           }
           const completedToolBatch = batch.toolCalls.map((toolCall) => ({ ...toolCall }))
           const settledTools = batch.toolSurface

@@ -48,6 +48,11 @@ import {
   type ToolSurfaceActivationEvidence,
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
+import {
+  assertProgrammaticToolCapabilityViewPrepared,
+  markProgrammaticToolCapabilityProvenanceCommitted,
+  type ProgrammaticToolCapabilityV1
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
 
 export interface ContextAssembly<TContributions, TView> {
   assembleContributions(): Promise<TContributions>
@@ -155,6 +160,8 @@ export interface ProviderAttemptManifestInput<TSelection> {
   executionContract?: DeepChatExecutionContract
   /** Exact immutable snapshot whose tool definitions are sent by this provider request. */
   toolSurfaceSnapshot: ToolSurfaceSnapshot | null
+  /** Process-live authority projected synchronously into this View; never reconstructed from Tape. */
+  programmaticToolCapability: ProgrammaticToolCapabilityV1 | null
 }
 
 export interface ProviderAttemptManifestPort<TSelection> {
@@ -186,6 +193,7 @@ export interface ProviderAttemptExecutionContractPort {
 
 export interface ProviderAttemptToolSurfacePort {
   build(input: { requestSeq: number; tools: readonly MCPToolDefinition[] }): ToolSurfaceSnapshot
+  buildProgrammaticCapability?(snapshot: ToolSurfaceSnapshot): ProgrammaticToolCapabilityV1
   /** Commits only the prepared in-memory Run ordering; it must not perform I/O or cancel the Run. */
   admit(input: { requestSeq: number; snapshot: ToolSurfaceSnapshot }): void
   releaseActivationCandidates(candidates: readonly ToolSurfaceActivationEvidence[]): void
@@ -558,6 +566,7 @@ export class DeepChatContextCoordinator {
         throw new Error('Provider request sequence is exhausted.')
       }
       let toolSurfaceSnapshot: ToolSurfaceSnapshot | null = null
+      let programmaticToolCapability: ProgrammaticToolCapabilityV1 | null = null
       if (input.toolSurface) {
         input.run.abortController.signal.throwIfAborted()
         const builtSnapshot: unknown = input.toolSurface.build({
@@ -566,6 +575,17 @@ export class DeepChatContextCoordinator {
         })
         assertIssuedToolSurfaceSnapshot(builtSnapshot)
         toolSurfaceSnapshot = builtSnapshot
+        if (toolSurfaceSnapshot.adapterMode === 'cli-programmatic') {
+          if (!input.toolSurface.buildProgrammaticCapability) {
+            throw new Error('CLI Programmatic provider View lost its capability builder.')
+          }
+          programmaticToolCapability =
+            input.toolSurface.buildProgrammaticCapability(toolSurfaceSnapshot)
+          assertProgrammaticToolCapabilityViewPrepared(
+            programmaticToolCapability,
+            toolSurfaceSnapshot
+          )
+        }
       }
       if (
         toolSurfaceSnapshot &&
@@ -706,6 +726,7 @@ export class DeepChatContextCoordinator {
           input.manifest.onAppendError(error)
         } catch {}
       }
+      let providerViewProvenanceCommitted = false
       try {
         input.manifest.append({
           requestSeq,
@@ -732,8 +753,16 @@ export class DeepChatContextCoordinator {
           contextBuilderVersion,
           syntheticContributions: manifestSyntheticContributions,
           ...(executionContract ? { executionContract } : {}),
-          toolSurfaceSnapshot
+          toolSurfaceSnapshot,
+          programmaticToolCapability
         })
+        if (programmaticToolCapability && toolSurfaceSnapshot) {
+          markProgrammaticToolCapabilityProvenanceCommitted(
+            programmaticToolCapability,
+            toolSurfaceSnapshot
+          )
+        }
+        providerViewProvenanceCommitted = true
       } catch (error) {
         if (executionContract) {
           if (input.strictViewContract) {
@@ -758,7 +787,8 @@ export class DeepChatContextCoordinator {
           input.run,
           requestSeq,
           toolSurfaceSnapshot,
-          input.toolSurface!.releaseActivationCandidates
+          input.toolSurface!.releaseActivationCandidates,
+          providerViewProvenanceCommitted ? programmaticToolCapability : null
         )
       }
 

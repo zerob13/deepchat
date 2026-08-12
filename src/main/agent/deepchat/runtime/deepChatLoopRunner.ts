@@ -131,9 +131,22 @@ import {
   createFullToolSurfaceRunController,
   FULL_TOOL_SURFACE_POLICY_VERSION,
   projectToolSurfaceTapeProvenance,
-  type FullToolSurfaceRunController,
+  type ToolSurfaceRunController,
   type ToolSurfaceSnapshot
 } from './toolSurface'
+import {
+  MAX_PROGRAMMATIC_TOOL_BATCH_STEPS,
+  MAX_PROGRAMMATIC_TOOL_CHILDREN,
+  MAX_PROGRAMMATIC_TOOL_DURATION_MS,
+  MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
+  MAX_PROGRAMMATIC_TOOL_OUTPUT_BYTES,
+  PROGRAMMATIC_TOOL_SURFACE_POLICY_VERSION,
+  assertProgrammaticToolCapabilityViewPrepared,
+  buildProgrammaticToolCapabilityV1,
+  createProgrammaticToolSurfaceRunControllerV1,
+  projectProgrammaticToolTapeProvenanceV1,
+  type ProgrammaticToolCapabilityV1
+} from './programmaticToolSurface'
 import {
   meetTaskContractToolDefinitions,
   resolveExecutionContractSubagentDepth
@@ -189,6 +202,10 @@ type LoopRunLifecyclePort = Pick<
 >
 
 export interface ToolSurfaceRunModePort {
+  /**
+   * Internal rollout assignment. Returning `cli-programmatic` is an explicit assertion that the
+   * provider/model cohort is CLI-capable; absence of this port keeps production on legacy behavior.
+   */
   resolve(input: {
     readonly sessionId: string
     readonly providerId: string
@@ -264,6 +281,7 @@ export interface CommitTapeProviderViewInput {
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
   executionContract?: DeepChatExecutionContract
   toolSurfaceSnapshot?: ToolSurfaceSnapshot | null
+  programmaticToolCapability: ProgrammaticToolCapabilityV1 | null
 }
 
 export interface DeepChatLoopRunnerPorts {
@@ -569,16 +587,23 @@ export class DeepChatLoopRunner {
         providerId: state.providerId,
         modelId: state.modelId
       }) ?? 'legacy'
-    if (toolSurfaceMode !== 'legacy' && toolSurfaceMode !== 'full') {
+    if (
+      toolSurfaceMode !== 'legacy' &&
+      toolSurfaceMode !== 'full' &&
+      toolSurfaceMode !== 'cli-programmatic'
+    ) {
       throw new Error('Tool Surface assignment returned an unsupported Run mode.')
     }
-    if (toolSurfaceMode === 'full' && !nativeToolSurfaceEligible) {
+    if (toolSurfaceMode !== 'legacy' && !nativeToolSurfaceEligible) {
       throw new Error(
-        'Full Tool Surface mode requires a native chat model with provider-native function calling.'
+        `${
+          toolSurfaceMode === 'full' ? 'Full Tool Surface' : 'CLI Programmatic Tool Surface'
+        } mode requires a native chat model with provider-native function calling.`
       )
     }
-    let fullToolSurfaceController: FullToolSurfaceRunController | null = null
-    if (toolSurfaceMode === 'full') {
+    let toolSurfaceController: ToolSurfaceRunController | null = null
+    let programmaticProviderActiveDefinitions: readonly MCPToolDefinition[] | null = null
+    if (toolSurfaceMode !== 'legacy') {
       const universe = await awaitWithAbort(
         this.ports.toolResolver.resolveRunToolDefinitionUniverse(
           sessionId,
@@ -595,17 +620,41 @@ export class DeepChatLoopRunner {
         !universe.complete ||
         universe.mandatoryAdmissionBlocked
       ) {
-        throw new Error('Full Tool Surface mode requires a complete Run tool universe.')
+        throw new Error(
+          `${
+            toolSurfaceMode === 'full' ? 'Full Tool Surface' : 'CLI Programmatic Tool Surface'
+          } mode requires a complete Run tool universe.`
+        )
       }
-      fullToolSurfaceController = createFullToolSurfaceRunController({
-        ceilingDefinitions: meetTaskContractToolDefinitions(
-          sessionId,
-          universe.definitions,
-          taskContractContext
-        ),
-        initialActiveDefinitions: tools,
-        policyVersion: FULL_TOOL_SURFACE_POLICY_VERSION
-      })
+      const ceilingDefinitions = meetTaskContractToolDefinitions(
+        sessionId,
+        universe.definitions,
+        taskContractContext
+      )
+      if (toolSurfaceMode === 'full') {
+        toolSurfaceController = createFullToolSurfaceRunController({
+          ceilingDefinitions,
+          initialActiveDefinitions: tools,
+          policyVersion: FULL_TOOL_SURFACE_POLICY_VERSION
+        })
+      } else {
+        const initialProviderActiveDefinitions = tools.filter(
+          (definition) => definition.source === 'agent'
+        )
+        toolSurfaceController = createProgrammaticToolSurfaceRunControllerV1({
+          ceilingDefinitions: [
+            ...initialProviderActiveDefinitions,
+            ...ceilingDefinitions.filter((definition) => definition.source === 'mcp')
+          ],
+          providerActiveDefinitions: initialProviderActiveDefinitions,
+          policyVersion: PROGRAMMATIC_TOOL_SURFACE_POLICY_VERSION
+        })
+        programmaticProviderActiveDefinitions = Object.freeze(
+          toolSurfaceController.ceiling.entries
+            .filter((entry) => entry.catalogEntry.target.source === 'agent')
+            .map((entry) => entry.definition)
+        )
+      }
     }
     const collectToolSurfaceShadow = observeToolSurfaceShadow && toolSurfaceMode === 'legacy'
     const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
@@ -779,26 +828,60 @@ export class DeepChatLoopRunner {
             supportsAudioInput,
             traceDebugEnabled: traceEnabled,
             viewContext,
-            ...(fullToolSurfaceController
+            ...(toolSurfaceController
               ? {
                   toolSurface: {
-                    build: ({ requestSeq, tools: eligibleDefinitions }) =>
-                      fullToolSurfaceController.build({
+                    build: ({ requestSeq, tools: eligibleDefinitions }) => {
+                      const viewEligibleDefinitions = programmaticProviderActiveDefinitions
+                        ? [
+                            ...programmaticProviderActiveDefinitions,
+                            ...eligibleDefinitions.filter(
+                              (definition) => definition.source === 'mcp'
+                            )
+                          ]
+                        : eligibleDefinitions
+                      return toolSurfaceController.build({
                         request: {
                           sessionId: loopRun.sessionId,
                           messageId: loopRun.messageId,
                           runId: loopRun.runId,
                           requestSeq
                         },
-                        eligibleDefinitions
-                      }),
+                        eligibleDefinitions: viewEligibleDefinitions
+                      })
+                    },
+                    ...(toolSurfaceMode === 'cli-programmatic'
+                      ? {
+                          buildProgrammaticCapability: (snapshot: ToolSurfaceSnapshot) =>
+                            buildProgrammaticToolCapabilityV1({
+                              snapshot,
+                              taskContractContext,
+                              ceilings: {
+                                maxToolEffect:
+                                  taskContractContext?.contract.taskHarness.ceilings.maxToolEffect ??
+                                  'write',
+                                workspace: projectDir
+                                  ? { kind: 'path', path: projectDir }
+                                  : { kind: 'runtime_default' },
+                                maxSubagentDepth: 0
+                              },
+                              quotas: {
+                                maxChildren: MAX_PROGRAMMATIC_TOOL_CHILDREN,
+                                maxBatchSteps: MAX_PROGRAMMATIC_TOOL_BATCH_STEPS,
+                                maxInputBytes: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
+                                maxOutputBytes: MAX_PROGRAMMATIC_TOOL_OUTPUT_BYTES,
+                                maxDurationMs: MAX_PROGRAMMATIC_TOOL_DURATION_MS
+                              }
+                            })
+                        }
+                      : {}),
                     admit: ({ snapshot }) => {
                       resourceScope.assertCurrent()
-                      fullToolSurfaceController.admit(snapshot)
+                      toolSurfaceController.admit(snapshot)
                     },
                     releaseActivationCandidates: (candidates) => {
                       resourceScope.assertCurrent()
-                      fullToolSurfaceController.stageActivationBatch(candidates)
+                      toolSurfaceController.stageActivationBatch(candidates)
                     }
                   }
                 }
@@ -974,7 +1057,7 @@ export class DeepChatLoopRunner {
                 ) {
                   throw new Error('Provider request lost its active ExecutionContract binding.')
                 }
-                if (fullToolSurfaceController) {
+                if (toolSurfaceController) {
                   resourceScope.assertCurrent()
                   const activeRequestToolSurface = loopRun.activeRequestToolSurface
                   if (
@@ -1023,7 +1106,7 @@ export class DeepChatLoopRunner {
                 )
               },
               beforeStream: () => {
-                if (fullToolSurfaceController) {
+                if (toolSurfaceController) {
                   resourceScope.assertCurrent()
                 }
                 crossPreStreamBoundary()
@@ -1307,6 +1390,9 @@ export class DeepChatLoopRunner {
       ...(params.executionContract ? { executionContract: params.executionContract } : {})
     })
     if (!params.toolSurfaceSnapshot) {
+      if (params.programmaticToolCapability !== null) {
+        throw new Error('A legacy provider View cannot carry a Programmatic capability.')
+      }
       this.ports.tape.appendViewManifest(manifest)
       return
     }
@@ -1322,10 +1408,19 @@ export class DeepChatLoopRunner {
       params.toolSurfaceSnapshot,
       params.executionContract !== undefined
     )
+    if (params.programmaticToolCapability !== null) {
+      assertProgrammaticToolCapabilityViewPrepared(
+        params.programmaticToolCapability,
+        params.toolSurfaceSnapshot
+      )
+    }
     this.ports.tape.commitToolSurfaceView({
       manifest,
       activeToolDefinitions: params.tools,
-      programmaticSurface: null,
+      programmaticSurface:
+        params.programmaticToolCapability === null
+          ? null
+          : projectProgrammaticToolTapeProvenanceV1(params.programmaticToolCapability),
       ...projection
     })
   }
