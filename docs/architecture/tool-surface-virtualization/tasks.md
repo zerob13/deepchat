@@ -65,8 +65,8 @@
       assembly without inferring model capability.
 - [ ] Implement Direct Native, CLI Programmatic, and Native Activation route selection.
 - [ ] Add cross-Run sticky/hysteresis policy and measured model CLI capability.
-- [ ] Add Agent-only `deepchat tool search|describe|call|batch` routes.
-- [ ] Add version-negotiated `CLI_SURFACE_V2` as a strict V1 superset and prove V1 cannot reach the
+- [x] Add Agent-only `deepchat tool search|describe|call|batch` routes.
+- [x] Add version-negotiated `CLI_SURFACE_V2` as a strict V1 superset and prove V1 cannot reach the
       new routes.
 - [x] Mint exact outer-operation invocation tokens only for CLI Programmatic Runs.
 - [x] Construct the per-View capability without `providerToolCallId`, then derive an exact
@@ -75,51 +75,51 @@
       Programmatic commands before outer T1.
 - [x] Keep prepared tokens inert until a new outer T1 receipt arms the grant; revoke on failure and
       prevent process spawn.
-- [ ] Bind route plus canonical stdin/scalar arguments, atomically consume once, and reject changed
+- [x] Bind route plus canonical stdin/scalar arguments, atomically consume once, and reject changed
       body/route, replay, expiry/revocation, and wrong principal/conversation.
-- [ ] Keep search/describe read-only with no authorization, activation, seen ledger, or target Journal
+- [x] Keep search/describe read-only with no authorization, activation, seen ledger, or target Journal
       fact.
-- [ ] Return only bounded invocation names, reviewed metadata, signatures/schemas, and copyable
+- [x] Return only bounded invocation names, reviewed metadata, signatures/schemas, and copyable
       examples without internal stable IDs, server UUIDs, hashes, MCP metadata, or secrets.
-- [ ] Enforce direct call without search and one bounded anti-oracle unavailable shape.
+- [x] Enforce direct call without search and one bounded anti-oracle unavailable shape.
 - [x] Add fixed Skill-to-CLI adapter guidance without dynamic prefix churn.
-- [ ] Perform a severity review before commit; do not push.
+- [x] Perform a severity review before commit; do not push.
 
 ## Journal v2
 
-- [ ] Add discriminated provider/nested operation identities with v1/v2 coexistence.
-- [ ] Persist only canonical hashes, status, and bounded provenance; reject conflicting payloads.
+- [x] Add discriminated provider/nested operation identities with v1/v2 coexistence.
+- [x] Persist only canonical hashes, status, and bounded provenance; reject conflicting payloads.
 - [x] Add the process-live parent registry and route the loop and deferred Run terminal writers
       through its no-Tape-read causality fence.
-- [ ] Add process-live parent controller and settlement receipts across the CLI boundary.
-- [ ] Bind receipts to canonical outer-result hashes instead of trusting stdout for settlement.
-- [ ] Before opening any Agent tool route, make the process-live controller the sole production
+- [x] Add process-live parent controller and settlement receipts across the CLI boundary.
+- [x] Bind receipts to canonical outer-result hashes instead of trusting stdout for settlement.
+- [x] Before opening any Agent tool route, make the process-live controller the sole production
       Programmatic outer-T2 path and call its terminal fence from the real Run terminal path without
       reading Tape.
-- [ ] Enforce parent/child T1/T2/terminal causality, including rejection of outer T2 and
+- [x] Enforce parent/child T1/T2/terminal causality, including rejection of outer T2 and
       `run_terminal` while any Programmatic T1 is unmatched, and Run-fatal Journal failures.
-- [ ] Implement independent per-child preflight and default per-child approval.
-- [ ] Cover cancellation, crash, parking, explicit retry, and missing outer T2 failure states.
-- [ ] Perform a severity review before commit; do not push.
+- [x] Implement independent per-child preflight and default per-child approval.
+- [x] Cover cancellation, crash, parking, explicit retry, and missing outer T2 failure states.
+- [x] Perform a severity review before commit; do not push.
 
 ## Batch v1
 
-- [ ] Implement bounded fixed-count sequential fail-fast Batch v1 with controller-assigned contiguous
+- [x] Implement bounded fixed-count sequential fail-fast Batch v1 with controller-assigned contiguous
       plan-index ordinals and one-child `call`.
-- [ ] Support only bounded RFC 6901 bindings from existing argument destinations to prior immutable
+- [x] Support only bounded RFC 6901 bindings from existing argument destinations to prior immutable
       results; reject duplicate/overlapping destinations, interpolation, dynamic expansion,
       parallel/DAG, retry, recursion, sandboxing, and restart recovery.
-- [ ] Reapply per-child and aggregate byte/depth/entry/retention quotas after materialization.
-- [ ] Cover malformed/missing/type-mismatched references, amplification, and fail-fast
+- [x] Reapply per-child and aggregate byte/depth/entry/retention quotas after materialization.
+- [x] Cover malformed/missing/type-mismatched references, amplification, and fail-fast
       `not_started` behavior.
-- [ ] Cover the complete cancellation/crash/parking/explicit-retry failure matrix.
-- [ ] Perform a severity review before commit; do not push.
+- [x] Cover the complete cancellation/crash/parking/explicit-retry failure matrix.
+- [x] Perform a severity review before commit; do not push.
 
 ## Tape, Context, and Canary
 
-- [ ] Add bounded `view/programmatic_tool_surface` with strict canonical conflict checking.
-- [ ] Bind strict V5 facts before provider admission; retain honest V4 fail-open provenance.
-- [ ] Keep normal dispatch free of Tape reads.
+- [x] Add bounded `view/programmatic_tool_surface` with strict canonical conflict checking.
+- [x] Bind strict V5 facts before provider admission; retain honest V4 fail-open provenance.
+- [x] Keep normal dispatch free of Tape reads.
 - [ ] Preserve outer exec only in provider Context and project real nested target truth through
       Journal/UI.
 - [ ] Measure provider-specific billed cost, cache metrics, schema churn, rounds, latency, and
