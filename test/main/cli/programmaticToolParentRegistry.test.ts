@@ -321,6 +321,70 @@ describe('ProgrammaticToolParentRegistry', () => {
     expect(commit).not.toHaveBeenCalled()
   })
 
+  it('parks a nested T1-only operation until its child and outer outcomes are durable', () => {
+    const { controller, journal, operationBinding, registration, registry } = setup()
+    const outerDispatch = journal.commitDispatch({
+      sessionId: operationBinding.operation.sessionId,
+      messageId: operationBinding.operation.messageId,
+      operation: {
+        runId: operationBinding.operation.runId,
+        requestSeq: operationBinding.operation.requestSeq,
+        providerToolCallId: operationBinding.operation.providerToolCallId
+      },
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool call', stdin: '{}' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' }
+    })
+    registration.armOuterDispatch({ ...outerDispatch, operation: operationBinding.operation })
+    registration.takeArmedToken()
+    const argumentTemplate = { arguments: { value: 'write' }, bindings: [] }
+    controller.reserveChildren([
+      {
+        childOrdinal: 0,
+        toolName: 'remote_write',
+        toolSource: 'mcp',
+        target: { serverName: 'remote', originalName: 'remote_write' },
+        definitionHash: '4'.repeat(64),
+        argumentTemplate
+      }
+    ])
+    controller.materializeChild({
+      childOrdinal: 0,
+      argumentTemplate,
+      normalizedArguments: { value: 'write' }
+    })
+    controller.commitChildDispatch(0, {
+      toolName: 'remote_write',
+      toolSource: 'mcp',
+      normalizedArguments: { value: 'write' },
+      target: { serverName: 'remote', originalName: 'remote_write' }
+    })
+    const commit = vi.fn(() => ({ sessionId: RUN.sessionId, entryId: 99, created: true }))
+
+    expect(() => registry.commitRunTerminal(RUN, commit)).toThrow(
+      /has not settled its outer outcome/
+    )
+    expect(() => registration.settleLaunchFailure({ responseText: 'cancelled' })).toThrow(
+      /child plan is already reserved/
+    )
+    expect(commit).not.toHaveBeenCalled()
+
+    controller.commitChildOutcome({ childOrdinal: 0, responseText: 'written', isError: false })
+    expect(() => registry.commitRunTerminal(RUN, commit)).toThrow(
+      /has not settled its outer outcome/
+    )
+    controller.completeToolInvocation({ responseText: 'written', isError: false })
+    expect(registration.takeCompletedInvocationResult()).toEqual({
+      responseText: 'written',
+      isError: false
+    })
+    registration.settleOuterOutcome({ responseText: 'written', isError: false })
+
+    expect(registry.commitRunTerminal(RUN, commit)).toMatchObject({ created: true })
+    expect(commit).toHaveBeenCalledOnce()
+  })
+
   it('arms from the real outer T1 receipt and settles outer T2 before Run terminal', () => {
     const { authority, controller, journal, operationBinding, registration, registry } = setup()
     const outerDispatch = journal.commitDispatch({

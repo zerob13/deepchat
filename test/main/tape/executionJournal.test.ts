@@ -187,6 +187,66 @@ describe('Execution Journal domain and strict persistence', () => {
     )
   })
 
+  it('uses a new provider operation identity for an explicit model retry', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const nestedService = new ExecutionJournalService(() => table)
+    commitStarted(service, RUN_IDS.completed)
+
+    for (const providerToolCallId of ['call_0', 'call_1']) {
+      service.commitDispatch({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: operation(RUN_IDS.completed, providerToolCallId),
+        toolName: 'exec',
+        toolSource: 'agent',
+        normalizedArguments: { command: 'deepchat tool call' },
+        target: { serverName: 'agent-filesystem', originalName: 'exec' }
+      })
+      nestedService.commitNestedDispatch({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: nestedOperation(RUN_IDS.completed, 0, providerToolCallId),
+        toolName: 'search',
+        toolSource: 'mcp',
+        normalizedArguments: { query: 'hello' },
+        target: { serverName: 'search-server', originalName: 'search' },
+        definitionHash: '1'.repeat(64),
+        capabilityHash: '2'.repeat(64)
+      })
+      nestedService.commitNestedToolOutcome({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: nestedOperation(RUN_IDS.completed, 0, providerToolCallId),
+        responseText: 'child result',
+        isError: false
+      })
+      service.commitToolOutcome({
+        sessionId: 'session-1',
+        messageId: 'assistant-1',
+        operation: operation(RUN_IDS.completed, providerToolCallId),
+        responseText: 'outer result',
+        isError: false
+      })
+    }
+
+    const nestedDispatches = entries.filter(
+      (entry) =>
+        entry.name === 'execution/dispatch_committed' &&
+        JSON.parse(entry.meta_json).protocolVersion === EXECUTION_JOURNAL_NESTED_PROTOCOL_VERSION
+    )
+    expect(nestedDispatches).toHaveLength(2)
+    expect(new Set(nestedDispatches.map((entry) => entry.provenance_key))).toHaveLength(2)
+    expect(nestedDispatches.map(parseExecutionJournalFact)).toEqual([
+      expect.objectContaining({
+        operation: expect.objectContaining({ providerToolCallId: 'call_0', childOrdinal: 0 })
+      }),
+      expect.objectContaining({
+        operation: expect.objectContaining({ providerToolCallId: 'call_1', childOrdinal: 0 })
+      })
+    ])
+  })
+
   it('bounds nested child ordinals and rejects v2 fields in the v1 identity parser', () => {
     const { table } = createTapeTableMock()
     const service = createTapeService(table)

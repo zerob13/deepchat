@@ -91,6 +91,7 @@ function buildCapability(input: {
   providerActiveDefinitions?: readonly MCPToolDefinition[]
   maxInputBytes?: number
   maxOutputBytes?: number
+  maxDurationMs?: number
 }): Readonly<{ capability: ProgrammaticToolCapabilityV1; snapshot: ToolSurfaceSnapshot }> {
   const exec = input.definitions.find((definition) => definition.function.name === 'exec')
   if (!exec) throw new Error('Test capability requires exec')
@@ -121,7 +122,7 @@ function buildCapability(input: {
       maxBatchSteps: 8,
       maxInputBytes: input.maxInputBytes ?? 1024 * 1024,
       maxOutputBytes: input.maxOutputBytes ?? 1024 * 1024,
-      maxDurationMs: 30_000
+      maxDurationMs: input.maxDurationMs ?? 30_000
     }
   })
   return { capability, snapshot }
@@ -851,6 +852,233 @@ describe('ProgrammaticToolDispatcher', () => {
     expect(projections[0]).toHaveBeenCalledOnce()
     expect(projections[1]).not.toHaveBeenCalled()
     expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
+  it('stops before the next child T1 when cancellation follows a settled batch child', async () => {
+    const context = buildCapability({
+      definitions: [
+        agentExec(),
+        mcpTool({ name: 'remote_first' }),
+        mcpTool({ name: 'remote_second' }),
+        mcpTool({ name: 'remote_third' })
+      ]
+    })
+    const fixture = createDispatcher(context)
+    const controller = new AbortController()
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: input.request.function.name,
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: input.request.function.name }
+      })
+      return {
+        content: 'first result',
+        rawData: { toolCallId: input.request.id, content: 'first result' }
+      }
+    })
+    fixture.commitChildOutcome.mockImplementation((_grant, input) => {
+      if (input.childOrdinal === 0) {
+        controller.abort(new CliRequestError('cancelled', 'Request was cancelled'))
+      }
+    })
+
+    const output = toolBatchRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolBatchRoute.name,
+        {
+          steps: [
+            { target: 'remote_first', arguments: {} },
+            { target: 'remote_second', arguments: {} },
+            { target: 'remote_third', arguments: {} }
+          ]
+        },
+        agentCaller(),
+        operationGrant(context.capability, 'batch'),
+        controller.signal
+      )
+    )
+
+    expect(output.steps).toEqual([
+      { childOrdinal: 0, status: 'success', result: 'first result' },
+      {
+        childOrdinal: 1,
+        status: 'error',
+        error: {
+          code: 'cancelled',
+          message: 'Programmatic Tool execution was cancelled',
+          retriable: false
+        }
+      },
+      { childOrdinal: 2, status: 'not_started' }
+    ])
+    expect(fixture.executeChild).toHaveBeenCalledOnce()
+    expect(fixture.commitChildDispatch).toHaveBeenCalledOnce()
+    expect(fixture.commitChildOutcome).toHaveBeenCalledOnce()
+    expect(fixture.stopBeforeChild).toHaveBeenCalledWith(expect.anything(), 1)
+    expect(fixture.recordToolInvocationResult).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ isError: true })
+    )
+  })
+
+  it('keeps a post-T1 cancellation indeterminate instead of inventing nested T2', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_slow' })]
+    })
+    const fixture = createDispatcher(context)
+    const controller = new AbortController()
+    const cancellation = new CliRequestError('cancelled', 'Request was cancelled')
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: 'remote_slow',
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: 'remote_slow' }
+      })
+      controller.abort(cancellation)
+      input.signal.throwIfAborted()
+      throw new Error('unreachable')
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_slow', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        controller.signal
+      )
+    ).rejects.toBe(cancellation)
+
+    expect(fixture.commitChildDispatch).toHaveBeenCalledOnce()
+    expect(fixture.commitChildOutcome).not.toHaveBeenCalled()
+    expect(fixture.stopBeforeChild).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
+  it('settles an owned timeout before child T1 without inventing a nested operation', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_slow' })],
+      maxDurationMs: 5
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(
+      async (input) =>
+        await new Promise<never>((_resolve, reject) => {
+          const rejectWithAbort = () => reject(input.signal.reason)
+          if (input.signal.aborted) rejectWithAbort()
+          else input.signal.addEventListener('abort', rejectWithAbort, { once: true })
+        })
+    )
+
+    const output = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_slow', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.step).toEqual({
+      childOrdinal: 0,
+      status: 'error',
+      error: {
+        code: 'timeout',
+        message: 'Programmatic Tool execution timed out',
+        retriable: false
+      }
+    })
+    expect(fixture.commitChildDispatch).not.toHaveBeenCalled()
+    expect(fixture.commitChildOutcome).not.toHaveBeenCalled()
+    expect(fixture.stopBeforeChild).toHaveBeenCalledWith(expect.anything(), 0)
+    expect(fixture.recordToolInvocationResult).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ isError: true })
+    )
+  })
+
+  it('stops a batch before T1 when approval for a later child is denied', async () => {
+    const context = buildCapability({
+      definitions: [
+        agentExec(),
+        mcpTool({ name: 'remote_read' }),
+        mcpTool({ name: 'remote_write', effect: 'write' }),
+        mcpTool({ name: 'remote_later' })
+      ]
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild
+      .mockImplementationOnce(async (input) => {
+        input.commitDispatch({
+          toolName: 'remote_read',
+          toolSource: 'mcp',
+          normalizedArguments: {},
+          target: { serverName: 'remote', originalName: 'remote_read' }
+        })
+        return {
+          content: 'read result',
+          rawData: { toolCallId: input.request.id, content: 'read result' }
+        }
+      })
+      .mockResolvedValueOnce({
+        content: 'Permission required',
+        rawData: {
+          toolCallId: 'child-2',
+          content: 'Permission required',
+          requiresPermission: true,
+          permissionRequest: {
+            needsPermission: true,
+            requestId: 'permission-2',
+            toolName: 'remote_write',
+            serverName: 'remote',
+            permissionType: 'write',
+            description: 'Permission required'
+          } as never
+        }
+      })
+    fixture.authorizeChild.mockRejectedValueOnce(
+      new CliRequestError('approval_denied', 'Programmatic Tool permission was denied', {
+        httpStatus: 403
+      })
+    )
+
+    const output = toolBatchRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolBatchRoute.name,
+        {
+          steps: [
+            { target: 'remote_read', arguments: {} },
+            { target: 'remote_write', arguments: {} },
+            { target: 'remote_later', arguments: {} }
+          ]
+        },
+        agentCaller(),
+        operationGrant(context.capability, 'batch'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.steps).toEqual([
+      { childOrdinal: 0, status: 'success', result: 'read result' },
+      {
+        childOrdinal: 1,
+        status: 'error',
+        error: {
+          code: 'approval_denied',
+          message: 'Programmatic Tool permission was denied',
+          retriable: false
+        }
+      },
+      { childOrdinal: 2, status: 'not_started' }
+    ])
+    expect(fixture.executeChild).toHaveBeenCalledTimes(2)
+    expect(fixture.commitChildDispatch).toHaveBeenCalledOnce()
+    expect(fixture.commitChildOutcome).toHaveBeenCalledOnce()
+    expect(fixture.cancelChildPermission).toHaveBeenCalledWith('permission-2', 'session-1')
+    expect(fixture.stopBeforeChild).toHaveBeenCalledWith(expect.anything(), 1)
   })
 
   it('parks one child approval before T1 and consumes it through the exact second dispatch', async () => {
