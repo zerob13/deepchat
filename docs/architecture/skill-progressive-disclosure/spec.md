@@ -97,10 +97,11 @@ catalogBudget = min(floor(effectiveContextLength * 0.02), 2,000)
 The Route budget uses the configured model context window even when an endpoint such as ACP bypasses
 DeepChat's local context admission. When that configured window is unknown or invalid, the budget is
 2,000 approximate tokens. Descriptions are first capped at 1,024 Unicode code points as a defensive
-input bound. Normalization inspects only a bounded source prefix before applying that output cap.
-Categories are capped at 128 code points, and at most eight platform labels of 64 code points each
-are kept, so no whitelisted auxiliary field can become an unbounded alternate description. The
-final bound uses the same `tokenx` approximate-token estimator used by request preflight.
+input bound (and therefore at most 4,096 UTF-8 bytes). Normalization inspects only a bounded source
+prefix before applying that output cap. Categories are capped at 128 code points, and at most eight
+platform labels of 64 code points each are kept, so no whitelisted auxiliary field can become an
+unbounded alternate description. The final bound uses the same `tokenx` approximate-token
+estimator used by request preflight.
 
 If the computed budget cannot fit the minimum wrapper and omission marker, the catalog block is
 absent. The constant-size usage instructions still direct the model to `skill_list`, and the render
@@ -152,9 +153,10 @@ interface SkillListInput {
 ```
 
 - No query performs bounded browsing in stable catalog order.
-- A query performs local deterministic lexical matching over normalized Skill metadata.
+- A query performs local deterministic lexical matching over the canonical bounded summary and
+  bounded normalized Skill metadata.
 - Ranking is exact name, normalized name/prefix, existing aliases or keywords when present,
-  category, then description text; ties use stable category/name order.
+  category, then bounded summary text; ties use stable category/name order.
 - The default page size is 10 and the hard maximum is 20.
 - `skill_list` is a system-model discovery capability while Skills are enabled; per-tool user
   configuration cannot remove the only recovery path for omitted Route cards.
@@ -169,10 +171,13 @@ interface SkillListInput {
 - The response contains whitelisted routing cards, `nextCursor`, total match count, and omitted
   count. It never returns arbitrary metadata or an unbounded full description.
 
-Local matching may inspect complete metadata in memory. Queried discovery scans complete
-descriptions one at a time, retaining only match state and a fixed-size content hash rather than a
-second normalized copy of the full corpus. Only the bounded routing-card projection is
-provider-visible. Every Skill omitted from Route remains discoverable through browsing or search.
+Local matching never builds or retains a second normalized description corpus. It searches the
+same bounded summary used by the canonical routing card. Aliases, keywords, and tags are inspected
+under fixed candidate and per-value bounds. Raw query bytes are bounded before normalization, and
+the normalized query is checked again because NFC may expand input. Changes outside the searchable
+projection do not invalidate a cursor because they cannot change matching, ordering, or output.
+Every Skill omitted from Route remains discoverable through bounded browsing even when its search
+terms are outside the routing summary.
 
 ## Activate Contract
 

@@ -5,6 +5,7 @@ import { SKILL_NAME_MAX_LENGTH } from '../../../src/shared/types/skill'
 import {
   SKILL_ROUTING_CATEGORY_MAX_CODE_POINTS,
   SKILL_LIST_RESULT_MAX_TOKENS,
+  SKILL_ROUTING_DESCRIPTION_MAX_BYTES,
   SKILL_ROUTING_DESCRIPTION_MAX_CODE_POINTS,
   SKILL_ROUTING_PLATFORM_MAX_CODE_POINTS,
   buildSkillListResult,
@@ -135,9 +136,9 @@ describe('skill routing catalog', () => {
     expect(projection.report.omittedNames).toEqual(['one'])
   })
 
-  it('searches full descriptions but returns only bounded routing fields', () => {
+  it('searches bounded routing descriptions without retaining oversized tails', () => {
     const skills = [
-      metadata('database-safety', `prefix ${'x'.repeat(4_000)} rollback-protocol`, {
+      metadata('database-safety', `rollback-protocol ${'😀'.repeat(1_000_000)} private-tail`, {
         path: '/private/database-safety/SKILL.md',
         skillRoot: '/private/database-safety',
         metadata: { secret: 'do-not-return', tags: ['database'] },
@@ -155,6 +156,10 @@ describe('skill routing catalog', () => {
     expect(serialized).not.toContain('do-not-return')
     expect(serialized).not.toContain('allowedTools')
     expect(approximateTokenSize(serialized)).toBeLessThanOrEqual(SKILL_LIST_RESULT_MAX_TOKENS)
+    expect(Buffer.byteLength(result.skills[0].description ?? '', 'utf8')).toBeLessThanOrEqual(
+      SKILL_ROUTING_DESCRIPTION_MAX_BYTES
+    )
+    expect(buildSkillListResult(skills, [], [], { query: 'private-tail' }).skills).toEqual([])
   })
 
   it('ignores malformed descriptions defensively during queried discovery', () => {
@@ -243,6 +248,36 @@ describe('skill routing catalog', () => {
         limit: 1
       })
     ).toThrow('does not match the current query and catalog')
+  })
+
+  it('keeps cursors valid when only an unsearchable description tail changes', () => {
+    const searchablePrefix = `needle ${'p'.repeat(SKILL_ROUTING_DESCRIPTION_MAX_CODE_POINTS)}`
+    const first = metadata('first', `${searchablePrefix} first-tail`)
+    const skills = [first, metadata('second', 'needle second')]
+    const firstPage = buildSkillListResult(skills, [], [], { query: 'needle', limit: 1 })
+
+    expect(firstPage.nextCursor).toBeTypeOf('string')
+    first.description = `${searchablePrefix} revised-tail`
+
+    expect(
+      buildSkillListResult(skills, [], [], {
+        query: 'needle',
+        cursor: firstPage.nextCursor,
+        limit: 1
+      }).skills.map((skill) => skill.name)
+    ).toEqual(['second'])
+  })
+
+  it('bounds metadata candidate scanning and query normalization input', () => {
+    const aliases = Array.from({ length: 129 }, (_, index) =>
+      index === 128 ? 'hidden-tail' : index
+    )
+    const skill = metadata('bounded', 'bounded', { metadata: { aliases } })
+
+    expect(buildSkillListResult([skill], [], [], { query: 'hidden-tail' }).skills).toEqual([])
+    expect(() => buildSkillListResult([skill], [], [], { query: 'a'.repeat(1_025) })).toThrow(
+      'query exceeds 1024 UTF-8 bytes'
+    )
   })
 
   it('invalidates cursors when execution-active discovery decoration changes', () => {

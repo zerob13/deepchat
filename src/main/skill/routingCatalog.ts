@@ -9,6 +9,7 @@ import type {
 import { SKILL_NAME_MAX_LENGTH } from '@shared/types/skill'
 
 export const SKILL_ROUTING_DESCRIPTION_MAX_CODE_POINTS = 1_024
+export const SKILL_ROUTING_DESCRIPTION_MAX_BYTES = SKILL_ROUTING_DESCRIPTION_MAX_CODE_POINTS * 4
 export const SKILL_ROUTING_CATEGORY_MAX_CODE_POINTS = 128
 export const SKILL_ROUTING_PLATFORM_MAX_CODE_POINTS = 64
 export const SKILL_ROUTING_PLATFORM_MAX_COUNT = 8
@@ -21,7 +22,7 @@ export const SKILL_LIST_QUERY_MAX_CODE_POINTS = 256
 export const SKILL_LIST_QUERY_MAX_BYTES = 1_024
 export const SKILL_LIST_CURSOR_MAX_BYTES = 1_024
 
-const SKILL_ROUTING_PROJECTION_VERSION = 1
+const SKILL_ROUTING_PROJECTION_VERSION = 2
 const SKILL_LIST_CURSOR_VERSION = 1
 const SKILL_SEARCH_METADATA_MAX_VALUES = 128
 const SKILL_SEARCH_METADATA_VALUE_MAX_CODE_POINTS = 256
@@ -59,8 +60,7 @@ type SkillSearchRecord = {
   normalizedName: string
   normalizedCategory: string
   normalizedAliases: readonly string[]
-  descriptionMatches: boolean
-  descriptionHash: string
+  normalizedSummary: string
 }
 
 type SkillListCursor = {
@@ -491,7 +491,7 @@ function readSearchMetadataValues(metadata: Record<string, unknown> | undefined)
   for (const key of ['aliases', 'keywords', 'tags']) {
     const value = metadata?.[key]
     const values = typeof value === 'string' ? [value] : Array.isArray(value) ? value : []
-    for (const candidate of values) {
+    for (const candidate of values.slice(0, SKILL_SEARCH_METADATA_MAX_VALUES - result.length)) {
       if (result.length >= SKILL_SEARCH_METADATA_MAX_VALUES) return result
       const normalized = normalizeBoundedText(
         candidate,
@@ -519,14 +519,12 @@ function buildSearchRecords(
   }
   return [...cardByName.values()].map((card) => {
     const metadata = metadataByName.get(card.name)
-    const description = typeof metadata?.description === 'string' ? metadata.description : ''
     return {
       card,
       normalizedName: normalizeSearchText(card.name),
       normalizedCategory: normalizeSearchText(card.category ?? ''),
       normalizedAliases: query ? readSearchMetadataValues(metadata?.metadata) : [],
-      descriptionMatches: query ? normalizeSearchText(description).includes(query) : false,
-      descriptionHash: query ? hashText(description) : ''
+      normalizedSummary: query ? normalizeSearchText(card.summary) : ''
     }
   })
 }
@@ -537,7 +535,7 @@ function scoreSearchRecord(record: SkillSearchRecord, query: string): number | n
   if (record.normalizedName.startsWith(query)) return 1
   if (record.normalizedAliases.some((value) => value.includes(query))) return 2
   if (record.normalizedCategory.includes(query)) return 3
-  if (record.descriptionMatches) return 4
+  if (record.normalizedSummary.includes(query)) return 4
   return null
 }
 
@@ -566,7 +564,6 @@ function buildCatalogFingerprint(
     for (const platform of record.card.platforms ?? []) updateField(platform)
     updateField(record.card.sessionActive ? '1' : '0')
     updateField(record.card.sessionActive || activeSkillNames.has(record.card.name) ? '1' : '0')
-    updateField(record.descriptionHash)
     updateField(String(record.normalizedAliases.length))
     for (const alias of record.normalizedAliases) updateField(alias)
   }
@@ -644,7 +641,14 @@ function decodeCursor(
 }
 
 function normalizeSkillListQuery(query: string | undefined): string {
-  const normalized = collapseWhitespace((query ?? '').normalize('NFC')).toLowerCase()
+  const source = query ?? ''
+  if (source.length > SKILL_LIST_QUERY_MAX_BYTES) {
+    throw new RangeError(`skill_list query exceeds ${SKILL_LIST_QUERY_MAX_BYTES} UTF-8 bytes.`)
+  }
+  if (Buffer.byteLength(source, 'utf8') > SKILL_LIST_QUERY_MAX_BYTES) {
+    throw new RangeError(`skill_list query exceeds ${SKILL_LIST_QUERY_MAX_BYTES} UTF-8 bytes.`)
+  }
+  const normalized = collapseWhitespace(source.normalize('NFC')).toLowerCase()
   if (countCodePoints(normalized) > SKILL_LIST_QUERY_MAX_CODE_POINTS) {
     throw new RangeError(
       `skill_list query exceeds ${SKILL_LIST_QUERY_MAX_CODE_POINTS} Unicode characters.`
