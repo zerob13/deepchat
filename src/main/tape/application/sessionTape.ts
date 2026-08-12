@@ -26,8 +26,6 @@ import type {
   CommitExecutionRunStartedInput,
   CommitExecutionRunTerminalInput,
   CommitExecutionToolOutcomeInput,
-  CommitNestedExecutionDispatchInput,
-  CommitNestedExecutionToolOutcomeInput,
   ExecutionJournalCommitReceipt,
   ExecutionRecoveryReport
 } from '../domain/executionJournal'
@@ -44,7 +42,6 @@ import type {
   TapeToolSurfaceViewWriter,
   ExecutionJournalRecoveryReader,
   ExecutionJournalWriter,
-  NestedExecutionJournalWriter,
   TapeRawEntryReader,
   TapeReconciliationPort,
   TapeToolFactAppendReceipt,
@@ -115,7 +112,6 @@ export class SessionTape
     TapeInspectionReader,
     TapeLifecycleAdmin,
     ExecutionJournalWriter,
-    NestedExecutionJournalWriter,
     ExecutionJournalRecoveryReader
 {
   private readonly providers: TapeApplicationProviders
@@ -188,16 +184,6 @@ export class SessionTape
 
   commitToolOutcome(input: CommitExecutionToolOutcomeInput): ExecutionJournalCommitReceipt {
     return this.executionJournal.commitToolOutcome(input)
-  }
-
-  commitNestedDispatch(input: CommitNestedExecutionDispatchInput): ExecutionJournalCommitReceipt {
-    return this.executionJournal.commitNestedDispatch(input)
-  }
-
-  commitNestedToolOutcome(
-    input: CommitNestedExecutionToolOutcomeInput
-  ): ExecutionJournalCommitReceipt {
-    return this.executionJournal.commitNestedToolOutcome(input)
   }
 
   commitRunTerminal(input: CommitExecutionRunTerminalInput): ExecutionJournalCommitReceipt {

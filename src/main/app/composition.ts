@@ -574,7 +574,7 @@ export async function createMainProcessControl(dependencies: {
   )
   const programmaticToolParents = new ProgrammaticToolParentRegistry({
     tokenAuthority: agentCliTokenAuthority,
-    executionJournal: sessionData.tapeStore
+    executionJournal: sessionData.programmaticExecutionJournal
   })
   programmaticToolDispatcher = new ProgrammaticToolDispatcher({
     parents: programmaticToolParents,

@@ -300,7 +300,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     (deps.agentCliTokenAuthority
       ? new ProgrammaticToolParentRegistry({
           tokenAuthority: deps.agentCliTokenAuthority,
-          executionJournal: tapeService
+          executionJournal: sessionData.programmaticExecutionJournal
         })
       : new ProgrammaticToolParentRegistry())
   const sessionLifecycle = new SessionLifecycleCoordinator({

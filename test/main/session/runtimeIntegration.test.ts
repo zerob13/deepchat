@@ -1839,6 +1839,25 @@ describe('Integration: multi-turn context', () => {
 })
 
 describe('Integration: Session Tape boundary', () => {
+  it('exposes nested Journal writes only through the Programmatic controller capability', () => {
+    const sessionData = createSessionDataFromDatabase(createMockSqlitePresenter() as never, {
+      publishPendingInputsChanged: vi.fn(),
+      publishMessagesChanged: vi.fn()
+    })
+
+    expect('commitNestedDispatch' in sessionData.tapeStore).toBe(false)
+    expect('commitNestedToolOutcome' in sessionData.tapeStore).toBe(false)
+    expect(Object.keys(sessionData.programmaticExecutionJournal).sort()).toEqual([
+      'commitNestedDispatch',
+      'commitNestedToolOutcome',
+      'commitToolOutcome'
+    ])
+    expect('commitDispatch' in sessionData.programmaticExecutionJournal).toBe(false)
+    expect('commitRunStarted' in sessionData.programmaticExecutionJournal).toBe(false)
+    expect('commitRunTerminal' in sessionData.programmaticExecutionJournal).toBe(false)
+    expect(Object.isFrozen(sessionData.programmaticExecutionJournal)).toBe(true)
+  })
+
   it('keeps linked reads free of readiness writes while preparing current reads', async () => {
     const sessionData = createSessionDataFromDatabase(createMockSqlitePresenter() as never, {
       publishPendingInputsChanged: vi.fn(),

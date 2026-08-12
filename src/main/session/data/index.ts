@@ -7,6 +7,11 @@ import { SessionPendingInputStore } from './pendingInputStore'
 import { SessionPendingInputs } from './pendingInputs'
 import { SessionSettingsStore } from './settings'
 import { normalizeTapeHandoffState, SessionTape } from '@/tape/application/sessionTape'
+import { ExecutionJournalService } from '@/tape/application/executionJournalService'
+import type {
+  ExecutionJournalWriter,
+  NestedExecutionJournalWriter
+} from '@/tape/ports/capabilities'
 import { SessionTranscript } from './transcript'
 import { SessionDatabase } from './database'
 
@@ -29,6 +34,15 @@ export function createSessionDataFromDatabase(
   events: SessionDataEvents
 ) {
   const tapeStore = new SessionTape(database)
+  const programmaticJournalService = new ExecutionJournalService(
+    () => database.deepchatExecutionJournalStore
+  )
+  const programmaticExecutionJournal: Pick<ExecutionJournalWriter, 'commitToolOutcome'> &
+    NestedExecutionJournalWriter = Object.freeze({
+    commitToolOutcome: (input) => programmaticJournalService.commitToolOutcome(input),
+    commitNestedDispatch: (input) => programmaticJournalService.commitNestedDispatch(input),
+    commitNestedToolOutcome: (input) => programmaticJournalService.commitNestedToolOutcome(input)
+  })
   const transcript = new SessionTranscript(database, tapeStore)
   const pendingInputStore = new SessionPendingInputStore(database)
   const ensureTape = (sessionId: string) => tapeStore.ensureSessionTapeReady(sessionId, transcript)
@@ -86,6 +100,7 @@ export function createSessionDataFromDatabase(
     transcript,
     tape,
     tapeStore,
+    programmaticExecutionJournal,
     pendingInputs: new SessionPendingInputs(pendingInputStore, transcript, events)
   }
 }
