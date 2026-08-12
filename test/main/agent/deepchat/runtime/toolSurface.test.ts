@@ -2206,7 +2206,7 @@ describe('Tool Surface production selection', () => {
     }
     const initial = build(1)
     selected.controller.admit(initial)
-    return { definitions, byName, selected, build, candidate }
+    return { definitions, byName, selected, build, candidate, initial }
   }
 
   it('keeps a small catalog fully active without adding ToolSearch', () => {
@@ -2742,6 +2742,31 @@ describe('Tool Surface production selection', () => {
         }),
       'invalid_definition'
     )
+  })
+
+  it('does not reconstruct an unadmitted activation after its Run controller is recreated', () => {
+    const interrupted = createActivationHarness(['hidden'])
+    interrupted.selected.controller.stageActivationBatch([interrupted.candidate('hidden', 1)])
+    const unadmitted = interrupted.build(2)
+
+    expect(interrupted.initial.toolDefinitions.map((definition) => definition.function.name)).not.toContain(
+      'hidden'
+    )
+    expect(unadmitted.toolDefinitions.map((definition) => definition.function.name)).toContain(
+      'hidden'
+    )
+
+    const recreated = createActivationHarness(['hidden'])
+    const recreatedNextView = recreated.build(2)
+
+    expect(recreated.initial.toolDefinitions.map((definition) => definition.function.name)).not.toContain(
+      'hidden'
+    )
+    expect(recreatedNextView.toolDefinitions.map((definition) => definition.function.name)).not.toContain(
+      'hidden'
+    )
+    expect(recreatedNextView.activation).toEqual({ originRequestSeq: null, decisions: [] })
+    expect(recreatedNextView.acceptedSearchEvidence).toEqual([])
   })
 
   it('rejects staging on a full controller and rejects invalid activation authority', () => {

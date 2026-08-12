@@ -34,7 +34,7 @@
 - [x] Reserve/register native `tool_search` and search only its originating frozen catalog.
 - [x] Return bounded metadata without schema or internal identifiers.
 - [x] Release after durable outcome; ordinal-merge and deduplicate after complete batch settlement.
-- [ ] Discard pre-admission candidates across restart and activate only in the next View.
+- [x] Discard pre-admission candidates across restart and activate only in the next View.
 - [x] Enforce reserve, batch, Run, provider, and V5 budgets without eviction/full fallback.
 - [x] Return bounded Skill activation failure and stage serialized no-I/O resource bundles.
 - [x] Reject guessed inactive calls before target resolution and compare canonical definition hash
