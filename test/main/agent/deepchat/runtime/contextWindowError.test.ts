@@ -194,6 +194,7 @@ describe('isContextWindowErrorLike', () => {
       message: 'Prompt has 142,321 tokens, maximum is 131,072 tokens.',
       actualTokens: 142321,
       limitTokens: 131072,
+      limitScope: 'prompt',
       scope: 'prompt'
     },
     {
@@ -201,12 +202,14 @@ describe('isContextWindowErrorLike', () => {
         "This model's maximum context length is 8,192 tokens. However, your messages resulted in 9,001 tokens.",
       actualTokens: 9001,
       limitTokens: 8192,
+      limitScope: 'context',
       scope: 'messages'
     },
     {
       message: 'prompt is too long: 209859 tokens > 200000 maximum',
       actualTokens: 209859,
       limitTokens: 200000,
+      limitScope: 'prompt',
       scope: 'prompt'
     }
   ])('extracts explicit provider context numbers from $message', (fixture) => {
@@ -214,6 +217,7 @@ describe('isContextWindowErrorLike', () => {
       matched: true,
       actualTokens: fixture.actualTokens,
       limitTokens: fixture.limitTokens,
+      limitScope: fixture.limitScope,
       scope: fixture.scope,
       confidence: 'explicit'
     })
@@ -265,6 +269,7 @@ describe('isContextWindowErrorLike', () => {
       matched: true,
       actualTokens: 142321,
       limitTokens: 131072,
+      limitScope: 'prompt',
       scope: 'prompt',
       confidence: 'explicit'
     })
@@ -279,6 +284,44 @@ describe('isContextWindowErrorLike', () => {
       matched: true,
       scope: 'unknown',
       confidence: 'qualitative'
+    })
+  })
+
+  it.each([
+    {
+      message: 'Input has 9,001 tokens, maximum is 8,192 tokens.',
+      scope: 'input'
+    },
+    {
+      message: 'Message has 9,001 tokens, maximum is 8,192 tokens.',
+      scope: 'messages'
+    },
+    {
+      message: 'Request has 9,001 tokens, maximum is 8,192 tokens.',
+      scope: 'request'
+    },
+    {
+      message: 'Schema has too many tokens; maximum is 8,192 tokens.',
+      scope: 'unknown'
+    }
+  ])('does not promote a field-scoped limit from $message', ({ message, scope }) => {
+    const facts = inspectContextOverflow(message)
+
+    expect(facts).toMatchObject({ matched: true, scope })
+    expect(facts).not.toHaveProperty('limitTokens')
+    expect(facts).not.toHaveProperty('limitScope')
+  })
+
+  it('does not treat character-size validation as a context overflow', () => {
+    expect(
+      inspectContextOverflow('inputs[0] content size exceeds maximum 8192 characters')
+    ).toEqual({ matched: false, confidence: 'none' })
+  })
+
+  it('does not promote a non-overflow token comparison into a context ceiling', () => {
+    expect(inspectContextOverflow('Prompt has 4,096 tokens, maximum is 8,192 tokens.')).toEqual({
+      matched: false,
+      confidence: 'none'
     })
   })
 

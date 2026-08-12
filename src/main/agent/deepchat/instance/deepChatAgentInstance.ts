@@ -108,10 +108,12 @@ export class DeepChatAgentInstance {
     modelId: string
     confidence: 'none' | 'qualitative' | 'explicit'
     limitTokens?: number
+    limitScope?: 'context' | 'prompt'
   }): void {
     if (!input.providerId.trim() || !input.modelId.trim() || input.confidence === 'none') return
     const limitTokens =
       input.confidence === 'explicit' &&
+      (input.limitScope === 'context' || input.limitScope === 'prompt') &&
       Number.isSafeInteger(input.limitTokens) &&
       (input.limitTokens ?? 0) > 0
         ? input.limitTokens

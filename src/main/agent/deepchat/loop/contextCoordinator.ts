@@ -127,6 +127,7 @@ export interface ProviderContextOverflowFacts {
   matched: boolean
   actualTokens?: number
   limitTokens?: number
+  limitScope?: 'context' | 'prompt'
   scope?: 'prompt' | 'input' | 'request' | 'messages' | 'unknown'
   confidence: 'none' | 'qualitative' | 'explicit'
 }

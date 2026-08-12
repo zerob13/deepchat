@@ -1093,7 +1093,8 @@ export class DeepChatLoopRunner {
                 providerId: state.providerId,
                 modelId: requestModelId,
                 confidence: facts.confidence,
-                limitTokens: facts.limitTokens
+                limitTokens: facts.limitTokens,
+                limitScope: facts.limitScope
               }),
             createAbortError
           })

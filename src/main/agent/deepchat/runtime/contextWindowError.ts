@@ -53,7 +53,7 @@ const ACTUAL_THEN_LIMIT_PATTERN = new RegExp(
   'i'
 )
 const LIMIT_THEN_ACTUAL_PATTERN = new RegExp(
-  `(?:maximum|max)\\s+(?:context\\s+)?(?:length|window|tokens?)(?:\\s+(?:is|of))?\\s*[:=]?\\s*${TOKEN_COUNT_CAPTURE}\\s*tokens?[\\s\\S]{0,200}?(?:resulted\\s+in|contains?|has|uses?)\\s*${TOKEN_COUNT_CAPTURE}\\s*tokens?`,
+  `(?:maximum|max)\\s+context\\s+(?:length|window|tokens?)(?:\\s+(?:is|of))?\\s*[:=]?\\s*${TOKEN_COUNT_CAPTURE}\\s*tokens?[\\s\\S]{0,200}?(?:resulted\\s+in|contains?|has|uses?)\\s*${TOKEN_COUNT_CAPTURE}\\s*tokens?`,
   'i'
 )
 const CONTEXT_COUNT_COMPARISON_PATTERN = new RegExp(
@@ -69,6 +69,7 @@ export interface ContextOverflowFacts {
   matched: boolean
   actualTokens?: number
   limitTokens?: number
+  limitScope?: 'context' | 'prompt'
   scope?: 'prompt' | 'input' | 'request' | 'messages' | 'unknown'
   confidence: 'none' | 'qualitative' | 'explicit'
 }
@@ -83,25 +84,48 @@ export function inspectContextOverflow(value: unknown): ContextOverflowFacts {
   if (!matched) return { matched: false, confidence: 'none' }
 
   let explicitMatch:
-    | (ReturnType<typeof parseExplicitContextNumbers> & { text: string })
+    | (ReturnType<typeof parseExplicitContextNumbers> & {
+        text: string
+        scope: ContextOverflowFacts['scope']
+      })
     | undefined
+  let explicitMatchRank = 0
   for (const text of matches) {
     const numbers = parseExplicitContextNumbers(text)
-    if (numbers.actualTokens === undefined && numbers.limitTokens === undefined) continue
-    if (numbers.actualTokens !== undefined && numbers.limitTokens !== undefined) {
-      explicitMatch = { ...numbers, text }
-      break
-    }
-    explicitMatch ??= { ...numbers, text }
+    if (numbers.actualTokens === undefined && numbers.observedLimitTokens === undefined) continue
+    const hasValidCeiling =
+      numbers.limitScope !== undefined &&
+      numbers.observedLimitTokens !== undefined &&
+      (numbers.actualTokens === undefined || numbers.actualTokens > numbers.observedLimitTokens)
+    const rank = hasValidCeiling
+      ? numbers.actualTokens === undefined
+        ? 3
+        : 4
+      : numbers.actualTokens !== undefined && numbers.observedLimitTokens !== undefined
+        ? 2
+        : 1
+    if (rank <= explicitMatchRank) continue
+    explicitMatchRank = rank
+    explicitMatch = { ...numbers, text, scope: resolveContextScope(text) }
   }
   if (explicitMatch) {
+    const hasValidCeiling =
+      explicitMatch.limitScope !== undefined &&
+      explicitMatch.observedLimitTokens !== undefined &&
+      (explicitMatch.actualTokens === undefined ||
+        explicitMatch.actualTokens > explicitMatch.observedLimitTokens)
     return {
       matched: true,
       ...(explicitMatch.actualTokens !== undefined
         ? { actualTokens: explicitMatch.actualTokens }
         : {}),
-      ...(explicitMatch.limitTokens !== undefined ? { limitTokens: explicitMatch.limitTokens } : {}),
-      scope: resolveContextScope(explicitMatch.text),
+      ...(hasValidCeiling
+        ? {
+            limitTokens: explicitMatch.observedLimitTokens,
+            limitScope: explicitMatch.limitScope
+          }
+        : {}),
+      scope: explicitMatch.scope,
       confidence: 'explicit'
     }
   }
@@ -124,7 +148,8 @@ function isContextWindowErrorText(text: string): boolean {
   const explicit = parseExplicitContextNumbers(text)
   if (
     explicit.actualTokens !== undefined &&
-    explicit.limitTokens !== undefined &&
+    explicit.observedLimitTokens !== undefined &&
+    explicit.actualTokens > explicit.observedLimitTokens &&
     TOKEN_CONTEXT_HINTS.some((hint) => normalized.includes(hint))
   ) {
     return true
@@ -237,13 +262,16 @@ function parseTokenCount(value: string | undefined): number | undefined {
 
 function parseExplicitContextNumbers(text: string): {
   actualTokens?: number
-  limitTokens?: number
+  observedLimitTokens?: number
+  limitScope?: 'context' | 'prompt'
 } {
   const actualThenLimit = ACTUAL_THEN_LIMIT_PATTERN.exec(text)
   if (actualThenLimit) {
+    const scope = resolveContextScope(actualThenLimit[0])
     return {
       actualTokens: parseTokenCount(actualThenLimit[1]),
-      limitTokens: parseTokenCount(actualThenLimit[2])
+      observedLimitTokens: parseTokenCount(actualThenLimit[2]),
+      ...(scope === 'prompt' ? { limitScope: 'prompt' as const } : {})
     }
   }
 
@@ -251,21 +279,26 @@ function parseExplicitContextNumbers(text: string): {
   if (limitThenActual) {
     return {
       actualTokens: parseTokenCount(limitThenActual[2]),
-      limitTokens: parseTokenCount(limitThenActual[1])
+      observedLimitTokens: parseTokenCount(limitThenActual[1]),
+      limitScope: 'context'
     }
   }
 
   const comparison = CONTEXT_COUNT_COMPARISON_PATTERN.exec(text)
   if (comparison) {
+    const scope = resolveContextScope(comparison[0])
     return {
       actualTokens: parseTokenCount(comparison[1]),
-      limitTokens: parseTokenCount(comparison[2])
+      observedLimitTokens: parseTokenCount(comparison[2]),
+      ...(scope === 'prompt' ? { limitScope: 'prompt' as const } : {})
     }
   }
 
   const explicitLimit = EXPLICIT_CONTEXT_LIMIT_PATTERN.exec(text)
-  const limitTokens = parseTokenCount(explicitLimit?.[1])
-  return limitTokens === undefined ? {} : { limitTokens }
+  const observedLimitTokens = parseTokenCount(explicitLimit?.[1])
+  return observedLimitTokens === undefined
+    ? {}
+    : { observedLimitTokens, limitScope: 'context' }
 }
 
 function resolveContextScope(text: string): ContextOverflowFacts['scope'] {

@@ -184,10 +184,12 @@ messages, output reserve, and Skill materialization reports. Opaque reconciliati
 cost with unavailable attribution instead of inventing precision.
 
 Upgrade overflow detection to a structured observation. Parse explicit actual/limit numbers when
-providers supply them; keep generic matches qualitative. Session ceiling, configured context
-length, and any future estimator calibration remain separate values with explicit
-source/confidence. Explicit limits are model-scoped runtime observations and do not overwrite
-Provider configuration or enter Tape.
+providers supply them, but only an explicit total-context or whole-prompt limit may become a
+Session ceiling. Message-, request-, schema-, tool-, or other field-scoped limits only mark model
+metadata suspect. Keep generic matches qualitative. Session ceiling, configured context length,
+and any future estimator calibration remain separate values with explicit source/confidence.
+Explicit limits are model-scoped runtime observations and do not overwrite Provider configuration
+or enter Tape.
 
 Retry only when the final Provider projection materially changes its messages or effective output
 limit. If the calibrated projection is unchanged or protected content cannot fit, skip the doomed
