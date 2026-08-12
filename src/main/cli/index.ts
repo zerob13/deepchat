@@ -17,6 +17,10 @@ export {
   type ProgrammaticToolParentRegistration,
   type ProgrammaticToolParentRunIdentity
 } from './programmaticToolParentRegistry'
+export {
+  ProgrammaticToolDispatcher,
+  type ProgrammaticToolDispatcherOptions
+} from './programmaticToolDispatcher'
 export { CliAuditLog, type CliAuditLogOptions } from './auditLog'
 export { ArtifactSpool, type ArtifactSpoolOptions } from './artifactSpool'
 export { createArtifactRoutes } from './artifactRoutes'

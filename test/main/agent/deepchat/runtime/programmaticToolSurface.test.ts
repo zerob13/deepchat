@@ -497,9 +497,12 @@ describe('Programmatic Tool Surface', () => {
 
   it('preflights the maximum Run programmatic projection before adapter admission', () => {
     const exec = agentTool('exec')
-    const remoteTools = Array.from({ length: 300 }, (_, index) =>
-      mcpTool(`remote_${String(index).padStart(3, '0')}_${'x'.repeat(900)}`)
-    )
+    const remoteTools = Array.from({ length: 300 }, (_, index) => {
+      const identity = String(index).padStart(3, '0')
+      const definition = mcpTool(`remote_${identity}_${'x'.repeat(450)}`)
+      definition.server.name = `server_${identity}_${'y'.repeat(900)}`
+      return definition
+    })
     const snapshot = buildSnapshot({
       definitions: [exec, ...remoteTools],
       eligibleDefinitions: [exec, remoteTools[0]],

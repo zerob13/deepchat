@@ -8,6 +8,10 @@ import type {
   DeepChatTaskContractContext,
   DeepChatTaskContractRef
 } from '@shared/types/task-contract'
+import {
+  ProgrammaticToolInvocationNameSchema,
+  ProgrammaticToolPropertyNameSchema
+} from '@shared/contracts/routes/tools.routes'
 import { canonicalJsonStringifyData, hashJsonData } from '@/tape/domain/canonicalJson'
 import { isToolEffectWithinCeiling } from '@/tape/domain/executionContract'
 import {
@@ -371,6 +375,22 @@ function projectProgrammaticEntries(
         throw new ToolSurfaceError(
           'Programmatic Surface lost its frozen Run definition.',
           'conflicting_tool'
+        )
+      }
+      if (!ProgrammaticToolInvocationNameSchema.safeParse(entry.target.providerVisibleName).success) {
+        throw new ToolSurfaceError(
+          'Programmatic Surface contains a target name that cannot cross the CLI boundary.',
+          'ineligible_exposure'
+        )
+      }
+      if (
+        Object.keys(ceilingEntry.definition.function.parameters.properties).some(
+          (name) => !ProgrammaticToolPropertyNameSchema.safeParse(name).success
+        )
+      ) {
+        throw new ToolSurfaceError(
+          'Programmatic Surface contains an input property that cannot cross the CLI boundary.',
+          'ineligible_exposure'
         )
       }
       return Object.freeze({
