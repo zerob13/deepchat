@@ -95,6 +95,7 @@ import {
   isAutomaticToolSurfaceRunModeAssignment,
   prepareToolSurfacePolicySelectionInputs,
   selectAutomaticToolSurfaceRunMode,
+  ToolSurfaceAdapterHistory,
   type ToolSurfaceRunModeAssignment
 } from '@/agent/deepchat/runtime/toolSurfaceSelection'
 import type {
@@ -506,6 +507,8 @@ export function buildTapeViewSelection(
 }
 
 export class DeepChatLoopRunner {
+  private readonly toolSurfaceAdapterHistory = new ToolSurfaceAdapterHistory()
+
   constructor(private readonly ports: DeepChatLoopRunnerPorts) {}
 
   async run(args: DeepChatLoopRunInput): Promise<{ runId: string; result: ProcessResult }> {
@@ -680,6 +683,7 @@ export class DeepChatLoopRunner {
     resourceScope.assertCurrent()
     const initialRunSkillNames = getEffectiveRuntimeSkillNames()
     const initialToolProfileRevisionToken = resourceInstance.getToolProfileRevisionToken()
+    const toolProfile = resolveDeepChatToolProfileKind(projectDir)
     const toolSurfaceAssignment =
       this.ports.toolSurfaceRunMode?.resolve({
         sessionId,
@@ -693,6 +697,23 @@ export class DeepChatLoopRunner {
       : null
     const fixedToolSurfaceMode =
       typeof toolSurfaceAssignment === 'string' ? toolSurfaceAssignment : null
+    const automaticToolSurfaceHistoryScope = automaticToolSurfaceAssignment
+      ? Object.freeze({
+          sessionId,
+          providerId: state.providerId,
+          modelId: state.modelId,
+          toolProfile
+        })
+      : null
+    const previousAutomaticToolSurfaceMode = automaticToolSurfaceAssignment
+      ? (automaticToolSurfaceAssignment.previousMode ??
+        (automaticToolSurfaceHistoryScope
+          ? this.toolSurfaceAdapterHistory.previousMode({
+              instance: resourceInstance,
+              scope: automaticToolSurfaceHistoryScope
+            })
+          : null))
+      : null
     if (
       !automaticToolSurfaceAssignment &&
       fixedToolSurfaceMode !== 'legacy' &&
@@ -761,7 +782,9 @@ export class DeepChatLoopRunner {
           policy: automaticPolicy,
           ceilingToolCount: ceilingCatalog.entries.length,
           ceilingDefinitionTokens: ceilingCatalog.definitionTokens,
-          previouslyVirtualized: automaticToolSurfaceAssignment.previouslyVirtualized === true,
+          previouslyVirtualized:
+            previousAutomaticToolSurfaceMode === 'native-activation' ||
+            previousAutomaticToolSurfaceMode === 'cli-programmatic'
         })
         const initialProviderActiveDefinitions = tools.filter(
           (definition) => definition.source === 'agent'
@@ -772,6 +795,7 @@ export class DeepChatLoopRunner {
         let programmaticController: ToolSurfaceRunController | null = null
         if (
           trigger.virtualizationTriggered &&
+          previousAutomaticToolSurfaceMode !== 'native-activation' &&
           automaticToolSurfaceAssignment.cliProgrammaticCapability === 'proven' &&
           agentExecAvailable
         ) {
@@ -797,7 +821,10 @@ export class DeepChatLoopRunner {
           virtualizationTriggered: trigger.virtualizationTriggered,
           cliProgrammaticCapability: automaticToolSurfaceAssignment.cliProgrammaticCapability,
           agentExecAvailable,
-          programmaticRunCeilingFits: programmaticController !== null
+          programmaticRunCeilingFits: programmaticController !== null,
+          ...(previousAutomaticToolSurfaceMode
+            ? { previousMode: previousAutomaticToolSurfaceMode }
+            : {})
         })
         if (toolSurfaceMode === 'cli-programmatic') {
           if (!programmaticController) {
@@ -816,7 +843,7 @@ export class DeepChatLoopRunner {
             .flatMap((requirement) => requirement.requiredStableTargetKeys)
           const selectionInputs = prepareToolSurfacePolicySelectionInputs({
             eligibleCatalog,
-            toolProfile: resolveDeepChatToolProfileKind(projectDir),
+            toolProfile,
             activeSkillRequiredStableTargetKeys,
             recentToolNames: collectRecentToolSurfaceNames(messages)
           })
@@ -826,7 +853,8 @@ export class DeepChatLoopRunner {
             toolSearchDefinition,
             policy: automaticPolicy,
             previouslyVirtualized:
-              automaticToolSurfaceAssignment.previouslyVirtualized === true,
+              previousAutomaticToolSurfaceMode === 'native-activation' ||
+              previousAutomaticToolSurfaceMode === 'cli-programmatic',
             ...selectionInputs
           })
           if (!selected.decision.virtualizationTriggered) {
@@ -862,7 +890,7 @@ export class DeepChatLoopRunner {
           .flatMap((requirement) => requirement.requiredStableTargetKeys)
         const selectionInputs = prepareToolSurfacePolicySelectionInputs({
           eligibleCatalog,
-          toolProfile: resolveDeepChatToolProfileKind(projectDir),
+          toolProfile,
           activeSkillRequiredStableTargetKeys,
           recentToolNames: collectRecentToolSurfaceNames(messages)
         })
@@ -1041,6 +1069,7 @@ export class DeepChatLoopRunner {
       const persistMessageTrace = this.persistMessageTrace.bind(this)
       const emitRateLimitWaitingMessage = this.emitRateLimitWaitingMessage.bind(this)
       const clearRateLimitWaitingMessage = this.clearRateLimitWaitingMessage.bind(this)
+      const toolSurfaceAdapterHistory = this.toolSurfaceAdapterHistory
       const hooks = this.ports.hookSink.scope({
         sessionId,
         messageId,
@@ -1150,6 +1179,17 @@ export class DeepChatLoopRunner {
                     admit: ({ snapshot }) => {
                       resourceScope.assertCurrent()
                       toolSurfaceController.admit(snapshot)
+                      if (
+                        automaticToolSurfaceAssignment &&
+                        automaticToolSurfaceHistoryScope &&
+                        toolSurfaceMode !== 'legacy'
+                      ) {
+                        toolSurfaceAdapterHistory.record({
+                          instance: resourceInstance,
+                          scope: automaticToolSurfaceHistoryScope,
+                          mode: toolSurfaceMode
+                        })
+                      }
                     },
                     releaseActivationCandidates: (candidates) => {
                       resourceScope.assertCurrent()
@@ -1669,7 +1709,7 @@ export class DeepChatLoopRunner {
             sessionId,
             providerId: state.providerId,
             modelId: state.modelId,
-            toolProfile: resolveDeepChatToolProfileKind(projectDir)
+            toolProfile
           })
           this.ports.toolSurfaceDiagnostics.scheduleDeferredRun({
             instance: resourceInstance,

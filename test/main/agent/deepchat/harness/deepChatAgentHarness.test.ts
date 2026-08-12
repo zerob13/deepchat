@@ -3024,6 +3024,90 @@ describe('DeepChatAgentHarness', () => {
       }
     )
 
+    it('keeps automatic virtualization sticky through the exit hysteresis band', async () => {
+      const definitionsByRun = [
+        createAutomaticAdapterDefinitions(39),
+        createAutomaticAdapterDefinitions(31),
+        createAutomaticAdapterDefinitions(30)
+      ]
+      let universeIndex = 0
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockImplementation(
+        async () => definitionsByRun[Math.min(universeIndex, definitionsByRun.length - 1)]
+      )
+      toolService.getToolDefinitionUniverse.mockImplementation(async () => {
+        const definitions = definitionsByRun[Math.min(universeIndex, definitionsByRun.length - 1)]
+        universeIndex += 1
+        return { definitions, complete: true, unavailableSourceCount: 0 }
+      })
+      recreateAgentWithToolSurfaceRunMode(() => ({
+        mode: 'automatic',
+        cliProgrammaticCapability: 'unproven'
+      }))
+      const modes: string[] = []
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementation(async (params) => {
+        modes.push(params.run.resources.toolSurfaceMode)
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Enter virtualization')
+      agent.deepChatRuntime.markToolRegistryChanged()
+      await agent.processMessage('s1', 'Stay virtualized')
+      agent.deepChatRuntime.markToolRegistryChanged()
+      await agent.processMessage('s1', 'Exit virtualization')
+
+      expect(modes).toEqual(['native-activation', 'native-activation', 'full'])
+    })
+
+    it('does not make a pre-admission automatic Run sticky', async () => {
+      const definitionsByRun = [
+        createAutomaticAdapterDefinitions(39),
+        createAutomaticAdapterDefinitions(31)
+      ]
+      let universeIndex = 0
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockImplementation(
+        async () => definitionsByRun[Math.min(universeIndex, definitionsByRun.length - 1)]
+      )
+      toolService.getToolDefinitionUniverse.mockImplementation(async () => {
+        const definitions = definitionsByRun[Math.min(universeIndex, definitionsByRun.length - 1)]
+        universeIndex += 1
+        return { definitions, complete: true, unavailableSourceCount: 0 }
+      })
+      recreateAgentWithToolSurfaceRunMode(() => ({
+        mode: 'automatic',
+        cliProgrammaticCapability: 'unproven'
+      }))
+      const modes: string[] = []
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementation(async (params) => {
+        modes.push(params.run.resources.toolSurfaceMode)
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Stop before provider admission')
+      agent.deepChatRuntime.markToolRegistryChanged()
+      await agent.processMessage('s1', 'Remain on the direct adapter')
+
+      expect(modes).toEqual(['native-activation', 'full'])
+    })
+
     it('falls back to Native Activation before admission when the Programmatic ceiling is oversized', async () => {
       const definitions = createAutomaticAdapterDefinitions(300)
       for (let index = 1; index < definitions.length; index += 1) {

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import { computeToolSurfaceVirtualizationTrigger } from '@/agent/deepchat/runtime/toolSurface'
 import {
   createAutomaticToolSurfaceSelectionPolicy,
   isAutomaticToolSurfaceRunModeAssignment,
   selectAutomaticToolSurfaceRunMode,
+  ToolSurfaceAdapterHistory,
   type ToolSurfaceRunModeAssignment
 } from '@/agent/deepchat/runtime/toolSurfaceSelection'
 
@@ -90,11 +93,60 @@ describe('Tool Surface adapter selection', () => {
     ).toBe('cli-programmatic')
   })
 
+  it('keeps a virtualized lineage on Native Activation until rollout explicitly reassigns it', () => {
+    expect(
+      selectAutomaticToolSurfaceRunMode({
+        virtualizationTriggered: true,
+        cliProgrammaticCapability: 'proven',
+        agentExecAvailable: true,
+        programmaticRunCeilingFits: true,
+        previousMode: 'native-activation'
+      })
+    ).toBe('native-activation')
+    expect(
+      selectAutomaticToolSurfaceRunMode({
+        virtualizationTriggered: true,
+        cliProgrammaticCapability: 'proven',
+        agentExecAvailable: true,
+        programmaticRunCeilingFits: true,
+        previousMode: 'full'
+      })
+    ).toBe('cli-programmatic')
+  })
+
+  it('keeps bounded process-live adapter history isolated by instance and lineage', () => {
+    const history = new ToolSurfaceAdapterHistory({ maxLineagesPerInstance: 2 })
+    const firstInstance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const secondInstance = new DeepChatAgentInstance(toAppSessionId('session-1'))
+    const scope = (modelId: string) => ({
+      sessionId: 'session-1',
+      providerId: 'provider-1',
+      modelId,
+      toolProfile: 'code' as const
+    })
+
+    history.record({ instance: firstInstance, scope: scope('model-1'), mode: 'native-activation' })
+    history.record({ instance: firstInstance, scope: scope('model-2'), mode: 'cli-programmatic' })
+    expect(history.previousMode({ instance: firstInstance, scope: scope('model-1') })).toBe(
+      'native-activation'
+    )
+    history.record({ instance: firstInstance, scope: scope('model-1'), mode: 'native-activation' })
+    history.record({ instance: firstInstance, scope: scope('model-3'), mode: 'full' })
+
+    expect(history.previousMode({ instance: firstInstance, scope: scope('model-2') })).toBeNull()
+    expect(history.previousMode({ instance: firstInstance, scope: scope('model-1') })).toBe(
+      'native-activation'
+    )
+    expect(history.previousMode({ instance: firstInstance, scope: scope('model-3') })).toBe('full')
+    expect(history.previousMode({ instance: secondInstance, scope: scope('model-1') })).toBeNull()
+  })
+
   it('rejects malformed automatic assignments at the rollout boundary', () => {
     expect(
       isAutomaticToolSurfaceRunModeAssignment({
         mode: 'automatic',
-        cliProgrammaticCapability: 'inferred'
+        cliProgrammaticCapability: 'proven',
+        previousMode: 'legacy'
       } as unknown as ToolSurfaceRunModeAssignment)
     ).toBe(false)
   })

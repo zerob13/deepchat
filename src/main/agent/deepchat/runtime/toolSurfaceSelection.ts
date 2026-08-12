@@ -1,6 +1,10 @@
 import { types as nodeTypes } from 'node:util'
-import type { DeepChatToolProfileKind } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import type {
+  DeepChatAgentInstance,
+  DeepChatToolProfileKind
+} from '@/agent/deepchat/instance/deepChatAgentInstance'
 import type { LoopRunToolSurfaceMode } from '@/agent/deepchat/loop/loopRun'
+import { hashJsonData } from '@/tape/domain/canonicalJson'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type {
   CanonicalToolCatalog,
@@ -13,6 +17,10 @@ const MAX_RECENT_TOOL_NAMES = 64
 const MAX_RECENT_TOOL_CALLS_INSPECTED = 256
 const MAX_RECENT_TOOL_NAME_CODE_UNITS = 1_024
 const MAX_RECENT_TOOL_NAME_BYTES = 1_024
+const DEFAULT_ADAPTER_HISTORY_LINEAGES_PER_INSTANCE = 8
+const MAX_ADAPTER_HISTORY_LINEAGES_PER_INSTANCE = 32
+const MAX_ADAPTER_HISTORY_SCOPE_CODE_UNITS = 1_024
+const MAX_ADAPTER_HISTORY_SCOPE_BYTES = 4_096
 
 const TOOL_SURFACE_SELECTION_BOUNDS = Object.freeze({
   maxInitialToolCount: 32,
@@ -50,8 +58,8 @@ export interface AutomaticToolSurfaceRunModeAssignment {
   readonly mode: 'automatic'
   /** A trusted rollout result backed by measured provider/model evidence, never an inference. */
   readonly cliProgrammaticCapability: 'proven' | 'unproven'
-  /** Cross-Run hysteresis hint only. Current Run facts remain authoritative. */
-  readonly previouslyVirtualized?: boolean
+  /** Optional cross-process rollout hint. Process-live history fills this when absent. */
+  readonly previousMode?: Exclude<LoopRunToolSurfaceMode, 'legacy'>
 }
 
 export type ToolSurfaceRunModeAssignment =
@@ -67,8 +75,10 @@ export function isAutomaticToolSurfaceRunModeAssignment(
     assignment.mode === 'automatic' &&
     (assignment.cliProgrammaticCapability === 'proven' ||
       assignment.cliProgrammaticCapability === 'unproven') &&
-    (assignment.previouslyVirtualized === undefined ||
-      typeof assignment.previouslyVirtualized === 'boolean')
+    (assignment.previousMode === undefined ||
+      assignment.previousMode === 'full' ||
+      assignment.previousMode === 'native-activation' ||
+      assignment.previousMode === 'cli-programmatic')
   )
 }
 
@@ -77,8 +87,10 @@ export function selectAutomaticToolSurfaceRunMode(input: {
   readonly cliProgrammaticCapability: 'proven' | 'unproven'
   readonly agentExecAvailable: boolean
   readonly programmaticRunCeilingFits: boolean
+  readonly previousMode?: Exclude<LoopRunToolSurfaceMode, 'legacy'>
 }): Exclude<LoopRunToolSurfaceMode, 'legacy'> {
   if (!input.virtualizationTriggered) return 'full'
+  if (input.previousMode === 'native-activation') return 'native-activation'
   return input.cliProgrammaticCapability === 'proven' &&
     input.agentExecAvailable &&
     input.programmaticRunCeilingFits
@@ -112,6 +124,94 @@ export function createExplicitNativeActivationPolicy(
     ...TOOL_SURFACE_SELECTION_BOUNDS,
     toolSearchDefinitionTokens
   })
+}
+
+export interface ToolSurfaceAdapterHistoryScope {
+  readonly sessionId: string
+  readonly providerId: string
+  readonly modelId: string
+  readonly toolProfile: DeepChatToolProfileKind
+}
+
+function isBoundedAdapterHistoryScopeField(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= MAX_ADAPTER_HISTORY_SCOPE_CODE_UNITS &&
+    value === value.trim() &&
+    !value.includes('\0') &&
+    Buffer.byteLength(value, 'utf8') <= MAX_ADAPTER_HISTORY_SCOPE_BYTES
+  )
+}
+
+/** Process-live cache-stability hint. It never grants eligibility or survives an instance reset. */
+export class ToolSurfaceAdapterHistory {
+  private readonly entriesByInstance = new WeakMap<
+    DeepChatAgentInstance,
+    Map<string, Exclude<LoopRunToolSurfaceMode, 'legacy'>>
+  >()
+  private readonly maxLineagesPerInstance: number
+
+  constructor(options: { readonly maxLineagesPerInstance?: number } = {}) {
+    const requestedMax = options.maxLineagesPerInstance
+    this.maxLineagesPerInstance =
+      requestedMax !== undefined && Number.isSafeInteger(requestedMax) && requestedMax > 0
+        ? Math.min(requestedMax, MAX_ADAPTER_HISTORY_LINEAGES_PER_INSTANCE)
+        : DEFAULT_ADAPTER_HISTORY_LINEAGES_PER_INSTANCE
+  }
+
+  previousMode(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceAdapterHistoryScope
+  }): Exclude<LoopRunToolSurfaceMode, 'legacy'> | null {
+    try {
+      const key = this.lineageKey(input.instance, input.scope)
+      const entries = this.entriesByInstance.get(input.instance)
+      const current = entries?.get(key)
+      if (!entries || !current) return null
+      return current
+    } catch {
+      return null
+    }
+  }
+
+  record(input: {
+    readonly instance: DeepChatAgentInstance
+    readonly scope: ToolSurfaceAdapterHistoryScope
+    readonly mode: Exclude<LoopRunToolSurfaceMode, 'legacy'>
+  }): void {
+    try {
+      const key = this.lineageKey(input.instance, input.scope)
+      const entries = this.entriesByInstance.get(input.instance) ?? new Map()
+      entries.delete(key)
+      entries.set(key, input.mode)
+      while (entries.size > this.maxLineagesPerInstance) {
+        const oldestKey = entries.keys().next().value
+        if (typeof oldestKey !== 'string') break
+        entries.delete(oldestKey)
+      }
+      this.entriesByInstance.set(input.instance, entries)
+    } catch {}
+  }
+
+  private lineageKey(
+    instance: DeepChatAgentInstance,
+    scope: ToolSurfaceAdapterHistoryScope
+  ): string {
+    if (
+      scope.sessionId !== instance.sessionId ||
+      !isBoundedAdapterHistoryScopeField(scope.sessionId) ||
+      !isBoundedAdapterHistoryScopeField(scope.providerId) ||
+      !isBoundedAdapterHistoryScopeField(scope.modelId)
+    ) {
+      throw new Error('Tool Surface adapter history scope is invalid for its Session instance.')
+    }
+    return hashJsonData({
+      sessionId: scope.sessionId,
+      providerId: scope.providerId,
+      modelId: scope.modelId,
+      toolProfile: scope.toolProfile
+    })
+  }
 }
 
 function coreToolNames(profile: DeepChatToolProfileKind): readonly string[] {
