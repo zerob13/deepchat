@@ -1,4 +1,3 @@
-import { types as nodeTypes } from 'node:util'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type {
@@ -19,6 +18,10 @@ import {
   type ToolSurfaceShadowTriggerReason,
   type ToolSurfaceStaticDefinitionOverlap
 } from './toolSurface'
+import {
+  collectRecentToolSurfaceNames,
+  prepareToolSurfacePolicySelectionInputs
+} from './toolSurfaceSelection'
 
 export const TOOL_SURFACE_SHADOW_DIAGNOSTICS_SCHEMA_VERSION = 1
 export const TOOL_SURFACE_P0A_SHADOW_POLICY: ToolSurfaceShadowPolicy = Object.freeze({
@@ -41,11 +44,6 @@ export const TOOL_SURFACE_P0A_SHADOW_POLICY: ToolSurfaceShadowPolicy = Object.fr
 
 const DEFAULT_SAMPLE_CAPACITY = 256
 const MAX_SAMPLE_CAPACITY = 4_096
-const MAX_RECENT_MESSAGES = 64
-const MAX_RECENT_TOOL_NAMES = 64
-const MAX_RECENT_TOOL_CALLS_INSPECTED = 256
-const MAX_RECENT_TOOL_NAME_CODE_UNITS = 1_024
-const MAX_RECENT_TOOL_NAME_BYTES = 1_024
 const MAX_INITIAL_VIEW_PHYSICAL_ATTEMPTS = 64
 const MAX_SCOPE_FIELD_CODE_UNITS = 1_024
 const MAX_SCOPE_FIELD_BYTES = 4_096
@@ -64,19 +62,6 @@ const TRIGGER_REASONS: readonly ToolSurfaceShadowTriggerReason[] = Object.freeze
 ])
 
 const SURFACE_RELATIONS = Object.freeze(['first', 'unchanged', 'changed', 'unavailable'] as const)
-
-const CODE_CORE_TOOL_NAMES = Object.freeze([
-  'deepchat_question',
-  'edit',
-  'exec',
-  'glob',
-  'grep',
-  'process',
-  'read',
-  'update_plan',
-  'write'
-])
-const GENERAL_CORE_TOOL_NAMES = Object.freeze(['deepchat_question', 'update_plan'])
 
 export type ToolSurfaceRelation = (typeof SURFACE_RELATIONS)[number]
 
@@ -437,97 +422,13 @@ function resolveScope(input: ToolSurfaceShadowDiagnosticsScope): DeepChatToolPro
   return input.toolProfile
 }
 
-function coreToolNames(profile: DeepChatToolProfileKind): readonly string[] {
-  switch (profile) {
-    case 'code':
-      return CODE_CORE_TOOL_NAMES
-    case 'research':
-    case 'analysis':
-    case 'general':
-      return GENERAL_CORE_TOOL_NAMES
-  }
-}
-
-function stableTargetKeysForVisibleNames(
-  catalog: CanonicalToolCatalog,
-  names: readonly string[]
-): string[] {
-  const entryByName = new Map(
-    catalog.entries.map((entry) => [entry.target.providerVisibleName, entry.stableTargetKey])
-  )
-  const stableTargetKeys: string[] = []
-  const seen = new Set<string>()
-  for (const name of names) {
-    const stableTargetKey = entryByName.get(name)
-    if (!stableTargetKey || seen.has(stableTargetKey)) continue
-    seen.add(stableTargetKey)
-    stableTargetKeys.push(stableTargetKey)
-  }
-  return stableTargetKeys
-}
-
-function isSafeDataObject(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== 'object' || nodeTypes.isProxy(value)) return false
-  const prototype = Object.getPrototypeOf(value)
-  return prototype === Object.prototype || prototype === null
-}
-
-function readOwnDataProperty(value: Record<string, unknown>, key: string): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(value, key)
-  return descriptor && 'value' in descriptor ? descriptor.value : undefined
-}
-
-function readSafeArrayElement(value: readonly unknown[], index: number): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
-  return descriptor && 'value' in descriptor ? descriptor.value : undefined
-}
-
-function isBoundedRecentToolName(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= MAX_RECENT_TOOL_NAME_CODE_UNITS &&
-    value === value.trim() &&
-    !value.includes('\0') &&
-    Buffer.byteLength(value, 'utf8') <= MAX_RECENT_TOOL_NAME_BYTES
-  )
-}
-
-function collectRecentToolNames(messages: readonly ChatMessage[]): readonly string[] {
-  if (!Array.isArray(messages) || nodeTypes.isProxy(messages)) return Object.freeze([])
-  const names: string[] = []
-  const seen = new Set<string>()
-  let inspectedToolCalls = 0
-  const firstIndex = Math.max(0, messages.length - MAX_RECENT_MESSAGES)
-  for (let messageIndex = messages.length - 1; messageIndex >= firstIndex; messageIndex -= 1) {
-    const message = readSafeArrayElement(messages, messageIndex)
-    if (!isSafeDataObject(message) || readOwnDataProperty(message, 'role') !== 'assistant') continue
-    const toolCalls = readOwnDataProperty(message, 'tool_calls')
-    if (!Array.isArray(toolCalls) || nodeTypes.isProxy(toolCalls)) continue
-    for (let callIndex = toolCalls.length - 1; callIndex >= 0; callIndex -= 1) {
-      inspectedToolCalls += 1
-      if (inspectedToolCalls > MAX_RECENT_TOOL_CALLS_INSPECTED) return Object.freeze(names)
-      const call = readSafeArrayElement(toolCalls, callIndex)
-      if (!isSafeDataObject(call)) continue
-      const functionCall = readOwnDataProperty(call, 'function')
-      if (!isSafeDataObject(functionCall)) continue
-      const name = readOwnDataProperty(functionCall, 'name')
-      if (!isBoundedRecentToolName(name) || seen.has(name)) continue
-      seen.add(name)
-      names.push(name)
-      if (names.length >= MAX_RECENT_TOOL_NAMES) return Object.freeze(names)
-    }
-  }
-  return Object.freeze(names)
-}
-
 function prepareToolSurfaceShadowRunInput(input: {
   readonly eligibleDefinitions: readonly MCPToolDefinition[]
   readonly messages?: readonly ChatMessage[]
 }): PreparedToolSurfaceShadowRunInput {
   return Object.freeze({
     eligibleCatalog: buildCanonicalToolCatalog(input.eligibleDefinitions),
-    recentToolNames: collectRecentToolNames(input.messages ?? [])
+    recentToolNames: collectRecentToolSurfaceNames(input.messages ?? [])
   })
 }
 
@@ -658,17 +559,19 @@ function computeToolSurfaceShadowRunMeasurement(input: {
 
   const ceilingCatalog = universe.ceilingCatalog
   const eligibleCatalog = input.eligibleCatalog
-  const policyRequiredStableTargetKeys = eligibleCatalog.entries
-    .filter((entry) => entry.exposure === 'system-model')
-    .map((entry) => entry.stableTargetKey)
-  const coreStableTargetKeys = stableTargetKeysForVisibleNames(
+  const selectionInputs = prepareToolSurfacePolicySelectionInputs({
     eligibleCatalog,
-    coreToolNames(input.toolProfile)
-  )
-  const recentStableTargetKeys = stableTargetKeysForVisibleNames(
+    toolProfile: input.toolProfile,
+    activeSkillRequiredStableTargetKeys: universe.activeSkillRequiredStableTargetKeys,
+    recentToolNames: input.recentToolNames
+  })
+  const decision = computeToolSurfaceShadowDecision({
+    ceilingCatalog,
     eligibleCatalog,
-    input.recentToolNames
-  )
+    policy: input.policy,
+    previouslyVirtualized: input.previouslyVirtualized,
+    ...selectionInputs
+  })
   const eligibleIdentityByTarget = new Map(
     eligibleCatalog.entries.map((entry) => [
       entry.stableTargetKey,
@@ -678,19 +581,6 @@ function computeToolSurfaceShadowRunMeasurement(input: {
       }
     ])
   )
-  const decision = computeToolSurfaceShadowDecision({
-    ceilingCatalog,
-    eligibleCatalog,
-    policy: input.policy,
-    previouslyVirtualized: input.previouslyVirtualized,
-    policyRequiredStableTargetKeys,
-    coreStableTargetKeys,
-    activeSkillRequiredStableTargetKeys: universe.activeSkillRequiredStableTargetKeys,
-    recentHints: recentStableTargetKeys.flatMap((stableTargetKey) => {
-      const identity = eligibleIdentityByTarget.get(stableTargetKey)
-      return identity ? [identity] : []
-    })
-  })
   const hypotheticalSurfaceIdentities = decision.virtualizationTriggered
     ? [
         ...decision.selectedEntries.flatMap((entry) => {

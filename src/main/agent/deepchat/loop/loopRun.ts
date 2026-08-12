@@ -15,7 +15,7 @@ import {
   type ProgrammaticToolCapabilityV1
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 
-export type LoopRunToolSurfaceMode = 'legacy' | 'full' | 'cli-programmatic'
+export type LoopRunToolSurfaceMode = 'legacy' | 'full' | 'native-activation' | 'cli-programmatic'
 
 export interface LoopRunResources {
   toolDefinitions: MCPToolDefinition[]

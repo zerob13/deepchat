@@ -64,7 +64,7 @@ import {
   ExecutionJournalError
 } from '@/tape/domain/executionJournal'
 import { buildTaskContract } from '@/tape/domain/taskContract'
-import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
+import { LIVE_DELEGATION_AGENT_TOOL_NAME, TOOL_SEARCH_AGENT_TOOL_NAME } from '@shared/agentTools'
 import {
   TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
   TAPE_TOOL_CATALOG_EVENT_NAME,
@@ -3169,6 +3169,83 @@ describe('DeepChatAgentHarness', () => {
       expect(surfaceFacts.map((fact: any) => fact.contractBearing)).toEqual([false, false])
       expect(surfaceFacts.map((fact: any) => fact.request.requestSeq)).toEqual([1, 2])
       expect(agent.getToolSurfaceShadowDiagnostics('s1')).toBeNull()
+    })
+
+    it('wires an explicitly assigned Native Activation surface without changing the default route', async () => {
+      const agentTool = (name: string): MCPToolDefinition => ({
+        type: 'function',
+        function: {
+          name,
+          description: `${name} description`,
+          parameters: { type: 'object', properties: {} }
+        },
+        server: { name: 'agent-tools', icons: '', description: 'Agent tools' },
+        source: 'agent',
+        execution: TOOL_EXECUTION.read.parallel
+      })
+      const question = agentTool('deepchat_question')
+      const hidden = agentTool('hidden_capability')
+      const definitions = [question, hidden]
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue(definitions)
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions,
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'native-activation')
+
+      const providerToolNames: string[][] = []
+      llmProvider.providerInstance.coreStream.mockImplementation(
+        async function* (
+          _messages,
+          _modelId,
+          _modelConfig,
+          _temperature,
+          _maxTokens,
+          requestTools
+        ) {
+          providerToolNames.push(requestTools.map((tool) => tool.function.name))
+          yield { type: 'stop', stop_reason: 'complete' }
+        }
+      )
+      const bindings: LoopRunRequestToolSurfaceBinding[] = []
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        expect(params.run.resources.toolSurfaceMode).toBe('native-activation')
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        const first = params.run.activeRequestToolSurface
+        if (!first) throw new Error('Expected an active Native Activation binding.')
+        bindings.push(first)
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      expect(providerToolNames).toEqual([['deepchat_question', TOOL_SEARCH_AGENT_TOOL_NAME]])
+      expect(bindings.map((binding) => binding.snapshot.adapterMode)).toEqual(['native-activation'])
+      expect(
+        bindings[0].snapshot.eligibleCatalog.entries.map(
+          (entry) => entry.target.providerVisibleName
+        )
+      ).toEqual(['deepchat_question', 'hidden_capability', TOOL_SEARCH_AGENT_TOOL_NAME])
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable
+          .getBySession('s1')
+          .filter((row: any) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)
+          .map((row: any) => JSON.parse(row.payload_json).data.adapterMode)
+      ).toEqual(['native-activation'])
     })
 
     it('assembles and persists exact CLI Programmatic provider Views', async () => {

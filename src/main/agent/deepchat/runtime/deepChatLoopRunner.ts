@@ -86,6 +86,11 @@ import type {
   ToolSurfaceProviderAttemptDiagnostic,
   ToolSurfaceShadowDiagnosticsRegistryPort
 } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
+import {
+  collectRecentToolSurfaceNames,
+  createExplicitNativeActivationPolicy,
+  prepareToolSurfacePolicySelectionInputs
+} from '@/agent/deepchat/runtime/toolSurfaceSelection'
 import type {
   DeepChatEventPublisher,
   DeepChatSessionUpdatePublisher,
@@ -129,12 +134,15 @@ import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
 import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
 import {
+  buildCanonicalToolCatalog,
   createFullToolSurfaceRunController,
+  createPolicySelectedToolSurfaceRun,
   FULL_TOOL_SURFACE_POLICY_VERSION,
   projectToolSurfaceTapeProvenance,
   type ToolSurfaceRunController,
   type ToolSurfaceSnapshot
 } from './toolSurface'
+import { buildToolSearchDefinition } from '@/tool/agentTools/toolSearchTool'
 import {
   MAX_PROGRAMMATIC_TOOL_BATCH_STEPS,
   MAX_PROGRAMMATIC_TOOL_CHILDREN,
@@ -206,7 +214,8 @@ type LoopRunLifecyclePort = Pick<
 export interface ToolSurfaceRunModePort {
   /**
    * Internal rollout assignment. Returning `cli-programmatic` is an explicit assertion that the
-   * provider/model cohort is CLI-capable; absence of this port keeps production on legacy behavior.
+   * provider/model cohort is CLI-capable. Returning `native-activation` explicitly assigns that
+   * adapter; this port does not infer model capability. Absence keeps production on legacy behavior.
    */
   resolve(input: {
     readonly sessionId: string
@@ -606,6 +615,7 @@ export class DeepChatLoopRunner {
     if (
       toolSurfaceMode !== 'legacy' &&
       toolSurfaceMode !== 'full' &&
+      toolSurfaceMode !== 'native-activation' &&
       toolSurfaceMode !== 'cli-programmatic'
     ) {
       throw new Error('Tool Surface assignment returned an unsupported Run mode.')
@@ -613,7 +623,11 @@ export class DeepChatLoopRunner {
     if (toolSurfaceMode !== 'legacy' && !nativeToolSurfaceEligible) {
       throw new Error(
         `${
-          toolSurfaceMode === 'full' ? 'Full Tool Surface' : 'CLI Programmatic Tool Surface'
+          toolSurfaceMode === 'full'
+            ? 'Full Tool Surface'
+            : toolSurfaceMode === 'native-activation'
+              ? 'Native Activation Tool Surface'
+              : 'CLI Programmatic Tool Surface'
         } mode requires a native chat model with provider-native function calling.`
       )
     }
@@ -638,7 +652,11 @@ export class DeepChatLoopRunner {
       ) {
         throw new Error(
           `${
-            toolSurfaceMode === 'full' ? 'Full Tool Surface' : 'CLI Programmatic Tool Surface'
+            toolSurfaceMode === 'full'
+              ? 'Full Tool Surface'
+              : toolSurfaceMode === 'native-activation'
+                ? 'Native Activation Tool Surface'
+                : 'CLI Programmatic Tool Surface'
           } mode requires a complete Run tool universe.`
         )
       }
@@ -653,6 +671,32 @@ export class DeepChatLoopRunner {
           initialActiveDefinitions: tools,
           policyVersion: FULL_TOOL_SURFACE_POLICY_VERSION
         })
+      } else if (toolSurfaceMode === 'native-activation') {
+        const eligibleCatalog = buildCanonicalToolCatalog(tools)
+        const activeSkillRequiredStableTargetKeys = universe.skillRequirements
+          .filter((requirement) => requirement.activeAtRunStart && requirement.activatable)
+          .flatMap((requirement) => requirement.requiredStableTargetKeys)
+        const selectionInputs = prepareToolSurfacePolicySelectionInputs({
+          eligibleCatalog,
+          toolProfile: resolveDeepChatToolProfileKind(projectDir),
+          activeSkillRequiredStableTargetKeys,
+          recentToolNames: collectRecentToolSurfaceNames(messages)
+        })
+        const toolSearchDefinition = buildToolSearchDefinition()
+        const selected = createPolicySelectedToolSurfaceRun({
+          ceilingDefinitions,
+          initialEligibleDefinitions: tools,
+          toolSearchDefinition,
+          policy: createExplicitNativeActivationPolicy(
+            buildCanonicalToolCatalog([toolSearchDefinition]).definitionTokens
+          ),
+          previouslyVirtualized: true,
+          ...selectionInputs
+        })
+        if (!selected.decision.virtualizationTriggered) {
+          throw new Error('Native Activation assignment did not produce a virtualized controller.')
+        }
+        toolSurfaceController = selected.controller
       } else {
         const initialProviderActiveDefinitions = tools.filter(
           (definition) => definition.source === 'agent'
@@ -881,7 +925,10 @@ export class DeepChatLoopRunner {
                           runId: loopRun.runId,
                           requestSeq
                         },
-                        eligibleDefinitions: viewEligibleDefinitions
+                        eligibleDefinitions: viewEligibleDefinitions,
+                        ...(toolSurfaceMode === 'native-activation'
+                          ? { toolSearchAvailable: true }
+                          : {})
                       })
                     },
                     ...(toolSurfaceMode === 'cli-programmatic'

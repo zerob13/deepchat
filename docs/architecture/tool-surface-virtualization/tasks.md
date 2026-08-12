@@ -61,6 +61,8 @@
 
 ## CLI Programmatic and Three Adapters
 
+- [x] Wire an explicit, default-off Native Activation assignment through Run setup and View
+      assembly without inferring model capability.
 - [ ] Implement Direct Native, CLI Programmatic, and Native Activation route selection.
 - [ ] Add cross-Run sticky/hysteresis policy and measured model CLI capability.
 - [ ] Add Agent-only `deepchat tool search|describe|call|batch` routes.
