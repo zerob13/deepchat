@@ -89,6 +89,9 @@
 - [ ] Persist only canonical hashes, status, and bounded provenance; reject conflicting payloads.
 - [ ] Add process-live parent controller and settlement receipts across the CLI boundary.
 - [ ] Bind receipts to canonical outer-result hashes instead of trusting stdout for settlement.
+- [ ] Before opening any Agent tool route, make the process-live controller the sole production
+      Programmatic outer-T2 path and call its terminal fence from the real Run terminal path without
+      reading Tape.
 - [ ] Enforce parent/child T1/T2/terminal causality, including rejection of outer T2 and
       `run_terminal` while any Programmatic T1 is unmatched, and Run-fatal Journal failures.
 - [ ] Implement independent per-child preflight and default per-child approval.

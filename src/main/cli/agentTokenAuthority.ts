@@ -5,6 +5,13 @@ import {
   LocalControlTokenSchema,
   type LocalControlScope
 } from '@shared/contracts/localControl'
+import {
+  MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS,
+  MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN,
+  MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS,
+  MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES,
+  MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES
+} from '@/tape/domain/toolSurfaceFacts'
 
 export const DEFAULT_AGENT_CLI_TOKEN_TTL_MS = 35 * 60_000
 export const DEFAULT_AGENT_CLI_TOKEN_MAX_CALLS = 64
@@ -107,6 +114,7 @@ export type PreparedAgentCliProgrammaticGrant = Readonly<{
   conversationId: string
   expiresAt: number
   operation: AgentCliProgrammaticOperationIdentity
+  binding: AgentCliProgrammaticOperationBinding
   arm(receipt: AgentCliOuterDispatchReceipt): ArmedAgentCliProgrammaticToken
   revoke(): void
 }>
@@ -218,37 +226,36 @@ function normalizeProgrammaticOperationBinding(
   }
   const maxInputBytes = boundedPositiveSafeInteger(
     input.quotas.maxInputBytes,
-    MAX_AGENT_CLI_TOKEN_BYTES,
+    MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES,
     'maxInputBytes'
   )
   const maxOutputBytes = boundedPositiveSafeInteger(
     input.quotas.maxOutputBytes,
-    MAX_AGENT_CLI_TOKEN_BYTES,
+    MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES,
     'maxOutputBytes'
   )
-  const aggregateBytes = maxInputBytes + maxOutputBytes
-  if (!Number.isSafeInteger(aggregateBytes) || aggregateBytes > MAX_AGENT_CLI_TOKEN_BYTES) {
-    throw new Error('Programmatic aggregate byte quota exceeds its supported maximum')
-  }
   const quotas = Object.freeze({
     maxChildren: boundedPositiveSafeInteger(
       input.quotas.maxChildren,
-      MAX_AGENT_CLI_TOKEN_CALLS,
+      MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN,
       'maxChildren'
     ),
     maxBatchSteps: boundedPositiveSafeInteger(
       input.quotas.maxBatchSteps,
-      MAX_AGENT_CLI_TOKEN_CALLS,
+      MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS,
       'maxBatchSteps'
     ),
     maxInputBytes,
     maxOutputBytes,
     maxDurationMs: boundedPositiveSafeInteger(
       input.quotas.maxDurationMs,
-      MAX_AGENT_CLI_TOKEN_TTL_MS,
+      MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS,
       'maxDurationMs'
     )
   })
+  if (quotas.maxBatchSteps > quotas.maxChildren) {
+    throw new Error('maxBatchSteps must not exceed maxChildren')
+  }
   return Object.freeze({
     schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
     surfaceVersion: AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
@@ -405,6 +412,7 @@ export class AgentCliTokenAuthority {
       conversationId,
       expiresAt: claims.expiresAt,
       operation: binding.operation,
+      binding,
       arm: (receipt) => {
         if (armAttempted || revoked) throw new Error('Programmatic grant is no longer pending')
         armAttempted = true

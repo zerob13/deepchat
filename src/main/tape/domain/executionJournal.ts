@@ -31,7 +31,7 @@ export interface ExecutionJournalRecoveryRow extends DeepChatTapeEntryRow {
 }
 
 const MAX_IDENTITY_CHARS = 1_024
-const MAX_TOOL_NAME_CHARS = 512
+export const MAX_EXECUTION_JOURNAL_TOOL_NAME_CHARACTERS = 512
 const MAX_TARGET_FIELD_CHARS = 1_024
 const MAX_STOP_REASON_CHARS = 1_024
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/
@@ -539,7 +539,7 @@ export function buildDispatchData(input: CommitExecutionDispatchInput) {
     protocolVersion: EXECUTION_JOURNAL_PROTOCOL_VERSION,
     operation: normalizeExecutionOperationIdentity(input.operation),
     messageId: requireMessageId(input.messageId),
-    toolName: requireString(input.toolName, 'toolName', MAX_TOOL_NAME_CHARS),
+    toolName: requireString(input.toolName, 'toolName', MAX_EXECUTION_JOURNAL_TOOL_NAME_CHARACTERS),
     toolSource:
       input.toolSource === 'agent' || input.toolSource === 'mcp'
         ? input.toolSource
@@ -554,9 +554,6 @@ export function buildDispatchData(input: CommitExecutionDispatchInput) {
 export function buildToolOutcomeData(input: CommitExecutionToolOutcomeInput) {
   requireSessionId(input.sessionId)
   requireOptionalCreatedAt(input.createdAt)
-  if (typeof input.responseText !== 'string') {
-    throw new ExecutionJournalError('responseText must be a string.', 'invalid_fact')
-  }
   if (typeof input.isError !== 'boolean') {
     throw new ExecutionJournalError('isError must be a boolean.', 'invalid_fact')
   }
@@ -564,7 +561,7 @@ export function buildToolOutcomeData(input: CommitExecutionToolOutcomeInput) {
     protocolVersion: EXECUTION_JOURNAL_PROTOCOL_VERSION,
     operation: normalizeExecutionOperationIdentity(input.operation),
     messageId: requireMessageId(input.messageId),
-    responseHash: hashJson(input.responseText),
+    responseHash: buildExecutionToolResponseHash(input.responseText),
     isError: input.isError
   }
 }
@@ -577,7 +574,7 @@ export function buildNestedDispatchData(input: CommitNestedExecutionDispatchInpu
     protocolVersion: EXECUTION_JOURNAL_NESTED_PROTOCOL_VERSION,
     operation: normalizeNestedExecutionOperationIdentity(input.operation),
     messageId: requireMessageId(input.messageId),
-    toolName: requireString(input.toolName, 'toolName', MAX_TOOL_NAME_CHARS),
+    toolName: requireString(input.toolName, 'toolName', MAX_EXECUTION_JOURNAL_TOOL_NAME_CHARACTERS),
     toolSource:
       input.toolSource === 'agent' || input.toolSource === 'mcp'
         ? input.toolSource
@@ -591,12 +588,16 @@ export function buildNestedDispatchData(input: CommitNestedExecutionDispatchInpu
   }
 }
 
+export function buildExecutionToolResponseHash(responseText: string): string {
+  if (typeof responseText !== 'string') {
+    throw new ExecutionJournalError('responseText must be a string.', 'invalid_fact')
+  }
+  return hashJson(responseText)
+}
+
 export function buildNestedToolOutcomeData(input: CommitNestedExecutionToolOutcomeInput) {
   requireSessionId(input.sessionId)
   requireOptionalCreatedAt(input.createdAt)
-  if (typeof input.responseText !== 'string') {
-    throw new ExecutionJournalError('responseText must be a string.', 'invalid_fact')
-  }
   if (typeof input.isError !== 'boolean') {
     throw new ExecutionJournalError('isError must be a boolean.', 'invalid_fact')
   }
@@ -604,7 +605,7 @@ export function buildNestedToolOutcomeData(input: CommitNestedExecutionToolOutco
     protocolVersion: EXECUTION_JOURNAL_NESTED_PROTOCOL_VERSION,
     operation: normalizeNestedExecutionOperationIdentity(input.operation),
     messageId: requireMessageId(input.messageId),
-    responseHash: hashJson(input.responseText),
+    responseHash: buildExecutionToolResponseHash(input.responseText),
     isError: input.isError
   }
 }
@@ -770,7 +771,11 @@ export function parseExecutionJournalFact(row: DeepChatTapeEntryRow): ExecutionJ
       const operation = normalizeNestedExecutionOperationIdentity(
         common.data.operation as NestedExecutionOperationIdentity
       )
-      const toolName = requireString(common.data.toolName, 'toolName', MAX_TOOL_NAME_CHARS)
+      const toolName = requireString(
+        common.data.toolName,
+        'toolName',
+        MAX_EXECUTION_JOURNAL_TOOL_NAME_CHARACTERS
+      )
       const toolSource = common.data.toolSource
       if (toolSource !== 'agent' && toolSource !== 'mcp') {
         throw new ExecutionJournalError('toolSource is invalid.', 'invalid_fact')
@@ -814,7 +819,11 @@ export function parseExecutionJournalFact(row: DeepChatTapeEntryRow): ExecutionJ
     const operation = normalizeExecutionOperationIdentity(
       common.data.operation as ExecutionOperationIdentity
     )
-    const toolName = requireString(common.data.toolName, 'toolName', MAX_TOOL_NAME_CHARS)
+    const toolName = requireString(
+      common.data.toolName,
+      'toolName',
+      MAX_EXECUTION_JOURNAL_TOOL_NAME_CHARACTERS
+    )
     const toolSource = common.data.toolSource
     if (toolSource !== 'agent' && toolSource !== 'mcp') {
       throw new ExecutionJournalError('toolSource is invalid.', 'invalid_fact')

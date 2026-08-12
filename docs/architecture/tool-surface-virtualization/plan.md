@@ -161,6 +161,12 @@ pairs before outer T2, and no operation after outer T2 or Run terminal. Reject o
 `run_terminal` while a Programmatic outer or nested T1 remains unmatched so uncertain Runs stay
 visible to recovery. Treat duplicate T1, corruption, and Journal failure as Run-fatal.
 
+Land the controller foundation before production wiring, but do not treat its local assertion as a
+global Journal fence. Before registering any Agent tool route, wire the process-live controller as
+the sole Programmatic outer-T2 path and require its terminal assertion from the real Run terminal
+path; generic writers must not bypass either gate. This wiring uses runtime state and never reads
+Tape on the dispatch hot path.
+
 Bind the receipt to the canonical outer-result hash so shell stdout cannot manufacture settlement.
 Do not rehydrate an outer shell permission continuation for Programmatic commands after restart; an
 in-process grant may continue before T1, while a crash after T1 follows normal parking.

@@ -297,7 +297,7 @@ describe('AgentCliTokenAuthority', () => {
     expect(authority.beginRequest(token('w'))).toEqual({ status: 'invalid' })
   })
 
-  it('rejects route confusion and aggregate byte quotas above the token hard limit', () => {
+  it('rejects route confusion and quotas above Programmatic hard limits', () => {
     const authority = new AgentCliTokenAuthority()
     const prepare = (binding: AgentCliProgrammaticOperationBinding) =>
       authority.prepareProgrammaticOperation({
@@ -313,12 +313,33 @@ describe('AgentCliTokenAuthority', () => {
         programmaticBinding({
           quotas: {
             ...programmaticBinding().quotas,
-            maxInputBytes: 600 * 1024 * 1024,
-            maxOutputBytes: 600 * 1024 * 1024
+            maxInputBytes: 4 * 1024 * 1024 + 1
           }
         })
       )
-    ).toThrow('aggregate byte quota exceeds')
+    ).toThrow('maxInputBytes exceeds its supported maximum')
+    expect(() =>
+      prepare(
+        programmaticBinding({
+          quotas: {
+            ...programmaticBinding().quotas,
+            maxChildren: 65,
+            maxBatchSteps: 65
+          }
+        })
+      )
+    ).toThrow('maxChildren exceeds its supported maximum')
+    expect(() =>
+      prepare(
+        programmaticBinding({
+          quotas: {
+            ...programmaticBinding().quotas,
+            maxChildren: 1,
+            maxBatchSteps: 2
+          }
+        })
+      )
+    ).toThrow('maxBatchSteps must not exceed maxChildren')
     expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
   })
 

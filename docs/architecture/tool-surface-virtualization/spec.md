@@ -302,6 +302,12 @@ byte/depth/entry quotas are reapplied after materialization. Any known error, de
 quota/materialization failure, or target error stops the batch and marks every later step
 `not_started`.
 
+`maxOutputBytes` independently bounds the aggregate finalized child response texts and the
+canonical outer result. The outer result is not added to the child aggregate because it may be a
+bounded summary of those same child results. Exceeding either bound must be converted to a bounded
+known error before child T2 or settlement; reaching the controller with an oversized finalized
+value is a Run-fatal invariant breach.
+
 Batch v1 forbids `forEach`, dynamic expansion, parallelism, DAG scheduling, automatic retry,
 cross-restart resume, replay/redelivery, recursion, and arbitrary Shell/JavaScript execution. The
 controller is not durable: after a crash it does not restore the plan or unexecuted steps.
