@@ -31,7 +31,7 @@ import type {
 } from '@/agent/deepchat/loop/ports'
 import type { CommandShellProfile } from '@shared/commandShell'
 import type { ExecutionJournalWriter, TapeToolFactWriter } from '@/tape/ports/capabilities'
-import type { TapeSkillIdentity } from '@/tape/domain/skillMaterialization'
+import type { EffectiveSkillContentResolution } from '@shared/types/skill'
 import type { ExecutionOperationIdentity } from '@/tape/domain/executionJournal'
 import type { SessionPermissionGrant } from '@/session/contracts'
 
@@ -129,7 +129,7 @@ export interface ProcessControlCollaborators {
   getAgentId?: () => string | undefined
   activateSkill?: (skillName: string) => Promise<string[]>
   commitRuntimeSkillView?: (input: {
-    identity: TapeSkillIdentity
+    resolution: EffectiveSkillContentResolution
     toolCallId: string
     responseText: string
     blockIndex: number

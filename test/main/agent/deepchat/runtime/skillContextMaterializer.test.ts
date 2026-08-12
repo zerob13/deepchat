@@ -122,16 +122,15 @@ describe('SkillContextMaterializer', () => {
 
   it('strictly materializes the exact runtime Skill body against the Run Tape incarnation', async () => {
     const { service, skills, tape } = fixture()
+    const viewedResolution = resolution('one')
     const executionRef = await service.materializeRuntimeView({
       sessionId: 'session-1',
       expectedTapeIncarnationId: 'incarnation-1',
-      agentId: 'agent-1',
-      identity: resolution('one').identity,
-      effectiveContent: 'body:one',
+      resolution: viewedResolution,
       abortSignal: new AbortController().signal
     })
 
-    expect(skills.resolveFreshEffectiveSkillContents).toHaveBeenCalledWith('agent-1', ['one'])
+    expect(skills.resolveFreshEffectiveSkillContents).not.toHaveBeenCalled()
     expect(tape.materializeSkillContexts).toHaveBeenCalledWith([
       expect.objectContaining({
         sessionId: 'session-1',
@@ -154,55 +153,69 @@ describe('SkillContextMaterializer', () => {
     expect(Object.isFrozen(executionRef)).toBe(true)
   })
 
-  it('does not write a runtime package when the Tape or fresh Skill body drifted', async () => {
+  it('does not write a runtime package when the Tape drifted or activation was canceled', async () => {
     const tapeDrift = fixture()
     tapeDrift.tape.getTapeIncarnationId.mockReturnValueOnce('incarnation-2')
     await expect(
       tapeDrift.service.materializeRuntimeView({
         sessionId: 'session-1',
         expectedTapeIncarnationId: 'incarnation-1',
-        agentId: 'agent-1',
-        identity: resolution('one').identity,
-        effectiveContent: 'body:one',
+        resolution: resolution('one'),
         abortSignal: new AbortController().signal
       })
     ).rejects.toThrow(/another Session Tape incarnation/)
     expect(tapeDrift.skills.resolveFreshEffectiveSkillContents).not.toHaveBeenCalled()
     expect(tapeDrift.tape.materializeSkillContexts).not.toHaveBeenCalled()
 
-    const contentDrift = fixture()
-    contentDrift.skills.resolveFreshEffectiveSkillContents.mockResolvedValueOnce([
-      resolution('one', 'changed')
-    ])
-    await expect(
-      contentDrift.service.materializeRuntimeView({
-        sessionId: 'session-1',
-        expectedTapeIncarnationId: 'incarnation-1',
-        agentId: 'agent-1',
-        identity: resolution('one').identity,
-        effectiveContent: 'body:one',
-        abortSignal: new AbortController().signal
-      })
-    ).rejects.toThrow(/content changed/)
-    expect(contentDrift.tape.materializeSkillContexts).not.toHaveBeenCalled()
-
     const canceled = fixture()
     const abortController = new AbortController()
-    canceled.skills.resolveFreshEffectiveSkillContents.mockImplementationOnce(async () => {
-      abortController.abort()
-      return [resolution('one')]
-    })
+    abortController.abort()
     await expect(
       canceled.service.materializeRuntimeView({
         sessionId: 'session-1',
         expectedTapeIncarnationId: 'incarnation-1',
-        agentId: 'agent-1',
-        identity: resolution('one').identity,
-        effectiveContent: 'body:one',
+        resolution: resolution('one'),
         abortSignal: abortController.signal
       })
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(canceled.tape.materializeSkillContexts).not.toHaveBeenCalled()
+  })
+
+  it('materializes the viewed execution snapshot without re-reading a changed Skill source', async () => {
+    const { service, skills, tape } = fixture()
+    const viewed = resolution('one')
+    const viewedBytes = Buffer.from('console.log("viewed")')
+    viewed.executionPackage.files.push({
+      relativePath: 'scripts/run.js',
+      base64: viewedBytes.toString('base64'),
+      byteCount: viewedBytes.byteLength,
+      sha256: createHash('sha256').update(viewedBytes).digest('hex')
+    })
+    viewed.executionPackage.executables.push({
+      relativePath: 'scripts/run.js',
+      runtime: 'node',
+      enabled: true
+    })
+    skills.resolveFreshEffectiveSkillContents.mockResolvedValueOnce([
+      resolution('one', 'body from a later disk version')
+    ])
+
+    await service.materializeRuntimeView({
+      sessionId: 'session-1',
+      expectedTapeIncarnationId: 'incarnation-1',
+      resolution: viewed,
+      abortSignal: new AbortController().signal
+    })
+
+    expect(skills.resolveFreshEffectiveSkillContents).not.toHaveBeenCalled()
+    expect(tape.materializeSkillContexts).toHaveBeenCalledWith([
+      expect.objectContaining({
+        effectiveContent: 'body:one',
+        executionPackage: expect.objectContaining({
+          files: [expect.objectContaining({ base64: viewedBytes.toString('base64') })]
+        })
+      })
+    ])
   })
 
   it('applies the batch guard before any write', async () => {

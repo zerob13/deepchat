@@ -133,6 +133,27 @@ function makeTool(name: string): MCPToolDefinition {
   }
 }
 
+function makeRuntimeSkillResolution(content = '# Effective Skill body') {
+  return {
+    identity: {
+      agentId: 'deepchat',
+      sourceType: 'created' as const,
+      sourceId: '/skills/deepchat-settings',
+      skillName: 'deepchat-settings'
+    },
+    effectiveContent: content,
+    builderVersion: 'builder-1',
+    renderedManifestHash: 'a'.repeat(64),
+    scriptInventoryHash: 'a'.repeat(64),
+    executionPackage: {
+      files: [],
+      executables: [],
+      runtimePolicy: { python: 'auto' as const, node: 'auto' as const },
+      environmentBindingId: null
+    }
+  }
+}
+
 function createMockToolService(responses: Record<string, string> = {}): ToolServicePort {
   return {
     getAllToolDefinitions: vi.fn().mockResolvedValue([]),
@@ -2616,6 +2637,7 @@ describe('processStream', () => {
 
   it('refreshes tools without replacing the system prompt after skill_view activates a skill', async () => {
     let callCount = 0
+    const skillResolution = makeRuntimeSkillResolution()
     const toolService = {
       ...createMockToolService(),
       callTool: vi
@@ -2644,7 +2666,8 @@ describe('processStream', () => {
                   sourceType: 'created',
                   sourceId: '/skills/deepchat-settings',
                   skillName: 'deepchat-settings'
-                }
+                },
+                skillResolution
               }
             }
           }
@@ -2755,6 +2778,7 @@ describe('processStream', () => {
   })
 
   it('does not start another provider request when post-activation tool refresh fails', async () => {
+    const skillResolution = makeRuntimeSkillResolution()
     const responseText = JSON.stringify({
       success: true,
       name: 'deepchat-settings',
@@ -2787,7 +2811,8 @@ describe('processStream', () => {
                 sourceType: 'created',
                 sourceId: '/skills/deepchat-settings',
                 skillName: 'deepchat-settings'
-              }
+              },
+              skillResolution
             }
           }
         }

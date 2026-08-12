@@ -1148,7 +1148,7 @@ export class DeepChatLoopRunner {
               toolName: 'skill_view',
               responseText: input.responseText,
               timestamp: input.timestamp,
-              identity: input.identity,
+              identity: input.resolution.identity,
               operation: input.operation,
               outcomeEntryId: input.outcomeEntryId
             })
@@ -1163,16 +1163,17 @@ export class DeepChatLoopRunner {
             if (typeof result.content !== 'string' || !result.content) {
               throw new Error('Runtime Skill-view result has no effective content to materialize.')
             }
+            if (result.content !== input.resolution.effectiveContent) {
+              throw new Error('Runtime Skill-view result does not match its execution snapshot.')
+            }
             const executionRef = await this.ports.skillContextMaterializer.materializeRuntimeView({
               sessionId,
               expectedTapeIncarnationId: tapeIncarnationId,
-              agentId: activeAgentId,
-              identity: input.identity,
-              effectiveContent: result.content,
+              resolution: input.resolution,
               abortSignal
             })
             registerRuntimeSkillContext(loopRun, {
-              identity: input.identity,
+              identity: input.resolution.identity,
               toolCallId: input.toolCallId,
               entryId: receipt.entryId,
               tapeIncarnationId: receipt.tapeIncarnationId,

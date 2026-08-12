@@ -14,6 +14,29 @@ import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { SkillExecutionService } from '@/skill/skillExecutionService'
 import { POSIX_COMMAND_SHELL } from '../../../helpers/commandShell'
 
+const SKILL_EVIDENCE_HASH = 'a'.repeat(64)
+
+function makeSkillResolution(name: string, content: string, agentId = 'agent-a') {
+  return {
+    identity: {
+      agentId,
+      sourceType: 'created' as const,
+      sourceId: `/skills/${name}`,
+      skillName: name
+    },
+    effectiveContent: content,
+    builderVersion: 'builder-1',
+    renderedManifestHash: SKILL_EVIDENCE_HASH,
+    scriptInventoryHash: SKILL_EVIDENCE_HASH,
+    executionPackage: {
+      files: [],
+      executables: [],
+      runtimePolicy: { python: 'auto' as const, node: 'auto' as const },
+      environmentBindingId: null
+    }
+  }
+}
+
 vi.mock('electron', () => ({
   app: {
     getPath: () => '/tmp',
@@ -103,18 +126,15 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
         metadata: {}
       }
     ])
+    const contentResolution = makeSkillResolution('code-review', '# Code Review')
     const viewResult = {
       success: true,
       name: 'code-review',
       filePath: null,
       content: '# Code Review',
       isPinned: false,
-      contentIdentity: {
-        agentId: 'agent-a',
-        sourceType: 'created',
-        sourceId: '/skills/code-review',
-        skillName: 'code-review'
-      }
+      contentIdentity: contentResolution.identity,
+      contentResolution
     }
     skillService.viewSkill.mockResolvedValue(viewResult)
     skillService.viewSkillForAgent.mockResolvedValue(viewResult)
@@ -367,18 +387,15 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
   it('returns runtime skill_view activation metadata without persisting session skills', async () => {
     skillService.getActiveSkills.mockResolvedValue([])
     skillService.getActiveSkillsAllowedTools.mockResolvedValue([])
+    const contentResolution = makeSkillResolution('deepchat-settings', '# Skill')
     skillService.viewSkillForAgent.mockResolvedValue({
       success: true,
       name: 'deepchat-settings',
       filePath: null,
       content: '# Skill',
       isPinned: false,
-      contentIdentity: {
-        agentId: 'agent-a',
-        sourceType: 'created',
-        sourceId: '/skills/deepchat-settings',
-        skillName: 'deepchat-settings'
-      }
+      contentIdentity: contentResolution.identity,
+      contentResolution
     })
 
     const manager = buildManager()
@@ -394,6 +411,8 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     expect(content.activatedForMessage).toBe(true)
     expect(content.activationScope).toBe('message')
     expect(content.contentIdentity).toBeUndefined()
+    expect(content.contentResolution).toBeUndefined()
+    expect(JSON.stringify(content)).not.toContain('executionPackage')
     expect(skillService.setActiveSkills).not.toHaveBeenCalled()
     expect(commitDispatch).toHaveBeenCalledOnce()
     expect(commitDispatch).toHaveBeenCalledWith({
@@ -411,7 +430,8 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
         sourceType: 'created',
         sourceId: '/skills/deepchat-settings',
         skillName: 'deepchat-settings'
-      }
+      },
+      skillResolution: contentResolution
     })
   })
 

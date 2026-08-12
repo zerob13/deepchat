@@ -13,8 +13,8 @@ import type { AgentToolProgressUpdate } from '@shared/types/tool'
 import type { AssistantMessageBlock, PermissionMode } from '@shared/types/agent-interface'
 import type { AgentPlanSnapshot, AgentPlanTerminalReason } from '@shared/types/agent-plan'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import type { EffectiveSkillContentResolution } from '@shared/types/skill'
 import { isSkillSourceType } from '@shared/types/skillManagement'
-import type { TapeSkillIdentity } from '@/tape/domain/skillMaterialization'
 import { buildExecutionContractBinding } from '@/tape/domain/executionContract'
 import {
   parseQuestionToolArgs,
@@ -130,7 +130,7 @@ type StagedToolResult = {
   requiresInline?: boolean
   runtimeSkillView?: {
     skillName: string
-    identity: TapeSkillIdentity
+    resolution: EffectiveSkillContentResolution
   }
 }
 
@@ -339,7 +339,7 @@ async function commitStagedToolResults(
         }
         try {
           await controls.commitRuntimeSkillView({
-            identity: runtimeSkillView.identity,
+            resolution: runtimeSkillView.resolution,
             toolCallId: stagedResult.toolCallId,
             responseText: stagedResult.responseText,
             blockIndex,
@@ -955,26 +955,32 @@ function extractRuntimeSkillViewAfterCall(
     toolResult.skillContext && typeof toolResult.skillContext === 'object'
       ? (toolResult.skillContext as Record<string, unknown>)
       : null
+  const skillResolution =
+    toolResult.skillResolution && typeof toolResult.skillResolution === 'object'
+      ? (toolResult.skillResolution as EffectiveSkillContentResolution)
+      : null
   if (
     !activatedSkill ||
     !skillContext ||
+    !skillResolution ||
     typeof skillContext.agentId !== 'string' ||
     !skillContext.agentId.trim() ||
     !isSkillSourceType(skillContext.sourceType) ||
     typeof skillContext.sourceId !== 'string' ||
     !skillContext.sourceId.trim() ||
-    skillContext.skillName !== activatedSkill
+    skillContext.skillName !== activatedSkill ||
+    skillResolution.identity?.agentId !== skillContext.agentId ||
+    skillResolution.identity?.sourceType !== skillContext.sourceType ||
+    skillResolution.identity?.sourceId !== skillContext.sourceId ||
+    skillResolution.identity?.skillName !== activatedSkill ||
+    typeof skillResolution.effectiveContent !== 'string' ||
+    !skillResolution.effectiveContent
   ) {
     throw new Error('Runtime Skill-view activation metadata is invalid.')
   }
   return {
     skillName: activatedSkill,
-    identity: {
-      agentId: skillContext.agentId,
-      sourceType: skillContext.sourceType,
-      sourceId: skillContext.sourceId,
-      skillName: activatedSkill
-    }
+    resolution: skillResolution
   }
 }
 

@@ -105,6 +105,27 @@ function makeTool(
   }
 }
 
+function makeRuntimeSkillResolution(content = '# Effective Skill body') {
+  return {
+    identity: {
+      agentId: 'deepchat',
+      sourceType: 'created' as const,
+      sourceId: '/skills/deepchat-settings',
+      skillName: 'deepchat-settings'
+    },
+    effectiveContent: content,
+    builderVersion: 'builder-1',
+    renderedManifestHash: 'a'.repeat(64),
+    scriptInventoryHash: 'a'.repeat(64),
+    executionPackage: {
+      files: [],
+      executables: [],
+      runtimePolicy: { python: 'auto' as const, node: 'auto' as const },
+      environmentBindingId: null
+    }
+  }
+}
+
 function makeAgentTool(
   name: string,
   execution: ToolExecutionContract = TOOL_EXECUTION.write
@@ -3353,6 +3374,7 @@ describe('dispatch', () => {
     it('flags toolsChanged when skill_view activates a skill via main SKILL.md', async () => {
       const tools = [makeTool('skill_view')]
       const activationOrder: string[] = []
+      const skillResolution = makeRuntimeSkillResolution()
       const commitRuntimeSkillView = vi.fn(async () => {
         activationOrder.push('commit')
       })
@@ -3386,7 +3408,8 @@ describe('dispatch', () => {
                   sourceType: 'created',
                   sourceId: '/skills/deepchat-settings',
                   skillName: 'deepchat-settings'
-                }
+                },
+                skillResolution
               }
             }
           }
@@ -3429,19 +3452,26 @@ describe('dispatch', () => {
         expect.objectContaining({
           toolCallId: 'tc1',
           responseText: expect.stringContaining('deepchat-settings'),
-          identity: {
-            agentId: 'deepchat',
-            sourceType: 'created',
-            sourceId: '/skills/deepchat-settings',
-            skillName: 'deepchat-settings'
-          }
+          resolution: skillResolution
         })
       )
       expect(activateSkill).toHaveBeenCalledWith('deepchat-settings')
       expect(activationOrder).toEqual(['commit', 'activate'])
     })
 
-    it('fails closed when runtime Skill activation does not enter the active set', async () => {
+    it.each([
+      ['missing', undefined],
+      [
+        'identity-mismatched',
+        {
+          ...makeRuntimeSkillResolution(),
+          identity: {
+            ...makeRuntimeSkillResolution().identity,
+            sourceId: '/skills/another-skill'
+          }
+        }
+      ]
+    ])('fails closed for %s runtime Skill execution evidence', async (_case, skillResolution) => {
       const tools = [makeTool('skill_view')]
       const toolService = {
         ...createMockToolService(),
@@ -3467,7 +3497,84 @@ describe('dispatch', () => {
                   sourceType: 'created',
                   sourceId: '/skills/deepchat-settings',
                   skillName: 'deepchat-settings'
-                }
+                },
+                ...(skillResolution ? { skillResolution } : {})
+              }
+            }
+          }
+        })
+      } as unknown as ToolServicePort
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc1',
+          name: 'skill_view',
+          params: '{"name":"deepchat-settings"}',
+          response: ''
+        }
+      })
+      state.completedToolCalls = [
+        { id: 'tc1', name: 'skill_view', arguments: '{"name":"deepchat-settings"}' }
+      ]
+      const commitRuntimeSkillView = vi.fn()
+      const activateSkill = vi.fn()
+
+      await settleToolBatch(
+        state,
+        [],
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32000,
+        1024,
+        { commitRuntimeSkillView, activateSkill }
+      )
+      expect(commitRuntimeSkillView).not.toHaveBeenCalled()
+      expect(activateSkill).not.toHaveBeenCalled()
+      expect(state.blocks[0]).toMatchObject({
+        status: 'error',
+        tool_call: {
+          response: 'Error: Runtime Skill-view activation metadata is invalid.'
+        }
+      })
+    })
+
+    it('fails closed when runtime Skill activation does not enter the active set', async () => {
+      const tools = [makeTool('skill_view')]
+      const skillResolution = makeRuntimeSkillResolution()
+      const toolService = {
+        ...createMockToolService(),
+        callTool: vi.fn().mockImplementation(async (request, options) => {
+          options?.commitDispatch?.({
+            toolName: request.function.name,
+            toolSource: 'mcp',
+            normalizedArguments: { name: 'deepchat-settings' },
+            target: { serverName: 'test-server', originalName: 'skill_view' }
+          })
+          return {
+            content: '{"success":true,"name":"deepchat-settings"}',
+            rawData: {
+              toolCallId: 'tc1',
+              content: '{"success":true,"name":"deepchat-settings"}',
+              isError: false,
+              toolResult: {
+                activationApplied: true,
+                activationSource: 'skill_md',
+                activatedSkill: 'deepchat-settings',
+                skillContext: {
+                  agentId: 'deepchat',
+                  sourceType: 'created',
+                  sourceId: '/skills/deepchat-settings',
+                  skillName: 'deepchat-settings'
+                },
+                skillResolution
               }
             }
           }
@@ -3523,6 +3630,7 @@ describe('dispatch', () => {
 
     it('rejects an impossible runtime Skill view before journaling its large body', async () => {
       const tools = [makeTool('skill_view')]
+      const skillResolution = makeRuntimeSkillResolution('x'.repeat(20_000))
       const responseText = JSON.stringify({
         success: true,
         name: 'deepchat-settings',
@@ -3554,7 +3662,8 @@ describe('dispatch', () => {
                 sourceType: 'created',
                 sourceId: '/skills/deepchat-settings',
                 skillName: 'deepchat-settings'
-              }
+              },
+              skillResolution
             }
           }
         }
@@ -3610,6 +3719,7 @@ describe('dispatch', () => {
 
     it('fails closed when final fitting changes a committed runtime Skill view', async () => {
       const tools = [makeTool('skill_view')]
+      const skillResolution = makeRuntimeSkillResolution()
       const responseText = '{"success":true,"name":"deepchat-settings"}'
       const toolService = createMockToolService()
       vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
@@ -3634,7 +3744,8 @@ describe('dispatch', () => {
                 sourceType: 'created',
                 sourceId: '/skills/deepchat-settings',
                 skillName: 'deepchat-settings'
-              }
+              },
+              skillResolution
             }
           }
         }
@@ -3715,6 +3826,7 @@ describe('dispatch', () => {
 
     it('fails closed when final fitting cannot keep a committed runtime Skill view inline', async () => {
       const tools = [makeTool('skill_view')]
+      const skillResolution = makeRuntimeSkillResolution()
       const responseText = '{"success":true,"name":"deepchat-settings"}'
       const toolService = createMockToolService()
       vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
@@ -3739,7 +3851,8 @@ describe('dispatch', () => {
                 sourceType: 'created',
                 sourceId: '/skills/deepchat-settings',
                 skillName: 'deepchat-settings'
-              }
+              },
+              skillResolution
             }
           }
         }
@@ -3807,6 +3920,7 @@ describe('dispatch', () => {
 
     it('keeps a committed tool outcome authoritative when skill activation fails', async () => {
       const tools = [makeTool('skill_view')]
+      const skillResolution = makeRuntimeSkillResolution()
       const toolService = createMockToolService()
       const commitToolOutcome = vi.fn(() => ({ sessionId: 's1', entryId: 2, created: true }))
       vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
@@ -3830,7 +3944,8 @@ describe('dispatch', () => {
                 sourceType: 'created',
                 sourceId: '/skills/deepchat-settings',
                 skillName: 'deepchat-settings'
-              }
+              },
+              skillResolution
             }
           }
         }
@@ -3895,6 +4010,7 @@ describe('dispatch', () => {
     it('does not activate a runtime Skill when its strict Tape commit fails', async () => {
       const tools = [makeTool('skill_view')]
       const activateSkill = vi.fn()
+      const skillResolution = makeRuntimeSkillResolution()
       const toolService = {
         ...createMockToolService(),
         callTool: vi.fn().mockImplementation(async (request, options) => {
@@ -3919,7 +4035,8 @@ describe('dispatch', () => {
                   sourceType: 'created',
                   sourceId: '/skills/deepchat-settings',
                   skillName: 'deepchat-settings'
-                }
+                },
+                skillResolution
               }
             }
           }
@@ -3976,6 +4093,7 @@ describe('dispatch', () => {
       const abortController = new AbortController()
       const abortIo = createIo({ abortSignal: abortController.signal })
       const tools = [makeTool('skill_view')]
+      const skillResolution = makeRuntimeSkillResolution()
       const responseText = JSON.stringify({
         success: true,
         name: 'deepchat-settings',
@@ -4007,7 +4125,8 @@ describe('dispatch', () => {
                 sourceType: 'created',
                 sourceId: '/skills/deepchat-settings',
                 skillName: 'deepchat-settings'
-              }
+              },
+              skillResolution
             }
           }
         }

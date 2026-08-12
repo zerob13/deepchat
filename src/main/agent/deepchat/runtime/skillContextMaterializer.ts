@@ -22,7 +22,6 @@ import {
   MAX_SKILL_MATERIALIZATION_BATCH_COUNT,
   validateTapeSkillMaterializationBatch,
   type TapeSkillMaterializationInput,
-  type TapeSkillIdentity,
   type TapeSkillMaterializationPayload,
   type TapeSkillMaterializationReceipt,
   type TapeSkillMaterializationRef
@@ -63,9 +62,7 @@ export interface RuntimeSkillExecutionMaterializer {
   materializeRuntimeView(input: {
     sessionId: string
     expectedTapeIncarnationId: string
-    agentId: string
-    identity: TapeSkillIdentity
-    effectiveContent: string
+    resolution: EffectiveSkillContentResolution
     abortSignal: AbortSignal
   }): Promise<DeepChatTapeSkillMaterializationRef>
 }
@@ -362,9 +359,7 @@ export class SkillContextMaterializer {
   async materializeRuntimeView(input: {
     sessionId: string
     expectedTapeIncarnationId: string
-    agentId: string
-    identity: TapeSkillIdentity
-    effectiveContent: string
+    resolution: EffectiveSkillContentResolution
     abortSignal: AbortSignal
   }): Promise<DeepChatTapeSkillMaterializationRef> {
     input.abortSignal.throwIfAborted()
@@ -373,36 +368,18 @@ export class SkillContextMaterializer {
       input.expectedTapeIncarnationId,
       'expectedTapeIncarnationId'
     )
-    const agentId = requireId(input.agentId, 'agentId')
-    const skillName = canonicalName(input.identity.skillName, 'identity.skillName')
-    if (
-      input.identity.agentId !== agentId ||
-      !input.identity.sourceType ||
-      !input.identity.sourceId.trim() ||
-      typeof input.effectiveContent !== 'string' ||
-      !input.effectiveContent
-    ) {
+    const resolution = cloneAndFreeze(input.resolution)
+    const agentId = requireId(resolution.identity.agentId, 'resolution.identity.agentId')
+    const skillName = canonicalName(
+      resolution.identity.skillName,
+      'resolution.identity.skillName'
+    )
+    if (!resolution.identity.sourceType || !resolution.identity.sourceId.trim()) {
       throw new Error('Runtime Skill materialization identity is invalid.')
     }
+    assertResolution(resolution, agentId, skillName)
     if (this.dependencies.tape.getTapeIncarnationId(sessionId) !== expectedTapeIncarnationId) {
       throw new Error('Runtime Skill materialization belongs to another Session Tape incarnation.')
-    }
-
-    const resolutions = await this.dependencies.skills.resolveFreshEffectiveSkillContents(agentId, [
-      skillName
-    ])
-    if (resolutions.length !== 1) {
-      throw new Error('Runtime Skill materialization did not resolve exactly one package.')
-    }
-    input.abortSignal.throwIfAborted()
-    const resolution = resolutions[0]
-    assertResolution(resolution, agentId, skillName)
-    if (
-      resolution.identity.sourceType !== input.identity.sourceType ||
-      resolution.identity.sourceId !== input.identity.sourceId ||
-      resolution.effectiveContent !== input.effectiveContent
-    ) {
-      throw new Error('Runtime Skill content changed before its execution package was committed.')
     }
 
     const materializationInput: TapeSkillMaterializationInput = {

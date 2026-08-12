@@ -921,6 +921,25 @@ describe('SkillService', () => {
       expect(pluginSkillContent?.content).toContain('Plugin root: `/plugins/fixture`')
       expect(pluginSkillContent?.content).toContain(`Arch: \`${process.arch}\``)
       expect(pluginSkillContent?.content).toContain('Owner: `com.deepchat.plugins.fixture`')
+      const statPluginPath = (target: string) => {
+        const isFile = target.endsWith('/SKILL.md')
+        const size = isFile
+          ? Buffer.byteLength(String((fs.readFileSync as Mock)(target) ?? ''), 'utf8')
+          : 0
+        return {
+          dev: 1,
+          ino: isFile ? 1 : 2,
+          nlink: 1,
+          size,
+          mtimeMs: 1,
+          ctimeMs: 1,
+          isDirectory: () => !isFile,
+          isFile: () => isFile,
+          isSymbolicLink: () => false
+        }
+      }
+      ;(fs.statSync as Mock).mockImplementation(statPluginPath)
+      ;(fs.lstatSync as Mock).mockImplementation(statPluginPath)
       expect(
         (await skillService.viewSkillForAgent('deepchat', 'plugin-skill')).contentIdentity?.sourceId
       ).toBe('/plugins/fixture/plugin-skill')
@@ -1248,6 +1267,17 @@ describe('SkillService', () => {
       ).rejects.toThrow('execution evidence file exceeds')
     })
 
+    it('rejects a manifest that changes while its execution package is being snapshotted', async () => {
+      await skillService.discoverSkills()
+      vi.spyOn(skillService as any, 'readStableRegularFile')
+        .mockResolvedValueOnce(Buffer.from('first manifest'))
+        .mockResolvedValueOnce(Buffer.from('changed manifest'))
+
+      await expect(
+        skillService.resolveFreshEffectiveSkillContents('deepchat', ['test-skill'])
+      ).rejects.toThrow('manifest changed while its execution package was being snapshotted')
+    })
+
     it('returns deterministic canonical identity and evidence hashes', async () => {
       await skillService.discoverSkills()
 
@@ -1479,6 +1509,26 @@ describe('SkillService', () => {
         }
         return '---\nname: test-skill\ndescription: Test\nplatforms:\n  - macos\n---\n\n# Skill body'
       })
+      const statForViewPath = (target: string) => {
+        const isFile =
+          target.endsWith('/SKILL.md') || target.endsWith('/guide.md') || target.endsWith('/run.py')
+        const bytes = isFile
+          ? Buffer.from((fs.readFileSync as Mock)(target) ?? '')
+          : Buffer.alloc(0)
+        return {
+          dev: 1,
+          ino: target.endsWith('/SKILL.md') ? 1 : target.endsWith('/run.py') ? 2 : 3,
+          nlink: 1,
+          size: bytes.byteLength,
+          mtimeMs: 1,
+          ctimeMs: 1,
+          isDirectory: () => !isFile,
+          isFile: () => isFile,
+          isSymbolicLink: () => false
+        }
+      }
+      ;(fs.statSync as Mock).mockImplementation(statForViewPath)
+      ;(fs.lstatSync as Mock).mockImplementation(statForViewPath)
       ;(matter as unknown as Mock).mockReturnValue({
         data: {
           name: 'test-skill',
@@ -1520,6 +1570,27 @@ describe('SkillService', () => {
           skillName: 'test-skill'
         })
       )
+      expect(result.contentResolution).toEqual(
+        expect.objectContaining({
+          identity: result.contentIdentity,
+          effectiveContent: result.content,
+          executionPackage: expect.objectContaining({
+            files: [
+              expect.objectContaining({
+                relativePath: 'scripts/run.py',
+                base64: Buffer.from('print("hi")').toString('base64')
+              })
+            ],
+            executables: [
+              expect.objectContaining({
+                relativePath: 'scripts/run.py',
+                runtime: 'python',
+                enabled: true
+              })
+            ]
+          })
+        })
+      )
     })
 
     it('freshly resolves the root view instead of reusing cached effective content', async () => {
@@ -1538,6 +1609,24 @@ describe('SkillService', () => {
       expect(result.success).toBe(true)
       expect(result.content).toContain('# Updated skill body')
       expect(result.content).not.toContain('# Skill body\n\n')
+      expect(result).not.toHaveProperty('contentIdentity')
+      expect(result).not.toHaveProperty('contentResolution')
+    })
+
+    it('refuses runtime activation when the scoped catalog changes during snapshotting', async () => {
+      const lstat = fs.promises.lstat as Mock
+      lstat.mockImplementationOnce(async (...args: Parameters<typeof fs.promises.lstat>) => {
+        await skillService.discoverSkills('deepchat')
+        return (fs.lstatSync as Mock)(...args)
+      })
+
+      const result = await skillService.viewSkillForAgent('deepchat', 'test-skill')
+
+      expect(result).toEqual({
+        success: false,
+        error:
+          'Failed to load skill view: Skill catalog changed while its execution snapshot was being built'
+      })
     })
 
     it('does not pin a skill after viewing the main SKILL.md in a new-agent session', async () => {
@@ -1685,6 +1774,22 @@ describe('SkillService', () => {
     })
 
     it('returns a structured error when main skill content access throws', async () => {
+      const statBeforeReadFailure = (target: string) => {
+        const isFile = String(target).endsWith('/SKILL.md')
+        return {
+          dev: 1,
+          ino: isFile ? 1 : 2,
+          nlink: 1,
+          size: isFile ? 128 : 0,
+          mtimeMs: 1,
+          ctimeMs: 1,
+          isDirectory: () => !isFile,
+          isFile: () => isFile,
+          isSymbolicLink: () => false
+        }
+      }
+      ;(fs.statSync as Mock).mockImplementation(statBeforeReadFailure)
+      ;(fs.lstatSync as Mock).mockImplementation(statBeforeReadFailure)
       ;(fs.readFileSync as Mock).mockImplementation((target: string) => {
         if (String(target).endsWith('/test-skill/SKILL.md')) {
           throw new Error('Read failure')

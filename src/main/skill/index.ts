@@ -213,6 +213,8 @@ export type RuntimeSkillContentIdentity = EffectiveSkillContentIdentity
 export type RuntimeSkillViewResult = SkillViewResult & {
   /** Main-process evidence only. AgentToolManager removes it from the provider-visible result. */
   contentIdentity?: RuntimeSkillContentIdentity
+  /** Exact main-process snapshot that backs runtime activation and script authority. */
+  contentResolution?: EffectiveSkillContentResolution
 }
 
 interface ScopedSkillCatalog {
@@ -1661,10 +1663,13 @@ export class SkillService implements SkillServicePort {
     }
 
     let rawContent: string
+    let freshManifestBytes: Buffer | undefined
     if (freshEvidence) {
-      rawContent = (
-        await this.readStableRegularFile(confinedSkillPath, SKILL_CONFIG.SKILL_FILE_MAX_SIZE)
-      ).toString('utf8')
+      freshManifestBytes = await this.readStableRegularFile(
+        confinedSkillPath,
+        SKILL_CONFIG.SKILL_FILE_MAX_SIZE
+      )
+      rawContent = freshManifestBytes.toString('utf8')
     } else {
       const stats = await fs.promises.stat(confinedSkillPath)
       if (stats.size > SKILL_CONFIG.SKILL_FILE_MAX_SIZE) {
@@ -1706,6 +1711,15 @@ export class SkillService implements SkillServicePort {
           undeclaredLegacySupportPaths
         )
       : undefined
+    if (freshManifestBytes) {
+      const confirmedManifestBytes = await this.readStableRegularFile(
+        confinedSkillPath,
+        SKILL_CONFIG.SKILL_FILE_MAX_SIZE
+      )
+      if (!confirmedManifestBytes.equals(freshManifestBytes)) {
+        throw new Error('Skill manifest changed while its execution package was being snapshotted')
+      }
+    }
     const scripts =
       freshPackage?.scripts ?? (await this.listSkillScriptsFromMetadata(agentId, metadata))
     const runtimeInstructions = this.buildRuntimeInstructions(metadata, scripts)
@@ -1723,6 +1737,24 @@ export class SkillService implements SkillServicePort {
       renderedManifest: renderedContent,
       scriptInventory,
       executionPackage: freshPackage?.executionPackage
+    }
+  }
+
+  private buildEffectiveSkillContentResolution(
+    agentId: string,
+    metadata: SkillMetadata,
+    build: EffectiveSkillContentBuild
+  ): EffectiveSkillContentResolution {
+    if (!build.executionPackage) {
+      throw new Error('Fresh Skill execution package was not constructed')
+    }
+    return {
+      identity: this.buildSkillContentIdentity(agentId, metadata),
+      effectiveContent: build.skillContent.content,
+      builderVersion: EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION,
+      renderedManifestHash: this.hashSkillEvidence(build.renderedManifest),
+      scriptInventoryHash: this.hashSkillEvidence(JSON.stringify(build.scriptInventory)),
+      executionPackage: build.executionPackage
     }
   }
 
@@ -1761,23 +1793,16 @@ export class SkillService implements SkillServicePort {
         ) {
           throw new Error(`effective content exceeds ${SKILL_EFFECTIVE_CONTENT_MAX_BYTES} bytes`)
         }
-        const executionPackage = build.executionPackage
-        if (!executionPackage) {
-          throw new Error('fresh execution package was not constructed')
-        }
+        const resolution = this.buildEffectiveSkillContentResolution(
+          normalizedAgentId,
+          metadata,
+          build
+        )
         if (
           metadataCache.get(name) !== metadata ||
           !this.isSkillVisible(metadata, normalizedAgentId)
         ) {
           throw new Error('catalog changed while execution package was being snapshotted')
-        }
-        const resolution = {
-          identity: this.buildSkillContentIdentity(normalizedAgentId, metadata),
-          effectiveContent: build.skillContent.content,
-          builderVersion: EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION,
-          renderedManifestHash: this.hashSkillEvidence(build.renderedManifest),
-          scriptInventoryHash: this.hashSkillEvidence(JSON.stringify(build.scriptInventory)),
-          executionPackage
         }
         effectiveContentBytes += Buffer.byteLength(resolution.effectiveContent, 'utf8')
         packageBytes += resolution.executionPackage.files.reduce(
@@ -2159,27 +2184,28 @@ export class SkillService implements SkillServicePort {
     agentId: string,
     name: string,
     options?: { filePath?: string; conversationId?: string }
-  ): Promise<SkillViewResult> {
+  ): Promise<RuntimeSkillViewResult> {
     const normalizedAgentId = await this.requireAgentScope(agentId)
-    return await this.viewSkillInAgentScope(normalizedAgentId, name, options)
+    return await this.viewSkillInAgentScope(normalizedAgentId, name, options, true)
   }
 
   async viewSkill(
     name: string,
     options?: { filePath?: string; conversationId?: string }
   ): Promise<SkillViewResult> {
-    const { contentIdentity: _contentIdentity, ...result } = await this.viewSkillInAgentScope(
-      BUILTIN_SKILL_AGENT_ID,
-      name,
-      options
-    )
+    const {
+      contentIdentity: _contentIdentity,
+      contentResolution: _contentResolution,
+      ...result
+    } = await this.viewSkillInAgentScope(BUILTIN_SKILL_AGENT_ID, name, options, false)
     return result
   }
 
   private async viewSkillInAgentScope(
     agentId: string,
     name: string,
-    options?: { filePath?: string; conversationId?: string }
+    options: { filePath?: string; conversationId?: string } | undefined,
+    captureExecutionSnapshot: boolean
   ): Promise<RuntimeSkillViewResult> {
     const metadataCache = this.getMetadataCacheForAgent(agentId)
     await this.ensureAgentCatalogDiscovered(agentId)
@@ -2268,9 +2294,12 @@ export class SkillService implements SkillServicePort {
       }
     }
 
-    const contentIdentity = this.buildSkillContentIdentity(agentId, metadata)
     try {
-      const build = await this.buildEffectiveSkillContent(agentId, metadata)
+      const build = await this.buildEffectiveSkillContent(
+        agentId,
+        metadata,
+        captureExecutionSnapshot
+      )
       if (!build) {
         return {
           success: false,
@@ -2278,6 +2307,15 @@ export class SkillService implements SkillServicePort {
         }
       }
       const skillContent = build.skillContent
+      const contentResolution = captureExecutionSnapshot
+        ? this.buildEffectiveSkillContentResolution(agentId, metadata, build)
+        : undefined
+      if (
+        captureExecutionSnapshot &&
+        (metadataCache.get(name) !== metadata || !this.isSkillVisible(metadata, agentId))
+      ) {
+        throw new Error('Skill catalog changed while its execution snapshot was being built')
+      }
       const effectiveContentBytes = Buffer.byteLength(skillContent.content, 'utf8')
       if (effectiveContentBytes > SKILL_EFFECTIVE_CONTENT_MAX_BYTES) {
         return {
@@ -2296,7 +2334,9 @@ export class SkillService implements SkillServicePort {
         metadata: metadata.metadata,
         linkedFiles: await this.listSkillLinkedFiles(metadata.skillRoot),
         isPinned,
-        contentIdentity
+        contentIdentity:
+          contentResolution?.identity ?? this.buildSkillContentIdentity(agentId, metadata),
+        ...(contentResolution ? { contentResolution } : {})
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)

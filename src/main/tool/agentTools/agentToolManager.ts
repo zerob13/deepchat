@@ -2634,7 +2634,7 @@ export class AgentToolManager {
         )?.()
       }
       const result = await skillTools.handleSkillView(conversationId, validationResult.data)
-      const { contentIdentity, ...publicResult } = result
+      const { contentIdentity, contentResolution, ...publicResult } = result
       const normalizedViewedSkill = result.name?.trim() || validationResult.data.name.trim()
       const activeSkillNamesForResult = effectiveActiveSkills ?? []
       const activationApplied =
@@ -2652,11 +2652,12 @@ export class AgentToolManager {
               ? 'file'
               : 'none'
       const skillContext = activationApplied ? contentIdentity : null
-      if (activationApplied && !skillContext) {
+      const skillResolution = activationApplied ? contentResolution : null
+      if (activationApplied && (!skillContext || !skillResolution)) {
         const content = JSON.stringify({
           success: false,
           name: normalizedViewedSkill,
-          error: 'Skill identity could not be resolved safely; activation was refused'
+          error: 'Skill execution snapshot could not be resolved safely; activation was refused'
         })
         return { content, rawData: { content, isError: true } }
       }
@@ -2691,7 +2692,9 @@ export class AgentToolManager {
           toolResult: {
             activationApplied,
             activationSource,
-            ...(activationApplied ? { activatedSkill: normalizedViewedSkill, skillContext } : {})
+            ...(activationApplied
+              ? { activatedSkill: normalizedViewedSkill, skillContext, skillResolution }
+              : {})
           }
         }
       }
