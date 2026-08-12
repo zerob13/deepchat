@@ -113,6 +113,7 @@ type TurnRunLifecyclePort = Pick<
   RunLifecycleCoordinator,
   | 'applyProcessResultStatus'
   | 'assertCurrentInstance'
+  | 'canSettleOperation'
   | 'clearOperationController'
   | 'clearRun'
   | 'ensureOperationController'
@@ -1334,9 +1335,15 @@ export class TurnCoordinator {
         messageId: assistantMessageId
       })
     } finally {
+      const ownsTurnLifecycle = this.ports.runLifecycle.canSettleOperation(
+        scope,
+        preStreamAbortController
+      )
       this.ports.runLifecycle.clearOperationController(scope, preStreamAbortController)
-      instance.clearPreStreamTranscriptAnchor()
-      instance.replaceRuntimeActivatedSkills([])
+      if (ownsTurnLifecycle) {
+        instance.clearPreStreamTranscriptAnchor()
+        instance.replaceRuntimeActivatedSkills([])
+      }
     }
   }
 
@@ -1898,12 +1905,17 @@ export class TurnCoordinator {
       this.ports.runLifecycle.transitionCurrentStatus(sessionId, 'error')
       throw errorToProject
     } finally {
+      const ownsTurnLifecycle =
+        preStreamAbortController !== null &&
+        this.ports.runLifecycle.canSettleOperation(scope, preStreamAbortController)
       this.ports.runLifecycle.clearOperationController(
         scope,
         preStreamAbortController ?? undefined
       )
-      instance.clearPreStreamTranscriptAnchor()
-      instance.replaceRuntimeActivatedSkills([])
+      if (ownsTurnLifecycle) {
+        instance.clearPreStreamTranscriptAnchor()
+        instance.replaceRuntimeActivatedSkills([])
+      }
       instance.finishResume(messageId)
     }
   }

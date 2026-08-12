@@ -7874,6 +7874,46 @@ describe('DeepChatAgentHarness', () => {
       expect((await agent.getSessionState('s1'))?.status).toBe('idle')
     })
 
+    it('does not let stale turn cleanup clear newer runtime Skill state', async () => {
+      const skillService = getSkillServiceMock()
+      installSessionRows([])
+      let messageSequence = 0
+      vi.mocked(nanoid).mockImplementation(() => `skill-race-message-${++messageSequence}`)
+      skillService.getMetadataList.mockResolvedValue([
+        { name: 'runtime-skill', description: 'Runtime skill' }
+      ])
+      skillService.loadSkillContent.mockResolvedValue({
+        name: 'runtime-skill',
+        content: 'Runtime skill instructions'
+      })
+      const firstRun = deferred<{ status: 'aborted'; stopReason: 'user_stop' }>()
+      const secondRun = deferred<{ status: 'completed'; stopReason: 'complete' }>()
+      ;(processStream as ReturnType<typeof vi.fn>)
+        .mockImplementationOnce(async () => await firstRun.promise)
+        .mockImplementationOnce(async () => await secondRun.promise)
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const firstProcess = agent.processMessage('s1', 'First')
+      await vi.waitFor(() => expect(processStream).toHaveBeenCalledOnce())
+
+      await agent.cancelGeneration('s1')
+      const secondProcess = agent.processMessage('s1', {
+        text: 'Second',
+        activeSkills: ['runtime-skill']
+      })
+      await vi.waitFor(() => expect(processStream).toHaveBeenCalledTimes(2))
+
+      firstRun.resolve({ status: 'aborted', stopReason: 'user_stop' })
+      await firstProcess
+
+      const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
+      expect(instance.getRuntimeActivatedSkills()).toEqual(['runtime-skill'])
+
+      secondRun.resolve({ status: 'completed', stopReason: 'complete' })
+      await secondProcess
+      expect(instance.getRuntimeActivatedSkills()).toEqual([])
+    })
+
     it('cancels generation only when the event id matches the active assistant message', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const cancelSpy = vi.spyOn(agent, 'cancelGeneration').mockResolvedValue(undefined)
