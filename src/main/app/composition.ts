@@ -229,6 +229,8 @@ import {
   CliLauncherService,
   CliMutationGuard,
   CliOcrService,
+  ProgrammaticToolDispatcher,
+  ProgrammaticToolParentRegistry,
   CliRequestPolicy,
   CliRunService,
   CliServer,
@@ -419,6 +421,7 @@ export async function createMainProcessControl(dependencies: {
     getBoundRendererIds: (sessionId) => resolveBoundRendererIds(sessionId)
   })
   const agentCliTokenAuthority = new AgentCliTokenAuthority()
+  let programmaticToolDispatcher: ProgrammaticToolDispatcher
   const artifactSpool = new ArtifactSpool({
     directory: path.join(app.getPath('userData'), 'local-control', 'artifacts'),
     consumeAgentBytes: (tokenId, bytes) => agentCliTokenAuthority.consumeBytes(tokenId, bytes),
@@ -444,6 +447,10 @@ export async function createMainProcessControl(dependencies: {
       const output = await dispatchDeepchatRoute(routeDispatcher, method, input, { caller })
       signal.throwIfAborted()
       return output
+    },
+    dispatchProgrammaticTool: async (method, input, caller, operation, signal) => {
+      assertRouteAllowedDuringDatabaseMaintenance(method)
+      return await programmaticToolDispatcher.dispatch(method, input, caller, operation, signal)
     },
     dispatchStream: async (method, input, caller, requestId, signal, emit) => {
       if (cliRunService?.handlesStream(method)) {
@@ -565,6 +572,13 @@ export async function createMainProcessControl(dependencies: {
         })
     }
   )
+  const programmaticToolParents = new ProgrammaticToolParentRegistry({
+    tokenAuthority: agentCliTokenAuthority,
+    executionJournal: sessionData.tapeStore
+  })
+  programmaticToolDispatcher = new ProgrammaticToolDispatcher({
+    parents: programmaticToolParents
+  })
   const taskContractService = new TaskContractService(
     () => sessionData.database.deepchatContractStore
   )
@@ -1484,7 +1498,8 @@ export async function createMainProcessControl(dependencies: {
     taskContractContext: {
       prepare: (sessionId) => liveDelegationService.prepareTaskContractContext(sessionId)
     },
-    agentCliTokenAuthority
+    agentCliTokenAuthority,
+    programmaticToolParents
   })
   const sessionTranscriptMutations = new SessionTranscriptMutations({
     transcript: sessionData.transcript,
