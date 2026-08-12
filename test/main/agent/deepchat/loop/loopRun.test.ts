@@ -32,6 +32,24 @@ function createRun(sessionId: string, initialRequestSeq = 0) {
   })
 }
 
+function runtimeExecutionRef(
+  identity: {
+    agentId: string
+    sourceType: 'created'
+    sourceId: string
+    skillName: string
+  },
+  tapeIncarnationId = 'incarnation-1'
+) {
+  return {
+    kind: 'materialization' as const,
+    entryId: 11,
+    tapeIncarnationId,
+    ...identity,
+    effectiveContentHash: 'b'.repeat(64)
+  }
+}
+
 describe('LoopRun', () => {
   it.each([
     ['missing', { toolDefinitions: [], activeSkillNames: [] }],
@@ -210,17 +228,19 @@ describe('LoopRun', () => {
     const contentHash = hashSkillEffectiveContent(responseText)
     run.resources.tapeIncarnationId = 'incarnation-1'
 
+    const identity = {
+      agentId: 'agent-1',
+      sourceType: 'created' as const,
+      sourceId: '/skills/skill-1',
+      skillName: 'skill-1'
+    }
     registerRuntimeSkillContext(run, {
-      identity: {
-        agentId: 'agent-1',
-        sourceType: 'created',
-        sourceId: '/skills/skill-1',
-        skillName: 'skill-1'
-      },
+      identity,
       toolCallId: 'tool-call-1',
       entryId: 12,
       tapeIncarnationId: 'incarnation-1',
-      contentHash
+      contentHash,
+      executionRef: runtimeExecutionRef(identity)
     })
 
     expect(() => resolveSkillContextsForRequest(run, run.messages)).toThrow(
@@ -387,7 +407,13 @@ describe('LoopRun', () => {
       toolCallId: 'tool-call-1',
       entryId: 12,
       tapeIncarnationId: 'incarnation-1',
-      contentHash: 'a'.repeat(64)
+      contentHash: 'a'.repeat(64),
+      executionRef: runtimeExecutionRef({
+        agentId: 'agent-1',
+        sourceType: 'created',
+        sourceId: '/skills/skill-1',
+        skillName: 'skill-1'
+      })
     }
 
     registerRuntimeSkillContext(run, input)
@@ -397,7 +423,11 @@ describe('LoopRun', () => {
       'conflicting evidence'
     )
     expect(() =>
-      registerRuntimeSkillContext(run, { ...input, tapeIncarnationId: 'incarnation-2' })
+      registerRuntimeSkillContext(run, {
+        ...input,
+        tapeIncarnationId: 'incarnation-2',
+        executionRef: { ...input.executionRef, tapeIncarnationId: 'incarnation-2' }
+      })
     ).toThrow('another Session Tape incarnation')
   })
 

@@ -419,17 +419,25 @@ describe('DeepChatContextCoordinator', () => {
       tool_call_id: 'tool-call-1',
       content: responseText
     })
+    const identity = {
+      agentId: 'agent-1',
+      sourceType: 'created' as const,
+      sourceId: '/skills/skill-1',
+      skillName: 'skill-1'
+    }
     registerRuntimeSkillContext(fixture.run, {
-      identity: {
-        agentId: 'agent-1',
-        sourceType: 'created',
-        sourceId: '/skills/skill-1',
-        skillName: 'skill-1'
-      },
+      identity,
       toolCallId: 'tool-call-1',
       entryId: 12,
       tapeIncarnationId: 'incarnation-1',
-      contentHash
+      contentHash,
+      executionRef: {
+        kind: 'materialization',
+        entryId: 11,
+        tapeIncarnationId: 'incarnation-1',
+        ...identity,
+        effectiveContentHash: hashSkillEffectiveContent('effective Skill body')
+      }
     })
 
     await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
@@ -524,17 +532,25 @@ describe('DeepChatContextCoordinator', () => {
       tool_call_id: 'tool-call-1',
       content: responseText
     })
+    const identity = {
+      agentId: 'agent-1',
+      sourceType: 'created' as const,
+      sourceId: '/skills/skill-1',
+      skillName: 'skill-1'
+    }
     registerRuntimeSkillContext(fixture.run, {
-      identity: {
-        agentId: 'agent-1',
-        sourceType: 'created',
-        sourceId: '/skills/skill-1',
-        skillName: 'skill-1'
-      },
+      identity,
       toolCallId: 'tool-call-1',
       entryId: 12,
       tapeIncarnationId: 'incarnation-1',
-      contentHash: hashSkillEffectiveContent(responseText)
+      contentHash: hashSkillEffectiveContent(responseText),
+      executionRef: {
+        kind: 'materialization',
+        entryId: 11,
+        tapeIncarnationId: 'incarnation-1',
+        ...identity,
+        effectiveContentHash: hashSkillEffectiveContent('effective Skill body')
+      }
     })
 
     await expect(

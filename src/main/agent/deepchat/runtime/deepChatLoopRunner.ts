@@ -112,7 +112,10 @@ import {
   registerMaterializedSkillContext,
   registerRuntimeSkillContext
 } from '@/agent/deepchat/loop/loopRun'
-import type { MaterializedSkillProjection } from './skillContextMaterializer'
+import type {
+  MaterializedSkillProjection,
+  RuntimeSkillExecutionMaterializer
+} from './skillContextMaterializer'
 import type { ToolExecutionPort, ToolResultPort } from '@/agent/deepchat/loop/ports'
 import {
   buildContextCheckpoint,
@@ -280,6 +283,7 @@ export interface DeepChatLoopRunnerPorts {
   registry: SessionScopeRegistry
   sessionSettings: Pick<SessionSettingsCoordinator, 'getEffectiveGenerationSettings'>
   promptAssembly: Pick<PromptAssemblyService, 'createBasePromptAssembler'>
+  skillContextMaterializer: RuntimeSkillExecutionMaterializer
   runLifecycle: LoopRunLifecyclePort
   identity: Pick<
     SessionIdentityService,
@@ -1112,7 +1116,7 @@ export class DeepChatLoopRunner {
             resourceInstance.activateRuntimeSkill(skillName)
             return getCandidateActiveSkillNames()
           },
-          commitRuntimeSkillView: (input) => {
+          commitRuntimeSkillView: async (input) => {
             const tapeIncarnationId = loopRun.resources.tapeIncarnationId
             if (!tapeIncarnationId) {
               throw new Error('Loop Run is not bound to a Session Tape incarnation.')
@@ -1135,12 +1139,32 @@ export class DeepChatLoopRunner {
               operation: input.operation,
               outcomeEntryId: input.outcomeEntryId
             })
+            let result: Record<string, unknown>
+            try {
+              const parsed = JSON.parse(input.responseText) as unknown
+              if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error()
+              result = parsed as Record<string, unknown>
+            } catch {
+              throw new Error('Runtime Skill-view result cannot materialize execution authority.')
+            }
+            if (typeof result.content !== 'string' || !result.content) {
+              throw new Error('Runtime Skill-view result has no effective content to materialize.')
+            }
+            const executionRef = await this.ports.skillContextMaterializer.materializeRuntimeView({
+              sessionId,
+              expectedTapeIncarnationId: tapeIncarnationId,
+              agentId: activeAgentId,
+              identity: input.identity,
+              effectiveContent: result.content,
+              abortSignal
+            })
             registerRuntimeSkillContext(loopRun, {
               identity: input.identity,
               toolCallId: input.toolCallId,
               entryId: receipt.entryId,
               tapeIncarnationId: receipt.tapeIncarnationId,
-              contentHash: receipt.contentHash
+              contentHash: receipt.contentHash,
+              executionRef
             })
           },
           onStreamingProviderPermission: (permission, tool, commitDecision) => {

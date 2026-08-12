@@ -388,6 +388,10 @@ export class TapeViewReplayService {
       expected.set(projection.toolCallId, projection.responseText)
     }
     if (expected.size === 0) return []
+    const executableManifests = this.listExactRuntimeSkillExecutionManifests(
+      input.sessionId,
+      input.messageId
+    )
 
     return input.projections.map((projection) => {
       const expectedPayload = {
@@ -476,12 +480,30 @@ export class TapeViewReplayService {
           }
         }
       )
+      const executionRefs = executableManifests.flatMap((manifest) =>
+        manifest.skillContexts.flatMap((context) =>
+          context.activationScope === 'runtime_view' &&
+          context.authoritativeRef.entryId === authority.entry_id &&
+          context.authoritativeRef.contentHash === hashString(projection.responseText) &&
+          context.agentId === identity.agentId &&
+          context.sourceType === identity.sourceType &&
+          context.sourceId === identity.sourceId &&
+          context.skillName === identity.skillName
+            ? [context.executionRef]
+            : []
+        )
+      )
+      const executionRefKeys = new Set(executionRefs.map((ref) => canonicalJsonStringifyData(ref)))
+      if (executionRefs.length === 0 || executionRefKeys.size !== 1) {
+        throw new Error('Runtime Skill-view recovery has no unique execution package authority.')
+      }
       return {
         identity,
         toolCallId: projection.toolCallId,
         entryId: authority.entry_id,
         tapeIncarnationId: input.expectedTapeIncarnationId,
-        contentHash: hashString(projection.responseText)
+        contentHash: hashString(projection.responseText),
+        executionRef: structuredClone(executionRefs[0])
       }
     })
   }
@@ -838,6 +860,40 @@ export class TapeViewReplayService {
       .map((row) => this.toViewManifestRecord(row))
       .filter((record): record is DeepChatTapeViewManifestRecord => Boolean(record))
       .sort((left, right) => right.requestSeq - left.requestSeq || right.entryId - left.entryId)
+  }
+
+  private listExactRuntimeSkillExecutionManifests(
+    sessionId: string,
+    messageId: string
+  ): DeepChatTapeViewManifestV7[] {
+    return this.table.getViewManifestEventsByMessage(sessionId, messageId).flatMap((row) => {
+      const payload = parseJsonObject(row.payload_json)
+      const data = payload.data
+      const rawManifest =
+        data && typeof data === 'object' && !Array.isArray(data)
+          ? (data as Record<string, unknown>).manifest
+          : null
+      const claimsSchema7 =
+        (rawManifest !== null &&
+          typeof rawManifest === 'object' &&
+          !Array.isArray(rawManifest) &&
+          (rawManifest as Record<string, unknown>).schemaVersion === 7) ||
+        row.provenance_key?.startsWith('view7:') === true
+      if (!claimsSchema7) return []
+      const record = this.toViewManifestRecord(row)
+      if (!record || record.manifest.schemaVersion !== 7) {
+        throw new Error('Runtime Skill execution View occurrence is corrupt.')
+      }
+      const exact = this.getViewManifestByExecutionBinding({
+        sessionId,
+        runId: record.manifest.runId,
+        requestSeq: record.requestSeq
+      })
+      if (!exact || exact.entryId !== record.entryId || exact.manifest.schemaVersion !== 7) {
+        throw new Error('Runtime Skill execution View binding is not exact.')
+      }
+      return [exact.manifest]
+    })
   }
 
   getViewManifestByExecutionBinding(input: {

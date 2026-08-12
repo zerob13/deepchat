@@ -65,6 +65,7 @@ export interface TapeRuntimeSkillViewContextReceipt {
   entryId: number
   tapeIncarnationId: string
   contentHash: string
+  executionRef: DeepChatTapeSkillMaterializationRef
 }
 
 export interface TapeSkillContextEvidence {

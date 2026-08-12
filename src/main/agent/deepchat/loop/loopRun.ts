@@ -4,7 +4,11 @@ import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
-import type { DeepChatTapeSkillContext } from '@shared/types/tape-view-manifest'
+import type {
+  DeepChatTapeRuntimeViewSkillContextV7,
+  DeepChatTapeSkillContext,
+  DeepChatTapeSkillMaterializationRef
+} from '@shared/types/tape-view-manifest'
 import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 import {
   hashSkillEffectiveContent,
@@ -13,12 +17,14 @@ import {
 import {
   MAX_SKILL_CONTEXTS_PER_VIEW,
   MAX_SKILL_VIEW_RESULT_FACT_BYTES,
+  validateSchema7SkillContexts,
   type TapeRuntimeSkillViewProjection
 } from '@/tape/domain/skillContext'
+import { canonicalJsonStringifyData } from '@/tape/domain/canonicalJson'
 
 export interface RuntimeSkillContextBinding {
   readonly toolCallId: string
-  readonly context: DeepChatTapeSkillContext
+  readonly context: DeepChatTapeRuntimeViewSkillContextV7
 }
 
 export interface MaterializedSkillContextBinding {
@@ -190,6 +196,7 @@ export function registerRuntimeSkillContext(
     entryId: number
     tapeIncarnationId: string
     contentHash: string
+    executionRef: DeepChatTapeSkillMaterializationRef
   }
 ): void {
   if (!run.resources.tapeIncarnationId) {
@@ -198,20 +205,37 @@ export function registerRuntimeSkillContext(
   if (run.resources.tapeIncarnationId !== input.tapeIncarnationId) {
     throw new Error('Runtime Skill context belongs to another Session Tape incarnation.')
   }
-  const context: DeepChatTapeSkillContext = {
+  if (
+    !input.executionRef ||
+    input.executionRef.tapeIncarnationId !== input.tapeIncarnationId ||
+    input.executionRef.agentId !== input.identity.agentId ||
+    input.executionRef.sourceType !== input.identity.sourceType ||
+    input.executionRef.sourceId !== input.identity.sourceId ||
+    input.executionRef.skillName !== input.identity.skillName
+  ) {
+    throw new Error('Runtime Skill execution package does not match its activation identity.')
+  }
+  const executionRef = Object.freeze({ ...input.executionRef })
+  const authoritativeRef = Object.freeze({
+    kind: 'tool_result' as const,
+    entryId: input.entryId,
+    contentHash: input.contentHash
+  })
+  const sourceEntryIds: number[] = []
+  Object.freeze(sourceEntryIds)
+  const context: DeepChatTapeRuntimeViewSkillContextV7 = {
     activationScope: 'runtime_view',
     ...input.identity,
-    authoritativeRef: {
-      kind: 'tool_result',
-      entryId: input.entryId,
-      contentHash: input.contentHash
-    },
+    authoritativeRef,
+    executionRef,
     providerRole: 'tool',
-    sourceEntryIds: [],
+    sourceEntryIds,
     projectedContentHash: input.contentHash,
     projectionVersion: 1,
     deduplicationSource: 'runtime_view'
   }
+  validateSchema7SkillContexts([context])
+  Object.freeze(context)
   if (
     run.resources.materializedSkillContexts.some((binding) =>
       sameSkillIdentity(binding.context, context)
@@ -226,7 +250,9 @@ export function registerRuntimeSkillContext(
     if (
       existing.toolCallId === input.toolCallId &&
       existing.context.authoritativeRef.entryId === input.entryId &&
-      existing.context.projectedContentHash === input.contentHash
+      existing.context.projectedContentHash === input.contentHash &&
+      canonicalJsonStringifyData(existing.context.executionRef) ===
+        canonicalJsonStringifyData(input.executionRef)
     ) {
       return
     }

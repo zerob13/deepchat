@@ -369,6 +369,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     registry: runtime,
     sessionSettings,
     promptAssembly,
+    skillContextMaterializer,
     identity,
     sessionPermissionPort,
     reviewToolPermission: createToolPermissionReviewer(toolRuntimeBindings),

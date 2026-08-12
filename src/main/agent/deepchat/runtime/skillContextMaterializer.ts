@@ -3,6 +3,7 @@ import type {
   DeepChatTapeMaterializedSkillContext,
   DeepChatTapeSkillContext,
   DeepChatTapeSkillContextV7,
+  DeepChatTapeSkillMaterializationRef,
   DeepChatTapeViewManifestRecord
 } from '@shared/types/tape-view-manifest'
 import { renderSessionSkillBody } from '../resources/systemPromptBuilder'
@@ -21,6 +22,7 @@ import {
   MAX_SKILL_MATERIALIZATION_BATCH_COUNT,
   validateTapeSkillMaterializationBatch,
   type TapeSkillMaterializationInput,
+  type TapeSkillIdentity,
   type TapeSkillMaterializationPayload,
   type TapeSkillMaterializationReceipt,
   type TapeSkillMaterializationRef
@@ -55,6 +57,17 @@ export interface MaterializedSkillProjection {
 export interface SkillProjectionBodies {
   readonly sessionSkillBodies: readonly Readonly<{ name: string; content: string }>[]
   readonly messageActiveTurnContext: string | null
+}
+
+export interface RuntimeSkillExecutionMaterializer {
+  materializeRuntimeView(input: {
+    sessionId: string
+    expectedTapeIncarnationId: string
+    agentId: string
+    identity: TapeSkillIdentity
+    effectiveContent: string
+    abortSignal: AbortSignal
+  }): Promise<DeepChatTapeSkillMaterializationRef>
 }
 
 export interface RecoveredSkillContextBatch {
@@ -344,6 +357,87 @@ export class SkillContextMaterializer {
         content: projection.effectiveContent
       }))
     )
+  }
+
+  async materializeRuntimeView(input: {
+    sessionId: string
+    expectedTapeIncarnationId: string
+    agentId: string
+    identity: TapeSkillIdentity
+    effectiveContent: string
+    abortSignal: AbortSignal
+  }): Promise<DeepChatTapeSkillMaterializationRef> {
+    input.abortSignal.throwIfAborted()
+    const sessionId = requireId(input.sessionId, 'sessionId')
+    const expectedTapeIncarnationId = requireId(
+      input.expectedTapeIncarnationId,
+      'expectedTapeIncarnationId'
+    )
+    const agentId = requireId(input.agentId, 'agentId')
+    const skillName = canonicalName(input.identity.skillName, 'identity.skillName')
+    if (
+      input.identity.agentId !== agentId ||
+      !input.identity.sourceType ||
+      !input.identity.sourceId.trim() ||
+      typeof input.effectiveContent !== 'string' ||
+      !input.effectiveContent
+    ) {
+      throw new Error('Runtime Skill materialization identity is invalid.')
+    }
+    if (this.dependencies.tape.getTapeIncarnationId(sessionId) !== expectedTapeIncarnationId) {
+      throw new Error('Runtime Skill materialization belongs to another Session Tape incarnation.')
+    }
+
+    const resolutions = await this.dependencies.skills.resolveFreshEffectiveSkillContents(agentId, [
+      skillName
+    ])
+    if (resolutions.length !== 1) {
+      throw new Error('Runtime Skill materialization did not resolve exactly one package.')
+    }
+    input.abortSignal.throwIfAborted()
+    const resolution = resolutions[0]
+    assertResolution(resolution, agentId, skillName)
+    if (
+      resolution.identity.sourceType !== input.identity.sourceType ||
+      resolution.identity.sourceId !== input.identity.sourceId ||
+      resolution.effectiveContent !== input.effectiveContent
+    ) {
+      throw new Error('Runtime Skill content changed before its execution package was committed.')
+    }
+
+    const materializationInput: TapeSkillMaterializationInput = {
+      sessionId,
+      expectedTapeIncarnationId,
+      ...resolution.identity,
+      effectiveContent: resolution.effectiveContent,
+      builderVersion: resolution.builderVersion,
+      renderedManifestHash: resolution.renderedManifestHash,
+      scriptInventoryHash: resolution.scriptInventoryHash,
+      executionPackage: resolution.executionPackage
+    }
+    const [expectedPayload] = validateTapeSkillMaterializationBatch([materializationInput])
+    input.abortSignal.throwIfAborted()
+    const receipts = this.dependencies.tape.materializeSkillContexts([materializationInput])
+    if (receipts.length !== 1) {
+      throw new Error('Runtime Skill materialization receipt count did not match the request.')
+    }
+    const receipt = receipts[0]
+    const ref = buildTapeSkillMaterializationRef(receipt)
+    assertReceiptMatches(receipt, ref, expectedPayload)
+    const roundTrip = this.dependencies.tape.readSkillMaterialization(ref)
+    if (
+      roundTrip.sessionId !== sessionId ||
+      roundTrip.tapeIncarnationId !== expectedTapeIncarnationId ||
+      !payloadMatches(roundTrip.payload, expectedPayload)
+    ) {
+      throw new Error('Runtime Skill materialization strict round-trip did not match its package.')
+    }
+    assertReceiptMatches(roundTrip, ref, expectedPayload)
+    const { sessionId: refSessionId, ...manifestRef } = ref
+    if (refSessionId !== sessionId) {
+      throw new Error('Runtime Skill materialization reference belongs to another Session.')
+    }
+    return Object.freeze(manifestRef)
   }
 
   materialize(

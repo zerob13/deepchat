@@ -1,5 +1,6 @@
 import type { TapeViewManifestBuildInput } from '@/tape/domain/viewManifest'
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
+import type { DeepChatTapeSkillMaterializationRef } from '@shared/types/tape-view-manifest'
 import {
   buildTapeSkillMaterializationRef,
   hashSkillEffectiveContent
@@ -74,6 +75,101 @@ function commitRuntimeSkillOutcome(
   return { operation: RUNTIME_SKILL_OPERATION, outcomeEntryId: outcome.entryId }
 }
 
+function materializeRuntimeExecutionPackage(
+  service: ReturnType<typeof createTapeService>,
+  tapeIncarnationId: string,
+  effectiveContent: string,
+  builderVersion = 'skill-effective-content-v2',
+  skillName = 'review'
+): DeepChatTapeSkillMaterializationRef {
+  const [receipt] = service.materializeSkillContexts([
+    {
+      sessionId: 's1',
+      expectedTapeIncarnationId: tapeIncarnationId,
+      agentId: 'deepchat',
+      sourceType: 'builtin',
+      sourceId: 'builtin-skills',
+      skillName,
+      effectiveContent,
+      builderVersion,
+      renderedManifestHash: hashSkillEffectiveContent(`manifest:${builderVersion}`),
+      scriptInventoryHash: hashSkillEffectiveContent('scripts'),
+      executionPackage: {
+        files: [],
+        executables: [],
+        runtimePolicy: { python: 'auto', node: 'auto' },
+        environmentBindingId: null
+      }
+    }
+  ])
+  const { sessionId: _sessionId, ...ref } = buildTapeSkillMaterializationRef(receipt)
+  return ref
+}
+
+function appendRuntimeExecutionManifest(input: {
+  service: ReturnType<typeof createTapeService>
+  tapeIncarnationId: string
+  responseText: string
+  toolResult: { entryId: number; contentHash: string }
+  executionRef: DeepChatTapeSkillMaterializationRef
+  requestSeq: number
+  runId?: string
+  skillName?: string
+}): void {
+  input.service.appendViewManifest(
+    createTapeViewManifest({
+      sessionId: 's1',
+      messageId: 'a1',
+      requestSeq: input.requestSeq,
+      taskType: 'tool_loop',
+      policy: 'tool_loop_shadow',
+      policyVersion: null,
+      messages: [{ role: 'tool', content: input.responseText, tool_call_id: 'tool-call-1' }],
+      tools: [],
+      latestEntryId: input.executionRef.entryId,
+      anchorEntryIds: [1],
+      included: [],
+      excluded: [],
+      tokenBudget: {
+        contextLength: 1000,
+        requestedMaxTokens: 100,
+        effectiveMaxTokens: 100,
+        reserveTokens: 100,
+        toolReserveTokens: 0
+      },
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      summaryCursorOrderSeq: 1,
+      supportsVision: false,
+      supportsAudioInput: false,
+      traceDebugEnabled: false,
+      runId: input.runId ?? 'runtime-recovery-run',
+      tapeIncarnationId: input.tapeIncarnationId,
+      skillContexts: [
+        {
+          activationScope: 'runtime_view',
+          agentId: 'deepchat',
+          sourceType: 'builtin',
+          sourceId: 'builtin-skills',
+          skillName: input.skillName ?? 'review',
+          authoritativeRef: {
+            kind: 'tool_result',
+            entryId: input.toolResult.entryId,
+            contentHash: input.toolResult.contentHash
+          },
+          executionRef: input.executionRef,
+          providerRole: 'tool',
+          sourceEntryIds: [],
+          projectedContentHash: input.toolResult.contentHash,
+          projectionVersion: 1,
+          deduplicationSource: 'runtime_view'
+        }
+      ],
+      assembledAt: 300 + input.requestSeq
+    })
+  )
+}
+
 describe('SessionTape view and replay', () => {
   it('resolves an effective user-message source through the indexed message history', () => {
     const { table, entries } = createTapeTableMock()
@@ -122,7 +218,7 @@ describe('SessionTape view and replay', () => {
     )
   })
 
-  it('recovers runtime Skill identity only from its strict tool-result fact', () => {
+  it('recovers runtime Skill identity only from exact tool and execution facts', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
     table.ensureBootstrapAnchor('s1')
@@ -153,15 +249,38 @@ describe('SessionTape view and replay', () => {
         skillName: 'review'
       }
     })
-    expect(
-      service.recoverRuntimeSkillViewContexts({
-        sessionId: 's1',
-        messageId: 'a1',
-        messageOrderSeq: 2,
-        expectedTapeIncarnationId: tapeIncarnationId,
-        projections: [{ toolCallId: 'tool-call-1', responseText, blockIndex: 0, timestamp: 100 }]
-      })
-    ).toEqual([
+    const recoveryInput = {
+      sessionId: 's1',
+      messageId: 'a1',
+      messageOrderSeq: 2,
+      expectedTapeIncarnationId: tapeIncarnationId,
+      projections: [{ toolCallId: 'tool-call-1', responseText, blockIndex: 0, timestamp: 100 }]
+    }
+    expect(() => service.recoverRuntimeSkillViewContexts(recoveryInput)).toThrow(
+      /no unique execution package authority/
+    )
+    const executionRef = materializeRuntimeExecutionPackage(
+      service,
+      tapeIncarnationId,
+      '# Review\n\nFollow the review contract.'
+    )
+    appendRuntimeExecutionManifest({
+      service,
+      tapeIncarnationId,
+      responseText,
+      toolResult: fact,
+      executionRef,
+      requestSeq: 2
+    })
+    appendRuntimeExecutionManifest({
+      service,
+      tapeIncarnationId,
+      responseText,
+      toolResult: fact,
+      executionRef,
+      requestSeq: 3
+    })
+    expect(service.recoverRuntimeSkillViewContexts(recoveryInput)).toEqual([
       {
         identity: {
           agentId: 'deepchat',
@@ -172,9 +291,19 @@ describe('SessionTape view and replay', () => {
         toolCallId: 'tool-call-1',
         entryId: fact.entryId,
         tapeIncarnationId,
-        contentHash: fact.contentHash
+        contentHash: fact.contentHash,
+        executionRef
       }
     ])
+    const executableManifestRow = entries.findLast(
+      (entry) => entry.kind === 'event' && entry.name === 'view/assembled'
+    )!
+    const storedManifestPayload = executableManifestRow.payload_json
+    executableManifestRow.payload_json = '{}'
+    expect(() => service.recoverRuntimeSkillViewContexts(recoveryInput)).toThrow(
+      /execution View occurrence is corrupt/
+    )
+    executableManifestRow.payload_json = storedManifestPayload
     expect(() =>
       service.recoverRuntimeSkillViewContexts({
         sessionId: 's1',
@@ -238,6 +367,24 @@ describe('SessionTape view and replay', () => {
       })
     ).toThrow('Journal chain does not match its exact result')
     outcomeRow.payload_json = storedOutcomePayload
+
+    const conflictingExecutionRef = materializeRuntimeExecutionPackage(
+      service,
+      tapeIncarnationId,
+      '# Review\n\nFollow the review contract.',
+      'skill-effective-content-v3'
+    )
+    appendRuntimeExecutionManifest({
+      service,
+      tapeIncarnationId,
+      responseText,
+      toolResult: fact,
+      executionRef: conflictingExecutionRef,
+      requestSeq: 4
+    })
+    expect(() => service.recoverRuntimeSkillViewContexts(recoveryInput)).toThrow(
+      /no unique execution package authority/
+    )
   })
 
   it('strictly binds materialized Skill evidence to one execution occurrence', () => {

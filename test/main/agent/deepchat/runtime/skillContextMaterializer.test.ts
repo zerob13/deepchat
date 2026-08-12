@@ -120,6 +120,91 @@ describe('SkillContextMaterializer', () => {
     expect(tape.materializeSkillContexts).not.toHaveBeenCalled()
   })
 
+  it('strictly materializes the exact runtime Skill body against the Run Tape incarnation', async () => {
+    const { service, skills, tape } = fixture()
+    const executionRef = await service.materializeRuntimeView({
+      sessionId: 'session-1',
+      expectedTapeIncarnationId: 'incarnation-1',
+      agentId: 'agent-1',
+      identity: resolution('one').identity,
+      effectiveContent: 'body:one',
+      abortSignal: new AbortController().signal
+    })
+
+    expect(skills.resolveFreshEffectiveSkillContents).toHaveBeenCalledWith('agent-1', ['one'])
+    expect(tape.materializeSkillContexts).toHaveBeenCalledWith([
+      expect.objectContaining({
+        sessionId: 'session-1',
+        expectedTapeIncarnationId: 'incarnation-1',
+        skillName: 'one',
+        effectiveContent: 'body:one'
+      })
+    ])
+    expect(tape.readSkillMaterialization).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      ...executionRef
+    })
+    expect(executionRef).toMatchObject({
+      kind: 'materialization',
+      tapeIncarnationId: 'incarnation-1',
+      agentId: 'agent-1',
+      skillName: 'one'
+    })
+    expect(executionRef).not.toHaveProperty('sessionId')
+    expect(Object.isFrozen(executionRef)).toBe(true)
+  })
+
+  it('does not write a runtime package when the Tape or fresh Skill body drifted', async () => {
+    const tapeDrift = fixture()
+    tapeDrift.tape.getTapeIncarnationId.mockReturnValueOnce('incarnation-2')
+    await expect(
+      tapeDrift.service.materializeRuntimeView({
+        sessionId: 'session-1',
+        expectedTapeIncarnationId: 'incarnation-1',
+        agentId: 'agent-1',
+        identity: resolution('one').identity,
+        effectiveContent: 'body:one',
+        abortSignal: new AbortController().signal
+      })
+    ).rejects.toThrow(/another Session Tape incarnation/)
+    expect(tapeDrift.skills.resolveFreshEffectiveSkillContents).not.toHaveBeenCalled()
+    expect(tapeDrift.tape.materializeSkillContexts).not.toHaveBeenCalled()
+
+    const contentDrift = fixture()
+    contentDrift.skills.resolveFreshEffectiveSkillContents.mockResolvedValueOnce([
+      resolution('one', 'changed')
+    ])
+    await expect(
+      contentDrift.service.materializeRuntimeView({
+        sessionId: 'session-1',
+        expectedTapeIncarnationId: 'incarnation-1',
+        agentId: 'agent-1',
+        identity: resolution('one').identity,
+        effectiveContent: 'body:one',
+        abortSignal: new AbortController().signal
+      })
+    ).rejects.toThrow(/content changed/)
+    expect(contentDrift.tape.materializeSkillContexts).not.toHaveBeenCalled()
+
+    const canceled = fixture()
+    const abortController = new AbortController()
+    canceled.skills.resolveFreshEffectiveSkillContents.mockImplementationOnce(async () => {
+      abortController.abort()
+      return [resolution('one')]
+    })
+    await expect(
+      canceled.service.materializeRuntimeView({
+        sessionId: 'session-1',
+        expectedTapeIncarnationId: 'incarnation-1',
+        agentId: 'agent-1',
+        identity: resolution('one').identity,
+        effectiveContent: 'body:one',
+        abortSignal: abortController.signal
+      })
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(canceled.tape.materializeSkillContexts).not.toHaveBeenCalled()
+  })
+
   it('applies the batch guard before any write', async () => {
     const { service, skills, tape } = fixture()
     await expect(
