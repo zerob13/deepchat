@@ -3104,6 +3104,7 @@ describe('DeepChatAgentHarness', () => {
       const snapshots: LoopRunRequestToolSurfaceBinding[] = []
       ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
         expect(params.run.resources.toolSurfaceMode).toBe('full')
+        expect(String(params.run.messages[0]?.content)).not.toContain('## Programmatic Tool Access')
         for (const requestTools of [initialTools, universeTools]) {
           for await (const _event of params.coreStream(
             params.run.messages,
@@ -3306,6 +3307,18 @@ describe('DeepChatAgentHarness', () => {
       const bindings: LoopRunRequestToolSurfaceBinding[] = []
       ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
         expect(params.run.resources.toolSurfaceMode).toBe('cli-programmatic')
+        const initialSystemPrompt = String(params.run.messages[0]?.content)
+        expect(initialSystemPrompt).toContain('## Programmatic Tool Access')
+        expect(initialSystemPrompt.match(/## Programmatic Tool Access/g)).toHaveLength(1)
+        expect(params.run.resources.promptAssembly?.prompt).toBe(initialSystemPrompt)
+        const refreshedPromptAssembly = await params.refreshSystemPrompt?.(
+          params.run.resources.activeSkillNames,
+          params.run.resources.toolDefinitions
+        )
+        expect(refreshedPromptAssembly?.prompt).toContain('## Programmatic Tool Access')
+        expect(refreshedPromptAssembly?.prompt.match(/## Programmatic Tool Access/g)).toHaveLength(
+          1
+        )
         for (let view = 0; view < 2; view += 1) {
           for await (const _event of params.coreStream(
             params.run.messages,

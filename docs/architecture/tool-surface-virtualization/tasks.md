@@ -80,7 +80,7 @@
 - [ ] Return only bounded invocation names, reviewed metadata, signatures/schemas, and copyable
       examples without internal stable IDs, server UUIDs, hashes, MCP metadata, or secrets.
 - [ ] Enforce direct call without search and one bounded anti-oracle unavailable shape.
-- [ ] Add fixed Skill-to-CLI adapter guidance without dynamic prefix churn.
+- [x] Add fixed Skill-to-CLI adapter guidance without dynamic prefix churn.
 - [ ] Perform a severity review before commit; do not push.
 
 ## Journal v2

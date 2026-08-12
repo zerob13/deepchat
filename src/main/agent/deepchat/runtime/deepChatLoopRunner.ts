@@ -31,6 +31,7 @@ import type { ResolvedCommandShell } from '@shared/commandShell'
 import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
 import type { SessionPendingInputs } from '@/session/data/pendingInputs'
 import {
+  appendCliProgrammaticToolAdapterSection,
   resolveEffectiveActiveSkillNames
 } from '@/agent/deepchat/resources/systemPromptBuilder'
 import {
@@ -349,6 +350,16 @@ function getProviderOverflowRetryMaxTokens(maxTokens: number): number {
   return Math.max(1, Math.min(normalized, Math.floor(normalized / 2) || 1))
 }
 
+function projectSystemPrompt(
+  messages: readonly ChatMessage[],
+  systemPrompt: string
+): ChatMessage[] {
+  if (messages[0]?.role === 'system') {
+    return [{ ...messages[0], content: systemPrompt }, ...messages.slice(1)]
+  }
+  return [{ role: 'system', content: systemPrompt }, ...messages]
+}
+
 function isFirstProviderContextOverflowEvent(event: LLMCoreStreamEvent): boolean {
   return event.type === 'error' && isContextWindowErrorLike(event.error_message)
 }
@@ -662,6 +673,14 @@ export class DeepChatLoopRunner {
       }
     }
     const collectToolSurfaceShadow = observeToolSurfaceShadow && toolSurfaceMode === 'legacy'
+    const runPromptAssembly =
+      toolSurfaceMode === 'cli-programmatic'
+        ? appendCliProgrammaticToolAdapterSection(initialPromptAssembly)
+        : initialPromptAssembly
+    const runMessages =
+      runPromptAssembly === initialPromptAssembly
+        ? messages
+        : projectSystemPrompt(messages, runPromptAssembly.prompt)
     const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
       this.ports.providerSettings,
       state.providerId,
@@ -676,12 +695,12 @@ export class DeepChatLoopRunner {
       sessionId: toAppSessionId(sessionId),
       messageId,
       abortController,
-      messages,
+      messages: runMessages,
       streamState: createState(),
       resources: {
         toolDefinitions: tools,
         activeSkillNames: initialRunSkillNames,
-        promptAssembly: initialPromptAssembly,
+        promptAssembly: runPromptAssembly,
         commandShell,
         toolSurfaceMode
       },
@@ -788,11 +807,13 @@ export class DeepChatLoopRunner {
               getEffectiveRuntimeSkillNames(activeSkillNames),
               refreshedTools
             )
-            return typeof refreshed === 'string'
-              ? createOpaquePromptAssembly(refreshed)
-              : refreshed
+            const refreshedAssembly =
+              typeof refreshed === 'string' ? createOpaquePromptAssembly(refreshed) : refreshed
+            return toolSurfaceMode === 'cli-programmatic'
+              ? appendCliProgrammaticToolAdapterSection(refreshedAssembly)
+              : refreshedAssembly
           }
-          return await this.ports.promptAssembly
+          const refreshedAssembly = await this.ports.promptAssembly
             .createBasePromptAssembler(resourceInstance)
             .assembleWithProvenance({
               sessionId: toAppSessionId(sessionId),
@@ -801,6 +822,9 @@ export class DeepChatLoopRunner {
               activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames),
               commandShell: loopRun.resources.commandShell
             })
+          return toolSurfaceMode === 'cli-programmatic'
+            ? appendCliProgrammaticToolAdapterSection(refreshedAssembly)
+            : refreshedAssembly
         },
         toolExecution: this.ports.toolExecutionPort,
         toolResults: this.ports.toolResultPort,
@@ -929,7 +953,8 @@ export class DeepChatLoopRunner {
                   providerId: state.providerId,
                   modelId: requestModelId,
                   requestMessages,
-                  baseSystemPrompt,
+                  baseSystemPrompt:
+                    toolSurfaceMode === 'cli-programmatic' ? undefined : baseSystemPrompt,
                   contextLength: requestModelConfig.contextLength,
                   requestedMaxTokens,
                   tools,

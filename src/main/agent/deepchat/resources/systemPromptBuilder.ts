@@ -15,7 +15,11 @@ import {
   buildRuntimeCapabilitiesPrompt,
   buildSystemEnvPromptAssembly
 } from './systemEnvPromptBuilder'
-import { assemblePromptSections, createPromptAssemblySection } from './promptAssembly'
+import {
+  appendPromptAssemblySection,
+  assemblePromptSections,
+  createPromptAssemblySection
+} from './promptAssembly'
 import type { SkillSettingsPort } from '@/skill/settings'
 import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
@@ -59,6 +63,26 @@ export interface SystemPromptBuildInput {
   orchestrationPolicy?: OrchestrationPolicy
   resourceInstance: DeepChatAgentInstance
   commandShell: ResolvedCommandShell
+}
+
+const CLI_PROGRAMMATIC_TOOL_ADAPTER_PROMPT = [
+  '## Programmatic Tool Access',
+  'If an instruction or active Skill names a tool that is not in your native tool list, do not call that name directly.',
+  'Use `exec` to run `deepchat tool search` or `deepchat tool describe`, then copy the returned invocation into `deepchat tool call` or bounded `deepchat tool batch`. Pass call and batch JSON through the `exec` stdin field; never use shell redirection.',
+  "Discovery does not authorize a target. Only targets in this Run's frozen Programmatic Surface can be requested; every child call independently rechecks current authority and policy before execution. Do not invoke native tools through the Programmatic Tool CLI."
+].join('\n')
+
+export function appendCliProgrammaticToolAdapterSection(
+  assembly: DeepChatPromptAssembly
+): DeepChatPromptAssembly {
+  return appendPromptAssemblySection(
+    assembly,
+    createPromptAssemblySection({
+      kind: 'tooling',
+      sourceRef: 'runtime:cli-programmatic-tool-adapter',
+      content: CLI_PROGRAMMATIC_TOOL_ADAPTER_PROMPT
+    })
+  )
 }
 
 type PackageJsonManifest = {
