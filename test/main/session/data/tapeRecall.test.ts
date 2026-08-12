@@ -2114,7 +2114,13 @@ describe('SessionTape recall', () => {
             effectiveContent: 'must-not-enter-linked-reads',
             builderVersion: 'test-builder',
             renderedManifestHash: fixtureHash,
-            scriptInventoryHash: fixtureHash
+            scriptInventoryHash: fixtureHash,
+            executionPackage: {
+              files: [],
+              executables: [],
+              runtimePolicy: { python: 'auto', node: 'auto' },
+              environmentBindingId: null
+            }
           }
         ])
         const visibleEntry = table.appendEvent({

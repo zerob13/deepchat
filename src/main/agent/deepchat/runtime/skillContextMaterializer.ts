@@ -90,6 +90,17 @@ function requireId(value: string, field: string): string {
   return value
 }
 
+function cloneAndFreeze<T>(value: T): T {
+  const clone = structuredClone(value)
+  const visit = (candidate: unknown): void => {
+    if (!candidate || typeof candidate !== 'object' || Object.isFrozen(candidate)) return
+    for (const nested of Object.values(candidate)) visit(nested)
+    Object.freeze(candidate)
+  }
+  visit(clone)
+  return clone
+}
+
 function assertResolution(
   resolution: EffectiveSkillContentResolution,
   agentId: string,
@@ -274,14 +285,14 @@ export class SkillContextMaterializer {
       effectiveContent: resolution.effectiveContent,
       builderVersion: resolution.builderVersion,
       renderedManifestHash: resolution.renderedManifestHash,
-      scriptInventoryHash: resolution.scriptInventoryHash
+      scriptInventoryHash: resolution.scriptInventoryHash,
+      executionPackage: resolution.executionPackage
     }))
     validateTapeSkillMaterializationBatch(inputs)
     const items = inputs.map((materializationInput, index) => {
-      Object.freeze(materializationInput)
       return Object.freeze({
         scope: ordered[index].scope,
-        materializationInput
+        materializationInput: cloneAndFreeze(materializationInput)
       })
     })
     const prepared = Object.freeze({ sessionId, agentId, items: Object.freeze(items) })

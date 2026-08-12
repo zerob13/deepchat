@@ -203,7 +203,13 @@ describe('DeepChatMemoryIngestionProjectionTable', () => {
             effectiveContent: 'must-not-enter-memory',
             builderVersion: 'test-builder',
             renderedManifestHash: fixtureHash,
-            scriptInventoryHash: fixtureHash
+            scriptInventoryHash: fixtureHash,
+            executionPackage: {
+              files: [],
+              executables: [],
+              runtimePolicy: { python: 'auto', node: 'auto' },
+              environmentBindingId: null
+            }
           }
         ])
 

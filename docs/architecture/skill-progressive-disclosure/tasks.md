@@ -104,6 +104,12 @@
 
 ## Final Validation
 
+- [ ] Extend canonical materializations with bounded private `scripts/` execution packages and
+      non-secret environment revision bindings.
+- [ ] Execute `skill_run` only from an exact execution-bound package ref and fail closed on package,
+      environment, extraction, or hash drift.
+- [ ] Revalidate the exact schema-6 request authority after rate/retry waits and immediately before
+      every physical Provider attempt.
 - [ ] Run format, i18n, lint, Node/web type checks, main/renderer tests, and build.
 - [ ] Review generated provider and ACP registry output.
 - [ ] Review the complete `dev...HEAD` diff by severity and fix every material finding.

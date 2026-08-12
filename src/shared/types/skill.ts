@@ -16,7 +16,17 @@ import type {
 export const SKILL_ARCHIVE_MAX_INPUT_BYTES = 200 * 1024 * 1024
 export const SKILL_NAME_MAX_LENGTH = 255
 export const SKILL_EFFECTIVE_CONTENT_MAX_BYTES = 512 * 1024
+export const SKILL_EFFECTIVE_CONTENT_MAX_BATCH_BYTES = 2 * 1024 * 1024
 export const SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES = SKILL_EFFECTIVE_CONTENT_MAX_BYTES + 256 * 1024
+export const SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES = 512 * 1024
+export const SKILL_EXECUTION_PACKAGE_MAX_FILES = 256
+export const SKILL_EXECUTION_PACKAGE_MAX_BYTES = 4 * 1024 * 1024
+export const SKILL_EXECUTION_PACKAGE_MAX_DIRECTORIES = 256
+export const SKILL_EXECUTION_PACKAGE_MAX_DEPTH = 16
+export const SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES = 4096
+export const SKILL_EXECUTION_PACKAGE_MAX_BATCH_BYTES = 16 * 1024 * 1024
+export const SKILL_EXECUTION_PACKAGE_MAX_ENCODED_BYTES = 7 * 1024 * 1024
+export const SKILL_EXECUTION_PACKAGE_MAX_BATCH_ENCODED_BYTES = 28 * 1024 * 1024
 
 /**
  * Skill metadata extracted from SKILL.md frontmatter.
@@ -64,6 +74,27 @@ export interface EffectiveSkillContentIdentity {
   skillName: string
 }
 
+/** Main-process-only source snapshot used to materialize a bounded Skill execution package. */
+export interface EffectiveSkillExecutionPackage {
+  files: Array<{
+    relativePath: string
+    base64: string
+    byteCount: number
+    sha256: string
+  }>
+  executables: Array<{
+    relativePath: string
+    runtime: SkillScriptRuntime
+    enabled: boolean
+  }>
+  runtimePolicy: SkillRuntimePolicy
+  /**
+   * Opaque version of an external environment binding. Secret values remain in Skill settings and
+   * execution must fail closed when the current binding no longer matches this identifier.
+   */
+  environmentBindingId: string | null
+}
+
 /** Fresh canonical Skill content and evidence used by internal runtime materializers. */
 export interface EffectiveSkillContentResolution {
   identity: EffectiveSkillContentIdentity
@@ -71,6 +102,7 @@ export interface EffectiveSkillContentResolution {
   builderVersion: string
   renderedManifestHash: string
   scriptInventoryHash: string
+  executionPackage: EffectiveSkillExecutionPackage
 }
 
 export type SkillRuntimePreference = 'auto' | 'system' | 'builtin'

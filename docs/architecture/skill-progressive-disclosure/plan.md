@@ -80,7 +80,16 @@ Add explicit filters for materialization facts in effective views, transcript re
 fallback search, Agent Tape tools, Memory ingestion/recall, and fork merge. Compatibility tests
 exercise the previous reader semantics and prove unknown `context` rows are non-effective.
 Architecture tests prevent broad Tape capability imports and sidecar persistence. This Foundation
-commit adds no production writer call site and therefore cannot expose a partial activation path.
+slice originally adds no production writer call site; later Activate slices connect the narrow
+capabilities only after their fail-closed projection paths exist.
+
+Extend the same canonical `skill/materialized` fact, rather than adding another fact or sidecar,
+with a private execution package for script-bearing Skills. Snapshot the bounded regular-file
+`scripts/` tree sequentially with no-follow identity checks and portable canonical paths. Store
+decoded and encoded size evidence and hashes; strictly recompute them on every read or reuse. Keep
+extension environment values out of Tape and bind them by an opaque management-state revision that
+future dispatch must verify through a narrow capability. Do not claim package-backed execution
+until `skill_run` consumes the exact execution-bound ref.
 
 ## Safe Runtime Skill View
 

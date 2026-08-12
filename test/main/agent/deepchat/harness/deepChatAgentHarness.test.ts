@@ -1333,7 +1333,13 @@ describe('DeepChatAgentHarness', () => {
               effectiveContent: loaded.content,
               builderVersion: 'effective-skill-content-v1',
               renderedManifestHash: 'a'.repeat(64),
-              scriptInventoryHash: 'b'.repeat(64)
+              scriptInventoryHash: 'b'.repeat(64),
+              executionPackage: {
+                files: [],
+                executables: [],
+                runtimePolicy: { python: 'auto' as const, node: 'auto' as const },
+                environmentBindingId: null
+              }
             }
           })
         )

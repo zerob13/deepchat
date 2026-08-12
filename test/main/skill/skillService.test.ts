@@ -76,6 +76,23 @@ vi.mock('fs', () => {
     realpath: vi.fn(async (...args: unknown[]) => fsMock.realpathSync(...(args as [string]))),
     readFile: vi.fn(async (...args: unknown[]) => fsMock.readFileSync(...(args as [string]))),
     readdir: vi.fn(async (...args: unknown[]) => fsMock.readdirSync(...(args as [string]))),
+    opendir: vi.fn(async (target: string) => ({
+      async *[Symbol.asyncIterator]() {
+        for (const entry of fsMock.readdirSync(target) ?? []) yield entry
+      }
+    })),
+    open: vi.fn(async (target: string) => {
+      const bytes = Buffer.from(fsMock.readFileSync(target) ?? '')
+      return {
+        stat: vi.fn(async () => fsMock.statSync(target)),
+        read: vi.fn(async (buffer: Buffer, offset: number, length: number, position: number) => {
+          const bytesRead = Math.max(0, Math.min(length, bytes.byteLength - position))
+          if (bytesRead > 0) bytes.copy(buffer, offset, position, position + bytesRead)
+          return { bytesRead, buffer }
+        }),
+        close: vi.fn(async () => undefined)
+      }
+    }),
     access: vi.fn(async (target: string) => {
       if (!fsMock.existsSync(target)) {
         throw Object.assign(new Error(`ENOENT: no such file or directory, access '${target}'`), {
@@ -87,6 +104,7 @@ vi.mock('fs', () => {
   return {
     default: {
       ...fsMock,
+      constants: { O_RDONLY: 0, O_NOFOLLOW: 0 },
       promises
     }
   }
@@ -339,14 +357,28 @@ describe('SkillService', () => {
     ;(fs.mkdtempSync as Mock).mockReturnValue('/mock/temp/deepchat-skill-123')
     ;(fs.readdirSync as Mock).mockReturnValue([])
     ;(fs.statSync as Mock).mockReturnValue({
+      dev: 1,
+      ino: 1,
+      nlink: 1,
       isFile: () => true,
-      size: 1024,
-      mtimeMs: Date.now()
+      size: 0,
+      mtimeMs: 1,
+      ctimeMs: 1
     })
     ;(fs.realpathSync as Mock).mockImplementation((target: string) => target)
-    ;(fs.lstatSync as Mock).mockReturnValue({
-      isDirectory: () => true,
-      isSymbolicLink: () => false
+    ;(fs.lstatSync as Mock).mockImplementation((target: string) => {
+      const isFile = target.endsWith('/SKILL.md')
+      return {
+        dev: 1,
+        ino: isFile ? 1 : 2,
+        nlink: 1,
+        size: 0,
+        mtimeMs: 1,
+        ctimeMs: 1,
+        isDirectory: () => !isFile,
+        isFile: () => isFile,
+        isSymbolicLink: () => false
+      }
     })
     ;(fs.promises.stat as Mock).mockImplementation(async (...args: unknown[]) =>
       (fs.statSync as Mock)(...args)
@@ -1074,9 +1106,33 @@ describe('SkillService', () => {
 
   describe('loadSkillContent', () => {
     beforeEach(() => {
+      const manifestBytes = Buffer.from('test content')
       mockSkillTree(['test-skill'])
       ;(fs.existsSync as Mock).mockImplementation((target: string) => !target.includes('/scripts'))
-      ;(fs.readFileSync as Mock).mockReturnValue('test content')
+      ;(fs.readFileSync as Mock).mockReturnValue(manifestBytes)
+      ;(fs.statSync as Mock).mockReturnValue({
+        dev: 1,
+        ino: 1,
+        nlink: 1,
+        isFile: () => true,
+        size: manifestBytes.byteLength,
+        mtimeMs: 1,
+        ctimeMs: 1
+      })
+      ;(fs.lstatSync as Mock).mockImplementation((target: string) => {
+        const isFile = target.endsWith('/SKILL.md')
+        return {
+          dev: 1,
+          ino: isFile ? 1 : 2,
+          nlink: 1,
+          size: isFile ? manifestBytes.byteLength : 0,
+          mtimeMs: 1,
+          ctimeMs: 1,
+          isDirectory: () => !isFile,
+          isFile: () => isFile,
+          isSymbolicLink: () => false
+        }
+      })
       ;(matter as unknown as Mock).mockReturnValue({
         data: { name: 'test-skill', description: 'Test' },
         content: '# Skill content here'
@@ -1161,6 +1217,34 @@ describe('SkillService', () => {
       expect((await skillService.loadSkillContent('test-skill'))?.content).toBe(cached?.content)
     })
 
+    it('rejects a fresh manifest that grows after its bounded file handle is opened', async () => {
+      await skillService.discoverSkills()
+      const manifestBytes = Buffer.from('test content')
+      const stats = {
+        dev: 1,
+        ino: 1,
+        nlink: 1,
+        isFile: () => true,
+        size: manifestBytes.byteLength,
+        mtimeMs: 1,
+        ctimeMs: 1
+      }
+      ;(fs.promises.open as Mock).mockResolvedValueOnce({
+        stat: vi.fn().mockResolvedValue(stats),
+        read: vi.fn(async (buffer: Buffer, offset: number, length: number, position: number) => {
+          if (position === manifestBytes.byteLength) return { bytesRead: 1, buffer }
+          const bytesRead = Math.min(length, manifestBytes.byteLength - position)
+          manifestBytes.copy(buffer, offset, position, position + bytesRead)
+          return { bytesRead, buffer }
+        }),
+        close: vi.fn().mockResolvedValue(undefined)
+      })
+
+      await expect(
+        skillService.resolveFreshEffectiveSkillContents('deepchat', ['test-skill'])
+      ).rejects.toThrow('execution evidence file exceeds')
+    })
+
     it('returns deterministic canonical identity and evidence hashes', async () => {
       await skillService.discoverSkills()
 
@@ -1173,28 +1257,141 @@ describe('SkillService', () => {
 
       expect(second).toEqual(first)
       expect(first.identity).toMatchObject({ agentId: 'deepchat', skillName: 'test-skill' })
-      expect(first.builderVersion).toBe('skill-effective-content-v1')
+      expect(first.builderVersion).toBe('skill-effective-content-v2')
       expect(first.renderedManifestHash).toMatch(/^[a-f0-9]{64}$/)
       expect(first.scriptInventoryHash).toMatch(/^[a-f0-9]{64}$/)
+      expect(first.executionPackage).toEqual({
+        files: [],
+        executables: [],
+        runtimePolicy: { python: 'auto', node: 'auto' },
+        environmentBindingId: null
+      })
+      expect(fs.promises.opendir).not.toHaveBeenCalled()
+    })
+
+    it('snapshots executable bytes and supporting files only for fresh materialization', async () => {
+      const skillRoot = `${DEFAULT_SKILLS_DIR}/test-skill`
+      const directories = new Set([
+        DEFAULT_SKILLS_DIR,
+        skillRoot,
+        `${skillRoot}/scripts`,
+        `${skillRoot}/scripts/templates`
+      ])
+      const contents = new Map([
+        [`${skillRoot}/SKILL.md`, Buffer.from('---\nname: test-skill\n---\nUse the script')],
+        [`${skillRoot}/scripts/run.js`, Buffer.from("require('./templates/config.json')")],
+        [`${skillRoot}/scripts/templates/config.json`, Buffer.from('{"value":1}')]
+      ])
+      const entries = new Map<string, ReturnType<typeof createDirEntry>[] | any[]>([
+        [DEFAULT_SKILLS_DIR, [createDirEntry('test-skill')]],
+        [skillRoot, [createFileEntry('SKILL.md'), createDirEntry('scripts')]],
+        [`${skillRoot}/scripts`, [createFileEntry('run.js'), createDirEntry('templates')]],
+        [`${skillRoot}/scripts/templates`, [createFileEntry('config.json')]]
+      ])
+      const inode = (target: string) =>
+        Array.from(target).reduce((total, char) => total + char.charCodeAt(0), 1)
+      const stats = (target: string) => {
+        const isDirectory = directories.has(target)
+        const bytes = contents.get(target) ?? Buffer.alloc(0)
+        return {
+          dev: 1,
+          ino: inode(target),
+          nlink: 1,
+          size: bytes.byteLength,
+          mtimeMs: 1,
+          isDirectory: () => isDirectory,
+          isFile: () => !isDirectory && contents.has(target),
+          isSymbolicLink: () => false
+        }
+      }
+      ;(fs.existsSync as Mock).mockReturnValue(true)
+      ;(fs.readdirSync as Mock).mockImplementation((target: string) => entries.get(target) ?? [])
+      ;(fs.lstatSync as Mock).mockImplementation(stats)
+      ;(fs.statSync as Mock).mockImplementation(stats)
+      ;(fs.readFileSync as Mock).mockImplementation((target: string) => contents.get(target))
+      ;(matter as unknown as Mock).mockReturnValue({
+        content: 'Use the script',
+        data: { name: 'test-skill', description: 'Test' }
+      })
+
+      await skillService.discoverSkills()
+      await skillService.saveSkillExtension('test-skill', {
+        version: 1,
+        env: { API_TOKEN: 'must-not-enter-tape' },
+        runtimePolicy: { python: 'auto', node: 'builtin' },
+        scriptOverrides: {}
+      })
+      ;(fs.promises.opendir as Mock).mockClear()
+      ;(fs.promises.readdir as Mock).mockClear()
+      const [first] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
+        'test-skill'
+      ])
+
+      expect(first.executionPackage.files.map(({ relativePath }) => relativePath)).toEqual([
+        'scripts/run.js',
+        'scripts/templates/config.json'
+      ])
+      expect(first.executionPackage.executables).toEqual([
+        { relativePath: 'scripts/run.js', runtime: 'node', enabled: true }
+      ])
+      expect(first.executionPackage.runtimePolicy.node).toBe('builtin')
+      expect(first.executionPackage.environmentBindingId).toBe(
+        '12345678-1234-1234-1234-123456789abc'
+      )
+      expect(first.executionPackage).not.toHaveProperty('env')
+      expect(JSON.stringify(first.executionPackage)).not.toContain('API_TOKEN')
+      expect(first.executionPackage.files[0].base64).toBe(
+        contents.get(`${skillRoot}/scripts/run.js`)!.toString('base64')
+      )
+      expect(fs.promises.opendir).toHaveBeenCalledTimes(2)
+      expect(fs.promises.readdir).not.toHaveBeenCalledWith(
+        `${skillRoot}/scripts`,
+        expect.anything()
+      )
+
+      contents.set(`${skillRoot}/scripts/run.js`, Buffer.from("console.log('new version')"))
+      const [second] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
+        'test-skill'
+      ])
+      expect(second.executionPackage.files[0].sha256).not.toBe(
+        first.executionPackage.files[0].sha256
+      )
+    })
+
+    it('bounds scripts directory enumeration before reading package candidates', async () => {
+      await skillService.discoverSkills()
+      const scriptsDir = `${DEFAULT_SKILLS_DIR}/test-skill/scripts`
+      ;(fs.existsSync as Mock).mockReturnValue(true)
+      ;(fs.readdirSync as Mock).mockImplementation((target: string) =>
+        target === scriptsDir
+          ? Array.from({ length: 513 }, (_, index) => createFileEntry(`file-${index}.txt`))
+          : []
+      )
+
+      await expect(
+        skillService.resolveFreshEffectiveSkillContents('deepchat', ['test-skill'])
+      ).rejects.toThrow('execution package directory contains too many entries')
     })
 
     it('fails clearly when a selected visible skill disappeared from disk', async () => {
       await skillService.discoverSkills()
-      ;(fs.promises.stat as Mock).mockRejectedValueOnce(
+      ;(fs.promises.lstat as Mock).mockRejectedValueOnce(
         Object.assign(new Error('ENOENT: missing manifest'), { code: 'ENOENT' })
       )
 
       await expect(
         skillService.resolveFreshEffectiveSkillContents('deepchat', ['test-skill'])
-      ).rejects.toThrow('Failed to resolve requested Skill "test-skill": ENOENT: missing manifest')
+      ).rejects.toThrow(
+        'Failed to resolve requested Skill "test-skill": manifest could not be loaded safely'
+      )
     })
 
     it('fails closed when the catalog changes during a fresh resolve', async () => {
       await skillService.discoverSkills()
-      const stat = fs.promises.stat as Mock
-      stat.mockImplementationOnce(async (...args: Parameters<typeof fs.promises.stat>) => {
+      const lstat = fs.promises.lstat as Mock
+      lstat.mockImplementationOnce(async (...args: Parameters<typeof fs.promises.lstat>) => {
         await skillService.discoverSkills('deepchat')
-        return (fs.statSync as Mock)(...args)
+        return (fs.lstatSync as Mock)(...args)
       })
 
       await expect(
@@ -2842,6 +3039,55 @@ describe('SkillService', () => {
       expect(loaded).toEqual(extension)
     })
 
+    it('versions only environment changes in the opaque runtime binding', async () => {
+      ;(randomUUID as Mock)
+        .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+        .mockReturnValueOnce('22222222-2222-4222-8222-222222222222')
+      const original = {
+        version: 1 as const,
+        env: { B: 'two', A: 'one' },
+        runtimePolicy: { python: 'builtin' as const, node: 'system' as const },
+        scriptOverrides: {}
+      }
+      await skillService.saveSkillExtension('test-skill', original)
+      const firstBinding = (configSettings.get('skills.managementState') as any).agents.deepchat
+        .skills['test-skill'].runtimeBindingId
+
+      await skillService.saveSkillExtension('test-skill', {
+        ...original,
+        env: { A: 'one', B: 'two' },
+        runtimePolicy: { python: 'system', node: 'builtin' },
+        scriptOverrides: { 'scripts/run.py': { enabled: false } }
+      })
+      const policyOnlyBinding = (configSettings.get('skills.managementState') as any).agents
+        .deepchat.skills['test-skill'].runtimeBindingId
+
+      await skillService.saveSkillWithExtension('test-skill', 'new content', {
+        ...original,
+        env: { A: 'one', B: 'two' }
+      })
+      const contentOnlyBinding = (configSettings.get('skills.managementState') as any).agents
+        .deepchat.skills['test-skill'].runtimeBindingId
+
+      await skillService.saveSkillExtension('test-skill', {
+        ...original,
+        env: { A: 'changed', B: 'two' }
+      })
+      const changedBinding = (configSettings.get('skills.managementState') as any).agents.deepchat
+        .skills['test-skill'].runtimeBindingId
+
+      expect(firstBinding).toBe('11111111-1111-4111-8111-111111111111')
+      expect(policyOnlyBinding).toBe(firstBinding)
+      expect(contentOnlyBinding).toBe(firstBinding)
+      expect(changedBinding).toBe('22222222-2222-4222-8222-222222222222')
+
+      await skillService.saveSkillExtension('test-skill', { ...original, env: {} })
+      expect(
+        (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
+          .runtimeBindingId
+      ).toBeUndefined()
+    })
+
     it('migrates legacy sidecar runtime config into database state', async () => {
       const extension = {
         version: 1 as const,
@@ -2866,6 +3112,14 @@ describe('SkillService', () => {
         (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
           .extension
       ).toEqual(extension)
+      const bindingId = (configSettings.get('skills.managementState') as any).agents.deepchat
+        .skills['test-skill'].runtimeBindingId
+      expect(bindingId).toBe('12345678-1234-1234-1234-123456789abc')
+      expect(await skillService.getSkillExtension('test-skill')).toEqual(extension)
+      expect(
+        (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
+          .runtimeBindingId
+      ).toBe(bindingId)
       expect(fs.rmSync).toHaveBeenCalledWith(sidecarPath, { force: true })
     })
 

@@ -237,20 +237,46 @@ physical kind is non-effective by default even when an older reader opens the Ta
 also exclude it explicitly from every ordinary projection.
 
 The canonical payload includes a schema version, Skill identity, effective content, effective
-content hash, builder version, Agent/source identity, rendered manifest hash, and script inventory
-hash. The provenance key includes the Session scope, Agent/source identity, Skill identity, content
-hash, and builder version.
+content hash, builder version, Agent/source identity, rendered manifest hash, script inventory
+hash, and a bounded execution package. The provenance key hashes the Session scope and complete
+canonical payload so every current or future evidence field participates in identity.
+
+The execution package snapshots only the existing `skill_run` authority namespace: regular files
+under the Skill's `scripts/` subtree. This includes sibling modules, templates, schemas, and other
+supporting assets colocated with executable scripts without silently archiving the rest of the Skill
+root. Hidden paths, symlinks, hard links, special files, non-portable paths, case-fold collisions,
+and files outside `scripts/` fail closed. Canonical decoded and encoded byte limits cover each file,
+package, and execution batch before persistence. Fresh resolution is sequential and directory
+enumeration is bounded so rejected input cannot first allocate an unbounded candidate batch. One
+bounded traversal is the source for both executable inventory and packaged files; stable file-handle
+reads never allocate beyond the size already admitted.
+
+Runtime policy is part of the package. Raw extension environment values may contain credentials and
+must never enter Tape. The package records only an opaque environment binding revision; the later
+execution path may resolve values through a narrow main-process capability only when the current
+revision matches exactly, and otherwise fails closed. This is the same intentional limited external
+boundary used for other secret-bearing configuration: Tape proves the binding selected for an
+execution without becoming another credential store. The opaque revision changes only when the
+sanitized environment key/value map changes; content, policy, and script-override edits preserve it.
+Legacy environment state without a revision receives a one-time management-state migration before
+it can be materialized.
 
 Existing provenance-key idempotency is insufficient by itself. Every reuse parses and validates
 the canonical payload, schema, Skill identity, builder version, content hash, and full canonical
 payload equality. Lookup, payload validation, Tape-incarnation validation, and append execute in
 one synchronous SQLite transaction. A mismatch is corruption and fails closed.
 
-One effective body is limited to 512 KiB UTF-8. One execution is limited to 64 complete Skill bodies
-and 2 MiB aggregate effective content. Oversized input fails before provider dispatch and is never
-truncated or replaced with an offload marker. Facts are Session-scoped, may be reused by equal
-identity and content in that Session, and expire with Session Tape reset or deletion. They do not
-receive independent garbage collection.
+One effective body is limited to 512 KiB UTF-8. One execution is limited to 64 complete Skill
+bodies and 2 MiB aggregate effective content. An execution package is limited to 256 files, 256
+directories, 16 directory levels, 512 KiB per file, 4 MiB decoded and 7 MiB canonical encoded; one
+execution is limited to 16 MiB decoded and 28 MiB encoded package data. Oversized input fails before
+provider dispatch and is never truncated or replaced with an offload marker. Facts are
+Session-scoped, may be reused by equal identity and content in that Session, and expire with Session
+Tape reset or deletion. They do not receive independent garbage collection.
+
+Schema 2 is the first shipped form of `skill/materialized`; schema 1 existed only on the unmerged
+feature branch and is intentionally rejected rather than being reinterpreted with an invented empty
+execution package.
 
 ### Two-Phase Admission
 
@@ -349,10 +375,10 @@ Materialization facts are behavioral context, not transcript. They are excluded 
 
 Fork merge must not copy materialization facts by entry count. A downgraded reader may copy an
 unknown `context` row during fork merge, but the row remains non-effective and unusable because its
-Session/Tape/source identity does not validate in the destination. Supporting files are recorded
-only through normal `skill_view(file_path)` tool results. Logs and default audit views expose only
-Skill name, hash, byte count, schema, and builder version; full content requires an explicit
-controlled inspection path.
+Session/Tape/source identity does not validate in the destination. Files outside the private,
+bounded `scripts/` execution package are recorded only through normal `skill_view(file_path)` tool
+results. Logs and default audit views expose only Skill name, hash, byte count, schema, and builder
+version; full content and package bytes require an explicit controlled inspection path.
 
 ## Context Governance
 

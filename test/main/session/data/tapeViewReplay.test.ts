@@ -264,7 +264,13 @@ describe('SessionTape view and replay', () => {
         effectiveContent,
         builderVersion: 'skill-effective-v1',
         renderedManifestHash: hashSkillEffectiveContent('manifest'),
-        scriptInventoryHash: hashSkillEffectiveContent('scripts')
+        scriptInventoryHash: hashSkillEffectiveContent('scripts'),
+        executionPackage: {
+          files: [],
+          executables: [],
+          runtimePolicy: { python: 'auto', node: 'auto' },
+          environmentBindingId: null
+        }
       }
     ])[0]
     table.getBySession.mockClear()

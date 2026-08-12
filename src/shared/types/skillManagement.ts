@@ -43,6 +43,8 @@ export interface SkillManagementItem {
   canonicalPath: string
   disabled: boolean
   extension: SkillExtensionConfig
+  /** Opaque revision for external runtime environment values; never contains those values. */
+  runtimeBindingId?: string
   source: SkillSource
   agentLinks?: Record<string, AgentLinkInfo>
 }

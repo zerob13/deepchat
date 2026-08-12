@@ -46,8 +46,19 @@ import {
   SkillLinkedFile,
   EffectiveSkillContentIdentity,
   EffectiveSkillContentResolution,
+  EffectiveSkillExecutionPackage,
   SKILL_ARCHIVE_MAX_INPUT_BYTES,
+  SKILL_EFFECTIVE_CONTENT_MAX_BATCH_BYTES,
   SKILL_EFFECTIVE_CONTENT_MAX_BYTES,
+  SKILL_EXECUTION_PACKAGE_MAX_BATCH_BYTES,
+  SKILL_EXECUTION_PACKAGE_MAX_BATCH_ENCODED_BYTES,
+  SKILL_EXECUTION_PACKAGE_MAX_BYTES,
+  SKILL_EXECUTION_PACKAGE_MAX_DEPTH,
+  SKILL_EXECUTION_PACKAGE_MAX_DIRECTORIES,
+  SKILL_EXECUTION_PACKAGE_MAX_FILES,
+  SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES,
+  SKILL_EXECUTION_PACKAGE_MAX_ENCODED_BYTES,
+  SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES,
   SKILL_NAME_MAX_LENGTH
 } from '@shared/types/skill'
 import type {
@@ -72,7 +83,7 @@ import {
 
 const execFileAsync = promisify(execFile)
 const READ_ONLY_BUNDLED_SKILL_NAMES = new Set(['deepchat-cli'])
-const EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION = 'skill-effective-content-v1'
+const EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION = 'skill-effective-content-v2'
 
 /**
  * Skill system configuration constants
@@ -206,6 +217,17 @@ interface EffectiveSkillContentBuild {
     enabled: boolean
     description?: string
   }>
+  executionPackage?: EffectiveSkillExecutionPackage
+}
+
+interface SkillRuntimeSnapshot {
+  extension: SkillExtensionConfig
+  environmentBindingId: string | null
+}
+
+interface SkillExecutionPackageSnapshot {
+  scripts: SkillScriptDescriptor[]
+  executionPackage: EffectiveSkillExecutionPackage
 }
 
 interface SkillDirectoryInstallContext {
@@ -224,6 +246,33 @@ function createDefaultSkillExtensionConfig(): SkillExtensionConfig {
     runtimePolicy: { ...DEFAULT_RUNTIME_POLICY },
     scriptOverrides: {}
   }
+}
+
+function sameSkillRuntimeEnvironment(
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>
+): boolean {
+  const entries = (value: Readonly<Record<string, string>>) =>
+    Object.entries(value).sort(([leftKey], [rightKey]) =>
+      Buffer.compare(Buffer.from(leftKey, 'utf8'), Buffer.from(rightKey, 'utf8'))
+    )
+  return JSON.stringify(entries(left)) === JSON.stringify(entries(right))
+}
+
+function sameSkillExtension(left: SkillExtensionConfig, right: SkillExtensionConfig): boolean {
+  const canonical = (value: SkillExtensionConfig) => ({
+    version: value.version,
+    env: Object.entries(value.env).sort(([leftKey], [rightKey]) =>
+      Buffer.compare(Buffer.from(leftKey, 'utf8'), Buffer.from(rightKey, 'utf8'))
+    ),
+    runtimePolicy: value.runtimePolicy,
+    scriptOverrides: Object.entries(value.scriptOverrides)
+      .sort(([leftKey], [rightKey]) =>
+        Buffer.compare(Buffer.from(leftKey, 'utf8'), Buffer.from(rightKey, 'utf8'))
+      )
+      .map(([key, override]) => [key, override] as const)
+  })
+  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right))
 }
 
 function sanitizeSkillExtensionConfig(input: unknown): SkillExtensionConfig {
@@ -1158,6 +1207,11 @@ export class SkillService implements SkillServicePort {
           : path.join(this.getAgentSkillsRoot(agentId), name),
       disabled: raw.disabled === true || raw.deepchat?.disabled === true,
       extension: sanitizeSkillExtensionConfig(raw.extension),
+      runtimeBindingId:
+        typeof raw.runtimeBindingId === 'string' &&
+        /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(raw.runtimeBindingId)
+          ? raw.runtimeBindingId
+          : undefined,
       source: this.sanitizeSkillSource(raw.source),
       agentLinks:
         raw.agentLinks && typeof raw.agentLinks === 'object'
@@ -1350,6 +1404,58 @@ export class SkillService implements SkillServicePort {
     return nextItem
   }
 
+  private nextSkillRuntimeBindingId(
+    item: SkillManagementItem,
+    extension: SkillExtensionConfig
+  ): string | undefined {
+    if (Object.keys(extension.env).length === 0) return undefined
+    return item.runtimeBindingId && sameSkillRuntimeEnvironment(item.extension.env, extension.env)
+      ? item.runtimeBindingId
+      : randomUUID()
+  }
+
+  private async captureSkillRuntimeSnapshot(
+    agentId: string,
+    name: string
+  ): Promise<SkillRuntimeSnapshot> {
+    const extension = await this.getSkillExtensionForAgent(agentId, name)
+    if (Object.keys(extension.env).length === 0) {
+      return { extension, environmentBindingId: null }
+    }
+
+    const state = this.getStoredManagementState()
+    const agentState = this.getAgentManagementState(state, agentId)
+    const item = agentState.skills[name]
+    if (!item || !sameSkillRuntimeEnvironment(item.extension.env, extension.env)) {
+      throw new Error(`Skill "${name}" runtime environment changed while it was being resolved`)
+    }
+    if (!item.runtimeBindingId) {
+      // One-time migration for pre-binding extension state. New writes always assign this eagerly.
+      item.runtimeBindingId = randomUUID()
+      this.saveManagementState(state)
+    }
+    return { extension, environmentBindingId: item.runtimeBindingId }
+  }
+
+  private assertCurrentSkillRuntimeSnapshot(
+    agentId: string,
+    name: string,
+    expected: SkillRuntimeSnapshot
+  ): void {
+    const item = this.getStoredManagementState().agents[agentId]?.skills[name]
+    const extension = item
+      ? sanitizeSkillExtensionConfig(item.extension)
+      : createDefaultSkillExtensionConfig()
+    const environmentBindingId =
+      Object.keys(extension.env).length > 0 ? (item?.runtimeBindingId ?? null) : null
+    if (
+      environmentBindingId !== expected.environmentBindingId ||
+      !sameSkillExtension(extension, expected.extension)
+    ) {
+      throw new Error(`Skill "${name}" runtime configuration changed while it was being resolved`)
+    }
+  }
+
   private getAgentManagementState(
     state: SkillManagementState,
     agentId: string
@@ -1515,7 +1621,8 @@ export class SkillService implements SkillServicePort {
 
   private async buildEffectiveSkillContent(
     agentId: string,
-    metadata: SkillMetadata
+    metadata: SkillMetadata,
+    freshEvidence: boolean = false
   ): Promise<EffectiveSkillContentBuild | null> {
     const confinedSkillPath = await this.resolvePhysicalSkillPath(metadata.skillRoot, metadata.path)
     if (!confinedSkillPath) {
@@ -1527,17 +1634,27 @@ export class SkillService implements SkillServicePort {
       return null
     }
 
-    const stats = await fs.promises.stat(confinedSkillPath)
-    if (stats.size > SKILL_CONFIG.SKILL_FILE_MAX_SIZE) {
-      throw new Error(
-        `[SkillService] Skill file too large: ${stats.size} bytes (max: ${SKILL_CONFIG.SKILL_FILE_MAX_SIZE})`
-      )
+    let rawContent: string
+    if (freshEvidence) {
+      rawContent = (
+        await this.readStableRegularFile(confinedSkillPath, SKILL_CONFIG.SKILL_FILE_MAX_SIZE)
+      ).toString('utf8')
+    } else {
+      const stats = await fs.promises.stat(confinedSkillPath)
+      if (stats.size > SKILL_CONFIG.SKILL_FILE_MAX_SIZE) {
+        throw new Error(
+          `[SkillService] Skill file too large: ${stats.size} bytes (max: ${SKILL_CONFIG.SKILL_FILE_MAX_SIZE})`
+        )
+      }
+      rawContent = await fs.promises.readFile(confinedSkillPath, 'utf-8')
     }
-
-    const rawContent = await fs.promises.readFile(confinedSkillPath, 'utf-8')
     const { content } = matter(rawContent)
     const renderedContent = this.replacePathVariables(content, metadata, agentId).trim()
-    const scripts = await this.listSkillScriptsFromMetadata(agentId, metadata)
+    const freshPackage = freshEvidence
+      ? await this.snapshotSkillExecutionPackage(agentId, metadata)
+      : undefined
+    const scripts =
+      freshPackage?.scripts ?? (await this.listSkillScriptsFromMetadata(agentId, metadata))
     const runtimeInstructions = this.buildRuntimeInstructions(metadata, scripts)
     const scriptInventory = scripts.map(({ relativePath, runtime, enabled, description }) => ({
       relativePath,
@@ -1551,7 +1668,8 @@ export class SkillService implements SkillServicePort {
         content: [renderedContent, runtimeInstructions].filter(Boolean).join('\n\n')
       },
       renderedManifest: renderedContent,
-      scriptInventory
+      scriptInventory,
+      executionPackage: freshPackage?.executionPackage
     }
   }
 
@@ -1563,48 +1681,353 @@ export class SkillService implements SkillServicePort {
     await this.ensureAgentCatalogDiscovered(normalizedAgentId)
     const metadataCache = this.getMetadataCacheForAgent(normalizedAgentId)
 
-    return await Promise.all(
-      names.map(async (name) => {
-        const metadata = metadataCache.get(name)
-        if (!metadata || !this.isSkillVisible(metadata, normalizedAgentId)) {
-          throw new Error(`[SkillService] Requested visible Skill "${name}" is no longer available`)
-        }
+    const resolutions: EffectiveSkillContentResolution[] = []
+    let effectiveContentBytes = 0
+    let packageBytes = 0
+    let encodedPackageBytes = 0
+    for (const name of names) {
+      const metadata = metadataCache.get(name)
+      if (!metadata || !this.isSkillVisible(metadata, normalizedAgentId)) {
+        throw new Error(`[SkillService] Requested visible Skill "${name}" is no longer available`)
+      }
 
-        try {
-          // Intentionally bypass contentCache: materialization must describe current disk state.
-          const build = await this.buildEffectiveSkillContent(normalizedAgentId, metadata)
-          if (!build) {
-            throw new Error('manifest could not be loaded safely')
-          }
-          if (
-            metadataCache.get(name) !== metadata ||
-            !this.isSkillVisible(metadata, normalizedAgentId)
-          ) {
-            throw new Error('catalog changed while effective content was being resolved')
-          }
-          if (
-            Buffer.byteLength(build.skillContent.content, 'utf8') >
-            SKILL_EFFECTIVE_CONTENT_MAX_BYTES
-          ) {
-            throw new Error(`effective content exceeds ${SKILL_EFFECTIVE_CONTENT_MAX_BYTES} bytes`)
-          }
-          return {
-            identity: this.buildSkillContentIdentity(normalizedAgentId, metadata),
-            effectiveContent: build.skillContent.content,
-            builderVersion: EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION,
-            renderedManifestHash: this.hashSkillEvidence(build.renderedManifest),
-            scriptInventoryHash: this.hashSkillEvidence(JSON.stringify(build.scriptInventory))
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          throw new Error(`[SkillService] Failed to resolve requested Skill "${name}": ${message}`)
+      try {
+        // Intentionally bypass contentCache: materialization must describe current disk state.
+        const build = await this.buildEffectiveSkillContent(normalizedAgentId, metadata, true)
+        if (!build) {
+          throw new Error('manifest could not be loaded safely')
         }
-      })
-    )
+        if (
+          metadataCache.get(name) !== metadata ||
+          !this.isSkillVisible(metadata, normalizedAgentId)
+        ) {
+          throw new Error('catalog changed while effective content was being resolved')
+        }
+        if (
+          Buffer.byteLength(build.skillContent.content, 'utf8') > SKILL_EFFECTIVE_CONTENT_MAX_BYTES
+        ) {
+          throw new Error(`effective content exceeds ${SKILL_EFFECTIVE_CONTENT_MAX_BYTES} bytes`)
+        }
+        const executionPackage = build.executionPackage
+        if (!executionPackage) {
+          throw new Error('fresh execution package was not constructed')
+        }
+        if (
+          metadataCache.get(name) !== metadata ||
+          !this.isSkillVisible(metadata, normalizedAgentId)
+        ) {
+          throw new Error('catalog changed while execution package was being snapshotted')
+        }
+        const resolution = {
+          identity: this.buildSkillContentIdentity(normalizedAgentId, metadata),
+          effectiveContent: build.skillContent.content,
+          builderVersion: EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION,
+          renderedManifestHash: this.hashSkillEvidence(build.renderedManifest),
+          scriptInventoryHash: this.hashSkillEvidence(JSON.stringify(build.scriptInventory)),
+          executionPackage
+        }
+        effectiveContentBytes += Buffer.byteLength(resolution.effectiveContent, 'utf8')
+        packageBytes += resolution.executionPackage.files.reduce(
+          (total, file) => total + file.byteCount,
+          0
+        )
+        const currentEncodedBytes = Buffer.byteLength(
+          JSON.stringify(resolution.executionPackage),
+          'utf8'
+        )
+        encodedPackageBytes += currentEncodedBytes
+        if (effectiveContentBytes > SKILL_EFFECTIVE_CONTENT_MAX_BATCH_BYTES) {
+          throw new Error('effective content batch exceeds 2 MiB')
+        }
+        if (packageBytes > SKILL_EXECUTION_PACKAGE_MAX_BATCH_BYTES) {
+          throw new Error('execution package batch exceeds 16 MiB')
+        }
+        if (currentEncodedBytes > SKILL_EXECUTION_PACKAGE_MAX_ENCODED_BYTES) {
+          throw new Error('execution package encoding exceeds 7 MiB')
+        }
+        if (encodedPackageBytes > SKILL_EXECUTION_PACKAGE_MAX_BATCH_ENCODED_BYTES) {
+          throw new Error('execution package encoded batch exceeds 28 MiB')
+        }
+        resolutions.push(resolution)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new Error(`[SkillService] Failed to resolve requested Skill "${name}": ${message}`)
+      }
+    }
+    return resolutions
   }
 
   private hashSkillEvidence(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex')
+  }
+
+  private async readStableRegularFile(filePath: string, maxBytes: number): Promise<Buffer> {
+    const before = await fs.promises.lstat(filePath)
+    if (
+      before.isSymbolicLink() ||
+      !before.isFile() ||
+      (before.nlink !== undefined && before.nlink !== 1)
+    ) {
+      throw new Error(`execution evidence rejects unsafe file: ${filePath}`)
+    }
+    if (before.size > maxBytes) {
+      throw new Error(`execution evidence file exceeds ${maxBytes} bytes: ${filePath}`)
+    }
+    const handle = await fs.promises.open(
+      filePath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+    )
+    try {
+      const opened = await handle.stat()
+      if (
+        !opened.isFile() ||
+        opened.dev !== before.dev ||
+        opened.ino !== before.ino ||
+        (opened.nlink !== undefined && opened.nlink !== 1) ||
+        !Number.isSafeInteger(opened.size) ||
+        opened.size < 0 ||
+        opened.size > maxBytes
+      ) {
+        throw new Error(`execution evidence file changed before read: ${filePath}`)
+      }
+      const bytes = Buffer.allocUnsafe(opened.size)
+      let offset = 0
+      while (offset < opened.size) {
+        const { bytesRead } = await handle.read(bytes, offset, opened.size - offset, offset)
+        if (bytesRead === 0) {
+          throw new Error(`execution evidence file changed during read: ${filePath}`)
+        }
+        offset += bytesRead
+      }
+      const trailing = Buffer.allocUnsafe(1)
+      if ((await handle.read(trailing, 0, 1, opened.size)).bytesRead !== 0) {
+        throw new Error(`execution evidence file exceeds ${maxBytes} bytes: ${filePath}`)
+      }
+      const after = await handle.stat()
+      if (
+        after.dev !== opened.dev ||
+        after.ino !== opened.ino ||
+        after.size !== opened.size ||
+        after.mtimeMs !== opened.mtimeMs ||
+        after.ctimeMs !== opened.ctimeMs ||
+        bytes.byteLength !== opened.size
+      ) {
+        throw new Error(`execution evidence file changed during read: ${filePath}`)
+      }
+      const finalPath = await fs.promises.lstat(filePath)
+      if (
+        finalPath.isSymbolicLink() ||
+        !finalPath.isFile() ||
+        finalPath.dev !== opened.dev ||
+        finalPath.ino !== opened.ino ||
+        finalPath.size !== opened.size ||
+        finalPath.mtimeMs !== opened.mtimeMs ||
+        finalPath.ctimeMs !== opened.ctimeMs
+      ) {
+        throw new Error(`execution evidence path changed during read: ${filePath}`)
+      }
+      return bytes
+    } finally {
+      await handle.close()
+    }
+  }
+
+  private assertPortableExecutionPackagePath(relativePath: string): void {
+    if (
+      !relativePath.startsWith('scripts/') ||
+      relativePath !== relativePath.normalize('NFC') ||
+      relativePath.includes('\\') ||
+      relativePath.includes('\0') ||
+      Buffer.byteLength(relativePath, 'utf8') > SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES
+    ) {
+      throw new Error(`execution package contains a non-portable path: ${relativePath}`)
+    }
+    const windowsDevices = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+    for (const segment of relativePath.split('/')) {
+      const deviceStem = segment.split('.')[0].replace(/[ .]+$/g, '')
+      if (
+        !segment ||
+        segment === '.' ||
+        segment === '..' ||
+        segment.startsWith('.') ||
+        segment.endsWith('.') ||
+        segment.endsWith(' ') ||
+        /[<>:"|?*]/.test(segment) ||
+        Array.from(segment).some((character) => character.charCodeAt(0) <= 0x1f) ||
+        windowsDevices.test(deviceStem)
+      ) {
+        throw new Error(`execution package contains a non-portable path: ${relativePath}`)
+      }
+    }
+  }
+
+  private async snapshotSkillExecutionPackage(
+    agentId: string,
+    metadata: SkillMetadata
+  ): Promise<SkillExecutionPackageSnapshot> {
+    const empty = (): SkillExecutionPackageSnapshot => {
+      const extension = createDefaultSkillExtensionConfig()
+      return {
+        scripts: [],
+        executionPackage: {
+          files: [],
+          executables: [],
+          runtimePolicy: extension.runtimePolicy,
+          environmentBindingId: null
+        }
+      }
+    }
+    const scriptsDir = path.join(metadata.skillRoot, 'scripts')
+    if (!(await this.pathExists(scriptsDir))) return empty()
+    const confinedScriptsDir = await this.resolvePhysicalSkillPath(metadata.skillRoot, scriptsDir)
+    if (!confinedScriptsDir) {
+      throw new Error('execution package scripts directory could not be loaded safely')
+    }
+
+    const files: EffectiveSkillContentResolution['executionPackage']['files'] = []
+    const discoveredScripts: SkillScriptDescriptor[] = []
+    let packageBytes = 0
+    let directoryCount = 0
+    const visit = async (directory: string, prefix = '', depth = 0): Promise<void> => {
+      if (depth > SKILL_EXECUTION_PACKAGE_MAX_DEPTH) {
+        throw new Error(
+          `execution package exceeds ${SKILL_EXECUTION_PACKAGE_MAX_DEPTH} directory levels`
+        )
+      }
+      directoryCount += 1
+      if (directoryCount > SKILL_EXECUTION_PACKAGE_MAX_DIRECTORIES) {
+        throw new Error(
+          `execution package exceeds ${SKILL_EXECUTION_PACKAGE_MAX_DIRECTORIES} directories`
+        )
+      }
+      const directoryBefore = await fs.promises.lstat(directory)
+      if (directoryBefore.isSymbolicLink() || !directoryBefore.isDirectory()) {
+        throw new Error(`execution package rejects unsafe directory: ${prefix || '.'}`)
+      }
+      const entries: fs.Dirent[] = []
+      const openedDirectory = await fs.promises.opendir(directory)
+      for await (const entry of openedDirectory) {
+        if (
+          entries.length >=
+          SKILL_EXECUTION_PACKAGE_MAX_FILES + SKILL_EXECUTION_PACKAGE_MAX_DIRECTORIES
+        ) {
+          throw new Error('execution package directory contains too many entries')
+        }
+        entries.push(entry)
+      }
+      entries.sort((left, right) =>
+        Buffer.compare(Buffer.from(left.name, 'utf8'), Buffer.from(right.name, 'utf8'))
+      )
+      for (const entry of entries) {
+        if (!entry.name || entry.name !== entry.name.normalize('NFC')) {
+          throw new Error('execution package contains a non-NFC path')
+        }
+        if (entry.name.startsWith('.')) {
+          throw new Error(`execution package rejects hidden path: ${entry.name}`)
+        }
+        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+        this.assertPortableExecutionPackagePath(relativePath)
+        const absolutePath = path.join(directory, entry.name)
+        const before = await fs.promises.lstat(absolutePath)
+        if (before.isSymbolicLink())
+          throw new Error(`execution package rejects symlink: ${relativePath}`)
+        if (before.isDirectory()) {
+          await visit(absolutePath, relativePath, depth + 1)
+          continue
+        }
+        if (!before.isFile()) {
+          throw new Error(`execution package rejects special file: ${relativePath}`)
+        }
+        if (files.length >= SKILL_EXECUTION_PACKAGE_MAX_FILES) {
+          throw new Error(`execution package exceeds ${SKILL_EXECUTION_PACKAGE_MAX_FILES} files`)
+        }
+        const bytes = await this.readStableRegularFile(
+          absolutePath,
+          SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES
+        )
+        packageBytes += bytes.byteLength
+        if (packageBytes > SKILL_EXECUTION_PACKAGE_MAX_BYTES) {
+          throw new Error('execution package exceeds 4 MiB')
+        }
+        files.push({
+          relativePath,
+          base64: bytes.toString('base64'),
+          byteCount: bytes.byteLength,
+          sha256: createHash('sha256').update(bytes).digest('hex')
+        })
+        const runtime = SUPPORTED_SCRIPT_EXTENSIONS[path.extname(entry.name).toLowerCase()]
+        if (runtime) {
+          discoveredScripts.push({
+            name: entry.name,
+            relativePath,
+            absolutePath,
+            runtime,
+            enabled: true
+          })
+        }
+      }
+      const directoryAfter = await fs.promises.lstat(directory)
+      if (
+        !directoryAfter.isDirectory() ||
+        directoryAfter.isSymbolicLink() ||
+        directoryAfter.dev !== directoryBefore.dev ||
+        directoryAfter.ino !== directoryBefore.ino ||
+        directoryAfter.mtimeMs !== directoryBefore.mtimeMs ||
+        directoryAfter.ctimeMs !== directoryBefore.ctimeMs
+      ) {
+        throw new Error(`execution package directory changed during read: ${prefix || '.'}`)
+      }
+    }
+    await visit(confinedScriptsDir, 'scripts')
+    if (discoveredScripts.length === 0) return empty()
+
+    files.sort((left, right) =>
+      Buffer.compare(
+        Buffer.from(left.relativePath, 'utf8'),
+        Buffer.from(right.relativePath, 'utf8')
+      )
+    )
+    const folded = new Set<string>()
+    for (const file of files) {
+      const key = file.relativePath.toLowerCase()
+      if (folded.has(key)) throw new Error(`execution package path collision: ${file.relativePath}`)
+      folded.add(key)
+    }
+    const runtimeSnapshot = await this.captureSkillRuntimeSnapshot(agentId, metadata.name)
+    const scripts = discoveredScripts
+      .map((script) => {
+        const legacyRelativePath = script.relativePath.replaceAll('/', path.sep)
+        const override =
+          runtimeSnapshot.extension.scriptOverrides[script.relativePath] ??
+          runtimeSnapshot.extension.scriptOverrides[legacyRelativePath] ??
+          {}
+        return {
+          ...script,
+          enabled: override.enabled ?? true,
+          description: override.description
+        }
+      })
+      .sort((left, right) =>
+        Buffer.compare(
+          Buffer.from(left.relativePath, 'utf8'),
+          Buffer.from(right.relativePath, 'utf8')
+        )
+      )
+    this.assertCurrentSkillRuntimeSnapshot(agentId, metadata.name, runtimeSnapshot)
+    const executionPackage: EffectiveSkillExecutionPackage = {
+      files,
+      executables: scripts.map(({ relativePath, runtime, enabled }) => ({
+        relativePath,
+        runtime,
+        enabled
+      })),
+      runtimePolicy: runtimeSnapshot.extension.runtimePolicy,
+      environmentBindingId: runtimeSnapshot.environmentBindingId
+    }
+    return {
+      scripts,
+      executionPackage
+    }
   }
 
   async viewSkillForAgent(
@@ -3925,7 +4348,8 @@ export class SkillService implements SkillServicePort {
           (item) => ({
             ...item,
             canonicalPath: metadata.skillRoot,
-            extension: sanitized
+            extension: sanitized,
+            runtimeBindingId: this.nextSkillRuntimeBindingId(item, sanitized)
           }),
           normalizedAgentId
         )
@@ -4129,7 +4553,8 @@ export class SkillService implements SkillServicePort {
       const config = sanitizeSkillExtensionConfig(JSON.parse(content))
       this.updateSkillManagementItem(name, (item) => ({
         ...item,
-        extension: config
+        extension: config,
+        runtimeBindingId: this.nextSkillRuntimeBindingId(item, config)
       }))
       try {
         fs.rmSync(sidecarPath, { force: true })
@@ -4180,12 +4605,14 @@ export class SkillService implements SkillServicePort {
       this.assertAgentScopeActive(normalizedAgentId)
       if (!metadataCache.has(name)) throw new Error(`Skill "${name}" not found`)
       const metadata = metadataCache.get(name)
+      const sanitized = sanitizeSkillExtensionConfig(config)
       this.updateSkillManagementItem(
         name,
         (item) => ({
           ...item,
           canonicalPath: metadata?.skillRoot ?? item.canonicalPath,
-          extension: sanitizeSkillExtensionConfig(config)
+          extension: sanitized,
+          runtimeBindingId: this.nextSkillRuntimeBindingId(item, sanitized)
         }),
         normalizedAgentId
       )
@@ -4234,7 +4661,11 @@ export class SkillService implements SkillServicePort {
     const descriptors = (
       await this.collectScriptDescriptors(confinedScriptsDir, metadata.skillRoot)
     ).map((script) => {
-      const override = extension.scriptOverrides[script.relativePath] ?? {}
+      const legacyRelativePath = script.relativePath.replaceAll('/', path.sep)
+      const override =
+        extension.scriptOverrides[script.relativePath] ??
+        extension.scriptOverrides[legacyRelativePath] ??
+        {}
       return {
         ...script,
         enabled: override.enabled ?? true,
@@ -4242,7 +4673,12 @@ export class SkillService implements SkillServicePort {
       }
     })
 
-    descriptors.sort((left, right) => left.relativePath.localeCompare(right.relativePath))
+    descriptors.sort((left, right) =>
+      Buffer.compare(
+        Buffer.from(left.relativePath, 'utf8'),
+        Buffer.from(right.relativePath, 'utf8')
+      )
+    )
     return descriptors
   }
 
@@ -4853,9 +5289,14 @@ export class SkillService implements SkillServicePort {
         continue
       }
 
+      const relativePath = path
+        .relative(skillRoot, confinedFilePath)
+        .split(path.sep)
+        .join('/')
+        .normalize('NFC')
       acc.push({
         name: entry.name,
-        relativePath: path.relative(skillRoot, confinedFilePath),
+        relativePath,
         absolutePath: confinedFilePath,
         runtime,
         enabled: true

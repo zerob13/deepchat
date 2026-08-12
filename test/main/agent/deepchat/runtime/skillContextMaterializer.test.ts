@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import {
   SkillContextMaterializer,
   type PreparedSkillContextBatch
@@ -23,7 +24,13 @@ function resolution(name: string, content = `body:${name}`, agentId = 'agent-1')
     effectiveContent: content,
     builderVersion: 'builder-1',
     renderedManifestHash: HASH,
-    scriptInventoryHash: HASH
+    scriptInventoryHash: HASH,
+    executionPackage: {
+      files: [],
+      executables: [],
+      runtimePolicy: { python: 'auto' as const, node: 'auto' as const },
+      environmentBindingId: null
+    }
   }
 }
 
@@ -126,6 +133,42 @@ describe('SkillContextMaterializer', () => {
     ).rejects.toThrow(/exceeds 64 bodies/)
     expect(skills.resolveFreshEffectiveSkillContents).not.toHaveBeenCalled()
     expect(tape.materializeSkillContexts).not.toHaveBeenCalled()
+  })
+
+  it('clones and deeply freezes prepared execution evidence', async () => {
+    const { service, skills } = fixture()
+    const fresh = resolution('one')
+    const bytes = Buffer.from('console.log(1)')
+    fresh.executionPackage.files.push({
+      relativePath: 'scripts/run.js',
+      base64: bytes.toString('base64'),
+      byteCount: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex')
+    })
+    fresh.executionPackage.executables.push({
+      relativePath: 'scripts/run.js',
+      runtime: 'node',
+      enabled: true
+    })
+    skills.resolveFreshEffectiveSkillContents.mockResolvedValueOnce([fresh])
+
+    const prepared = await service.prepareFresh({
+      sessionId: 'session-1',
+      agentId: 'agent-1',
+      messageSkillNames: ['one'],
+      sessionSkillNames: []
+    })
+    fresh.executionPackage.files[0].base64 = Buffer.from('changed').toString('base64')
+
+    expect(prepared.items[0].materializationInput.executionPackage.files[0].base64).toBe(
+      bytes.toString('base64')
+    )
+    expect(Object.isFrozen(prepared.items[0].materializationInput.executionPackage.files)).toBe(
+      true
+    )
+    expect(
+      Object.isFrozen(prepared.items[0].materializationInput.executionPackage.files[0])
+    ).toBe(true)
   })
 
   it('requires the triggering message source fact before writing', async () => {

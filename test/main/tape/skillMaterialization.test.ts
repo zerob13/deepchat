@@ -8,6 +8,11 @@ import {
   validateTapeSkillMaterializationPayload,
   type TapeSkillMaterializationInput
 } from '@/tape/domain/skillMaterialization'
+import {
+  SKILL_EXECUTION_PACKAGE_MAX_BYTES,
+  SKILL_EXECUTION_PACKAGE_MAX_FILES,
+  SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES
+} from '@shared/types/skill'
 import { TapeSkillMaterializationService } from '@/tape/application/skillMaterializationService'
 import { TapeFactService } from '@/tape/application/factService'
 import { ExecutionJournalService } from '@/tape/application/executionJournalService'
@@ -15,6 +20,41 @@ import type { DeepChatTapeAppendInput, DeepChatTapeEntryRow } from '@/tape/domai
 import type { ExecutionOperationIdentity } from '@/tape/domain/executionJournal'
 
 const hash = hashSkillEffectiveContent('fixture')
+const emptyExecutionPackage = {
+  files: [],
+  executables: [],
+  runtimePolicy: { python: 'auto' as const, node: 'auto' as const },
+  environmentBindingId: null
+}
+
+function executionPackage(path = 'scripts/run.js', content = 'console.log(1)') {
+  const bytes = Buffer.from(content)
+  return {
+    files: [
+      {
+        relativePath: path,
+        base64: bytes.toString('base64'),
+        byteCount: bytes.byteLength,
+        sha256: hashSkillEffectiveContent(content)
+      }
+    ],
+    executables: [{ relativePath: path, runtime: 'node' as const, enabled: true }],
+    runtimePolicy: { python: 'auto' as const, node: 'builtin' as const },
+    environmentBindingId: '12345678-1234-4234-9234-123456789abc'
+  }
+}
+
+function executionFiles(count: number, bytesPerFile: number) {
+  const content = 'x'.repeat(bytesPerFile)
+  const base64 = Buffer.from(content).toString('base64')
+  const sha256 = hashSkillEffectiveContent(content)
+  return Array.from({ length: count }, (_, index) => ({
+    relativePath: `scripts/support/${index.toString().padStart(3, '0')}.bin`,
+    base64,
+    byteCount: bytesPerFile,
+    sha256
+  }))
+}
 
 function input(content = 'hello 🌍'): TapeSkillMaterializationInput {
   return {
@@ -27,7 +67,8 @@ function input(content = 'hello 🌍'): TapeSkillMaterializationInput {
     effectiveContent: content,
     builderVersion: 'builder-1',
     renderedManifestHash: hash,
-    scriptInventoryHash: hash
+    scriptInventoryHash: hash,
+    executionPackage: emptyExecutionPackage
   }
 }
 
@@ -208,6 +249,167 @@ describe('Tape Skill materialization domain', () => {
     ).toThrow('supported Skill source type')
   })
 
+  it('round-trips a canonical execution package and identities package byte changes', () => {
+    const first = createTapeSkillMaterializationPayload({
+      ...input(),
+      executionPackage: executionPackage()
+    })
+    const changed = createTapeSkillMaterializationPayload({
+      ...input(),
+      executionPackage: executionPackage('scripts/run.js', 'console.log(2)')
+    })
+
+    expect(validateTapeSkillMaterializationPayload(structuredClone(first))).toEqual(first)
+    expect(first.executionPackage.byteCount).toBe(Buffer.byteLength('console.log(1)'))
+    expect(first.executionPackage.packageHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(changed.executionPackage.packageHash).not.toBe(first.executionPackage.packageHash)
+    expect(buildTapeSkillMaterializationPayloadHash(changed)).not.toBe(
+      buildTapeSkillMaterializationPayloadHash(first)
+    )
+    expect(() =>
+      createTapeSkillMaterializationPayload({
+        ...input(),
+        executionPackage: {
+          ...emptyExecutionPackage,
+          env: { SECRET: 'must-not-enter-tape' }
+        } as any
+      })
+    ).toThrow('unknown or missing')
+  })
+
+  it.each([
+    ['base64', (file: any) => (file.base64 = '***')],
+    ['hash', (file: any) => (file.sha256 = hash)],
+    ['traversal', (file: any) => (file.relativePath = '../run.js')],
+    ['drive path', (file: any) => (file.relativePath = 'C:/run.js')],
+    ['outside scripts', (file: any) => (file.relativePath = 'assets/run.js')],
+    ['hidden path', (file: any) => (file.relativePath = 'scripts/.env')],
+    ['device path', (file: any) => (file.relativePath = 'scripts/CON.js')],
+    ['alternate stream', (file: any) => (file.relativePath = 'scripts/run.js:secret')],
+    ['forbidden character', (file: any) => (file.relativePath = 'scripts/run?.js')],
+    ['control character', (file: any) => (file.relativePath = 'scripts/run\u0001.js')],
+    ['spaced device path', (file: any) => (file.relativePath = 'scripts/CON .js')]
+  ])('rejects invalid execution package %s', (_name, mutate) => {
+    const payload = createTapeSkillMaterializationPayload({
+      ...input(),
+      executionPackage: executionPackage()
+    }) as any
+    mutate(payload.executionPackage.files[0])
+    expect(() => validateTapeSkillMaterializationPayload(payload)).toThrow()
+  })
+
+  it('rejects package order, duplicate, and case-fold collisions', () => {
+    const packageSource = executionPackage()
+    packageSource.executables = []
+    const second = { ...packageSource.files[0], relativePath: 'A.js' }
+    for (const files of [
+      [packageSource.files[0], { ...second, relativePath: 'scripts/A.js' }],
+      [packageSource.files[0], packageSource.files[0]],
+      [
+        { ...packageSource.files[0], relativePath: 'scripts/A.js' },
+        { ...second, relativePath: 'scripts/a.js' }
+      ]
+    ]) {
+      expect(() =>
+        createTapeSkillMaterializationPayload({
+          ...input(),
+          executionPackage: { ...packageSource, files }
+        })
+      ).toThrow()
+    }
+  })
+
+  it('rejects case-fold collisions between parent directories', () => {
+    const packageSource = executionPackage()
+    packageSource.executables = []
+    const files = [
+      { ...packageSource.files[0], relativePath: 'scripts/A/one.js' },
+      { ...packageSource.files[0], relativePath: 'scripts/a/two.js' }
+    ]
+    expect(() =>
+      createTapeSkillMaterializationPayload({
+        ...input(),
+        executionPackage: { ...packageSource, files }
+      })
+    ).toThrow('collide on a supported platform')
+  })
+
+  it('bounds package files, decoded bytes, environment binding, and aggregate batch bytes', () => {
+    expect(() =>
+      createTapeSkillMaterializationPayload({
+        ...input(),
+        executionPackage: {
+          ...emptyExecutionPackage,
+          files: [
+            {
+              relativePath: 'scripts/huge.bin',
+              base64: 'A'.repeat(SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES * 4),
+              byteCount: 0,
+              sha256: hash
+            }
+          ]
+        }
+      })
+    ).toThrow('invalid base64')
+    expect(() =>
+      createTapeSkillMaterializationPayload({
+        ...input(),
+        executionPackage: {
+          ...emptyExecutionPackage,
+          files: executionFiles(1, SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES + 1)
+        }
+      })
+    ).toThrow('file byte count')
+    expect(() =>
+      createTapeSkillMaterializationPayload({
+        ...input(),
+        executionPackage: {
+          ...emptyExecutionPackage,
+          files: executionFiles(SKILL_EXECUTION_PACKAGE_MAX_FILES + 1, 0)
+        }
+      })
+    ).toThrow('file count')
+    expect(() =>
+      createTapeSkillMaterializationPayload({
+        ...input(),
+        executionPackage: {
+          ...emptyExecutionPackage,
+          files: executionFiles(
+            SKILL_EXECUTION_PACKAGE_MAX_BYTES / SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES + 1,
+            SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES
+          )
+        }
+      })
+    ).toThrow('byte count')
+    expect(() =>
+      createTapeSkillMaterializationPayload({
+        ...input(),
+        executionPackage: {
+          ...emptyExecutionPackage,
+          environmentBindingId: 'not-a-binding'
+        }
+      })
+    ).toThrow('environment binding is invalid')
+
+    const fullPackage = {
+      ...emptyExecutionPackage,
+      files: executionFiles(
+        SKILL_EXECUTION_PACKAGE_MAX_BYTES / SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES,
+        SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES
+      )
+    }
+    expect(() =>
+      validateTapeSkillMaterializationBatch(
+        Array.from({ length: 5 }, (_, index) => ({
+          ...input(),
+          skillName: `skill-${index}`,
+          sourceId: `source-${index}`,
+          executionPackage: fullPackage
+        }))
+      )
+    ).toThrow('package batch exceeds 16 MiB')
+  })
+
   it('fails rather than truncating body, count, and aggregate overflow', () => {
     expect(() => createTapeSkillMaterializationPayload(input('x'.repeat(512 * 1024 + 1)))).toThrow(
       '512 KiB'
@@ -245,11 +447,15 @@ describe('Tape Skill materialization capability', () => {
     const changedScripts = service.materializeSkillContexts([
       { ...input(), scriptInventoryHash: hashSkillEffectiveContent('different scripts') }
     ])[0]
+    const changedPackage = service.materializeSkillContexts([
+      { ...input(), executionPackage: executionPackage() }
+    ])[0]
 
     expect(changedManifest.entryId).not.toBe(first.entryId)
     expect(changedScripts.entryId).not.toBe(first.entryId)
     expect(changedScripts.entryId).not.toBe(changedManifest.entryId)
-    expect(rows).toHaveLength(3)
+    expect(changedPackage.entryId).not.toBe(first.entryId)
+    expect(rows).toHaveLength(4)
   })
 
   it.each([

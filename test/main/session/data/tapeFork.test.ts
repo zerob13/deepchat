@@ -129,7 +129,13 @@ describe('SessionTape forks', () => {
         effectiveContent: 'must-not-merge',
         builderVersion: 'test-builder',
         renderedManifestHash: fixtureHash,
-        scriptInventoryHash: fixtureHash
+        scriptInventoryHash: fixtureHash,
+        executionPackage: {
+          files: [],
+          executables: [],
+          runtimePolicy: { python: 'auto', node: 'auto' },
+          environmentBindingId: null
+        }
       }
     ])
     service.appendForkMessageRecord(fork, createRecord({ id: 'message', sessionId: 'ignored' }))
