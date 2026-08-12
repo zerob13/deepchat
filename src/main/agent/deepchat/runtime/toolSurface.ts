@@ -1443,6 +1443,35 @@ function resolveShadowTrigger(
   return { virtualizationTriggered: false, triggerReason: 'none' }
 }
 
+export function computeToolSurfaceVirtualizationTrigger(input: {
+  readonly policy: ToolSurfaceShadowPolicy
+  readonly ceilingToolCount: number
+  readonly ceilingDefinitionTokens: number
+  readonly previouslyVirtualized?: boolean
+}): {
+  readonly virtualizationTriggered: boolean
+  readonly triggerReason: ToolSurfaceShadowTriggerReason
+} {
+  if (
+    !isValidShadowPolicy(input.policy) ||
+    !isNonNegativeInteger(input.ceilingToolCount) ||
+    !isNonNegativeInteger(input.ceilingDefinitionTokens)
+  ) {
+    throw new ToolSurfaceError(
+      'Tool Surface virtualization trigger input is invalid.',
+      'invalid_definition'
+    )
+  }
+  return Object.freeze(
+    resolveShadowTrigger(
+      input.policy,
+      input.ceilingToolCount,
+      input.ceilingDefinitionTokens,
+      input.previouslyVirtualized === true
+    )
+  )
+}
+
 function sortedUniqueKeys(keys: readonly string[]): string[] | null {
   if (keys.length > MAX_TOOL_SURFACE_SELECTION_HINTS) return null
   const unique = new Set<string>()

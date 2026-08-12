@@ -1,5 +1,6 @@
 import { types as nodeTypes } from 'node:util'
 import type { DeepChatToolProfileKind } from '@/agent/deepchat/instance/deepChatAgentInstance'
+import type { LoopRunToolSurfaceMode } from '@/agent/deepchat/loop/loopRun'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type {
   CanonicalToolCatalog,
@@ -12,6 +13,18 @@ const MAX_RECENT_TOOL_NAMES = 64
 const MAX_RECENT_TOOL_CALLS_INSPECTED = 256
 const MAX_RECENT_TOOL_NAME_CODE_UNITS = 1_024
 const MAX_RECENT_TOOL_NAME_BYTES = 1_024
+
+const TOOL_SURFACE_SELECTION_BOUNDS = Object.freeze({
+  maxInitialToolCount: 32,
+  maxInitialDefinitionTokens: 10_000,
+  activationReserveToolCount: 8,
+  activationReserveDefinitionTokens: 2_000,
+  maxActivationCandidatesPerBatch: 16,
+  maxActivationCandidateDefinitionTokensPerBatch: 2_000,
+  maxActivationBatchesPerRun: 8,
+  maxAppendedTargetsPerRun: 8,
+  toolSearchPromptTokens: 128
+})
 
 const CODE_CORE_TOOL_NAMES = Object.freeze([
   'deepchat_question',
@@ -33,6 +46,60 @@ export interface ToolSurfacePolicySelectionInputs {
   readonly recentHints: readonly ToolSurfaceDefinitionIdentity[]
 }
 
+export interface AutomaticToolSurfaceRunModeAssignment {
+  readonly mode: 'automatic'
+  /** A trusted rollout result backed by measured provider/model evidence, never an inference. */
+  readonly cliProgrammaticCapability: 'proven' | 'unproven'
+  /** Cross-Run hysteresis hint only. Current Run facts remain authoritative. */
+  readonly previouslyVirtualized?: boolean
+}
+
+export type ToolSurfaceRunModeAssignment =
+  | LoopRunToolSurfaceMode
+  | AutomaticToolSurfaceRunModeAssignment
+
+export function isAutomaticToolSurfaceRunModeAssignment(
+  assignment: ToolSurfaceRunModeAssignment
+): assignment is AutomaticToolSurfaceRunModeAssignment {
+  return (
+    typeof assignment === 'object' &&
+    assignment !== null &&
+    assignment.mode === 'automatic' &&
+    (assignment.cliProgrammaticCapability === 'proven' ||
+      assignment.cliProgrammaticCapability === 'unproven') &&
+    (assignment.previouslyVirtualized === undefined ||
+      typeof assignment.previouslyVirtualized === 'boolean')
+  )
+}
+
+export function selectAutomaticToolSurfaceRunMode(input: {
+  readonly virtualizationTriggered: boolean
+  readonly cliProgrammaticCapability: 'proven' | 'unproven'
+  readonly agentExecAvailable: boolean
+  readonly programmaticRunCeilingFits: boolean
+}): Exclude<LoopRunToolSurfaceMode, 'legacy'> {
+  if (!input.virtualizationTriggered) return 'full'
+  return input.cliProgrammaticCapability === 'proven' &&
+    input.agentExecAvailable &&
+    input.programmaticRunCeilingFits
+    ? 'cli-programmatic'
+    : 'native-activation'
+}
+
+export function createAutomaticToolSurfaceSelectionPolicy(
+  toolSearchDefinitionTokens: number
+): ToolSurfaceSelectionPolicy {
+  return Object.freeze({
+    policyVersion: 'automatic-adapter-v1',
+    enterToolCount: 40,
+    exitToolCount: 32,
+    enterEstimatedInputTokens: 12_000,
+    exitEstimatedInputTokens: 9_600,
+    ...TOOL_SURFACE_SELECTION_BOUNDS,
+    toolSearchDefinitionTokens
+  })
+}
+
 export function createExplicitNativeActivationPolicy(
   toolSearchDefinitionTokens: number
 ): ToolSurfaceSelectionPolicy {
@@ -42,16 +109,8 @@ export function createExplicitNativeActivationPolicy(
     exitToolCount: 0,
     enterEstimatedInputTokens: 1,
     exitEstimatedInputTokens: 0,
-    maxInitialToolCount: 32,
-    maxInitialDefinitionTokens: 10_000,
-    activationReserveToolCount: 8,
-    activationReserveDefinitionTokens: 2_000,
-    maxActivationCandidatesPerBatch: 16,
-    maxActivationCandidateDefinitionTokensPerBatch: 2_000,
-    maxActivationBatchesPerRun: 8,
-    maxAppendedTargetsPerRun: 8,
-    toolSearchDefinitionTokens,
-    toolSearchPromptTokens: 128
+    ...TOOL_SURFACE_SELECTION_BOUNDS,
+    toolSearchDefinitionTokens
   })
 }
 

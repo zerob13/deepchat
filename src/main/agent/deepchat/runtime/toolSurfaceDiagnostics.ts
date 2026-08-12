@@ -20,26 +20,14 @@ import {
 } from './toolSurface'
 import {
   collectRecentToolSurfaceNames,
+  createAutomaticToolSurfaceSelectionPolicy,
   prepareToolSurfacePolicySelectionInputs
 } from './toolSurfaceSelection'
 
 export const TOOL_SURFACE_SHADOW_DIAGNOSTICS_SCHEMA_VERSION = 1
 export const TOOL_SURFACE_P0A_SHADOW_POLICY: ToolSurfaceShadowPolicy = Object.freeze({
+  ...createAutomaticToolSurfaceSelectionPolicy(256),
   policyVersion: 'p0a-shadow-v2',
-  enterToolCount: 40,
-  exitToolCount: 32,
-  enterEstimatedInputTokens: 12_000,
-  exitEstimatedInputTokens: 9_600,
-  maxInitialToolCount: 32,
-  maxInitialDefinitionTokens: 10_000,
-  activationReserveToolCount: 8,
-  activationReserveDefinitionTokens: 2_000,
-  maxActivationCandidatesPerBatch: 16,
-  maxActivationCandidateDefinitionTokensPerBatch: 2_000,
-  maxActivationBatchesPerRun: 8,
-  maxAppendedTargetsPerRun: 8,
-  toolSearchDefinitionTokens: 256,
-  toolSearchPromptTokens: 128
 })
 
 const DEFAULT_SAMPLE_CAPACITY = 256

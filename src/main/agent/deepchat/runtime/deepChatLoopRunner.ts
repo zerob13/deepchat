@@ -69,6 +69,7 @@ import {
   resolveTapeViewManifestPolicy,
   type TapeViewContextSelection
 } from '@/tape/domain/viewManifest'
+import { isCanonicalAgentExecToolSurfaceEntry } from '@/tape/domain/toolSurfaceFacts'
 import type { DeepChatLoopTapePort } from '@/tape/ports/capabilities'
 import { buildExecutionContract } from '@/tape/domain/executionContract'
 import {
@@ -89,8 +90,12 @@ import type {
 } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import {
   collectRecentToolSurfaceNames,
+  createAutomaticToolSurfaceSelectionPolicy,
   createExplicitNativeActivationPolicy,
-  prepareToolSurfacePolicySelectionInputs
+  isAutomaticToolSurfaceRunModeAssignment,
+  prepareToolSurfacePolicySelectionInputs,
+  selectAutomaticToolSurfaceRunMode,
+  type ToolSurfaceRunModeAssignment
 } from '@/agent/deepchat/runtime/toolSurfaceSelection'
 import type {
   DeepChatEventPublisher,
@@ -139,10 +144,12 @@ import type { SessionScopeRegistry } from '@/agent/deepchat/instance/deepChatAge
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
 import {
   buildCanonicalToolCatalog,
+  computeToolSurfaceVirtualizationTrigger,
   createFullToolSurfaceRunController,
   createPolicySelectedToolSurfaceRun,
   FULL_TOOL_SURFACE_POLICY_VERSION,
   projectToolSurfaceTapeProvenance,
+  ToolSurfaceError,
   type ToolSurfaceRunController,
   type ToolSurfaceSnapshot
 } from './toolSurface'
@@ -217,15 +224,15 @@ type LoopRunLifecyclePort = Pick<
 
 export interface ToolSurfaceRunModePort {
   /**
-   * Internal rollout assignment. Returning `cli-programmatic` is an explicit assertion that the
-   * provider/model cohort is CLI-capable. Returning `native-activation` explicitly assigns that
-   * adapter; this port does not infer model capability. Absence keeps production on legacy behavior.
+   * Internal rollout assignment. An automatic assignment must carry measured provider/model CLI
+   * capability instead of inferring it from native function calling. Fixed non-legacy modes remain
+   * available for bounded canary cohorts and tests. Absence keeps production on legacy behavior.
    */
   resolve(input: {
     readonly sessionId: string
     readonly providerId: string
     readonly modelId: string
-  }): LoopRunToolSurfaceMode
+  }): ToolSurfaceRunModeAssignment
 }
 
 const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
@@ -673,21 +680,34 @@ export class DeepChatLoopRunner {
     resourceScope.assertCurrent()
     const initialRunSkillNames = getEffectiveRuntimeSkillNames()
     const initialToolProfileRevisionToken = resourceInstance.getToolProfileRevisionToken()
-    const toolSurfaceMode =
+    const toolSurfaceAssignment =
       this.ports.toolSurfaceRunMode?.resolve({
         sessionId,
         providerId: state.providerId,
         modelId: state.modelId
       }) ?? 'legacy'
+    const automaticToolSurfaceAssignment = isAutomaticToolSurfaceRunModeAssignment(
+      toolSurfaceAssignment
+    )
+      ? toolSurfaceAssignment
+      : null
+    const fixedToolSurfaceMode =
+      typeof toolSurfaceAssignment === 'string' ? toolSurfaceAssignment : null
     if (
-      toolSurfaceMode !== 'legacy' &&
-      toolSurfaceMode !== 'full' &&
-      toolSurfaceMode !== 'native-activation' &&
-      toolSurfaceMode !== 'cli-programmatic'
+      !automaticToolSurfaceAssignment &&
+      fixedToolSurfaceMode !== 'legacy' &&
+      fixedToolSurfaceMode !== 'full' &&
+      fixedToolSurfaceMode !== 'native-activation' &&
+      fixedToolSurfaceMode !== 'cli-programmatic'
     ) {
       throw new Error('Tool Surface assignment returned an unsupported Run mode.')
     }
-    if (toolSurfaceMode !== 'legacy' && !nativeToolSurfaceEligible) {
+    let toolSurfaceMode: LoopRunToolSurfaceMode = automaticToolSurfaceAssignment
+      ? nativeToolSurfaceEligible
+        ? 'full'
+        : 'legacy'
+      : (fixedToolSurfaceMode ?? 'legacy')
+    if (!automaticToolSurfaceAssignment && toolSurfaceMode !== 'legacy' && !nativeToolSurfaceEligible) {
       throw new Error(
         `${
           toolSurfaceMode === 'full'
@@ -716,7 +736,9 @@ export class DeepChatLoopRunner {
       if (!universe.complete || universe.mandatoryAdmissionBlocked) {
         throw new Error(
           `${
-            toolSurfaceMode === 'full'
+            automaticToolSurfaceAssignment
+              ? 'Automatic Tool Surface'
+              : toolSurfaceMode === 'full'
               ? 'Full Tool Surface'
               : toolSurfaceMode === 'native-activation'
                 ? 'Native Activation Tool Surface'
@@ -729,7 +751,102 @@ export class DeepChatLoopRunner {
         universe.definitions,
         taskContractContext
       )
-      if (toolSurfaceMode === 'full') {
+      if (automaticToolSurfaceAssignment) {
+        const toolSearchDefinition = buildToolSearchDefinition()
+        const automaticPolicy = createAutomaticToolSurfaceSelectionPolicy(
+          buildCanonicalToolCatalog([toolSearchDefinition]).definitionTokens
+        )
+        const ceilingCatalog = buildCanonicalToolCatalog(ceilingDefinitions)
+        const trigger = computeToolSurfaceVirtualizationTrigger({
+          policy: automaticPolicy,
+          ceilingToolCount: ceilingCatalog.entries.length,
+          ceilingDefinitionTokens: ceilingCatalog.definitionTokens,
+          previouslyVirtualized: automaticToolSurfaceAssignment.previouslyVirtualized === true,
+        })
+        const initialProviderActiveDefinitions = tools.filter(
+          (definition) => definition.source === 'agent'
+        )
+        const agentExecAvailable = buildCanonicalToolCatalog(
+          initialProviderActiveDefinitions
+        ).entries.some(isCanonicalAgentExecToolSurfaceEntry)
+        let programmaticController: ToolSurfaceRunController | null = null
+        if (
+          trigger.virtualizationTriggered &&
+          automaticToolSurfaceAssignment.cliProgrammaticCapability === 'proven' &&
+          agentExecAvailable
+        ) {
+          try {
+            programmaticController = createProgrammaticToolSurfaceRunControllerV1({
+              ceilingDefinitions: [
+                ...initialProviderActiveDefinitions,
+                ...ceilingDefinitions.filter((definition) => definition.source === 'mcp')
+              ],
+              providerActiveDefinitions: initialProviderActiveDefinitions,
+              policyVersion: PROGRAMMATIC_TOOL_SURFACE_POLICY_VERSION
+            })
+          } catch (error) {
+            if (
+              !(error instanceof ToolSurfaceError) ||
+              (error.code !== 'limit_exceeded' && error.code !== 'ineligible_exposure')
+            ) {
+              throw error
+            }
+          }
+        }
+        toolSurfaceMode = selectAutomaticToolSurfaceRunMode({
+          virtualizationTriggered: trigger.virtualizationTriggered,
+          cliProgrammaticCapability: automaticToolSurfaceAssignment.cliProgrammaticCapability,
+          agentExecAvailable,
+          programmaticRunCeilingFits: programmaticController !== null
+        })
+        if (toolSurfaceMode === 'cli-programmatic') {
+          if (!programmaticController) {
+            throw new Error('CLI Programmatic selection requires a preflighted Run controller.')
+          }
+          toolSurfaceController = programmaticController
+          programmaticProviderActiveDefinitions = Object.freeze(
+            toolSurfaceController.ceiling.entries
+              .filter((entry) => entry.catalogEntry.target.source === 'agent')
+              .map((entry) => entry.definition)
+          )
+        } else if (toolSurfaceMode === 'native-activation') {
+          const eligibleCatalog = buildCanonicalToolCatalog(tools)
+          const activeSkillRequiredStableTargetKeys = universe.skillRequirements
+            .filter((requirement) => requirement.activeAtRunStart && requirement.activatable)
+            .flatMap((requirement) => requirement.requiredStableTargetKeys)
+          const selectionInputs = prepareToolSurfacePolicySelectionInputs({
+            eligibleCatalog,
+            toolProfile: resolveDeepChatToolProfileKind(projectDir),
+            activeSkillRequiredStableTargetKeys,
+            recentToolNames: collectRecentToolSurfaceNames(messages)
+          })
+          const selected = createPolicySelectedToolSurfaceRun({
+            ceilingDefinitions,
+            initialEligibleDefinitions: tools,
+            toolSearchDefinition,
+            policy: automaticPolicy,
+            previouslyVirtualized:
+              automaticToolSurfaceAssignment.previouslyVirtualized === true,
+            ...selectionInputs
+          })
+          if (!selected.decision.virtualizationTriggered) {
+            throw new Error('Native Activation route lost its automatic virtualization decision.')
+          }
+          toolSurfaceController = selected.controller
+          frozenSkillRequirementByName = new Map(
+            universe.skillRequirements.map((requirement) => [requirement.skillName, requirement])
+          )
+          if (!toolSurfaceController.prepareSkillActivation) {
+            throw new Error('Native Activation controller cannot prepare Skill activation.')
+          }
+        } else {
+          toolSurfaceController = createFullToolSurfaceRunController({
+            ceilingDefinitions,
+            initialActiveDefinitions: tools,
+            policyVersion: automaticPolicy.policyVersion
+          })
+        }
+      } else if (toolSurfaceMode === 'full') {
         toolSurfaceController = createFullToolSurfaceRunController({
           ceilingDefinitions,
           initialActiveDefinitions: tools,

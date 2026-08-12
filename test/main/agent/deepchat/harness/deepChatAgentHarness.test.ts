@@ -2936,6 +2936,129 @@ describe('DeepChatAgentHarness', () => {
   })
 
   describe('processMessage', () => {
+    const createAutomaticAdapterDefinitions = (remoteToolCount: number): MCPToolDefinition[] => [
+      {
+        source: 'agent',
+        execution: TOOL_EXECUTION.write,
+        type: 'function',
+        function: {
+          name: 'exec',
+          description: 'Execute a command',
+          parameters: { type: 'object', properties: { command: { type: 'string' } } }
+        },
+        server: { name: 'agent-filesystem', icons: '', description: 'Agent filesystem tools' }
+      },
+      ...Array.from({ length: remoteToolCount }, (_, index) => {
+        const name = `remote_${String(index).padStart(2, '0')}`
+        return {
+          source: 'mcp',
+          execution: TOOL_EXECUTION.read.parallel,
+          type: 'function',
+          function: {
+            name,
+            description: `${name} description`,
+            parameters: { type: 'object', properties: { query: { type: 'string' } } }
+          },
+          server: {
+            id: '55555555-5555-4555-8555-555555555555',
+            name: 'automatic-adapter-tools',
+            icons: '',
+            description: 'Automatic adapter tools',
+            configGeneration: 1,
+            bindingHash: 'e'.repeat(64)
+          },
+          raw: {
+            name,
+            inputSchema: { type: 'object', properties: { query: { type: 'string' } } }
+          }
+        } satisfies MCPToolDefinition
+      })
+    ]
+
+    it.each([
+      {
+        remoteToolCount: 1,
+        cliProgrammaticCapability: 'proven' as const,
+        expectedMode: 'full' as const
+      },
+      {
+        remoteToolCount: 40,
+        cliProgrammaticCapability: 'unproven' as const,
+        expectedMode: 'native-activation' as const
+      },
+      {
+        remoteToolCount: 40,
+        cliProgrammaticCapability: 'proven' as const,
+        expectedMode: 'cli-programmatic' as const
+      }
+    ])(
+      'freezes automatic adapter $expectedMode from catalog and measured CLI gates',
+      async ({ remoteToolCount, cliProgrammaticCapability, expectedMode }) => {
+        const definitions = createAutomaticAdapterDefinitions(remoteToolCount)
+        providerSettings.getModelConfig.mockReturnValue({
+          ...providerSettings.getModelConfig(),
+          functionCall: true
+        })
+        toolService.getAllToolDefinitions.mockResolvedValue(definitions)
+        toolService.getToolDefinitionUniverse.mockResolvedValue({
+          definitions,
+          complete: true,
+          unavailableSourceCount: 0
+        })
+        recreateAgentWithToolSurfaceRunMode(() => ({
+          mode: 'automatic',
+          cliProgrammaticCapability
+        }))
+        ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+          expect(params.run.resources.toolSurfaceMode).toBe(expectedMode)
+          expect(
+            String(params.run.messages[0]?.content).includes('## Programmatic Tool Access')
+          ).toBe(expectedMode === 'cli-programmatic')
+          return { status: 'completed', stopReason: 'complete' }
+        })
+
+        await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+        await agent.processMessage('s1', 'Hello')
+
+        expect(toolService.getToolDefinitionUniverse).toHaveBeenCalledOnce()
+      }
+    )
+
+    it('falls back to Native Activation before admission when the Programmatic ceiling is oversized', async () => {
+      const definitions = createAutomaticAdapterDefinitions(300)
+      for (let index = 1; index < definitions.length; index += 1) {
+        const definition = definitions[index]
+        const suffix = `${String(index).padStart(3, '0')}_${'x'.repeat(450)}`
+        definition.function.name = `remote_${suffix}`
+        definition.server.name = `server_${suffix}_${'y'.repeat(450)}`
+        if (definition.raw) definition.raw.name = definition.function.name
+      }
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true,
+        contextLength: 1_000_000
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue(definitions)
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions,
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => ({
+        mode: 'automatic',
+        cliProgrammaticCapability: 'proven'
+      }))
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        expect(params.run.resources.toolSurfaceMode).toBe('native-activation')
+        expect(String(params.run.messages[0]?.content)).not.toContain('## Programmatic Tool Access')
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+      expect(processStream).toHaveBeenCalledOnce()
+    })
+
     it('observes shadow surfaces and provider cache usage without changing provider tools', async () => {
       const eventOrder: string[] = []
       const tools = [
@@ -7512,6 +7635,10 @@ describe('DeepChatAgentHarness', () => {
         }
       ])
       toolService.buildToolSystemPrompt.mockReturnValue('TOOLING_BLOCK')
+      recreateAgentWithToolSurfaceRunMode(() => ({
+        mode: 'automatic',
+        cliProgrammaticCapability: 'proven'
+      }))
 
       await agent.initSession('s-acp-subagent', {
         agentId: 'acp-reviewer',
@@ -7529,6 +7656,7 @@ describe('DeepChatAgentHarness', () => {
       expect(buildSystemEnvPrompt).not.toHaveBeenCalled()
 
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(callArgs.run.resources.toolSurfaceMode).toBe('legacy')
       expect(callArgs.run.resources.toolDefinitions).toEqual([])
       expect(callArgs.run.messages).toEqual([{ role: 'user', content: 'Delegated task' }])
       for await (const _event of callArgs.coreStream(

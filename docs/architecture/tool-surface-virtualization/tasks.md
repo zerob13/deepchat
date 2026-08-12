@@ -63,7 +63,7 @@
 
 - [x] Wire an explicit, default-off Native Activation assignment through Run setup and View
       assembly without inferring model capability.
-- [ ] Implement Direct Native, CLI Programmatic, and Native Activation route selection.
+- [x] Implement Direct Native, CLI Programmatic, and Native Activation route selection.
 - [ ] Add cross-Run sticky/hysteresis policy and measured model CLI capability.
 - [x] Add Agent-only `deepchat tool search|describe|call|batch` routes.
 - [x] Add version-negotiated `CLI_SURFACE_V2` as a strict V1 superset and prove V1 cannot reach the
