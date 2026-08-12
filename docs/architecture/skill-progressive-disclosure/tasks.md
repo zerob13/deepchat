@@ -104,8 +104,9 @@
 
 ## Final Validation
 
-- [x] Extend canonical materializations with bounded private `scripts/` execution packages and
-      non-secret environment revision bindings.
+- [x] Extend canonical materializations with bounded private `scripts/` plus declared-support
+      execution packages under schema 3 with schema 2 read compatibility, unchanged-bundle
+      compatibility migration, and non-secret environment revision bindings.
 - [x] Add ViewManifest schema 7/hash 5 to bind runtime tool-result bodies and execution packages to
       one exact Provider request, including strict replay and continuation recovery.
 - [ ] Execute `skill_run` only from an exact execution-bound package ref and fail closed on package,

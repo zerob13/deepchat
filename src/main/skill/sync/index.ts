@@ -1837,14 +1837,17 @@ export class SkillSyncService implements SkillSyncServicePort {
     try {
       const fileContent = await fs.promises.readFile(skillFilePath, 'utf-8')
       logger.info(`[SkillSync] Read skill file, length: ${fileContent.length}`)
-      return formatConverter.parseExternal(
+      return await formatConverter.parseExternal(
         fileContent,
         { toolId: 'claude-code', filePath: skillFilePath, folderPath },
         { includeSubfolders: true }
       )
     } catch (error) {
       console.error(`[SkillSync] Failed to read/parse skill file:`, error)
-      return null
+      throw new Error(
+        `Failed to load Skill "${skillName}" for export: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      )
     }
   }
 

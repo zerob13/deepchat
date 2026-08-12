@@ -245,15 +245,29 @@ content hash, builder version, Agent/source identity, rendered manifest hash, sc
 hash, and a bounded execution package. The provenance key hashes the Session scope and complete
 canonical payload so every current or future evidence field participates in identity.
 
-The execution package snapshots only the existing `skill_run` authority namespace: regular files
-under the Skill's `scripts/` subtree. This includes sibling modules, templates, schemas, and other
-supporting assets colocated with executable scripts without silently archiving the rest of the Skill
-root. Hidden paths, symlinks, hard links, special files, non-portable paths, case-fold collisions,
-and files outside `scripts/` fail closed. Canonical decoded and encoded byte limits cover each file,
-package, and execution batch before persistence. Fresh resolution is sequential and directory
-enumeration is bounded so rejected input cannot first allocate an unbounded candidate batch. One
-bounded traversal is the source for both executable inventory and packaged files; stable file-handle
-reads never allocate beyond the size already admitted.
+The execution package snapshots the existing `skill_run` authority namespace under `scripts/` plus
+at most 16 explicit `executionSupportPaths` declared by the Skill. Supporting paths are
+non-executable and exist for runtime imports, templates, and schemas that cannot be colocated under
+`scripts/`; the rest of the Skill root is never silently archived. Hidden paths, symlinks, hard
+links, special files, non-portable paths, overlapping roots, and case-fold collisions fail closed.
+Canonical decoded and encoded byte limits cover each file, package, and execution batch before
+persistence. Fresh resolution is sequential and directory enumeration is bounded so rejected input
+cannot first allocate an unbounded candidate batch. One bounded traversal is the source for both
+executable inventory and packaged files; stable file-handle reads never allocate beyond the size
+already admitted.
+
+Supporting files are introduced by `skill/materialized` schema 3. Schema 2 remains readable with
+its original scripts-only invariant; new writers never place support files under the older schema.
+
+Existing bundled `docx` and `pptx` installations predate the support-path declaration. Startup may
+add that declaration only when a bounded fingerprint proves the complete installed tree is the
+exact known legacy bundle. Any changed manifest, script, support file, extra path, symlink, or
+special file disables migration; the proof is repeated before the permission-preserving atomic
+write. The same migration runs before discovering existing Agent-private copies. Builtin
+installation never overwrites the customized tree. Legacy Skill Sync conversion fails explicitly
+for support-bearing Skills until that subsystem can preserve arbitrary support trees. A known
+legacy bundle that still has its runtime support tree but cannot be migrated fails materialization
+with an actionable declaration error instead of producing a knowingly incomplete package.
 
 Runtime policy is part of the package. Raw extension environment values may contain credentials and
 must never enter Tape. The package records only an opaque environment binding revision; the later

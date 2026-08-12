@@ -24,6 +24,7 @@ export const SKILL_EXECUTION_PACKAGE_MAX_BYTES = 4 * 1024 * 1024
 export const SKILL_EXECUTION_PACKAGE_MAX_DIRECTORIES = 256
 export const SKILL_EXECUTION_PACKAGE_MAX_DEPTH = 16
 export const SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES = 4096
+export const SKILL_EXECUTION_PACKAGE_MAX_SUPPORT_PATHS = 16
 export const SKILL_EXECUTION_PACKAGE_MAX_BATCH_BYTES = 16 * 1024 * 1024
 export const SKILL_EXECUTION_PACKAGE_MAX_ENCODED_BYTES = 7 * 1024 * 1024
 export const SKILL_EXECUTION_PACKAGE_MAX_BATCH_ENCODED_BYTES = 28 * 1024 * 1024
@@ -49,6 +50,8 @@ export interface SkillMetadata {
   metadata?: Record<string, unknown>
   /** Optional additional tools required by this skill */
   allowedTools?: string[]
+  /** Explicit non-executable paths required by scripts at runtime. */
+  executionSupportPaths?: string[]
   /** Plugin owner id when the skill is contributed by a plugin */
   ownerPluginId?: string
   /** DeepChat-owned resource exposed read-only without copying into an Agent Skill root */

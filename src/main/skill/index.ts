@@ -2,7 +2,7 @@ import { app, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { execFile } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import matter from 'gray-matter'
 import type { SkillSettingsPort } from './settings'
@@ -59,6 +59,7 @@ import {
   SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES,
   SKILL_EXECUTION_PACKAGE_MAX_ENCODED_BYTES,
   SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES,
+  SKILL_EXECUTION_PACKAGE_MAX_SUPPORT_PATHS,
   SKILL_NAME_MAX_LENGTH
 } from '@shared/types/skill'
 import type {
@@ -83,7 +84,20 @@ import {
 
 const execFileAsync = promisify(execFile)
 const READ_ONLY_BUNDLED_SKILL_NAMES = new Set(['deepchat-cli'])
-const EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION = 'skill-effective-content-v2'
+const EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION = 'skill-effective-content-v3'
+// SHA-256 values cover the canonical manifest and complete pre-declaration resource tree.
+const LEGACY_BUILTIN_EXECUTION_SUPPORT_MIGRATIONS = {
+  docx: {
+    manifestHash: '0bd90681fcab2e282025ee14acf508b60bbd6c41ac6c3bf83c0dc14d52c37933',
+    treeHash: 'ccbe20a0aca2f7b6e25ce190b977a848c29b782e241cb0b44e15d74fbdc023e8',
+    supportPaths: ['ooxml']
+  },
+  pptx: {
+    manifestHash: 'b6f25545bfb358739f1532f793458b5dbc87ee009933cb7c306b2d951ab6617f',
+    treeHash: '21d88544f381e3e4106d076bc3f1f8438710864c931a9392a0d31e906c8a4bce',
+    supportPaths: ['ooxml']
+  }
+} as const
 
 /**
  * Skill system configuration constants
@@ -965,6 +979,17 @@ export class SkillService implements SkillServicePort {
     const catalog = this.getScopedCatalog(agentId)
     const finishOperation = this.beginAgentScopeOperation(agentId)
     try {
+      for (const name of Object.keys(LEGACY_BUILTIN_EXECUTION_SUPPORT_MIGRATIONS)) {
+        try {
+          await this.migrateLegacyBuiltinExecutionSupport(name, root)
+        } catch (error) {
+          logger.warn('[SkillService] Scoped legacy builtin Skill manifest migration failed.', {
+            agentId,
+            name,
+            error
+          })
+        }
+      }
       const discoveredByName = new Map<string, SkillMetadata>()
       let discoveredSkills: SkillMetadata[] = []
       if (fs.existsSync(root)) {
@@ -1149,6 +1174,7 @@ export class SkillService implements SkillServicePort {
         allowedTools: Array.isArray(data.allowedTools)
           ? data.allowedTools.filter((t): t is string => typeof t === 'string')
           : undefined,
+        executionSupportPaths: this.normalizeExecutionSupportPaths(data.executionSupportPaths),
         ownerPluginId
       }
     } catch (error) {
@@ -1648,10 +1674,37 @@ export class SkillService implements SkillServicePort {
       }
       rawContent = await fs.promises.readFile(confinedSkillPath, 'utf-8')
     }
-    const { content } = matter(rawContent)
+    const { content, data } = matter(rawContent)
+    if (
+      freshEvidence &&
+      (data.name !== metadata.name ||
+        typeof data.description !== 'string' ||
+        !data.description.trim())
+    ) {
+      throw new Error('Skill manifest identity changed before materialization')
+    }
     const renderedContent = this.replacePathVariables(content, metadata, agentId).trim()
+    const executionSupportPaths = freshEvidence
+      ? this.normalizeExecutionSupportPaths(data.executionSupportPaths, true)
+      : undefined
+    const legacySupport =
+      LEGACY_BUILTIN_EXECUTION_SUPPORT_MIGRATIONS[
+        metadata.name as keyof typeof LEGACY_BUILTIN_EXECUTION_SUPPORT_MIGRATIONS
+      ]
+    const undeclaredLegacySupportPaths =
+      freshEvidence &&
+      executionSupportPaths === undefined &&
+      legacySupport &&
+      createHash('sha256').update(rawContent).digest('hex') === legacySupport.manifestHash
+        ? legacySupport.supportPaths
+        : []
     const freshPackage = freshEvidence
-      ? await this.snapshotSkillExecutionPackage(agentId, metadata)
+      ? await this.snapshotSkillExecutionPackage(
+          agentId,
+          metadata,
+          executionSupportPaths,
+          undeclaredLegacySupportPaths
+        )
       : undefined
     const scripts =
       freshPackage?.scripts ?? (await this.listSkillScriptsFromMetadata(agentId, metadata))
@@ -1834,10 +1887,13 @@ export class SkillService implements SkillServicePort {
 
   private assertPortableExecutionPackagePath(relativePath: string): void {
     if (
-      !relativePath.startsWith('scripts/') ||
+      !relativePath ||
       relativePath !== relativePath.normalize('NFC') ||
+      relativePath.startsWith('/') ||
+      /^[A-Za-z]:\//.test(relativePath) ||
       relativePath.includes('\\') ||
       relativePath.includes('\0') ||
+      relativePath.split('/').length > SKILL_EXECUTION_PACKAGE_MAX_DEPTH + 2 ||
       Buffer.byteLength(relativePath, 'utf8') > SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES
     ) {
       throw new Error(`execution package contains a non-portable path: ${relativePath}`)
@@ -1863,7 +1919,9 @@ export class SkillService implements SkillServicePort {
 
   private async snapshotSkillExecutionPackage(
     agentId: string,
-    metadata: SkillMetadata
+    metadata: SkillMetadata,
+    executionSupportPaths?: readonly string[],
+    undeclaredLegacySupportPaths: readonly string[] = []
   ): Promise<SkillExecutionPackageSnapshot> {
     const empty = (): SkillExecutionPackageSnapshot => {
       const extension = createDefaultSkillExtensionConfig()
@@ -1877,8 +1935,55 @@ export class SkillService implements SkillServicePort {
         }
       }
     }
+    if (executionSupportPaths === undefined) {
+      for (const supportPath of undeclaredLegacySupportPaths) {
+        if (await this.pathExists(path.join(metadata.skillRoot, supportPath))) {
+          throw new Error(
+            `Skill "${metadata.name}" has legacy runtime files but no executionSupportPaths declaration; reinstall it or declare "${supportPath}" explicitly`
+          )
+        }
+      }
+    }
+    const declaredSupportPaths = [...(executionSupportPaths ?? [])]
+    if (declaredSupportPaths.length > SKILL_EXECUTION_PACKAGE_MAX_SUPPORT_PATHS) {
+      throw new Error(
+        `execution package exceeds ${SKILL_EXECUTION_PACKAGE_MAX_SUPPORT_PATHS} support paths`
+      )
+    }
+    const packageRoots = ['scripts', ...declaredSupportPaths]
+    for (const supportPath of declaredSupportPaths) {
+      this.assertPortableExecutionPackagePath(supportPath)
+      const foldedSupportPath = supportPath.toLowerCase()
+      if (
+        foldedSupportPath === 'scripts' ||
+        foldedSupportPath.startsWith('scripts/') ||
+        foldedSupportPath === 'skill.md'
+      ) {
+        throw new Error(`execution package support path is reserved: ${supportPath}`)
+      }
+    }
+    packageRoots.sort((left, right) =>
+      Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+    )
+    for (let leftIndex = 0; leftIndex < packageRoots.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < packageRoots.length; rightIndex += 1) {
+        const left = packageRoots[leftIndex].toLowerCase()
+        const right = packageRoots[rightIndex].toLowerCase()
+        if (left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)) {
+          throw new Error(
+            `execution package support paths overlap: ${packageRoots[leftIndex]}, ${packageRoots[rightIndex]}`
+          )
+        }
+      }
+    }
+
     const scriptsDir = path.join(metadata.skillRoot, 'scripts')
-    if (!(await this.pathExists(scriptsDir))) return empty()
+    if (!(await this.pathExists(scriptsDir))) {
+      if (declaredSupportPaths.length > 0) {
+        throw new Error('executionSupportPaths requires a scripts directory')
+      }
+      return empty()
+    }
     const confinedScriptsDir = await this.resolvePhysicalSkillPath(metadata.skillRoot, scriptsDir)
     if (!confinedScriptsDir) {
       throw new Error('execution package scripts directory could not be loaded safely')
@@ -1888,6 +1993,44 @@ export class SkillService implements SkillServicePort {
     const discoveredScripts: SkillScriptDescriptor[] = []
     let packageBytes = 0
     let directoryCount = 0
+    const snapshotFile = async (absolutePath: string, relativePath: string): Promise<void> => {
+      this.assertPortableExecutionPackagePath(relativePath)
+      const before = await fs.promises.lstat(absolutePath)
+      if (before.isSymbolicLink())
+        throw new Error(`execution package rejects symlink: ${relativePath}`)
+      if (!before.isFile()) {
+        throw new Error(`execution package rejects special file: ${relativePath}`)
+      }
+      if (files.length >= SKILL_EXECUTION_PACKAGE_MAX_FILES) {
+        throw new Error(`execution package exceeds ${SKILL_EXECUTION_PACKAGE_MAX_FILES} files`)
+      }
+      const bytes = await this.readStableRegularFile(
+        absolutePath,
+        SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES
+      )
+      packageBytes += bytes.byteLength
+      if (packageBytes > SKILL_EXECUTION_PACKAGE_MAX_BYTES) {
+        throw new Error('execution package exceeds 4 MiB')
+      }
+      files.push({
+        relativePath,
+        base64: bytes.toString('base64'),
+        byteCount: bytes.byteLength,
+        sha256: createHash('sha256').update(bytes).digest('hex')
+      })
+      const runtime = relativePath.startsWith('scripts/')
+        ? SUPPORTED_SCRIPT_EXTENSIONS[path.extname(relativePath).toLowerCase()]
+        : undefined
+      if (runtime) {
+        discoveredScripts.push({
+          name: path.basename(relativePath),
+          relativePath,
+          absolutePath,
+          runtime,
+          enabled: true
+        })
+      }
+    }
     const visit = async (directory: string, prefix = '', depth = 0): Promise<void> => {
       if (depth > SKILL_EXECUTION_PACKAGE_MAX_DEPTH) {
         throw new Error(
@@ -1935,36 +2078,7 @@ export class SkillService implements SkillServicePort {
           await visit(absolutePath, relativePath, depth + 1)
           continue
         }
-        if (!before.isFile()) {
-          throw new Error(`execution package rejects special file: ${relativePath}`)
-        }
-        if (files.length >= SKILL_EXECUTION_PACKAGE_MAX_FILES) {
-          throw new Error(`execution package exceeds ${SKILL_EXECUTION_PACKAGE_MAX_FILES} files`)
-        }
-        const bytes = await this.readStableRegularFile(
-          absolutePath,
-          SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES
-        )
-        packageBytes += bytes.byteLength
-        if (packageBytes > SKILL_EXECUTION_PACKAGE_MAX_BYTES) {
-          throw new Error('execution package exceeds 4 MiB')
-        }
-        files.push({
-          relativePath,
-          base64: bytes.toString('base64'),
-          byteCount: bytes.byteLength,
-          sha256: createHash('sha256').update(bytes).digest('hex')
-        })
-        const runtime = SUPPORTED_SCRIPT_EXTENSIONS[path.extname(entry.name).toLowerCase()]
-        if (runtime) {
-          discoveredScripts.push({
-            name: entry.name,
-            relativePath,
-            absolutePath,
-            runtime,
-            enabled: true
-          })
-        }
+        await snapshotFile(absolutePath, relativePath)
       }
       const directoryAfter = await fs.promises.lstat(directory)
       if (
@@ -1978,8 +2092,19 @@ export class SkillService implements SkillServicePort {
         throw new Error(`execution package directory changed during read: ${prefix || '.'}`)
       }
     }
-    await visit(confinedScriptsDir, 'scripts')
-    if (discoveredScripts.length === 0) return empty()
+    for (const packageRoot of packageRoots) {
+      const absolutePath =
+        packageRoot === 'scripts'
+          ? confinedScriptsDir
+          : path.join(metadata.skillRoot, ...packageRoot.split('/'))
+      const confinedPath = await this.resolvePhysicalSkillPath(metadata.skillRoot, absolutePath)
+      if (!confinedPath) {
+        throw new Error(`execution package support path could not be loaded safely: ${packageRoot}`)
+      }
+      const stat = await fs.promises.lstat(confinedPath)
+      if (stat.isDirectory()) await visit(confinedPath, packageRoot)
+      else await snapshotFile(confinedPath, packageRoot)
+    }
 
     files.sort((left, right) =>
       Buffer.compare(
@@ -2237,7 +2362,7 @@ export class SkillService implements SkillServicePort {
           }
           commitMutation()
           const { draftId, draftPath } = this.createDraftHandle(conversationId)
-          this.atomicWriteFile(path.join(draftPath, 'SKILL.md'), request.content!)
+          await this.atomicWriteFile(path.join(draftPath, 'SKILL.md'), request.content!)
           this.touchDraftActivity(draftPath)
           return {
             success: true,
@@ -2272,7 +2397,7 @@ export class SkillService implements SkillServicePort {
             return { success: false, action, error: 'Draft not found' }
           }
           commitMutation()
-          this.atomicWriteFile(path.join(draftPath, 'SKILL.md'), request.content!)
+          await this.atomicWriteFile(path.join(draftPath, 'SKILL.md'), request.content!)
           this.touchDraftActivity(draftPath)
           return {
             success: true,
@@ -2323,7 +2448,7 @@ export class SkillService implements SkillServicePort {
           }
           commitMutation()
           fs.mkdirSync(path.dirname(resolvedFilePath), { recursive: true })
-          this.atomicWriteFile(resolvedFilePath, request.fileContent)
+          await this.atomicWriteFile(resolvedFilePath, request.fileContent)
           this.touchDraftActivity(draftPath)
           return {
             success: true,
@@ -2618,6 +2743,15 @@ export class SkillService implements SkillServicePort {
         continue
       }
 
+      try {
+        await this.migrateLegacyBuiltinExecutionSupport(entry.name)
+      } catch (error) {
+        logger.warn('[SkillService] Legacy builtin Skill manifest migration failed.', {
+          name: entry.name,
+          error
+        })
+      }
+
       const result = await this.installFromDirectory(skillDir, {
         options: { overwrite: false },
         sourceType: 'builtin'
@@ -2630,6 +2764,174 @@ export class SkillService implements SkillServicePort {
       }
     }
     this.readOnlyBundledSkills = await this.discoverReadOnlyBundledSkills()
+  }
+
+  private async migrateLegacyBuiltinExecutionSupport(
+    name: string,
+    skillsRoot: string = this.skillsDir
+  ): Promise<void> {
+    const migration =
+      LEGACY_BUILTIN_EXECUTION_SUPPORT_MIGRATIONS[
+        name as keyof typeof LEGACY_BUILTIN_EXECUTION_SUPPORT_MIGRATIONS
+      ]
+    if (!migration) return
+
+    const skillRoot = path.join(skillsRoot, name)
+    const manifestPath = path.join(skillRoot, 'SKILL.md')
+    if (!fs.existsSync(manifestPath)) return
+
+    const manifestBytes = await this.readStableRegularFile(
+      manifestPath,
+      SKILL_CONFIG.SKILL_FILE_MAX_SIZE
+    )
+    const manifest = manifestBytes.toString('utf8')
+    const parsed = matter(manifest)
+    if (parsed.data.executionSupportPaths !== undefined) return
+    if (createHash('sha256').update(manifestBytes).digest('hex') !== migration.manifestHash) return
+
+    const treeHash = await this.createBoundedSkillTreeHash(skillRoot)
+    if (treeHash !== migration.treeHash) return
+
+    const closingFrontmatter = manifest.indexOf('\n---', 4)
+    if (!manifest.startsWith('---\n') || closingFrontmatter < 0) {
+      throw new Error(`Legacy builtin Skill manifest is malformed: ${name}`)
+    }
+    const supportDeclaration = [
+      'executionSupportPaths:',
+      ...migration.supportPaths.map((supportPath) => `  - ${supportPath}`),
+      ''
+    ].join('\n')
+    const upgraded =
+      manifest.slice(0, closingFrontmatter + 1) +
+      supportDeclaration +
+      manifest.slice(closingFrontmatter + 1)
+    const upgradedData = matter(upgraded).data
+    if (
+      !Array.isArray(upgradedData.executionSupportPaths) ||
+      upgradedData.executionSupportPaths.length !== migration.supportPaths.length ||
+      !migration.supportPaths.every(
+        (supportPath, index) => upgradedData.executionSupportPaths[index] === supportPath
+      )
+    ) {
+      throw new Error(`Legacy builtin Skill manifest migration is invalid: ${name}`)
+    }
+
+    if ((await this.createBoundedSkillTreeHash(skillRoot)) !== treeHash) {
+      throw new Error(`Legacy builtin Skill tree changed during migration: ${name}`)
+    }
+    const currentManifest = await this.readStableRegularFile(
+      manifestPath,
+      SKILL_CONFIG.SKILL_FILE_MAX_SIZE
+    )
+    if (!currentManifest.equals(manifestBytes)) {
+      throw new Error(`Legacy builtin Skill manifest changed during migration: ${name}`)
+    }
+    await this.atomicWriteFile(manifestPath, upgraded, manifestBytes)
+  }
+
+  private async createBoundedSkillTreeHash(root: string): Promise<string> {
+    const directories: string[] = []
+    const files: Array<{ relativePath: string; byteCount: number; sha256: string }> = []
+    let directoryCount = 0
+    let totalBytes = 0
+    const visit = async (directory: string, prefix = '', depth = 0): Promise<void> => {
+      if (depth > SKILL_EXECUTION_PACKAGE_MAX_DEPTH) {
+        throw new Error('Legacy builtin Skill tree exceeds the migration depth limit')
+      }
+      directoryCount += 1
+      if (directoryCount > SKILL_EXECUTION_PACKAGE_MAX_DIRECTORIES) {
+        throw new Error('Legacy builtin Skill tree exceeds the migration directory limit')
+      }
+      const directoryBefore = await fs.promises.lstat(directory)
+      if (directoryBefore.isSymbolicLink() || !directoryBefore.isDirectory()) {
+        throw new Error('Legacy builtin Skill tree contains an unsafe directory')
+      }
+      if (prefix) directories.push(prefix)
+      const entries: fs.Dirent[] = []
+      const openedDirectory = await fs.promises.opendir(directory)
+      for await (const entry of openedDirectory) {
+        if (
+          entries.length >=
+          SKILL_EXECUTION_PACKAGE_MAX_FILES + SKILL_EXECUTION_PACKAGE_MAX_DIRECTORIES
+        ) {
+          throw new Error('Legacy builtin Skill tree contains too many entries')
+        }
+        entries.push(entry)
+      }
+      entries.sort((left, right) =>
+        Buffer.compare(Buffer.from(left.name, 'utf8'), Buffer.from(right.name, 'utf8'))
+      )
+      for (const entry of entries) {
+        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name
+        this.assertPortableExecutionPackagePath(relativePath)
+        const absolutePath = path.join(directory, entry.name)
+        const stat = await fs.promises.lstat(absolutePath)
+        if (stat.isSymbolicLink()) {
+          throw new Error('Legacy builtin Skill tree contains a symbolic link')
+        }
+        if (stat.isDirectory()) {
+          await visit(absolutePath, relativePath, depth + 1)
+          continue
+        }
+        if (!stat.isFile()) {
+          throw new Error('Legacy builtin Skill tree contains a special file')
+        }
+        if (files.length >= SKILL_EXECUTION_PACKAGE_MAX_FILES) {
+          throw new Error('Legacy builtin Skill tree exceeds the migration file limit')
+        }
+        const bytes = await this.readStableRegularFile(
+          absolutePath,
+          SKILL_EXECUTION_PACKAGE_MAX_FILE_BYTES
+        )
+        totalBytes += bytes.byteLength
+        if (totalBytes > SKILL_EXECUTION_PACKAGE_MAX_BYTES) {
+          throw new Error('Legacy builtin Skill tree exceeds the migration byte limit')
+        }
+        files.push({
+          relativePath,
+          byteCount: bytes.byteLength,
+          sha256: createHash('sha256').update(bytes).digest('hex')
+        })
+      }
+      const directoryAfter = await fs.promises.lstat(directory)
+      if (
+        directoryAfter.isSymbolicLink() ||
+        !directoryAfter.isDirectory() ||
+        directoryAfter.dev !== directoryBefore.dev ||
+        directoryAfter.ino !== directoryBefore.ino ||
+        directoryAfter.mtimeMs !== directoryBefore.mtimeMs ||
+        directoryAfter.ctimeMs !== directoryBefore.ctimeMs
+      ) {
+        throw new Error('Legacy builtin Skill tree changed during migration')
+      }
+    }
+
+    await visit(root)
+    directories.sort((left, right) =>
+      Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+    )
+    files.sort((left, right) =>
+      Buffer.compare(
+        Buffer.from(left.relativePath, 'utf8'),
+        Buffer.from(right.relativePath, 'utf8')
+      )
+    )
+    return createHash('sha256').update(JSON.stringify({ directories, files })).digest('hex')
+  }
+
+  private normalizeExecutionSupportPaths(
+    value: unknown,
+    strict: boolean = false
+  ): string[] | undefined {
+    if (value === undefined) return undefined
+    if (!Array.isArray(value)) {
+      if (strict) throw new Error('executionSupportPaths must be an array of strings')
+      return undefined
+    }
+    if (strict && value.some((supportPath) => typeof supportPath !== 'string')) {
+      throw new Error('executionSupportPaths must contain only strings')
+    }
+    return value.filter((supportPath): supportPath is string => typeof supportPath === 'string')
   }
 
   private supportsCurrentPlatform(platforms?: string[]): boolean {
@@ -5672,13 +5974,49 @@ export class SkillService implements SkillServicePort {
     return fs.statSync(draftPath).mtimeMs
   }
 
-  private atomicWriteFile(targetPath: string, content: string): void {
+  private async atomicWriteFile(
+    targetPath: string,
+    content: string,
+    expectedContent?: Buffer
+  ): Promise<void> {
     const tempPath = path.join(
       path.dirname(targetPath),
-      `.${path.basename(targetPath)}.${process.pid}.${Date.now()}.tmp`
+      `.${path.basename(targetPath)}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`
     )
-    fs.writeFileSync(tempPath, content, 'utf-8')
-    fs.renameSync(tempPath, targetPath)
+    let tempHandle: number | null = null
+    let ownsTemp = false
+    try {
+      const originalMode = expectedContent ? fs.lstatSync(targetPath).mode & 0o7777 : undefined
+      tempHandle = fs.openSync(
+        tempPath,
+        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+        originalMode ?? 0o666
+      )
+      ownsTemp = true
+      fs.writeFileSync(tempHandle, content, 'utf-8')
+      fs.closeSync(tempHandle)
+      tempHandle = null
+      if (originalMode !== undefined && process.platform !== 'win32') {
+        fs.chmodSync(tempPath, originalMode)
+      }
+      if (expectedContent) {
+        const current = await this.readStableRegularFile(targetPath, expectedContent.byteLength)
+        if (!current.equals(expectedContent)) {
+          throw new Error(`Managed file changed during operation: ${targetPath}`)
+        }
+      }
+      fs.renameSync(tempPath, targetPath)
+      ownsTemp = false
+    } finally {
+      if (tempHandle !== null) {
+        try {
+          fs.closeSync(tempHandle)
+        } catch {
+          // Preserve the original write/close failure while still attempting cleanup.
+        }
+      }
+      if (ownsTemp) fs.rmSync(tempPath, { force: true })
+    }
   }
 
   private cleanupExpiredDrafts(): void {

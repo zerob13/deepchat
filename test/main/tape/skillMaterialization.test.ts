@@ -260,6 +260,7 @@ describe('Tape Skill materialization domain', () => {
     })
 
     expect(validateTapeSkillMaterializationPayload(structuredClone(first))).toEqual(first)
+    expect(first.schemaVersion).toBe(3)
     expect(first.executionPackage.byteCount).toBe(Buffer.byteLength('console.log(1)'))
     expect(first.executionPackage.packageHash).toMatch(/^[a-f0-9]{64}$/)
     expect(changed.executionPackage.packageHash).not.toBe(first.executionPackage.packageHash)
@@ -282,7 +283,6 @@ describe('Tape Skill materialization domain', () => {
     ['hash', (file: any) => (file.sha256 = hash)],
     ['traversal', (file: any) => (file.relativePath = '../run.js')],
     ['drive path', (file: any) => (file.relativePath = 'C:/run.js')],
-    ['outside scripts', (file: any) => (file.relativePath = 'assets/run.js')],
     ['hidden path', (file: any) => (file.relativePath = 'scripts/.env')],
     ['device path', (file: any) => (file.relativePath = 'scripts/CON.js')],
     ['alternate stream', (file: any) => (file.relativePath = 'scripts/run.js:secret')],
@@ -296,6 +296,57 @@ describe('Tape Skill materialization domain', () => {
     }) as any
     mutate(payload.executionPackage.files[0])
     expect(() => validateTapeSkillMaterializationPayload(payload)).toThrow()
+  })
+
+  it('accepts bounded supporting files but keeps executable authority under scripts', () => {
+    const packageSource = executionPackage()
+    const supportContent = '<schema/>'
+    const supportBytes = Buffer.from(supportContent)
+    const withSupport = createTapeSkillMaterializationPayload({
+      ...input(),
+      executionPackage: {
+        ...packageSource,
+        files: [
+          {
+            relativePath: 'ooxml/schemas/document.xsd',
+            base64: supportBytes.toString('base64'),
+            byteCount: supportBytes.byteLength,
+            sha256: hashSkillEffectiveContent(supportContent)
+          },
+          ...packageSource.files
+        ]
+      }
+    })
+    expect(withSupport.executionPackage.files[0].relativePath).toBe('ooxml/schemas/document.xsd')
+    expect(() =>
+      validateTapeSkillMaterializationPayload({ ...structuredClone(withSupport), schemaVersion: 2 })
+    ).toThrow('Schema 2 execution package files must be under scripts')
+
+    expect(() =>
+      createTapeSkillMaterializationPayload({
+        ...input(),
+        executionPackage: {
+          ...packageSource,
+          files: [
+            {
+              ...packageSource.files[0],
+              relativePath: 'ooxml/run.js'
+            }
+          ],
+          executables: [{ relativePath: 'ooxml/run.js', runtime: 'node', enabled: true }]
+        }
+      })
+    ).toThrow('executable must be under scripts')
+  })
+
+  it('keeps scripts-only schema 2 materializations readable', () => {
+    const current = createTapeSkillMaterializationPayload({
+      ...input(),
+      executionPackage: executionPackage()
+    })
+    const legacy = { ...structuredClone(current), schemaVersion: 2 }
+
+    expect(validateTapeSkillMaterializationPayload(legacy)).toEqual(legacy)
   })
 
   it('rejects package order, duplicate, and case-fold collisions', () => {

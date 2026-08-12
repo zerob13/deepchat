@@ -1004,6 +1004,46 @@ describe('SkillSyncService', () => {
       expect(result).toHaveLength(1)
       expect(result[0].warnings).toContain('Tool restrictions will be lost')
     })
+
+    it('reports runtime support incompatibility instead of treating the Skill as missing', async () => {
+      const { isValidToolId } = await import('../../../../src/main/skill/sync/security')
+      const { toolScanner } = await import('../../../../src/main/skill/sync/toolScanner')
+      const { formatConverter } = await import('../../../../src/main/skill/sync/formatConverter')
+      vi.mocked(isValidToolId).mockReturnValue(true)
+      vi.mocked(toolScanner.getTool).mockReturnValue(
+        createFolderTool({
+          id: 'claude-code',
+          name: 'Claude Code',
+          format: 'claude-code',
+          skillsDir: '/external/skills/',
+          isProjectLevel: false
+        })
+      )
+      vi.mocked(mockSkillService.getMetadataList).mockResolvedValue([
+        { name: 'docx', path: '/local/docx/SKILL.md', skillRoot: '/local/docx' }
+      ] as any)
+      vi.mocked(fs.promises.readFile).mockResolvedValue(
+        '---\nname: docx\ndescription: Documents\nexecutionSupportPaths:\n  - ooxml\n---\n# Docx'
+      )
+      vi.mocked(formatConverter.parseExternal).mockRejectedValueOnce(
+        new Error(
+          'Skills with executionSupportPaths cannot be converted until Skill Sync preserves their support files'
+        )
+      )
+
+      const [preview] = await presenter.previewExport(['docx'], 'claude-code')
+
+      expect(preview.targetPath).toBe('')
+      expect(preview.convertedContent).toBe('')
+      expect(preview.warnings).toEqual([
+        expect.stringContaining(
+          'Export error: Failed to load Skill "docx" for export: Skills with executionSupportPaths'
+        )
+      ])
+      const result = await presenter.executeExport([preview], {})
+      expect(result.exported).toBe(0)
+      expect(fs.promises.writeFile).not.toHaveBeenCalled()
+    })
   })
 
   describe('executeExport', () => {

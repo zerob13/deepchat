@@ -178,6 +178,9 @@ function parseSkillMetadata(skillsDir, skillPath, warnings) {
           : undefined,
       allowedTools: Array.isArray(data.allowedTools)
         ? data.allowedTools.filter((toolName) => typeof toolName === 'string')
+        : undefined,
+      executionSupportPaths: Array.isArray(data.executionSupportPaths)
+        ? data.executionSupportPaths.filter((supportPath) => typeof supportPath === 'string')
         : undefined
     }
   } catch (error) {

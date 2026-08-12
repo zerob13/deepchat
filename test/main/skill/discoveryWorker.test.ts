@@ -29,7 +29,16 @@ describe('discoverSkillMetadataInWorker', () => {
 
     fs.writeFileSync(
       path.join(topLevelSkillDir, 'SKILL.md'),
-      ['---', 'name: skill-one', 'description: First skill', '---', '', '# Skill One'].join('\n'),
+      [
+        '---',
+        'name: skill-one',
+        'description: First skill',
+        'executionSupportPaths:',
+        '  - runtime-data',
+        '---',
+        '',
+        '# Skill One'
+      ].join('\n'),
       'utf-8'
     )
     fs.writeFileSync(
@@ -49,7 +58,8 @@ describe('discoverSkillMetadataInWorker', () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: 'skill-one',
-          category: null
+          category: null,
+          executionSupportPaths: ['runtime-data']
         }),
         expect.objectContaining({
           name: 'skill-two',

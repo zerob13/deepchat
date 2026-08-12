@@ -54,6 +54,9 @@ vi.mock('fs', () => {
     readdirSync: vi.fn(),
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
+    openSync: vi.fn().mockReturnValue(42),
+    closeSync: vi.fn(),
+    chmodSync: vi.fn(),
     rmSync: vi.fn(),
     copyFileSync: vi.fn(),
     renameSync: vi.fn(),
@@ -104,7 +107,7 @@ vi.mock('fs', () => {
   return {
     default: {
       ...fsMock,
-      constants: { O_RDONLY: 0, O_NOFOLLOW: 0 },
+      constants: { O_RDONLY: 0, O_NOFOLLOW: 0, O_CREAT: 0, O_EXCL: 0, O_WRONLY: 0 },
       promises
     }
   }
@@ -1257,7 +1260,7 @@ describe('SkillService', () => {
 
       expect(second).toEqual(first)
       expect(first.identity).toMatchObject({ agentId: 'deepchat', skillName: 'test-skill' })
-      expect(first.builderVersion).toBe('skill-effective-content-v2')
+      expect(first.builderVersion).toBe('skill-effective-content-v3')
       expect(first.renderedManifestHash).toMatch(/^[a-f0-9]{64}$/)
       expect(first.scriptInventoryHash).toMatch(/^[a-f0-9]{64}$/)
       expect(first.executionPackage).toEqual({
@@ -1275,18 +1278,26 @@ describe('SkillService', () => {
         DEFAULT_SKILLS_DIR,
         skillRoot,
         `${skillRoot}/scripts`,
-        `${skillRoot}/scripts/templates`
+        `${skillRoot}/scripts/templates`,
+        `${skillRoot}/ooxml`,
+        `${skillRoot}/ooxml/schemas`
       ])
       const contents = new Map([
         [`${skillRoot}/SKILL.md`, Buffer.from('---\nname: test-skill\n---\nUse the script')],
         [`${skillRoot}/scripts/run.js`, Buffer.from("require('./templates/config.json')")],
-        [`${skillRoot}/scripts/templates/config.json`, Buffer.from('{"value":1}')]
+        [`${skillRoot}/scripts/templates/config.json`, Buffer.from('{"value":1}')],
+        [`${skillRoot}/ooxml/schemas/document.xsd`, Buffer.from('<schema/>')]
       ])
       const entries = new Map<string, ReturnType<typeof createDirEntry>[] | any[]>([
         [DEFAULT_SKILLS_DIR, [createDirEntry('test-skill')]],
-        [skillRoot, [createFileEntry('SKILL.md'), createDirEntry('scripts')]],
+        [
+          skillRoot,
+          [createFileEntry('SKILL.md'), createDirEntry('scripts'), createDirEntry('ooxml')]
+        ],
         [`${skillRoot}/scripts`, [createFileEntry('run.js'), createDirEntry('templates')]],
-        [`${skillRoot}/scripts/templates`, [createFileEntry('config.json')]]
+        [`${skillRoot}/scripts/templates`, [createFileEntry('config.json')]],
+        [`${skillRoot}/ooxml`, [createDirEntry('schemas')]],
+        [`${skillRoot}/ooxml/schemas`, [createFileEntry('document.xsd')]]
       ])
       const inode = (target: string) =>
         Array.from(target).reduce((total, char) => total + char.charCodeAt(0), 1)
@@ -1311,7 +1322,11 @@ describe('SkillService', () => {
       ;(fs.readFileSync as Mock).mockImplementation((target: string) => contents.get(target))
       ;(matter as unknown as Mock).mockReturnValue({
         content: 'Use the script',
-        data: { name: 'test-skill', description: 'Test' }
+        data: {
+          name: 'test-skill',
+          description: 'Test',
+          executionSupportPaths: ['ooxml']
+        }
       })
 
       await skillService.discoverSkills()
@@ -1328,6 +1343,7 @@ describe('SkillService', () => {
       ])
 
       expect(first.executionPackage.files.map(({ relativePath }) => relativePath)).toEqual([
+        'ooxml/schemas/document.xsd',
         'scripts/run.js',
         'scripts/templates/config.json'
       ])
@@ -1340,10 +1356,10 @@ describe('SkillService', () => {
       )
       expect(first.executionPackage).not.toHaveProperty('env')
       expect(JSON.stringify(first.executionPackage)).not.toContain('API_TOKEN')
-      expect(first.executionPackage.files[0].base64).toBe(
+      expect(first.executionPackage.files[1].base64).toBe(
         contents.get(`${skillRoot}/scripts/run.js`)!.toString('base64')
       )
-      expect(fs.promises.opendir).toHaveBeenCalledTimes(2)
+      expect(fs.promises.opendir).toHaveBeenCalledTimes(4)
       expect(fs.promises.readdir).not.toHaveBeenCalledWith(
         `${skillRoot}/scripts`,
         expect.anything()
@@ -1353,9 +1369,32 @@ describe('SkillService', () => {
       const [second] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
         'test-skill'
       ])
-      expect(second.executionPackage.files[0].sha256).not.toBe(
-        first.executionPackage.files[0].sha256
+      expect(second.executionPackage.files[1].sha256).not.toBe(
+        first.executionPackage.files[1].sha256
       )
+
+      ;(matter as unknown as Mock).mockReturnValue({
+        content: 'Use the script',
+        data: { name: 'test-skill', description: 'Test' }
+      })
+      const [withoutSupport] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
+        'test-skill'
+      ])
+      expect(withoutSupport.executionPackage.files.map(({ relativePath }) => relativePath)).toEqual(
+        ['scripts/run.js', 'scripts/templates/config.json']
+      )
+
+      ;(matter as unknown as Mock).mockReturnValue({
+        content: 'Use the script',
+        data: {
+          name: 'test-skill',
+          description: 'Test',
+          executionSupportPaths: 'ooxml'
+        }
+      })
+      await expect(
+        skillService.resolveFreshEffectiveSkillContents('deepchat', ['test-skill'])
+      ).rejects.toThrow('executionSupportPaths must be an array of strings')
     })
 
     it('bounds scripts directory enumeration before reading package candidates', async () => {

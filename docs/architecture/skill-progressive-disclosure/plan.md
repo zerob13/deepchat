@@ -93,11 +93,15 @@ capabilities only after their fail-closed projection paths exist.
 
 Extend the same canonical `skill/materialized` fact, rather than adding another fact or sidecar,
 with a private execution package for script-bearing Skills. Snapshot the bounded regular-file
-`scripts/` tree sequentially with no-follow identity checks and portable canonical paths. Store
-decoded and encoded size evidence and hashes; strictly recompute them on every read or reuse. Keep
-extension environment values out of Tape and bind them by an opaque management-state revision that
-future dispatch must verify through a narrow capability. Do not claim package-backed execution
-until `skill_run` consumes the exact execution-bound ref.
+`scripts/` tree and explicitly declared non-executable support paths sequentially with no-follow
+identity checks and portable canonical paths. Store decoded and encoded size evidence and hashes;
+strictly recompute them on every read or reuse. Keep extension environment values out of Tape and
+bind them by an opaque management-state revision that future dispatch must verify through a narrow
+capability. Do not claim package-backed execution until `skill_run` consumes the exact
+execution-bound ref. Migrate the two legacy bundled Skills that require support paths only after a
+bounded, repeated full-tree fingerprint proves each top-level or Agent-private installed copy is
+unchanged; never overwrite customized Skill content. Keep legacy Skill Sync conversion fail-closed
+for declarations it cannot yet round-trip with their support files.
 
 ## Safe Runtime Skill View
 

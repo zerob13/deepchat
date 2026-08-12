@@ -19,7 +19,7 @@ import {
 import type { DeepChatTapeEntryRow } from './entry'
 
 export const SKILL_MATERIALIZATION_NAME = 'skill/materialized' as const
-export const SKILL_MATERIALIZATION_SCHEMA_VERSION = 2 as const
+export const SKILL_MATERIALIZATION_SCHEMA_VERSION = 3 as const
 export const MAX_SKILL_MATERIALIZATION_BODY_BYTES = SKILL_EFFECTIVE_CONTENT_MAX_BYTES
 export const MAX_SKILL_MATERIALIZATION_BATCH_COUNT = 64
 export const MAX_SKILL_MATERIALIZATION_BATCH_BYTES = SKILL_EFFECTIVE_CONTENT_MAX_BATCH_BYTES
@@ -42,7 +42,7 @@ export interface TapeSkillIdentity {
 }
 
 export interface TapeSkillMaterializationPayload extends TapeSkillIdentity {
-  schemaVersion: 2
+  schemaVersion: 2 | 3
   tapeIncarnationId: string
   effectiveContent: string
   effectiveContentHash: string
@@ -136,9 +136,6 @@ function canonicalRelativePath(value: unknown): string {
     throw new TypeError('Execution package path must be a canonical POSIX relative path.')
   }
   const segments = value.split('/')
-  if (segments[0] !== 'scripts' || segments.length < 2) {
-    throw new TypeError('Execution package files must be under scripts/.')
-  }
   if (segments.length > SKILL_EXECUTION_PACKAGE_MAX_DEPTH + 2) {
     throw new RangeError('Execution package path exceeds the maximum depth.')
   }
@@ -171,7 +168,8 @@ function canonicalRelativePath(value: unknown): string {
 }
 
 function validateExecutionPackage(
-  value: unknown
+  value: unknown,
+  allowSupportPaths: boolean
 ): TapeSkillMaterializationPayload['executionPackage'] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new TypeError('executionPackage must be an object.')
@@ -199,6 +197,9 @@ function validateExecutionPackage(
     const file = value as Record<string, unknown>
     exactKeys(file, ['relativePath', 'base64', 'byteCount', 'sha256'], 'Execution package file')
     const relativePath = canonicalRelativePath(file.relativePath)
+    if (!allowSupportPaths && !relativePath.startsWith('scripts/')) {
+      throw new TypeError('Schema 2 execution package files must be under scripts/.')
+    }
     if (
       previous !== null &&
       Buffer.compare(Buffer.from(previous), Buffer.from(relativePath)) >= 0
@@ -342,7 +343,7 @@ function createExecutionPackage(
   source: EffectiveSkillExecutionPackage
 ): TapeSkillMaterializationPayload['executionPackage'] {
   const byteCount = source.files.reduce((sum, file) => sum + file.byteCount, 0)
-  return validateExecutionPackage({ ...source, byteCount, packageHash: hashJsonData(source) })
+  return validateExecutionPackage({ ...source, byteCount, packageHash: hashJsonData(source) }, true)
 }
 
 export function createTapeSkillMaterializationPayload(
@@ -397,7 +398,10 @@ export function validateTapeSkillMaterializationPayload(
   if (Object.keys(payload).sort().join('\0') !== expectedKeys.join('\0')) {
     throw new TypeError('Skill materialization payload has unknown or missing fields.')
   }
-  if (payload.schemaVersion !== 2) throw new TypeError('Unsupported Skill materialization schema.')
+  if (payload.schemaVersion !== 2 && payload.schemaVersion !== 3) {
+    throw new TypeError('Unsupported Skill materialization schema.')
+  }
+  const schemaVersion = payload.schemaVersion
   const effectiveContent =
     typeof payload.effectiveContent === 'string' ? payload.effectiveContent : null
   if (effectiveContent === null) throw new TypeError('effectiveContent must be a string.')
@@ -413,7 +417,7 @@ export function validateTapeSkillMaterializationPayload(
     throw new TypeError('sourceType is not a supported Skill source type.')
   }
   return {
-    schemaVersion: 2,
+    schemaVersion,
     tapeIncarnationId: requireIdentity(payload.tapeIncarnationId, 'tapeIncarnationId'),
     agentId: requireIdentity(payload.agentId, 'agentId'),
     sourceType,
@@ -425,7 +429,7 @@ export function validateTapeSkillMaterializationPayload(
     renderedManifestHash: requireHash(payload.renderedManifestHash, 'renderedManifestHash'),
     scriptInventoryHash: requireHash(payload.scriptInventoryHash, 'scriptInventoryHash'),
     byteCount,
-    executionPackage: validateExecutionPackage(payload.executionPackage)
+    executionPackage: validateExecutionPackage(payload.executionPackage, schemaVersion === 3)
   }
 }
 
