@@ -3119,12 +3119,28 @@ describe('SkillService', () => {
       expect(policyOnlyBinding).toBe(firstBinding)
       expect(contentOnlyBinding).toBe(firstBinding)
       expect(changedBinding).toBe('22222222-2222-4222-8222-222222222222')
+      await expect(
+        skillService.resolveSkillRuntimeEnvironmentBinding('deepchat', 'test-skill', firstBinding)
+      ).rejects.toThrow(/binding changed/)
+      await expect(
+        skillService.resolveSkillRuntimeEnvironmentBinding('deepchat', 'test-skill', changedBinding)
+      ).resolves.toEqual({ A: 'changed', B: 'two' })
+
+      delete (configSettings.get('skills.managementState') as any).agents.deepchat.skills[
+        'test-skill'
+      ].runtimeBindingId
+      await expect(
+        skillService.resolveSkillRuntimeEnvironmentBinding('deepchat', 'test-skill', null)
+      ).rejects.toThrow(/missing an execution binding/)
 
       await skillService.saveSkillExtension('test-skill', { ...original, env: {} })
       expect(
         (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
           .runtimeBindingId
       ).toBeUndefined()
+      await expect(
+        skillService.resolveSkillRuntimeEnvironmentBinding('deepchat', 'test-skill', null)
+      ).resolves.toEqual({})
     })
 
     it('migrates legacy sidecar runtime config into database state', async () => {

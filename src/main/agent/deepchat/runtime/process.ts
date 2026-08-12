@@ -3,6 +3,7 @@ import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { PermissionRequestPayload } from '@shared/types/core/llm-events'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import type { LoopRunRequestViewBinding } from '@/agent/deepchat/loop/loopRun'
 import type {
   IoParams,
   PendingToolInteraction,
@@ -56,6 +57,7 @@ type ToolRoundBatch = {
   nextAction: 'continue' | 'terminal'
   requestSeq: number
   executionContract: DeepChatExecutionContract | null
+  requestView?: LoopRunRequestViewBinding
 }
 
 function getLatestErrorMessage(state: StreamState): string | null {
@@ -1075,6 +1077,10 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           }
           const executionContract = activeRequestContract?.executionContract ?? null
           const requestSeq = activeRequestContract?.requestSeq ?? run.requestSeq
+          const requestView = run.activeRequestView
+          if (requestView && requestView.requestSeq !== requestSeq) {
+            throw new Error('Provider response does not match its exact ViewManifest request.')
+          }
 
           logger.info(
             `[ProcessStream] stream iteration done reason=${state.stopReason} events=${eventCount} blocks=${state.blocks.length}`
@@ -1121,7 +1127,8 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 disposition: { kind: 'reject', reason: 'output_truncated' },
                 nextAction,
                 requestSeq,
-                executionContract
+                executionContract,
+                ...(requestView ? { requestView } : {})
               },
               requestedToolExecutionCount: 0
             }
@@ -1143,7 +1150,8 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               disposition: { kind: 'execute' },
               nextAction: 'continue',
               requestSeq,
-              executionContract
+              executionContract,
+              ...(requestView ? { requestView } : {})
             },
             requestedToolExecutionCount: completedToolCalls.length
           }
@@ -1173,6 +1181,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 runId: run.runId,
                 requestSeq: batch.requestSeq
               },
+              requestView: batch.requestView,
               commandShell: run.resources.commandShell,
               contextLength:
                 providerId === 'acp'

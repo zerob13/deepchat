@@ -1265,7 +1265,10 @@ export class DeepChatLoopRunner {
     }
   }
 
-  appendTapeViewManifest(params: AppendTapeViewManifestInput): void {
+  appendTapeViewManifest(params: AppendTapeViewManifestInput): {
+    manifestHash: string
+    tapeIncarnationId?: string
+  } {
     const sourceMaps = this.ports.tape.getViewManifestSourceMaps(
       params.sessionId,
       params.messageId
@@ -1317,6 +1320,13 @@ export class DeepChatLoopRunner {
         : {})
     })
     this.ports.tape.appendViewManifest(manifest)
+    return {
+      manifestHash: manifest.hashes.manifestHash,
+      ...((manifest.schemaVersion === 6 || manifest.schemaVersion === 7) &&
+      manifest.tapeIncarnationId
+        ? { tapeIncarnationId: manifest.tapeIncarnationId }
+        : {})
+    }
   }
 
   emitRateLimitWaitingMessage(

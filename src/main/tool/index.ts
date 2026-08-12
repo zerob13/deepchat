@@ -415,6 +415,9 @@ export class ToolService implements ToolServicePort {
         {
           toolCallId: request.id,
           runId: options?.runId,
+          requestSeq: options?.requestSeq,
+          manifestHash: options?.manifestHash,
+          tapeIncarnationId: options?.tapeIncarnationId,
           onProgress: options?.onProgress,
           signal: options?.signal,
           allowExternalFileAccess: allowsExternalFileAccess(permissionMode),

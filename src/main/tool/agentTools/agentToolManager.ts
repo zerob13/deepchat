@@ -138,6 +138,9 @@ interface AgentToolManagerOptions {
 interface AgentToolExecutionOptions {
   toolCallId?: string
   runId?: string
+  requestSeq?: number
+  manifestHash?: string
+  tapeIncarnationId?: string
   onProgress?: (update: AgentToolProgressUpdate) => void
   signal?: AbortSignal
   allowExternalFileAccess?: boolean

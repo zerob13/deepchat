@@ -85,6 +85,7 @@ import {
   type ExecutionOperationIdentity
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
+import type { LoopRunRequestViewBinding } from '@/agent/deepchat/loop/loopRun'
 import { preflightRequestContext } from './contextBudget'
 
 type PermissionType = 'read' | 'write' | 'all' | 'command'
@@ -1790,6 +1791,7 @@ async function runToolCall(params: {
   onToolCallStarted?: (toolCallId: string) => void
   executionJournal: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
+  requestView?: LoopRunRequestViewBinding
   executionContract?: DeepChatExecutionContract | null
   commandShell: ResolvedCommandShell
   tools: MCPToolDefinition[]
@@ -1812,6 +1814,7 @@ async function runToolCall(params: {
     onToolCallStarted,
     executionJournal,
     operationScope,
+    requestView,
     executionContract,
     commandShell,
     contextLength,
@@ -1935,15 +1938,26 @@ async function runToolCall(params: {
     const callTool = async (scopedOneShotCommandGrantId = oneShotCommandGrantId) => {
       returnedToolResult = null
       io.abortSignal.throwIfAborted()
+      if (requestView && requestView.requestSeq !== operationScope.requestSeq) {
+        throw new Error('Tool call ViewManifest identity does not match its provider request.')
+      }
       if (!toolCallStarted) {
         toolCallStarted = true
         onToolCallStarted?.(completedToolCall.id)
       }
       const enabledMcpServerIds = controls?.getEnabledMcpServerIds?.()
       const result = await toolExecution.execute(toolCall, {
-        runId: io.requestId,
+        runId: operationScope.runId,
         messageId: io.messageId,
         requestSeq: operationScope.requestSeq,
+        ...(requestView
+          ? {
+              manifestHash: requestView.manifestHash,
+              ...(requestView.tapeIncarnationId
+                ? { tapeIncarnationId: requestView.tapeIncarnationId }
+                : {})
+            }
+          : {}),
         ...(executionContract ? { executionContract } : {}),
         onProgress: applyProgressUpdate,
         signal: io.abortSignal,
@@ -2252,6 +2266,7 @@ export interface SettleToolBatchParams {
   providerId?: string
   executionJournal: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
+  requestView?: LoopRunRequestViewBinding
   executionContract?: DeepChatExecutionContract | null
   commandShell: ResolvedCommandShell
 }
@@ -2280,6 +2295,7 @@ export async function settleToolBatch(
     providerId,
     executionJournal,
     operationScope,
+    requestView,
     executionContract,
     commandShell
   } = params
@@ -2465,6 +2481,7 @@ export async function settleToolBatch(
               onToolCallStarted,
               executionJournal,
               operationScope,
+              requestView,
               executionContract,
               commandShell,
               tools,
@@ -2754,6 +2771,7 @@ export async function settleToolBatch(
           onToolCallStarted,
           executionJournal,
           operationScope,
+          requestView,
           executionContract,
           commandShell,
           tools,

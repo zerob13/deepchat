@@ -2,6 +2,7 @@ import type { LoopRun } from './loopRun'
 import {
   advanceRequestSequence,
   bindActiveRequestContract,
+  bindActiveRequestView,
   enterPhysicalAttempt,
   resolveSkillContextsForRequest
 } from './loopRun'
@@ -180,7 +181,10 @@ export interface ProviderAttemptManifestPort<TSelection> {
     viewPolicy?: DeepChatTapeViewPolicy
     viewPolicyVersion?: number | null
   }): { policy: DeepChatTapeViewPolicy; policyVersion: number | null }
-  append(input: ProviderAttemptManifestInput<TSelection>): void
+  append(input: ProviderAttemptManifestInput<TSelection>): {
+    manifestHash: string
+    tapeIncarnationId?: string
+  } | void
   onAppendError(error: unknown): void
 }
 
@@ -699,41 +703,43 @@ export class DeepChatContextCoordinator {
       if (requiresDurableSkillManifest && !tapeIncarnationId) {
         throw new Error('Skill-bearing provider request lost its Session Tape incarnation.')
       }
+      let requestView: { manifestHash: string; tapeIncarnationId?: string } | null = null
       try {
-        input.manifest.append({
-          requestSeq,
-          taskType: isInitialViewRequest ? input.viewContext!.taskType : 'tool_loop',
-          policy: manifestPolicy.policy,
-          policyVersion: manifestPolicy.policyVersion,
-          messages: providerMessages,
-          tools: input.tools,
-          tokenBudget: {
-            contextLength: input.modelConfig.contextLength ?? input.fallbackContextLength,
-            requestedMaxTokens: manifestRequestedMaxTokens,
-            effectiveMaxTokens: providerMaxTokens,
-            reserveTokens: manifestReserveTokens,
-            toolReserveTokens: effectiveRequestToolReserveTokens
-          },
-          selection:
-            isInitialViewRequest && !recoveredFromContextPressure
-              ? input.viewContext!.selection
-              : undefined,
-          summaryCursorOrderSeq: manifestSummaryCursorOrderSeq,
-          supportsVision: input.viewContext?.supportsVision ?? input.supportsVision,
-          supportsAudioInput: input.viewContext?.supportsAudioInput ?? input.supportsAudioInput,
-          traceDebugEnabled: input.viewContext?.traceDebugEnabled ?? input.traceDebugEnabled,
-          contextBuilderVersion,
-          syntheticContributions: manifestSyntheticContributions,
-          ...(executionContract ? { executionContract } : {}),
-          ...(requiresDurableSkillManifest
-            ? {
-                runId: input.run.runId,
-                tapeIncarnationId,
-                skillContexts,
-                requireDurableManifest: true
-              }
-            : {})
-        })
+        requestView =
+          input.manifest.append({
+            requestSeq,
+            taskType: isInitialViewRequest ? input.viewContext!.taskType : 'tool_loop',
+            policy: manifestPolicy.policy,
+            policyVersion: manifestPolicy.policyVersion,
+            messages: providerMessages,
+            tools: input.tools,
+            tokenBudget: {
+              contextLength: input.modelConfig.contextLength ?? input.fallbackContextLength,
+              requestedMaxTokens: manifestRequestedMaxTokens,
+              effectiveMaxTokens: providerMaxTokens,
+              reserveTokens: manifestReserveTokens,
+              toolReserveTokens: effectiveRequestToolReserveTokens
+            },
+            selection:
+              isInitialViewRequest && !recoveredFromContextPressure
+                ? input.viewContext!.selection
+                : undefined,
+            summaryCursorOrderSeq: manifestSummaryCursorOrderSeq,
+            supportsVision: input.viewContext?.supportsVision ?? input.supportsVision,
+            supportsAudioInput: input.viewContext?.supportsAudioInput ?? input.supportsAudioInput,
+            traceDebugEnabled: input.viewContext?.traceDebugEnabled ?? input.traceDebugEnabled,
+            contextBuilderVersion,
+            syntheticContributions: manifestSyntheticContributions,
+            ...(executionContract ? { executionContract } : {}),
+            ...(requiresDurableSkillManifest
+              ? {
+                  runId: input.run.runId,
+                  tapeIncarnationId,
+                  skillContexts,
+                  requireDurableManifest: true
+                }
+              : {})
+          }) ?? null
       } catch (error) {
         if (executionContract) {
           if (
@@ -758,6 +764,15 @@ export class DeepChatContextCoordinator {
         }
       }
       bindActiveRequestContract(input.run, requestSeq, executionContract)
+      if (
+        requiresDurableSkillManifest &&
+        (!requestView || requestView.tapeIncarnationId !== tapeIncarnationId)
+      ) {
+        throw new Error('Provider request lost its exact Skill ViewManifest identity.')
+      }
+      if (requestView) {
+        bindActiveRequestView(input.run, { requestSeq, ...requestView })
+      }
 
       return { providerMessages, providerMaxTokens, requestSeq, executionContract }
     }

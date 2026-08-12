@@ -46,6 +46,8 @@ export interface ToolCallOptions {
   runId?: string
   messageId?: string
   requestSeq?: number
+  manifestHash?: string
+  tapeIncarnationId?: string
   executionContract?: DeepChatExecutionContract
   onProgress?: (update: AgentToolProgressUpdate) => void
   signal?: AbortSignal

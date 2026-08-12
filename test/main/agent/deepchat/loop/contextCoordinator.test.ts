@@ -204,6 +204,10 @@ function createAttemptInput(options?: {
           manifestContractRefs.push(manifest.executionContract)
           manifests.push(structuredClone(manifest))
           options?.appendManifest?.(manifest)
+          return {
+            manifestHash: 'a'.repeat(64),
+            ...(manifest.tapeIncarnationId ? { tapeIncarnationId: manifest.tapeIncarnationId } : {})
+          }
         },
         onAppendError: (error: unknown) => manifestErrors.push(error)
       },
@@ -460,6 +464,11 @@ describe('DeepChatContextCoordinator', () => {
       ]
     })
     expect(fixture.manifests[0].messages).toEqual(fixture.providerRequests[0].messages)
+    expect(fixture.run.activeRequestView).toEqual({
+      requestSeq: 1,
+      manifestHash: 'a'.repeat(64),
+      tapeIncarnationId: 'incarnation-1'
+    })
   })
 
   it('durably binds a materialized message Skill to the exact provider projection', async () => {

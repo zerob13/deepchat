@@ -54,6 +54,12 @@ export interface LoopRunRequestContractBinding {
   readonly executionContract: DeepChatExecutionContract | null
 }
 
+export interface LoopRunRequestViewBinding {
+  readonly requestSeq: number
+  readonly manifestHash: string
+  readonly tapeIncarnationId?: string
+}
+
 export interface LoopRun<TStreamState> {
   readonly runId: string
   readonly sessionId: AppSessionId
@@ -69,6 +75,7 @@ export interface LoopRun<TStreamState> {
   resources: LoopRunResources
   providerRecovery: LoopRunProviderRecovery
   activeRequestContract: LoopRunRequestContractBinding | null
+  activeRequestView: LoopRunRequestViewBinding | null
 }
 
 export interface CreateLoopRunInput<TStreamState> {
@@ -126,7 +133,8 @@ export function createLoopRun<TStreamState>(
       contextOverflowHandoffAttempted: false,
       strictProviderOverflowRetryUsed: false
     },
-    activeRequestContract: null
+    activeRequestContract: null,
+    activeRequestView: null
   }
 }
 
@@ -443,6 +451,7 @@ export function advanceRequestSequence(run: LoopRun<unknown>): number {
   run.requestSeq = nextRequestSeq
   run.physicalAttempt = 0
   run.activeRequestContract = null
+  run.activeRequestView = null
   return nextRequestSeq
 }
 
@@ -466,6 +475,31 @@ export function bindActiveRequestContract(
   const binding = Object.freeze({ requestSeq, executionContract })
   run.activeRequestContract = binding
   return binding
+}
+
+export function bindActiveRequestView(
+  run: LoopRun<unknown>,
+  binding: LoopRunRequestViewBinding
+): LoopRunRequestViewBinding {
+  if (
+    binding.requestSeq !== run.requestSeq ||
+    !/^[a-f0-9]{64}$/.test(binding.manifestHash) ||
+    (binding.tapeIncarnationId !== undefined &&
+      (!binding.tapeIncarnationId ||
+        binding.tapeIncarnationId !== binding.tapeIncarnationId.trim() ||
+        binding.tapeIncarnationId !== binding.tapeIncarnationId.normalize('NFC')))
+  ) {
+    throw new Error('ViewManifest identity does not match the active provider request.')
+  }
+  const normalized = Object.freeze({
+    requestSeq: binding.requestSeq,
+    manifestHash: binding.manifestHash,
+    ...(binding.tapeIncarnationId === undefined
+      ? {}
+      : { tapeIncarnationId: binding.tapeIncarnationId })
+  })
+  run.activeRequestView = normalized
+  return normalized
 }
 
 export function enterPhysicalAttempt(run: LoopRun<unknown>): number {

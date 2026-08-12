@@ -18,6 +18,7 @@ import {
 } from '@/agent/deepchat/runtime/toolAdapters'
 import {
   bindActiveRequestContract,
+  bindActiveRequestView,
   createLoopRun
 } from '@/agent/deepchat/loop/loopRun'
 import type { DeepChatLoopNotification } from '@/agent/deepchat/loop/ports'
@@ -951,6 +952,11 @@ describe('processStream', () => {
         }
       } as any
       bindActiveRequestContract(run, 1, executionContract)
+      bindActiveRequestView(run, {
+        requestSeq: 1,
+        manifestHash: 'a'.repeat(64),
+        tapeIncarnationId: 'incarnation-1'
+      })
       const toolService = createMockToolService({ action: 'ok' })
 
       await processStream(
@@ -967,6 +973,8 @@ describe('processStream', () => {
         runId: RUN_ID,
         messageId: 'm1',
         requestSeq: 1,
+        manifestHash: 'a'.repeat(64),
+        tapeIncarnationId: 'incarnation-1',
         executionContract
       })
       expect(

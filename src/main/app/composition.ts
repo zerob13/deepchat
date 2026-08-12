@@ -125,6 +125,7 @@ import { SkillService } from '../skill'
 import type { SkillSessionStatePort } from '../skill'
 import { SkillSettings } from '../skill/settings'
 import { SkillSyncService } from '../skill/sync'
+import { SkillExecutionAuthorityResolver } from '../skill/skillExecutionAuthority'
 import { HookService } from '../hook'
 import { HookSettings } from '../hook/config'
 import { SchedulerService, createCronJobRunSessionStarter } from '../scheduler'
@@ -1267,6 +1268,10 @@ export async function createMainProcessControl(dependencies: {
     },
     liveDelegation: createLivePort(() => liveDelegationService),
     skills: skillService,
+    skillExecutionAuthority: new SkillExecutionAuthorityResolver({
+      tape: sessionData.tapeStore,
+      environments: skillService
+    }),
     browser: yoBrowserPresenter.toolHandler,
     files: {
       getMimeType: (filePath) => fileService.getMimeType(filePath),

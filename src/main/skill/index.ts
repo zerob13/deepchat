@@ -4842,6 +4842,28 @@ export class SkillService implements SkillServicePort {
       : createDefaultSkillExtensionConfig()
   }
 
+  async resolveSkillRuntimeEnvironmentBinding(
+    agentId: string,
+    name: string,
+    expectedBindingId: string | null
+  ): Promise<Record<string, string>> {
+    const normalizedAgentId = await this.requireAgentScope(agentId)
+    const item = this.getStoredManagementState().agents[normalizedAgentId]?.skills[name]
+    const extension = item
+      ? sanitizeSkillExtensionConfig(item.extension)
+      : createDefaultSkillExtensionConfig()
+    const hasEnvironment = Object.keys(extension.env).length > 0
+    let actualBindingId: string | null = null
+    if (hasEnvironment && !item?.runtimeBindingId) {
+      throw new Error(`Skill "${name}" runtime environment is missing an execution binding`)
+    }
+    if (hasEnvironment && item?.runtimeBindingId) actualBindingId = item.runtimeBindingId
+    if (actualBindingId !== expectedBindingId) {
+      throw new Error(`Skill "${name}" runtime environment binding changed before execution`)
+    }
+    return { ...extension.env }
+  }
+
   private async migrateLegacySkillExtension(
     name: string,
     failOnUnreadable: boolean = false

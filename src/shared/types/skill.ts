@@ -490,6 +490,11 @@ export interface SkillServicePort {
   openSkillsFolderForAgent(agentId: string): Promise<void>
   getSkillExtension(name: string): Promise<SkillExtensionConfig>
   getSkillExtensionForAgent(agentId: string, name: string): Promise<SkillExtensionConfig>
+  resolveSkillRuntimeEnvironmentBinding(
+    agentId: string,
+    name: string,
+    expectedBindingId: string | null
+  ): Promise<Record<string, string>>
   saveSkillExtension(name: string, config: SkillExtensionConfig): Promise<void>
   saveSkillExtensionForAgent(
     agentId: string,
