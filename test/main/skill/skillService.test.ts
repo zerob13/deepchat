@@ -3159,6 +3159,33 @@ describe('SkillService', () => {
       )
     })
 
+    it('serializes an atomic removal with concurrent Session replacements', async () => {
+      ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)
+      newSessionActiveSkillsStore.set('new-session-concurrent', ['skill-1'])
+
+      const replace = skillService.setActiveSkills('new-session-concurrent', ['skill-1', 'skill-2'])
+      const remove = skillService.removeActiveSkill('new-session-concurrent', 'skill-1')
+
+      await expect(Promise.all([replace, remove])).resolves.toEqual([
+        ['skill-1', 'skill-2'],
+        ['skill-2']
+      ])
+      await expect(skillService.getActiveSkills('new-session-concurrent')).resolves.toEqual([
+        'skill-2'
+      ])
+    })
+
+    it('treats removing a missing Session Skill as an idempotent no-op', async () => {
+      ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)
+      newSessionActiveSkillsStore.set('new-session-noop', ['skill-2'])
+      ;(skillSessionStatePort.setPersistedNewSessionSkills as Mock).mockClear()
+
+      await expect(skillService.removeActiveSkill('new-session-noop', 'skill-1')).resolves.toEqual([
+        'skill-2'
+      ])
+      expect(skillSessionStatePort.setPersistedNewSessionSkills).not.toHaveBeenCalled()
+    })
+
     it('normalizes the old CUA skill name when setting active skills', async () => {
       ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)
       mockSkillTree(['computer-use'])

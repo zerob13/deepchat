@@ -154,10 +154,7 @@ export function useSkillsData(
     pendingSkills.value = []
   }
 
-  /**
-   * Remove one existing persistent Skill without exposing a path that creates Session state.
-   * Overlapping local requests are blocked because the typed route replaces the complete list.
-   */
+  /** Remove one existing persistent Skill without exposing a path that creates Session state. */
   const removeSessionActiveSkill = async (skillName: string) => {
     const requestedConversationId = conversationId.value
     if (
@@ -175,21 +172,7 @@ export function useSkillsData(
     const mutationSequence = ++activeSkillMutationSequence
     sessionActiveSkillRemoving.value = skillName
     try {
-      const currentSkills = await skillClient.getActiveSkills(requestedConversationId)
-      if (
-        mutationSequence !== activeSkillMutationSequence ||
-        conversationId.value !== requestedConversationId
-      ) {
-        return
-      }
-
-      const nextSkills = currentSkills.filter((name) => name !== skillName)
-      if (nextSkills.length === currentSkills.length) {
-        sessionActiveSkills.value = currentSkills
-        return
-      }
-
-      const updatedSkills = await skillClient.setActiveSkills(requestedConversationId, nextSkills)
+      const updatedSkills = await skillClient.removeActiveSkill(requestedConversationId, skillName)
       if (
         mutationSequence === activeSkillMutationSequence &&
         conversationId.value === requestedConversationId

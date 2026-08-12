@@ -1227,7 +1227,8 @@ function createRuntime() {
   } as unknown as IConversationExporter
   const skillService = {
     readSkillFileForAgent: vi.fn().mockResolvedValue('---\nname: write-tests\n---\nUse tests well'),
-    setActiveSkills: vi.fn().mockResolvedValue(['write-tests'])
+    setActiveSkills: vi.fn().mockResolvedValue(['write-tests']),
+    removeActiveSkill: vi.fn().mockResolvedValue([])
   } as unknown as SkillServicePort
 
   const workspaceService = {
@@ -1904,6 +1905,23 @@ describe('dispatchDeepchatRoute', () => {
     expect(assertSessionActiveSkillsMutable.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(skillService.setActiveSkills).mock.invocationCallOrder[0]
     )
+  })
+
+  it('removes one Session Skill without replacing concurrently added state', async () => {
+    const { runtime, skillService, assertSessionActiveSkillsMutable } = createRuntime()
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'skills.removeActive',
+        { conversationId: 'session-1', skill: 'write-tests' },
+        createRendererRouteContext(42, 7)
+      )
+    ).resolves.toEqual({ skills: [] })
+
+    expect(assertSessionActiveSkillsMutable).toHaveBeenCalledWith('session-1')
+    expect(skillService.removeActiveSkill).toHaveBeenCalledWith('session-1', 'write-tests')
+    expect(skillService.setActiveSkills).not.toHaveBeenCalled()
   })
 
   it('routes database imports through the App maintenance owner', async () => {

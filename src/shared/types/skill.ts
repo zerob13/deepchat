@@ -467,6 +467,7 @@ export interface SkillServicePort {
   // Session state management
   getActiveSkills(conversationId: string): Promise<string[]>
   setActiveSkills(conversationId: string, skills: string[]): Promise<string[]>
+  removeActiveSkill(conversationId: string, skill: string): Promise<string[]>
   clearNewAgentSessionSkills(conversationId: string): Promise<void>
   resolveSessionAgentId(conversationId: string): Promise<string | null>
   revalidateActiveSkillsForAgent(conversationId: string, agentId: string): Promise<string[]>

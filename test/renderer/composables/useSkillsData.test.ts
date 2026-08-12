@@ -5,6 +5,7 @@ import { defineComponent, toRef } from 'vue'
 const skillClient = vi.hoisted(() => ({
   getActiveSkills: vi.fn(),
   setActiveSkills: vi.fn(),
+  removeActiveSkill: vi.fn(),
   onSessionChanged: vi.fn(() => () => undefined)
 }))
 
@@ -48,12 +49,10 @@ describe('useSkillsData Session active Skills', () => {
     })
   })
 
-  it('blocks overlapping removals and rebases replacement on current Session state', async () => {
-    skillClient.getActiveSkills
-      .mockResolvedValueOnce(['review', 'database-migration'])
-      .mockResolvedValueOnce(['review', 'database-migration', 'new-skill'])
+  it('blocks overlapping removals and delegates the mutation atomically', async () => {
+    skillClient.getActiveSkills.mockResolvedValueOnce(['review', 'database-migration'])
     const update = createDeferred<string[]>()
-    skillClient.setActiveSkills.mockReturnValue(update.promise)
+    skillClient.removeActiveSkill.mockReturnValue(update.promise)
 
     const { useSkillsData } = await import('@/components/chat-input/composables/useSkillsData')
     let skillsData!: ReturnType<typeof useSkillsData>
@@ -74,11 +73,7 @@ describe('useSkillsData Session active Skills', () => {
     const firstRemoval = skillsData.removeSessionActiveSkill('review')
     await skillsData.removeSessionActiveSkill('database-migration')
 
-    expect(skillClient.setActiveSkills).toHaveBeenCalledTimes(1)
-    expect(skillClient.setActiveSkills).toHaveBeenCalledWith('session-1', [
-      'database-migration',
-      'new-skill'
-    ])
+    expect(skillClient.removeActiveSkill).toHaveBeenCalledExactlyOnceWith('session-1', 'review')
     expect(skillsData.sessionActiveSkillRemoving.value).toBe('review')
 
     update.resolve(['database-migration', 'new-skill'])
@@ -135,7 +130,7 @@ describe('useSkillsData Session active Skills', () => {
       sessionId === 'session-1' ? ['review'] : ['new-session-skill']
     )
     const update = createDeferred<string[]>()
-    skillClient.setActiveSkills.mockReturnValue(update.promise)
+    skillClient.removeActiveSkill.mockReturnValue(update.promise)
 
     const { useSkillsData } = await import('@/components/chat-input/composables/useSkillsData')
     let skillsData!: ReturnType<typeof useSkillsData>
@@ -170,7 +165,7 @@ describe('useSkillsData Session active Skills', () => {
     )
     const oldUpdate = createDeferred<string[]>()
     const newUpdate = createDeferred<string[]>()
-    skillClient.setActiveSkills.mockImplementation((sessionId: string) =>
+    skillClient.removeActiveSkill.mockImplementation((sessionId: string) =>
       sessionId === 'session-1' ? oldUpdate.promise : newUpdate.promise
     )
 
@@ -197,8 +192,8 @@ describe('useSkillsData Session active Skills', () => {
     const newRemoval = skillsData.removeSessionActiveSkill('new-skill')
     await flushPromises()
 
-    expect(skillClient.setActiveSkills).toHaveBeenNthCalledWith(1, 'session-1', [])
-    expect(skillClient.setActiveSkills).toHaveBeenNthCalledWith(2, 'session-2', [])
+    expect(skillClient.removeActiveSkill).toHaveBeenNthCalledWith(1, 'session-1', 'old-skill')
+    expect(skillClient.removeActiveSkill).toHaveBeenNthCalledWith(2, 'session-2', 'new-skill')
 
     oldUpdate.resolve([])
     await oldRemoval
@@ -276,7 +271,7 @@ describe('useSkillsData Session active Skills', () => {
 
   it('surfaces current-Session removal failures and clears the busy state', async () => {
     skillClient.getActiveSkills.mockResolvedValue(['review'])
-    skillClient.setActiveSkills.mockRejectedValue(new Error('generation active'))
+    skillClient.removeActiveSkill.mockRejectedValue(new Error('generation active'))
 
     const { useSkillsData } = await import('@/components/chat-input/composables/useSkillsData')
     let skillsData!: ReturnType<typeof useSkillsData>

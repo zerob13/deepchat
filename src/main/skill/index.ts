@@ -314,6 +314,7 @@ export class SkillService implements SkillServicePort {
   // Prevent concurrent discovery calls (race condition protection)
   private discoveryPromise: Promise<SkillMetadata[]> | null = null
   private legacySkillRetirementWarnings: Set<string> = new Set()
+  private activeSkillMutationTails = new Map<string, Promise<void>>()
 
   constructor(
     private readonly settings: SkillSettingsPort,
@@ -4313,6 +4314,48 @@ export class SkillService implements SkillServicePort {
    * Set active skills for a conversation
    */
   async setActiveSkills(conversationId: string, skills: string[]): Promise<string[]> {
+    return await this.runActiveSkillMutation(conversationId, () =>
+      this.setActiveSkillsUnlocked(conversationId, skills)
+    )
+  }
+
+  async removeActiveSkill(conversationId: string, skill: string): Promise<string[]> {
+    return await this.runActiveSkillMutation(conversationId, async () => {
+      const activeSkills = await this.getActiveSkills(conversationId)
+      if (!activeSkills.includes(skill)) return activeSkills
+      return await this.setActiveSkillsUnlocked(
+        conversationId,
+        activeSkills.filter((activeSkill) => activeSkill !== skill)
+      )
+    })
+  }
+
+  private async runActiveSkillMutation<T>(
+    conversationId: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const previous = this.activeSkillMutationTails.get(conversationId) ?? Promise.resolve()
+    let release!: () => void
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const tail = previous.catch(() => undefined).then(() => current)
+    this.activeSkillMutationTails.set(conversationId, tail)
+    await previous.catch(() => undefined)
+    try {
+      return await operation()
+    } finally {
+      release()
+      if (this.activeSkillMutationTails.get(conversationId) === tail) {
+        this.activeSkillMutationTails.delete(conversationId)
+      }
+    }
+  }
+
+  private async setActiveSkillsUnlocked(
+    conversationId: string,
+    skills: string[]
+  ): Promise<string[]> {
     try {
       const isNewSession = await this.isNewAgentSession(conversationId)
       const agentId = await this.resolveSessionAgentId(conversationId)
