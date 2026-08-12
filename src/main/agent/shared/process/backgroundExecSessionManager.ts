@@ -75,6 +75,7 @@ export interface BackgroundExecStartOptions {
   outputPrefix?: string
   previewChars?: number
   offloadThresholdChars?: number
+  maxOutputBytes?: number
   /** Ownership transfers to the background manager as soon as start is called. */
   ownedSkillExecutionPackageTree?: OwnedSkillExecutionPackageTree
 }
@@ -106,6 +107,9 @@ interface BackgroundSession {
   outputFilePath: string | null
   outputWriteQueue: Promise<void>
   totalOutputLength: number
+  totalOutputBytes: number
+  maxOutputBytes: number | null
+  outputLimitExceeded: boolean
   previewChars: number
   offloadThresholdChars: number
   offloadDisabled: boolean
@@ -312,6 +316,14 @@ export class BackgroundExecSessionManager {
       outputFilePath,
       outputWriteQueue: Promise.resolve(),
       totalOutputLength: 0,
+      totalOutputBytes: 0,
+      maxOutputBytes:
+        typeof options.maxOutputBytes === 'number' &&
+        Number.isSafeInteger(options.maxOutputBytes) &&
+        options.maxOutputBytes > 0
+          ? options.maxOutputBytes
+          : null,
+      outputLimitExceeded: false,
       previewChars: Math.max(1, Math.round(options?.previewChars ?? config.maxOutputChars)),
       offloadThresholdChars: Math.min(
         config.offloadThresholdChars,
@@ -655,6 +667,25 @@ export class BackgroundExecSessionManager {
   }
 
   private appendOutput(session: BackgroundSession, data: string): void {
+    if (!data || session.outputLimitExceeded) return
+    const dataBytes = Buffer.byteLength(data, 'utf8')
+    if (
+      session.maxOutputBytes !== null &&
+      session.totalOutputBytes + dataBytes > session.maxOutputBytes
+    ) {
+      session.outputLimitExceeded = true
+      this.appendAcceptedOutput(
+        session,
+        `\n[Process terminated: output exceeded ${session.maxOutputBytes} bytes.]\n`
+      )
+      void this.killInternal(session, 'output-limit')
+      return
+    }
+    session.totalOutputBytes += dataBytes
+    this.appendAcceptedOutput(session, data)
+  }
+
+  private appendAcceptedOutput(session: BackgroundSession, data: string): void {
     session.totalOutputLength += data.length
 
     const shouldOffload =
@@ -699,12 +730,14 @@ export class BackgroundExecSessionManager {
         clearTimeout(session.killTimeoutId)
       }
 
-      if (signal === 'SIGTERM' || signal === 'SIGKILL') {
-        session.status = 'killed'
-      } else if (code !== 0 && code !== null) {
-        session.status = 'error'
-      } else {
-        session.status = 'done'
+      if (session.status !== 'killed') {
+        if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+          session.status = 'killed'
+        } else if (code !== 0 && code !== null) {
+          session.status = 'error'
+        } else {
+          session.status = 'done'
+        }
       }
 
       session.exitCode = code ?? undefined

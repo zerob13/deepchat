@@ -297,6 +297,34 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     await executeOptions?.assertAuthorityCurrent()
     expect(assertSkillExecutionAuthorityCurrent).toHaveBeenCalledWith(authority)
     expect(result.content).toBe('ok')
+    expect(result.rawData?.isError).toBe(false)
+  })
+
+  it('marks output-limited skill runs as tool errors', async () => {
+    const authority = { identity: { skillName: 'ocr' }, executionPackage: {} }
+    resolveSkillExecutionAuthority.mockResolvedValue(authority)
+    vi.spyOn(SkillExecutionService.prototype, 'execute').mockResolvedValue({
+      output: '[Process terminated: output exceeded 8 bytes.]',
+      outputLimited: true,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    } as never)
+    const manager = buildManager()
+
+    const result = await manager.callTool(
+      'skill_run',
+      { skill: 'ocr', script: 'scripts/run.py' },
+      'conv-1',
+      {
+        runId: 'run-1',
+        requestSeq: 3,
+        manifestHash: 'a'.repeat(64),
+        tapeIncarnationId: 'incarnation-1',
+        commandShell: POSIX_COMMAND_SHELL
+      }
+    )
+
+    expect(result.rawData?.isError).toBe(true)
   })
 
   it('rejects skill_run without a physical provider-request binding', async () => {

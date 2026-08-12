@@ -32,6 +32,7 @@ export const SKILL_RUN_MAX_ARGUMENTS = 128
 export const SKILL_RUN_MAX_ARGUMENT_CHARS = 8 * 1024
 export const SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS = 24 * 1024
 export const SKILL_RUN_MAX_STDIN_CHARS = 1024 * 1024
+export const SKILL_RUN_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 
 /**
  * Skill metadata extracted from SKILL.md frontmatter.

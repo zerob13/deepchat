@@ -164,6 +164,9 @@ describe('BackgroundExecSessionManager', () => {
     outputFilePath: '/mock/session/bgexec_bg_123.log',
     outputWriteQueue: Promise.resolve(),
     totalOutputLength: 10001,
+    totalOutputBytes: 10001,
+    maxOutputBytes: null,
+    outputLimitExceeded: false,
     previewChars: 500,
     offloadThresholdChars: 10000,
     offloadDisabled: false,
@@ -234,6 +237,31 @@ describe('BackgroundExecSessionManager', () => {
         value: originalAppendFile
       })
     }
+  })
+
+  it('terminates a background process when its output byte limit is exceeded', async () => {
+    const child = new MockChildProcess()
+    vi.mocked(spawn).mockReturnValue(child as never)
+    mockTerminateProcessTree.mockImplementationOnce(async () => {
+      child.emit('close', 0, null)
+      return true
+    })
+
+    const started = await manager.start('conv-1', 'node script.js', '/workspace', {
+      commandShell: PLATFORM_COMMAND_SHELL,
+      timeout: 0,
+      maxOutputBytes: 8
+    })
+
+    child.stdout.emit('data', Buffer.from('12345678'))
+    child.stdout.emit('data', Buffer.from('discarded'))
+    await vi.waitFor(() => expect(mockTerminateProcessTree).toHaveBeenCalledOnce())
+
+    const result = await manager.getCompletionResult('conv-1', started.sessionId, 500)
+    expect(result.status).toBe('killed')
+    expect(result.output).toContain('12345678')
+    expect(result.output).toContain('output exceeded 8 bytes')
+    expect(result.output).not.toContain('discarded')
   })
 
   it('waits for completion and returns a completion snapshot before cleanup', async () => {

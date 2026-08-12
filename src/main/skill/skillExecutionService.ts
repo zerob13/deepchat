@@ -5,6 +5,7 @@ import logger from '@shared/logger'
 import {
   SKILL_RUN_MAX_ARGUMENTS,
   SKILL_RUN_MAX_ARGUMENT_CHARS,
+  SKILL_RUN_MAX_OUTPUT_BYTES,
   SKILL_RUN_MAX_STDIN_CHARS,
   SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS,
   type SkillRuntimePreference,
@@ -60,6 +61,7 @@ interface SkillExecutionServiceOptions {
 
 interface SkillExecutionResult {
   output: string | { status: 'running'; sessionId: string }
+  outputLimited?: boolean
   rtkApplied: boolean
   rtkMode: 'rewrite' | 'direct' | 'bypass'
   rtkFallbackReason?: string
@@ -94,6 +96,7 @@ interface ForegroundExecutionResult {
   outputOffloadPath?: string
   releasePackageTree: boolean
   aborted: boolean
+  outputLimited: boolean
   abortReason?: unknown
 }
 
@@ -176,6 +179,7 @@ export class SkillExecutionService {
               FOREGROUND_OFFLOAD_THRESHOLD,
               options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS
             ),
+            maxOutputBytes: SKILL_RUN_MAX_OUTPUT_BYTES,
             ownedSkillExecutionPackageTree: tree.descriptor
           },
           assertReadyForDispatch
@@ -230,6 +234,7 @@ export class SkillExecutionService {
       }
       return {
         output: foregroundResult.output,
+        outputLimited: foregroundResult.outputLimited,
         rtkApplied: plan.spawnMode === 'shell',
         rtkMode: plan.spawnMode === 'shell' ? 'rewrite' : 'bypass',
         outputOffloadPath: foregroundResult.outputOffloadPath
@@ -545,7 +550,8 @@ export class SkillExecutionService {
     commandShell: ResolvedCommandShell,
     stdin?: string,
     outputPreviewChars = FOREGROUND_PREVIEW_CHARS,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    maxOutputBytes = SKILL_RUN_MAX_OUTPUT_BYTES
   ): Promise<ForegroundExecutionResult> {
     signal?.throwIfAborted()
     const outputFilePath = this.createForegroundOutputPath(conversationId, plan.outputPrefix)
@@ -573,6 +579,7 @@ export class SkillExecutionService {
 
       let outputBuffer = ''
       let totalOutputLength = 0
+      let totalOutputBytes = 0
       let offloaded = false
       let offloadDisabled = outputFilePath === null
       let activeOutputFilePath = outputFilePath
@@ -584,6 +591,7 @@ export class SkillExecutionService {
       let aborted = false
       let abortReason: unknown
       let terminationStarted = false
+      let outputLimited = false
 
       const outputDecoders = createUtf8OutputDecoderPair((data) => appendOutput(data))
 
@@ -659,11 +667,12 @@ export class SkillExecutionService {
           outputOffloadPath: offloaded ? (activeOutputFilePath ?? undefined) : undefined,
           releasePackageTree,
           aborted,
+          outputLimited,
           ...(aborted ? { abortReason } : {})
         })
       }
 
-      const requestTermination = (cause: 'cancelled' | 'timed-out') => {
+      const requestTermination = (cause: 'cancelled' | 'timed-out' | 'output-limited') => {
         if (settled || terminationStarted) return
         terminationStarted = true
         timedOut = cause === 'timed-out'
@@ -735,7 +744,7 @@ export class SkillExecutionService {
           })
       }
 
-      const appendOutput = (data: string) => {
+      const appendAcceptedOutput = (data: string) => {
         totalOutputLength += data.length
         const shouldOffload =
           !offloadDisabled &&
@@ -751,6 +760,19 @@ export class SkillExecutionService {
         const chunk = outputBuffer + data
         outputBuffer = ''
         queueOutputWrite(chunk)
+      }
+
+      const appendOutput = (data: string) => {
+        if (!data || outputLimited) return
+        const dataBytes = Buffer.byteLength(data, 'utf8')
+        if (totalOutputBytes + dataBytes > maxOutputBytes) {
+          outputLimited = true
+          appendAcceptedOutput(`\n[Process terminated: output exceeded ${maxOutputBytes} bytes.]\n`)
+          requestTermination('output-limited')
+          return
+        }
+        totalOutputBytes += dataBytes
+        appendAcceptedOutput(data)
       }
 
       child.stdout?.on('data', (data: Buffer | string) => outputDecoders.writeStdout(data))

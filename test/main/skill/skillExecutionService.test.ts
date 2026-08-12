@@ -805,6 +805,59 @@ describe('SkillExecutionService', () => {
     expect(result.releasePackageTree).toBe(true)
   })
 
+  it('terminates foreground execution when its output byte limit is exceeded', async () => {
+    class MockStream extends EventEmitter {
+      destroy = vi.fn()
+    }
+
+    class MockChild extends EventEmitter {
+      stdout = new MockStream()
+      stderr = new MockStream()
+      stdin = {
+        write: vi.fn(),
+        end: vi.fn(),
+        destroy: vi.fn()
+      }
+    }
+
+    const child = new MockChild()
+    vi.mocked(spawn).mockReturnValue(child as never)
+    vi.spyOn(service as never, 'createForegroundOutputPath' as never).mockReturnValue(null)
+    vi.mocked(terminateProcessTree).mockImplementationOnce(async () => {
+      child.emit('close', null)
+      return true
+    })
+
+    const resultPromise = (service as never).runForeground(
+      {
+        command: 'python',
+        args: ['script.py'],
+        cwd: '/skills/ocr',
+        env: { PATH: '/bin' },
+        shellCommand: 'python script.py',
+        outputPrefix: 'skill_ocr',
+        spawnMode: 'direct'
+      },
+      1000,
+      'conv-1',
+      POSIX_COMMAND_SHELL,
+      undefined,
+      500,
+      undefined,
+      8
+    )
+
+    child.stdout.emit('data', Buffer.from('12345678'))
+    child.stderr.emit('data', Buffer.from('discarded'))
+
+    const result = await resultPromise
+    expect(terminateProcessTree).toHaveBeenCalledOnce()
+    expect(result.outputLimited).toBe(true)
+    expect(result.output).toContain('12345678')
+    expect(result.output).toContain('output exceeded 8 bytes')
+    expect(result.output).not.toContain('discarded')
+  })
+
   it('terminates a foreground process tree when its turn is cancelled', async () => {
     class MockStream extends EventEmitter {
       destroy = vi.fn()

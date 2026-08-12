@@ -2838,6 +2838,7 @@ export class AgentToolManager {
       content,
       rawData: {
         content,
+        isError: result.outputLimited === true,
         rtkApplied: result.rtkApplied,
         rtkMode: result.rtkMode,
         rtkFallbackReason: result.rtkFallbackReason,

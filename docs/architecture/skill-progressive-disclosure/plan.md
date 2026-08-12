@@ -218,6 +218,8 @@ second Provider call and return actionable category diagnostics.
 - Bound `skill_run` argument and stdin payloads, and resolve configured system runtimes to exact
   executable paths from the inherited process environment without running login-shell or runtime
   discovery probes or RTK rewrites before the Journal dispatch boundary.
+- Terminate Skill processes with an explicit error marker when their combined stdout/stderr exceeds
+  the fixed Skill output budget; never let foreground or background offload grow without bound.
 - Never trust renderer-supplied paths, hashes, entry refs, or activation scope.
 - Recheck cancellation, current runtime instance, Tape incarnation, source refs, and hashes at the
   final provider boundary.
@@ -253,6 +255,7 @@ second Provider call and return actionable category diagnostics.
 - Tool-result settlement-before-activation and fail-closed persistence tests.
 - Repeated root/supporting-file view behavior.
 - Bounded Skill execution inputs and side-effect-free, cancellable system-runtime path resolution.
+- Foreground and background Skill output-limit termination, including offload failure paths.
 - One-body-per-Skill request tests across overlapping activation sources.
 - Same-execution continuation with source mutation and new-execution fresh-version tests.
 - In-process permission pause, overflow recovery, parked restart behavior, and Tape reset failure
