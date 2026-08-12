@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  TAPE_TOOL_CATALOG_EVENT_NAME,
-  TAPE_TOOL_SURFACE_EVENT_NAME
+  TAPE_TOOL_SURFACE_EVENT_NAME,
+  TOOL_SURFACE_TAPE_EVENT_NAMES
 } from '@/tape/domain/toolSurfaceFacts'
 
 const sqliteModule = await import('better-sqlite3-multiple-ciphers').catch(() => null)
@@ -98,7 +98,7 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
   it('reserves Tool Surface provenance names for the dedicated writer', () => {
     const { db, table } = createTable()
 
-    for (const name of [TAPE_TOOL_CATALOG_EVENT_NAME, TAPE_TOOL_SURFACE_EVENT_NAME]) {
+    for (const name of TOOL_SURFACE_TAPE_EVENT_NAMES) {
       expect(() =>
         table.appendEvent({
           sessionId: 's1',
@@ -123,7 +123,7 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
     })
     expect(compatible.name).toBe('view/tool_catalog/future')
 
-    const rows = [TAPE_TOOL_CATALOG_EVENT_NAME, TAPE_TOOL_SURFACE_EVENT_NAME].map((name, index) => {
+    const rows = TOOL_SURFACE_TAPE_EVENT_NAMES.map((name, index) => {
       const row = table.appendToolSurfaceEvent({
         sessionId: 's1',
         name,

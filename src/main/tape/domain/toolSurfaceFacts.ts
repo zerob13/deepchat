@@ -9,14 +9,19 @@ import {
 } from '@shared/agentTools'
 import type { ToolExecutionContract } from '@shared/types/core/mcp'
 import type { DeepChatExecutionToolTargetIdentity } from '@shared/types/execution-contract'
+import type { DeepChatTaskContractRef } from '@shared/types/task-contract'
 import { canonicalJsonStringifyData, hashJsonData } from './canonicalJson'
 import { buildExecutionToolTargetKey, isDetachedStoredToolTarget } from './executionContract'
+import { isDeepChatTaskContractRef } from './taskContract'
+import { normalizeAbsoluteWorkspacePath } from './workspacePath'
 
 export const TAPE_TOOL_CATALOG_EVENT_NAME = 'view/tool_catalog'
 export const TAPE_TOOL_SURFACE_EVENT_NAME = 'view/tool_surface'
+export const TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME = 'view/programmatic_tool_surface'
 export const TOOL_SURFACE_TAPE_EVENT_NAMES = [
   TAPE_TOOL_CATALOG_EVENT_NAME,
-  TAPE_TOOL_SURFACE_EVENT_NAME
+  TAPE_TOOL_SURFACE_EVENT_NAME,
+  TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME
 ] as const
 export type ToolSurfaceTapeEventName = (typeof TOOL_SURFACE_TAPE_EVENT_NAMES)[number]
 
@@ -31,12 +36,21 @@ export const TAPE_TOOL_CATALOG_FACT_HASH_VERSION = 1
 export const TAPE_TOOL_CATALOG_PROJECTION_HASH_VERSION = 1
 export const TAPE_TOOL_SURFACE_FACT_SCHEMA_VERSION = 1
 export const TAPE_TOOL_SURFACE_FACT_HASH_VERSION = 1
+export const TAPE_PROGRAMMATIC_TOOL_SURFACE_FACT_SCHEMA_VERSION = 1
+export const TAPE_PROGRAMMATIC_TOOL_SURFACE_FACT_HASH_VERSION = 1
+export const TAPE_PROGRAMMATIC_TOOL_SURFACE_PROJECTION_HASH_VERSION = 1
+export const TAPE_PROGRAMMATIC_WORKSPACE_PATH_HASH_VERSION = 1
 export const TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION = 1
 export const MAX_TAPE_TOOL_CATALOG_PROJECTION_ENTRIES = 256
 export const MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES = 256
 export const MAX_TAPE_TOOL_SURFACE_SEARCH_REFS = 256
 export const MAX_TAPE_TOOL_SURFACE_REJECTIONS = 256
 export const MAX_TAPE_TOOL_SURFACE_DEGRADATIONS = 32
+export const MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN = 64
+export const MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS = 64
+export const MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES = 4 * 1024 * 1024
+export const MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES = 16 * 1024 * 1024
+export const MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS = 30 * 60_000
 export const MAX_TAPE_TOOL_FACT_BYTES = 512 * 1024
 export const MAX_TAPE_TOOL_FACT_SOURCE_BYTES = 4 * 1024 * 1024
 
@@ -45,6 +59,7 @@ const MAX_SOURCE_ACTIVE_ENTRIES = 1_024
 const MAX_SOURCE_ACTIVATION_DECISIONS = 4_096
 const MAX_IDENTITY_BYTES = 1_024
 const MAX_VERSION_BYTES = 256
+const MAX_PROGRAMMATIC_POLICY_VERSION_BYTES = MAX_IDENTITY_BYTES
 const MAX_PLAIN_DATA_DEPTH = 64
 const MAX_PLAIN_DATA_NODES = 100_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
@@ -79,6 +94,10 @@ const SURFACE_DEGRADATIONS = new Set<TapeToolSurfaceDegradationCode>([
   'search-refs-truncated',
   'candidate-rejections-truncated'
 ])
+const PROGRAMMATIC_DEGRADATIONS = new Set<TapeProgrammaticToolSurfaceDegradationCode>([
+  'programmatic-projection-count-limited',
+  'programmatic-projection-byte-limited'
+])
 
 export type TapeToolCatalogDegradationCode =
   | 'catalog-projection-count-limited'
@@ -89,6 +108,10 @@ export type TapeToolSurfaceDegradationCode =
   | 'active-projection-byte-limited'
   | 'search-refs-truncated'
   | 'candidate-rejections-truncated'
+
+export type TapeProgrammaticToolSurfaceDegradationCode =
+  | 'programmatic-projection-count-limited'
+  | 'programmatic-projection-byte-limited'
 
 export type TapeToolSurfaceSelectionReason =
   | 'full-catalog'
@@ -223,6 +246,86 @@ export interface CreateTapeToolSurfaceFactInput {
   readonly budget: TapeToolSurfaceBudgetObservation
   readonly searchResultRefs?: readonly TapeToolSurfaceSearchResultRef[]
   readonly candidateRejections?: readonly TapeToolSurfaceCandidateRejection[]
+}
+
+export type TapeProgrammaticWorkspaceCeiling =
+  | { readonly kind: 'runtime_default' }
+  | {
+      readonly kind: 'path'
+      readonly pathHashVersion: typeof TAPE_PROGRAMMATIC_WORKSPACE_PATH_HASH_VERSION
+      readonly pathHash: string
+    }
+
+export interface TapeProgrammaticToolSurfaceCeilings {
+  readonly maxToolEffect: 'read' | 'write'
+  readonly workspace: TapeProgrammaticWorkspaceCeiling
+  readonly maxSubagentDepth: 0 | 1
+}
+
+export interface TapeProgrammaticToolSurfaceQuotas {
+  readonly maxChildren: number
+  readonly maxBatchSteps: number
+  readonly maxInputBytes: number
+  readonly maxOutputBytes: number
+  readonly maxDurationMs: number
+}
+
+export interface TapeProgrammaticToolSurfaceFact {
+  readonly schemaVersion: typeof TAPE_PROGRAMMATIC_TOOL_SURFACE_FACT_SCHEMA_VERSION
+  readonly factHashVersion: typeof TAPE_PROGRAMMATIC_TOOL_SURFACE_FACT_HASH_VERSION
+  readonly capabilitySchemaVersion: 1
+  readonly capabilityHashVersion: 1
+  readonly capabilityHash: string
+  readonly programmaticSurfaceSchemaVersion: 1
+  readonly programmaticSurfaceHashVersion: 1
+  readonly programmaticSurfaceHash: string
+  readonly projectionHashVersion: typeof TAPE_PROGRAMMATIC_TOOL_SURFACE_PROJECTION_HASH_VERSION
+  readonly projectionHash: string
+  readonly canonicalizationVersion: string
+  readonly policyVersion: string
+  readonly adapterMode: 'cli-programmatic'
+  readonly request: TapeToolSurfaceRequestIdentity
+  readonly manifestHash: string
+  readonly catalog: TapeToolCatalogFactReference
+  readonly contractBearing: boolean
+  readonly totalEntryCount: number
+  readonly retainedEntryCount: number
+  readonly entries: readonly TapeToolCatalogSourceEntry[]
+  readonly taskContractRef: DeepChatTaskContractRef | null
+  readonly ceilings: TapeProgrammaticToolSurfaceCeilings
+  readonly quotas: TapeProgrammaticToolSurfaceQuotas
+  readonly degradations: readonly TapeProgrammaticToolSurfaceDegradationCode[]
+  readonly factHash: string
+}
+
+export interface CreateTapeProgrammaticToolSurfaceFactInput {
+  readonly capabilitySchemaVersion: 1
+  readonly capabilityHashVersion: 1
+  readonly capabilityHash: string
+  readonly programmaticSurfaceSchemaVersion: 1
+  readonly programmaticSurfaceHashVersion: 1
+  readonly programmaticSurfaceHash: string
+  readonly canonicalizationVersion: string
+  readonly policyVersion: string
+  readonly adapterMode: 'cli-programmatic'
+  readonly request: TapeToolSurfaceRequestIdentity
+  readonly manifestHash: string
+  readonly catalog: TapeToolCatalogFactReference
+  readonly contractBearing: boolean
+  readonly entries: readonly TapeToolCatalogSourceEntry[]
+  readonly taskContractRef: DeepChatTaskContractRef | null
+  readonly ceilings: TapeProgrammaticToolSurfaceCeilings
+  readonly quotas: TapeProgrammaticToolSurfaceQuotas
+}
+
+export interface ProgrammaticToolSurfaceHashInputV1 {
+  readonly schemaVersion: 1
+  readonly canonicalizationVersion: string
+  readonly catalogHash: string
+  readonly entries: readonly Pick<
+    TapeToolCatalogSourceEntry,
+    'target' | 'stableTargetKey' | 'canonicalToolDefinitionHash' | 'execution'
+  >[]
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -1347,6 +1450,378 @@ export function verifyTapeToolSurfaceFact(fact: unknown): fact is TapeToolSurfac
     if (!isSurfaceFactShape(detached)) return false
     const { surfaceHash: persistedSurfaceHash, ...withoutSurfaceHash } = detached
     return surfaceFactHash(withoutSurfaceHash) === persistedSurfaceHash
+  } catch {
+    return false
+  }
+}
+
+export function buildTapeProgrammaticWorkspacePathHash(normalizedAbsolutePath: string): {
+  readonly hashVersion: typeof TAPE_PROGRAMMATIC_WORKSPACE_PATH_HASH_VERSION
+  readonly pathHash: string
+} {
+  if (
+    !isNormalizedBoundedString(normalizedAbsolutePath, 32 * 1024) ||
+    normalizeAbsoluteWorkspacePath(normalizedAbsolutePath)?.path !== normalizedAbsolutePath
+  ) {
+    throw new TypeError('Programmatic workspace path must already be normalized and absolute.')
+  }
+  return {
+    hashVersion: TAPE_PROGRAMMATIC_WORKSPACE_PATH_HASH_VERSION,
+    pathHash: hashJsonData({
+      hashVersion: TAPE_PROGRAMMATIC_WORKSPACE_PATH_HASH_VERSION,
+      path: normalizedAbsolutePath
+    })
+  }
+}
+
+function isProgrammaticWorkspace(value: unknown): value is TapeProgrammaticWorkspaceCeiling {
+  if (!isPlainRecord(value)) return false
+  if (value.kind === 'runtime_default') return hasExactKeys(value, ['kind'])
+  return (
+    hasExactKeys(value, ['kind', 'pathHashVersion', 'pathHash']) &&
+    value.kind === 'path' &&
+    value.pathHashVersion === TAPE_PROGRAMMATIC_WORKSPACE_PATH_HASH_VERSION &&
+    isHash(value.pathHash)
+  )
+}
+
+function isProgrammaticCeilings(value: unknown): value is TapeProgrammaticToolSurfaceCeilings {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, ['maxToolEffect', 'workspace', 'maxSubagentDepth']) &&
+    (value.maxToolEffect === 'read' || value.maxToolEffect === 'write') &&
+    isProgrammaticWorkspace(value.workspace) &&
+    (value.maxSubagentDepth === 0 || value.maxSubagentDepth === 1)
+  )
+}
+
+function isProgrammaticQuotas(value: unknown): value is TapeProgrammaticToolSurfaceQuotas {
+  return (
+    isPlainRecord(value) &&
+    hasExactKeys(value, [
+      'maxChildren',
+      'maxBatchSteps',
+      'maxInputBytes',
+      'maxOutputBytes',
+      'maxDurationMs'
+    ]) &&
+    isPositiveSafeInteger(value.maxChildren) &&
+    value.maxChildren <= MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN &&
+    isPositiveSafeInteger(value.maxBatchSteps) &&
+    value.maxBatchSteps <= MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS &&
+    value.maxBatchSteps <= value.maxChildren &&
+    isPositiveSafeInteger(value.maxInputBytes) &&
+    value.maxInputBytes <= MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES &&
+    isPositiveSafeInteger(value.maxOutputBytes) &&
+    value.maxOutputBytes <= MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES &&
+    isPositiveSafeInteger(value.maxDurationMs) &&
+    value.maxDurationMs <= MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS
+  )
+}
+
+export function buildProgrammaticToolSurfaceHashV1(
+  input: ProgrammaticToolSurfaceHashInputV1
+): string {
+  return hashJsonData({
+    schemaVersion: input.schemaVersion,
+    canonicalizationVersion: input.canonicalizationVersion,
+    catalogHash: input.catalogHash,
+    entries: input.entries.map((entry) => ({
+      target: entry.target,
+      stableTargetKey: entry.stableTargetKey,
+      canonicalToolDefinitionHash: entry.canonicalToolDefinitionHash,
+      execution: entry.execution
+    }))
+  })
+}
+
+function programmaticDegradations(
+  total: number,
+  retained: number
+): TapeProgrammaticToolSurfaceDegradationCode[] {
+  const result: TapeProgrammaticToolSurfaceDegradationCode[] = []
+  if (total > MAX_TAPE_TOOL_CATALOG_PROJECTION_ENTRIES) {
+    result.push('programmatic-projection-count-limited')
+  }
+  if (retained < Math.min(total, MAX_TAPE_TOOL_CATALOG_PROJECTION_ENTRIES)) {
+    result.push('programmatic-projection-byte-limited')
+  }
+  return result
+}
+
+function programmaticProjectionHash(input: {
+  capabilityHash: string
+  totalEntryCount: number
+  entries: readonly TapeToolCatalogSourceEntry[]
+}): string {
+  return hashJsonData({
+    projectionHashVersion: TAPE_PROGRAMMATIC_TOOL_SURFACE_PROJECTION_HASH_VERSION,
+    ...input
+  })
+}
+
+function buildProgrammaticFactDraft(
+  input: CreateTapeProgrammaticToolSurfaceFactInput,
+  totalEntryCount: number,
+  entries: readonly TapeToolCatalogSourceEntry[]
+): TapeProgrammaticToolSurfaceFact {
+  const withoutHash = {
+    schemaVersion: TAPE_PROGRAMMATIC_TOOL_SURFACE_FACT_SCHEMA_VERSION,
+    factHashVersion: TAPE_PROGRAMMATIC_TOOL_SURFACE_FACT_HASH_VERSION,
+    capabilitySchemaVersion: input.capabilitySchemaVersion,
+    capabilityHashVersion: input.capabilityHashVersion,
+    capabilityHash: input.capabilityHash,
+    programmaticSurfaceSchemaVersion: input.programmaticSurfaceSchemaVersion,
+    programmaticSurfaceHashVersion: input.programmaticSurfaceHashVersion,
+    programmaticSurfaceHash: input.programmaticSurfaceHash,
+    projectionHashVersion: TAPE_PROGRAMMATIC_TOOL_SURFACE_PROJECTION_HASH_VERSION,
+    projectionHash: programmaticProjectionHash({
+      capabilityHash: input.capabilityHash,
+      totalEntryCount,
+      entries
+    }),
+    canonicalizationVersion: input.canonicalizationVersion,
+    policyVersion: input.policyVersion,
+    adapterMode: input.adapterMode,
+    request: { ...input.request },
+    manifestHash: input.manifestHash,
+    catalog: { ...input.catalog },
+    contractBearing: input.contractBearing,
+    totalEntryCount,
+    retainedEntryCount: entries.length,
+    entries,
+    taskContractRef: input.taskContractRef === null ? null : { ...input.taskContractRef },
+    ceilings: {
+      ...input.ceilings,
+      workspace: { ...input.ceilings.workspace }
+    },
+    quotas: { ...input.quotas },
+    degradations: programmaticDegradations(totalEntryCount, entries.length)
+  } satisfies Omit<TapeProgrammaticToolSurfaceFact, 'factHash'>
+  return { ...withoutHash, factHash: hashJsonData(withoutHash) }
+}
+
+function validateProgrammaticEntries(entries: readonly TapeToolCatalogSourceEntry[]): void {
+  const visibleNames = new Map<string, string>()
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
+    if (entry.target.source !== 'mcp' || entry.exposure !== 'user-configurable') {
+      throw new TypeError(
+        'Programmatic Tool Surface entries must be user-configurable MCP targets.'
+      )
+    }
+    if (index > 0) {
+      const order = compareCodePoints(entries[index - 1].stableTargetKey, entry.stableTargetKey)
+      if (order === 0) {
+        throw new TypeError('Programmatic Tool Surface contains a duplicate stable target.')
+      }
+      if (order > 0) {
+        throw new TypeError('Programmatic Tool Surface entries are not in canonical order.')
+      }
+    }
+    const prior = visibleNames.get(entry.target.providerVisibleName)
+    if (prior !== undefined && prior !== entry.stableTargetKey) {
+      throw new TypeError('Programmatic Tool Surface contains a conflicting provider-visible name.')
+    }
+    visibleNames.set(entry.target.providerVisibleName, entry.stableTargetKey)
+  }
+}
+
+export function createTapeProgrammaticToolSurfaceFact(
+  input: CreateTapeProgrammaticToolSurfaceFactInput
+): TapeProgrammaticToolSurfaceFact {
+  const data = detachBoundedPlainData(input, MAX_TAPE_TOOL_FACT_SOURCE_BYTES)
+  if (
+    !isPlainRecord(data) ||
+    !hasExactKeys(data, [
+      'capabilitySchemaVersion',
+      'capabilityHashVersion',
+      'capabilityHash',
+      'programmaticSurfaceSchemaVersion',
+      'programmaticSurfaceHashVersion',
+      'programmaticSurfaceHash',
+      'canonicalizationVersion',
+      'policyVersion',
+      'adapterMode',
+      'request',
+      'manifestHash',
+      'catalog',
+      'contractBearing',
+      'entries',
+      'taskContractRef',
+      'ceilings',
+      'quotas'
+    ]) ||
+    data.capabilitySchemaVersion !== 1 ||
+    data.capabilityHashVersion !== 1 ||
+    !isHash(data.capabilityHash) ||
+    data.programmaticSurfaceSchemaVersion !== 1 ||
+    data.programmaticSurfaceHashVersion !== 1 ||
+    !isHash(data.programmaticSurfaceHash) ||
+    !isNormalizedBoundedString(data.canonicalizationVersion, MAX_VERSION_BYTES) ||
+    !isNormalizedBoundedString(data.policyVersion, MAX_PROGRAMMATIC_POLICY_VERSION_BYTES) ||
+    data.adapterMode !== 'cli-programmatic' ||
+    !isRequestIdentity(data.request) ||
+    !isHash(data.manifestHash) ||
+    !isCatalogReference(data.catalog) ||
+    data.catalog.sessionId !== data.request.sessionId ||
+    typeof data.contractBearing !== 'boolean' ||
+    (data.contractBearing && !isUuid(data.request.runId)) ||
+    !Array.isArray(data.entries) ||
+    data.entries.length > MAX_SOURCE_CATALOG_ENTRIES ||
+    (data.taskContractRef !== null && !isDeepChatTaskContractRef(data.taskContractRef)) ||
+    (data.taskContractRef?.sessionId !== undefined &&
+      data.taskContractRef.sessionId !== data.request.sessionId) ||
+    !isProgrammaticCeilings(data.ceilings) ||
+    !isProgrammaticQuotas(data.quotas)
+  ) {
+    throw new TypeError('Programmatic Tool Surface fact input is invalid.')
+  }
+  const entries = data.entries
+    .map(cloneCatalogEntry)
+    .sort((left, right) => compareCodePoints(left.stableTargetKey, right.stableTargetKey))
+  validateProgrammaticEntries(entries)
+  if (
+    buildProgrammaticToolSurfaceHashV1({
+      schemaVersion: data.programmaticSurfaceSchemaVersion,
+      canonicalizationVersion: data.canonicalizationVersion,
+      catalogHash: data.catalog.fullCatalogHash,
+      entries
+    }) !== data.programmaticSurfaceHash
+  ) {
+    throw new TypeError('Programmatic Tool Surface does not match its surface hash.')
+  }
+  if (
+    data.ceilings.maxToolEffect === 'read' &&
+    entries.some((entry) => entry.execution.effect === 'write')
+  ) {
+    throw new TypeError('Programmatic Tool Surface exceeds its effect ceiling.')
+  }
+  const maximum = Math.min(entries.length, MAX_TAPE_TOOL_CATALOG_PROJECTION_ENTRIES)
+  const build = (length: number) =>
+    buildProgrammaticFactDraft(data, entries.length, entries.slice(0, length))
+  const retained = findLargestFittingPrefix(maximum, build)
+  const fact = build(retained)
+  if (canonicalBytes(fact) > MAX_TAPE_TOOL_FACT_BYTES) {
+    throw new TypeError('Programmatic Tool Surface fact exceeds its canonical byte limit.')
+  }
+  return deepFreeze(fact)
+}
+
+function isProgrammaticFactShape(value: unknown): value is TapeProgrammaticToolSurfaceFact {
+  if (!isPlainRecord(value)) return false
+  const keys = [
+    'schemaVersion',
+    'factHashVersion',
+    'capabilitySchemaVersion',
+    'capabilityHashVersion',
+    'capabilityHash',
+    'programmaticSurfaceSchemaVersion',
+    'programmaticSurfaceHashVersion',
+    'programmaticSurfaceHash',
+    'projectionHashVersion',
+    'projectionHash',
+    'canonicalizationVersion',
+    'policyVersion',
+    'adapterMode',
+    'request',
+    'manifestHash',
+    'catalog',
+    'contractBearing',
+    'totalEntryCount',
+    'retainedEntryCount',
+    'entries',
+    'taskContractRef',
+    'ceilings',
+    'quotas',
+    'degradations',
+    'factHash'
+  ]
+  if (
+    !hasExactKeys(value, keys) ||
+    value.schemaVersion !== 1 ||
+    value.factHashVersion !== 1 ||
+    value.capabilitySchemaVersion !== 1 ||
+    value.capabilityHashVersion !== 1 ||
+    !isHash(value.capabilityHash) ||
+    value.programmaticSurfaceSchemaVersion !== 1 ||
+    value.programmaticSurfaceHashVersion !== 1 ||
+    !isHash(value.programmaticSurfaceHash) ||
+    value.projectionHashVersion !== 1 ||
+    !isHash(value.projectionHash) ||
+    !isNormalizedBoundedString(value.canonicalizationVersion, MAX_VERSION_BYTES) ||
+    !isNormalizedBoundedString(value.policyVersion, MAX_PROGRAMMATIC_POLICY_VERSION_BYTES) ||
+    value.adapterMode !== 'cli-programmatic' ||
+    !isRequestIdentity(value.request) ||
+    !isHash(value.manifestHash) ||
+    !isCatalogReference(value.catalog) ||
+    value.catalog.sessionId !== value.request.sessionId ||
+    typeof value.contractBearing !== 'boolean' ||
+    (value.contractBearing && !isUuid(value.request.runId)) ||
+    !isNonNegativeSafeInteger(value.totalEntryCount) ||
+    value.totalEntryCount > MAX_SOURCE_CATALOG_ENTRIES ||
+    !isNonNegativeSafeInteger(value.retainedEntryCount) ||
+    !Array.isArray(value.entries) ||
+    value.entries.length !== value.retainedEntryCount ||
+    value.retainedEntryCount > value.totalEntryCount ||
+    value.retainedEntryCount > MAX_TAPE_TOOL_CATALOG_PROJECTION_ENTRIES ||
+    !value.entries.every(isCatalogEntry) ||
+    (value.taskContractRef !== null && !isDeepChatTaskContractRef(value.taskContractRef)) ||
+    (value.taskContractRef?.sessionId !== undefined &&
+      value.taskContractRef.sessionId !== value.request.sessionId) ||
+    !isProgrammaticCeilings(value.ceilings) ||
+    !isProgrammaticQuotas(value.quotas) ||
+    !Array.isArray(value.degradations) ||
+    !value.degradations.every((code) => PROGRAMMATIC_DEGRADATIONS.has(code)) ||
+    !isHash(value.factHash)
+  )
+    return false
+  try {
+    validateProgrammaticEntries(value.entries)
+  } catch {
+    return false
+  }
+  if (
+    value.ceilings.maxToolEffect === 'read' &&
+    value.entries.some((entry) => entry.execution.effect === 'write')
+  )
+    return false
+  if (
+    value.retainedEntryCount === value.totalEntryCount &&
+    buildProgrammaticToolSurfaceHashV1({
+      schemaVersion: value.programmaticSurfaceSchemaVersion,
+      canonicalizationVersion: value.canonicalizationVersion,
+      catalogHash: value.catalog.fullCatalogHash,
+      entries: value.entries
+    }) !== value.programmaticSurfaceHash
+  ) {
+    return false
+  }
+  return (
+    canonicalJsonStringifyData(value.degradations) ===
+    canonicalJsonStringifyData(
+      programmaticDegradations(value.totalEntryCount, value.retainedEntryCount)
+    )
+  )
+}
+
+export function verifyTapeProgrammaticToolSurfaceFact(
+  fact: unknown
+): fact is TapeProgrammaticToolSurfaceFact {
+  try {
+    const detached = detachBoundedPlainData(fact, MAX_TAPE_TOOL_FACT_BYTES)
+    if (!isProgrammaticFactShape(detached)) return false
+    if (
+      detached.projectionHash !==
+      programmaticProjectionHash({
+        capabilityHash: detached.capabilityHash,
+        totalEntryCount: detached.totalEntryCount,
+        entries: detached.entries
+      })
+    )
+      return false
+    const { factHash, ...withoutHash } = detached
+    return hashJsonData(withoutHash) === factHash
   } catch {
     return false
   }

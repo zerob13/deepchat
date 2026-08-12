@@ -37,32 +37,32 @@ function providerAttemptProvenance(overrides: Record<string, unknown> = {}) {
 }
 
 describe('SessionTape recall', () => {
-  it('invalidates projections written before Tool Surface search exclusion', () => {
-    expect(DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION).toBe(7)
+  it('invalidates projections written before Programmatic Tool Surface search exclusion', () => {
+    expect(DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION).toBe(8)
   })
 
-  it('rebuilds a same-head v6 projection that exposed Tool Surface provenance', () => {
+  it('rebuilds a same-head v7 projection that exposed Programmatic Tool Surface provenance', () => {
     const { table } = createTapeTableMock()
     table.append({
       sessionId: 's1',
       kind: 'event',
-      name: 'view/tool_surface',
+      name: 'view/programmatic_tool_surface',
       source: { type: 'runtime_event', id: 'm1', seq: 1 },
-      payload: { marker: 'historical-private-surface' },
+      payload: { marker: 'historical-private-programmatic-surface' },
       createdAt: 100
     })
-    let storedVersion = 6
+    let storedVersion = 7
     let projectedRows: any[] = [
       {
         sessionId: 's1',
         entryId: 1,
         kind: 'event',
-        name: 'view/tool_surface',
+        name: 'view/programmatic_tool_surface',
         sourceType: 'runtime_event',
         sourceId: 'm1',
         sourceSeq: 1,
-        searchText: 'historical-private-surface',
-        summaryText: 'historical-private-surface',
+        searchText: 'historical-private-programmatic-surface',
+        summaryText: 'historical-private-programmatic-surface',
         refs: {},
         createdAt: 100
       }
@@ -104,7 +104,7 @@ describe('SessionTape recall', () => {
       deepchatSessionsTable: { getSummaryState: vi.fn().mockReturnValue(null) }
     } as any)
 
-    expect(service.search('s1', 'historical-private-surface')).toEqual([])
+    expect(service.search('s1', 'historical-private-programmatic-surface')).toEqual([])
     expect(projectionTable.replaceSession).toHaveBeenCalledTimes(1)
     expect(projectionTable.appendSession).not.toHaveBeenCalled()
     expect(storedVersion).toBe(DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION)

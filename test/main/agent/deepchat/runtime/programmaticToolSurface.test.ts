@@ -13,6 +13,7 @@ import {
   buildProgrammaticToolSurfaceV1,
   createProgrammaticToolSurfaceRunControllerV1,
   preflightProgrammaticToolRunCeilingV1,
+  projectProgrammaticToolTapeProvenanceV1,
   type ProgrammaticToolCapabilityCeilingsV1,
   type ProgrammaticToolCapabilityQuotasV1
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
@@ -24,6 +25,7 @@ import {
   revokeToolSurfaceExecutionEligibility
 } from '@/agent/deepchat/runtime/toolSurface'
 import { buildTaskContract } from '@/tape/domain/taskContract'
+import { createTapeProgrammaticToolSurfaceFact } from '@/tape/domain/toolSurfaceFacts'
 
 const SERVER_ID = '22222222-2222-4222-8222-222222222222'
 const BINDING_HASH = 'a'.repeat(64)
@@ -800,6 +802,52 @@ describe('Programmatic Tool Surface', () => {
       'remote_search'
     ])
     expect(capability.ceilings.maxToolEffect).toBe('read')
+  })
+
+  it('projects bounded Tape provenance without raw definitions or workspace paths', () => {
+    const exec = agentTool('exec')
+    const hidden = mcpTool('remote_search')
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: [exec, hidden],
+      providerActiveDefinitions: [exec],
+      policyVersion: 'programmatic-test-v1'
+    })
+    const snapshot = controller.build({
+      request: { sessionId: 'session-1', messageId: 'message-1', runId: 'run-1', requestSeq: 1 },
+      eligibleDefinitions: [exec, hidden]
+    })
+    const capability = buildProgrammaticToolCapabilityV1({
+      snapshot,
+      taskContractContext: null,
+      ceilings: {
+        ...ceilings,
+        workspace: { kind: 'path', path: path.resolve('private-workspace') }
+      },
+      quotas
+    })
+
+    const projection = projectProgrammaticToolTapeProvenanceV1(capability)
+    const serialized = JSON.stringify(projection)
+
+    expect(serialized).not.toContain(path.resolve('private-workspace'))
+    expect(serialized).not.toContain('parameters')
+    expect(projection.entries[0]).not.toHaveProperty('definition')
+    expect(Object.isFrozen(projection)).toBe(true)
+    expect(Object.isFrozen(projection.entries)).toBe(true)
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact({
+        ...projection,
+        manifestHash: 'd'.repeat(64),
+        catalog: {
+          sessionId: 'session-1',
+          tapeIncarnationId: '22222222-2222-4222-8222-222222222222',
+          entryId: 7,
+          fullCatalogHash: capability.catalogHash,
+          catalogFactHash: 'e'.repeat(64)
+        },
+        contractBearing: false
+      })
+    ).not.toThrow()
   })
 
   it('rejects forged snapshots, surfaces, and capabilities', () => {

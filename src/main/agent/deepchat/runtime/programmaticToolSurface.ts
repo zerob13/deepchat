@@ -10,6 +10,17 @@ import type {
 } from '@shared/types/task-contract'
 import { canonicalJsonStringifyData, hashJsonData } from '@/tape/domain/canonicalJson'
 import { isToolEffectWithinCeiling } from '@/tape/domain/executionContract'
+import {
+  MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS,
+  MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN,
+  MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS,
+  MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES,
+  MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES,
+  buildProgrammaticToolSurfaceHashV1,
+  buildTapeProgrammaticWorkspacePathHash,
+  type CreateTapeProgrammaticToolSurfaceFactInput,
+  type TapeToolCatalogSourceEntry
+} from '@/tape/domain/toolSurfaceFacts'
 import { isDeepChatTaskContract, isDeepChatTaskContractRef } from '@/tape/domain/taskContract'
 import {
   isWorkspacePathWithin,
@@ -36,11 +47,11 @@ export const PROGRAMMATIC_TOOL_CAPABILITY_HASH_VERSION = 1 as const
 export const PROGRAMMATIC_TOOL_ADAPTER_MODE = 'cli-programmatic' as const
 export const MAX_PROGRAMMATIC_TOOL_SURFACE_ENTRIES = MAX_TOOL_SURFACE_DEFINITIONS
 export const MAX_PROGRAMMATIC_TOOL_AUTHORITY_PROJECTION_BYTES = 1024 * 1024
-export const MAX_PROGRAMMATIC_TOOL_CHILDREN = 64
-export const MAX_PROGRAMMATIC_TOOL_BATCH_STEPS = 64
-export const MAX_PROGRAMMATIC_TOOL_INPUT_BYTES = 4 * 1024 * 1024
-export const MAX_PROGRAMMATIC_TOOL_OUTPUT_BYTES = 16 * 1024 * 1024
-export const MAX_PROGRAMMATIC_TOOL_DURATION_MS = 30 * 60_000
+export const MAX_PROGRAMMATIC_TOOL_CHILDREN = MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN
+export const MAX_PROGRAMMATIC_TOOL_BATCH_STEPS = MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS
+export const MAX_PROGRAMMATIC_TOOL_INPUT_BYTES = MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES
+export const MAX_PROGRAMMATIC_TOOL_OUTPUT_BYTES = MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES
+export const MAX_PROGRAMMATIC_TOOL_DURATION_MS = MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_WORKSPACE_PATH_BYTES = 32 * 1024
@@ -65,7 +76,7 @@ export interface ProgrammaticToolSurfaceV1 {
 export interface ProgrammaticToolCapabilityCeilingsV1 {
   readonly maxToolEffect: 'read' | 'write'
   readonly workspace: DeepChatExecutionWorkspaceCeiling
-  readonly maxSubagentDepth: number
+  readonly maxSubagentDepth: 0 | 1
 }
 
 export interface ProgrammaticToolCapabilityQuotasV1 {
@@ -110,6 +121,11 @@ export interface CreateProgrammaticToolSurfaceRunControllerInput {
   readonly providerActiveDefinitions: readonly MCPToolDefinition[]
   readonly policyVersion: string
 }
+
+export type ProgrammaticToolTapeProvenanceProjectionV1 = Omit<
+  CreateTapeProgrammaticToolSurfaceFactInput,
+  'manifestHash' | 'catalog' | 'contractBearing'
+>
 
 const issuedProgrammaticToolSurfaces = new WeakSet<ProgrammaticToolSurfaceV1>()
 const issuedProgrammaticToolCapabilities = new WeakSet<ProgrammaticToolCapabilityV1>()
@@ -472,7 +488,12 @@ export function buildProgrammaticToolSurfaceV1(
   measureCanonicalAuthorityProjection(hashInput, 'Programmatic Surface')
   const surface = Object.freeze({
     ...draft,
-    surfaceHash: hashJsonData(hashInput, CANONICAL_JSON_OPTIONS)
+    surfaceHash: buildProgrammaticToolSurfaceHashV1({
+      schemaVersion: draft.schemaVersion,
+      canonicalizationVersion: draft.canonicalizationVersion,
+      catalogHash: draft.catalogHash,
+      entries: draft.entries
+    })
   })
   issuedProgrammaticToolSurfaces.add(surface)
   return surface
@@ -528,6 +549,75 @@ export function buildProgrammaticToolCapabilityV1(
   issuedProgrammaticToolCapabilities.add(capability)
   programmaticToolCapabilitySnapshots.set(capability, input.snapshot)
   return capability
+}
+
+export function projectProgrammaticToolTapeProvenanceV1(
+  capability: unknown
+): ProgrammaticToolTapeProvenanceProjectionV1 {
+  assertIssuedProgrammaticToolCapability(capability)
+  const snapshot = programmaticToolCapabilitySnapshots.get(capability)
+  if (!snapshot) {
+    throw new ToolSurfaceError(
+      'Programmatic capability lost its originating provider View.',
+      'invalid_definition'
+    )
+  }
+  const catalogEntryByTarget = new Map(
+    snapshot.eligibleCatalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  const entries = capability.entries.map((entry): TapeToolCatalogSourceEntry => {
+    const catalogEntry = catalogEntryByTarget.get(entry.stableTargetKey)
+    if (
+      !catalogEntry ||
+      catalogEntry.target.source !== 'mcp' ||
+      catalogEntry.canonicalToolDefinitionHash !== entry.canonicalToolDefinitionHash
+    ) {
+      throw new ToolSurfaceError(
+        'Programmatic Tape projection lost its exact eligible catalog entry.',
+        'conflicting_tool'
+      )
+    }
+    return Object.freeze({
+      target: Object.freeze({ ...catalogEntry.target }),
+      stableTargetKey: catalogEntry.stableTargetKey,
+      canonicalToolDefinitionHash: catalogEntry.canonicalToolDefinitionHash,
+      exposure: catalogEntry.exposure,
+      execution: Object.freeze({ ...catalogEntry.execution })
+    })
+  })
+  const workspace =
+    capability.ceilings.workspace.kind === 'runtime_default'
+      ? Object.freeze({ kind: 'runtime_default' as const })
+      : (() => {
+          const hashed = buildTapeProgrammaticWorkspacePathHash(
+            capability.ceilings.workspace.path
+          )
+          return Object.freeze({
+            kind: 'path' as const,
+            pathHashVersion: hashed.hashVersion,
+            pathHash: hashed.pathHash
+          })
+        })()
+  return Object.freeze({
+    capabilitySchemaVersion: capability.schemaVersion,
+    capabilityHashVersion: capability.hashVersion,
+    capabilityHash: capability.capabilityHash,
+    programmaticSurfaceSchemaVersion: PROGRAMMATIC_TOOL_SURFACE_SCHEMA_VERSION,
+    programmaticSurfaceHashVersion: 1,
+    programmaticSurfaceHash: capability.programmaticSurfaceHash,
+    canonicalizationVersion: capability.canonicalizationVersion,
+    policyVersion: capability.policyVersion,
+    adapterMode: capability.adapterMode,
+    request: capability.request,
+    entries: Object.freeze(entries),
+    taskContractRef: capability.taskContractRef,
+    ceilings: Object.freeze({
+      maxToolEffect: capability.ceilings.maxToolEffect,
+      workspace,
+      maxSubagentDepth: capability.ceilings.maxSubagentDepth
+    }),
+    quotas: capability.quotas
+  })
 }
 
 export function assertIssuedProgrammaticToolCapability(

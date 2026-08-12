@@ -17,10 +17,14 @@ import { buildExecutionToolTargetKey } from '@/tape/domain/executionContract'
 import {
   MAX_TAPE_TOOL_CATALOG_PROJECTION_ENTRIES,
   MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES,
+  buildProgrammaticToolSurfaceHashV1,
+  buildTapeProgrammaticWorkspacePathHash,
   buildTapeToolResultPayloadHash,
+  createTapeProgrammaticToolSurfaceFact,
   createTapeToolCatalogFact,
   createTapeToolSurfaceFact,
   verifyTapeToolCatalogFact,
+  verifyTapeProgrammaticToolSurfaceFact,
   verifyTapeToolSurfaceFact,
   type TapeToolCatalogSourceEntry,
   type TapeToolSurfaceCandidateRejection,
@@ -54,6 +58,25 @@ function catalogEntry(
     canonicalToolDefinitionHash: hashJsonData({ name, definition: 1 }),
     exposure: 'user-configurable',
     execution
+  }
+}
+
+function mcpCatalogEntry(name: string): TapeToolCatalogSourceEntry {
+  const identity: DeepChatExecutionToolTargetIdentity = {
+    providerVisibleName: name,
+    source: 'mcp',
+    serverName: `server-${name}`,
+    serverId: '11111111-1111-4111-8111-111111111111',
+    configGeneration: 1,
+    bindingHash: 'a'.repeat(64),
+    originalName: name
+  }
+  return {
+    target: identity,
+    stableTargetKey: buildExecutionToolTargetKey(identity),
+    canonicalToolDefinitionHash: hashJsonData({ name }),
+    exposure: 'user-configurable',
+    execution: TOOL_EXECUTION.read.parallel
   }
 }
 
@@ -1023,5 +1046,253 @@ describe('Tape Tool Surface facts', () => {
     expect(v4Fact.degradations).toContain('active-projection-byte-limited')
     expect(verifyTapeToolSurfaceFact(v4Fact)).toBe(true)
     expect(() => createSurface(catalogFact, activeEntries, true)).toThrow('canonical byte limit')
+  })
+
+  function programmaticInput(entries: readonly TapeToolCatalogSourceEntry[]) {
+    const orderedEntries = [...entries].sort((left, right) =>
+      left.stableTargetKey < right.stableTargetKey ? -1 : 1
+    )
+    const catalogHash = fullCatalogHash(orderedEntries)
+    return {
+      capabilitySchemaVersion: 1 as const,
+      capabilityHashVersion: 1 as const,
+      capabilityHash: hashJsonData({ capability: entries.length }),
+      programmaticSurfaceSchemaVersion: 1 as const,
+      programmaticSurfaceHashVersion: 1 as const,
+      programmaticSurfaceHash: buildProgrammaticToolSurfaceHashV1({
+        schemaVersion: 1,
+        canonicalizationVersion: 'deepchat-tool-definition-v1',
+        catalogHash,
+        entries: orderedEntries
+      }),
+      canonicalizationVersion: 'deepchat-tool-definition-v1',
+      policyVersion: 'programmatic-v1',
+      adapterMode: 'cli-programmatic' as const,
+      request: { sessionId: 'session-1', messageId: 'message-1', runId: RUN_ID, requestSeq: 1 },
+      manifestHash: hashJsonData({ manifest: 1 }),
+      catalog: {
+        sessionId: 'session-1',
+        tapeIncarnationId: TAPE_INCARNATION_ID,
+        entryId: 7,
+        fullCatalogHash: catalogHash,
+        catalogFactHash: hashJsonData({ catalogFact: 1 })
+      },
+      contractBearing: true,
+      entries,
+      taskContractRef: null,
+      ceilings: {
+        maxToolEffect: 'read' as const,
+        workspace: { kind: 'runtime_default' as const },
+        maxSubagentDepth: 1 as const
+      },
+      quotas: {
+        maxChildren: 8,
+        maxBatchSteps: 4,
+        maxInputBytes: 1_024,
+        maxOutputBytes: 2_048,
+        maxDurationMs: 30_000
+      }
+    }
+  }
+
+  it('builds immutable hash-valid programmatic facts in canonical MCP target order', () => {
+    const fact = createTapeProgrammaticToolSurfaceFact(
+      programmaticInput([mcpCatalogEntry('zeta'), mcpCatalogEntry('alpha')])
+    )
+
+    expect(fact.entries.map((entry) => entry.target.providerVisibleName)).toEqual(['alpha', 'zeta'])
+    expect(fact.degradations).toEqual([])
+    expect(Object.isFrozen(fact.entries[0].target)).toBe(true)
+    expect(verifyTapeProgrammaticToolSurfaceFact(fact)).toBe(true)
+    expect(verifyTapeProgrammaticToolSurfaceFact({ ...fact, policyVersion: 'forged' })).toBe(false)
+  })
+
+  it('matches canonical runtime identity and TaskContract reference boundaries', () => {
+    const entry = mcpCatalogEntry('read')
+    expect(
+      createTapeProgrammaticToolSurfaceFact({
+        ...programmaticInput([entry]),
+        policyVersion: 'p'.repeat(1_024)
+      }).policyVersion
+    ).toHaveLength(1_024)
+    for (const policyVersion of [' padded ', 'nul\0policy', 'p'.repeat(1_025)]) {
+      expect(() =>
+        createTapeProgrammaticToolSurfaceFact({
+          ...programmaticInput([entry]),
+          policyVersion
+        })
+      ).toThrow('invalid')
+    }
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact({
+        ...programmaticInput([entry]),
+        canonicalizationVersion: ' canonicalization-v1 '
+      })
+    ).toThrow('invalid')
+
+    const oversizedSessionId = 's'.repeat(257)
+    const input = programmaticInput([entry])
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact({
+        ...input,
+        request: { ...input.request, sessionId: oversizedSessionId },
+        catalog: { ...input.catalog, sessionId: oversizedSessionId },
+        taskContractRef: {
+          schemaVersion: 1,
+          sessionId: oversizedSessionId,
+          tapeIdentity: 'b'.repeat(64),
+          entryId: 1,
+          contractHash: 'c'.repeat(64)
+        }
+      })
+    ).toThrow('invalid')
+  })
+
+  it('deterministically count-limits programmatic evidence without claiming completeness', () => {
+    const entries = Array.from({ length: 260 }, (_, index) =>
+      mcpCatalogEntry(`tool-${String(index).padStart(3, '0')}`)
+    )
+    const fact = createTapeProgrammaticToolSurfaceFact(programmaticInput(entries.reverse()))
+
+    expect(fact.totalEntryCount).toBe(260)
+    expect(fact.retainedEntryCount).toBe(256)
+    expect(fact.degradations).toContain('programmatic-projection-count-limited')
+    expect(verifyTapeProgrammaticToolSurfaceFact(fact)).toBe(true)
+  })
+
+  it('deterministically byte-limits programmatic evidence without exposing the omitted suffix', () => {
+    const entries = Array.from({ length: 220 }, (_, index) =>
+      mcpCatalogEntry(`tool-${String(index).padStart(3, '0')}-${'x'.repeat(700)}`)
+    )
+    const fact = createTapeProgrammaticToolSurfaceFact(programmaticInput(entries))
+
+    expect(fact.totalEntryCount).toBe(entries.length)
+    expect(fact.retainedEntryCount).toBeLessThan(entries.length)
+    expect(fact.degradations).toEqual(['programmatic-projection-byte-limited'])
+    expect(verifyTapeProgrammaticToolSurfaceFact(fact)).toBe(true)
+  })
+
+  it('hashes normalized workspace paths without persisting paths', () => {
+    const workspace = buildTapeProgrammaticWorkspacePathHash('/private/project')
+    const fact = createTapeProgrammaticToolSurfaceFact({
+      ...programmaticInput([mcpCatalogEntry('read')]),
+      ceilings: {
+        maxToolEffect: 'read',
+        workspace: {
+          kind: 'path',
+          pathHashVersion: workspace.hashVersion,
+          pathHash: workspace.pathHash
+        },
+        maxSubagentDepth: 0
+      }
+    })
+
+    expect(JSON.stringify(fact)).not.toContain('/private/project')
+    expect(() => buildTapeProgrammaticWorkspacePathHash('/private/../private/project')).toThrow(
+      'normalized and absolute'
+    )
+  })
+
+  it('rejects invalid programmatic authority, references, names, and effect ceilings', () => {
+    const first = mcpCatalogEntry('first')
+    const conflictTarget = { ...mcpCatalogEntry('second').target, providerVisibleName: 'first' }
+    const conflict = {
+      ...mcpCatalogEntry('second'),
+      target: conflictTarget,
+      stableTargetKey: buildExecutionToolTargetKey(conflictTarget)
+    }
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact(programmaticInput([catalogEntry('agent')]))
+    ).toThrow('MCP')
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact(
+        programmaticInput([{ ...first, exposure: 'system-model' }])
+      )
+    ).toThrow('user-configurable MCP')
+    expect(() => createTapeProgrammaticToolSurfaceFact(programmaticInput([first, first]))).toThrow(
+      'duplicate'
+    )
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact(programmaticInput([first, conflict]))
+    ).toThrow('conflicting')
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact({
+        ...programmaticInput([first]),
+        taskContractRef: {
+          schemaVersion: 1,
+          sessionId: 'other-session',
+          tapeIdentity: 'b'.repeat(64),
+          entryId: 1,
+          contractHash: 'c'.repeat(64)
+        }
+      })
+    ).toThrow('invalid')
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact({
+        ...programmaticInput([{ ...first, execution: TOOL_EXECUTION.write }])
+      })
+    ).toThrow('effect ceiling')
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact({
+        ...programmaticInput([first]),
+        unexpected: true
+      } as never)
+    ).toThrow('invalid')
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact({
+        ...programmaticInput([first]),
+        request: {
+          sessionId: 'session-1',
+          messageId: 'message-1',
+          runId: 'not-a-uuid',
+          requestSeq: 1
+        }
+      })
+    ).toThrow('invalid')
+    expect(() =>
+      createTapeProgrammaticToolSurfaceFact({
+        ...programmaticInput([first]),
+        quotas: {
+          maxChildren: 1,
+          maxBatchSteps: 2,
+          maxInputBytes: 1_024,
+          maxOutputBytes: 2_048,
+          maxDurationMs: 30_000
+        }
+      })
+    ).toThrow('invalid')
+  })
+
+  it('rejects an internally rehashed impossible MCP exposure', () => {
+    const fact = createTapeProgrammaticToolSurfaceFact(programmaticInput([mcpCatalogEntry('read')]))
+    const impossibleEntry = { ...fact.entries[0], exposure: 'system-model' as const }
+    const impossibleCatalogHash = fullCatalogHash([impossibleEntry])
+    const impossibleSurfaceHash = buildProgrammaticToolSurfaceHashV1({
+      schemaVersion: 1,
+      canonicalizationVersion: fact.canonicalizationVersion,
+      catalogHash: impossibleCatalogHash,
+      entries: [impossibleEntry]
+    })
+    const projectionHash = hashJsonData({
+      projectionHashVersion: fact.projectionHashVersion,
+      capabilityHash: fact.capabilityHash,
+      totalEntryCount: fact.totalEntryCount,
+      entries: [impossibleEntry]
+    })
+    const { factHash: _factHash, ...withoutFactHash } = fact
+    const forgedWithoutHash = {
+      ...withoutFactHash,
+      programmaticSurfaceHash: impossibleSurfaceHash,
+      projectionHash,
+      catalog: { ...fact.catalog, fullCatalogHash: impossibleCatalogHash },
+      entries: [impossibleEntry]
+    }
+
+    expect(
+      verifyTapeProgrammaticToolSurfaceFact({
+        ...forgedWithoutHash,
+        factHash: hashJsonData(forgedWithoutHash)
+      })
+    ).toBe(false)
   })
 })
