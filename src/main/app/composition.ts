@@ -130,6 +130,10 @@ import { SchedulerService, createCronJobRunSessionStarter } from '../scheduler'
 import { AgentManager } from '@/agent/manager/agentManager'
 import { createDeepChatAgentBackend } from '@/agent/manager/deepChatAgentBackend'
 import { createDirectAcpAgentBackend } from '@/agent/manager/directAcpAgentBackend'
+import {
+  TOOL_SURFACE_PRODUCTION_ROLLOUT_POLICY_V1,
+  ToolSurfaceRolloutOwner
+} from '@/agent/deepchat/runtime/toolSurfaceRollout'
 import { AppSessionService } from '@/agent/shared/appSessionService'
 import { createSessionData } from '@/session/data'
 import { MemoryDatabase } from '@/memory/data/database'
@@ -421,6 +425,7 @@ export async function createMainProcessControl(dependencies: {
     getBoundRendererIds: (sessionId) => resolveBoundRendererIds(sessionId)
   })
   const agentCliTokenAuthority = new AgentCliTokenAuthority()
+  const toolSurfaceRollout = new ToolSurfaceRolloutOwner(TOOL_SURFACE_PRODUCTION_ROLLOUT_POLICY_V1)
   let programmaticToolDispatcher: ProgrammaticToolDispatcher
   const artifactSpool = new ArtifactSpool({
     directory: path.join(app.getPath('userData'), 'local-control', 'artifacts'),
@@ -1546,6 +1551,7 @@ export async function createMainProcessControl(dependencies: {
     taskContractContext: {
       prepare: (sessionId) => liveDelegationService.prepareTaskContractContext(sessionId)
     },
+    toolSurfaceRunMode: toolSurfaceRollout,
     agentCliTokenAuthority,
     programmaticToolParents
   })
