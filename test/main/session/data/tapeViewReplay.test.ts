@@ -4,6 +4,7 @@ import {
   buildTapeSkillMaterializationRef,
   hashSkillEffectiveContent
 } from '@/tape/domain/skillMaterialization'
+import { hashJsonData } from '@/tape/domain/canonicalJson'
 import {
   describe,
   expect,
@@ -342,7 +343,7 @@ describe('SessionTape view and replay', () => {
     ).toBe(first.entry_id)
     expect(() =>
       service.appendViewManifest(createTapeViewManifest({ ...baseInput, modelId: 'other-model' }))
-    ).toThrow(/Conflicting schema-6 ViewManifest binding/)
+    ).toThrow(/Conflicting Skill-bearing ViewManifest binding/)
     expect(entries.filter((entry) => entry.name === 'view/assembled')).toHaveLength(1)
 
     table.getBySession.mockClear()
@@ -501,6 +502,221 @@ describe('SessionTape view and replay', () => {
     expect(() => service.appendViewManifest(manifest)).toThrow(
       /activation identity|Journal chain does not match its exact result/
     )
+  })
+
+  it('binds runtime Skill bodies and execution packages into one schema-v7 occurrence', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    table.ensureBootstrapAnchor('s1')
+    const tapeIncarnationId = table.getBootstrapIncarnation('s1')!
+    const effectiveContent = '# Runtime Skill\n\nUse the frozen execution package.'
+    const response = JSON.stringify({
+      success: true,
+      name: 'runtime-skill',
+      content: effectiveContent,
+      activatedForMessage: true,
+      activationScope: 'message',
+      activationEvidenceVersion: 1
+    })
+    const toolResultReceipt = service.appendSkillViewResultFact({
+      sessionId: 's1',
+      expectedTapeIncarnationId: tapeIncarnationId,
+      messageId: 'a1',
+      orderSeq: 2,
+      blockIndex: 0,
+      toolCallId: 'tool-call-1',
+      toolName: 'skill_view',
+      responseText: response,
+      timestamp: 250,
+      ...commitRuntimeSkillOutcome(service, response, 'runtime-skill'),
+      identity: {
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'builtin-skills',
+        skillName: 'runtime-skill'
+      }
+    })
+    const materializationReceipt = service.materializeSkillContexts([
+      {
+        sessionId: 's1',
+        expectedTapeIncarnationId: tapeIncarnationId,
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'builtin-skills',
+        skillName: 'runtime-skill',
+        effectiveContent,
+        builderVersion: 'skill-effective-content-v2',
+        renderedManifestHash: hashSkillEffectiveContent('manifest'),
+        scriptInventoryHash: hashSkillEffectiveContent('scripts'),
+        executionPackage: {
+          files: [],
+          executables: [],
+          runtimePolicy: { python: 'auto', node: 'auto' },
+          environmentBindingId: null
+        }
+      }
+    ])[0]
+    const { sessionId: _sessionId, ...executionRef } =
+      buildTapeSkillMaterializationRef(materializationReceipt)
+    const runtimeContext = {
+      activationScope: 'runtime_view' as const,
+      agentId: 'deepchat',
+      sourceType: 'builtin' as const,
+      sourceId: 'builtin-skills',
+      skillName: 'runtime-skill',
+      authoritativeRef: {
+        kind: 'tool_result' as const,
+        entryId: toolResultReceipt.entryId,
+        contentHash: toolResultReceipt.contentHash
+      },
+      executionRef,
+      providerRole: 'tool' as const,
+      sourceEntryIds: [],
+      projectedContentHash: toolResultReceipt.contentHash,
+      projectionVersion: 1,
+      deduplicationSource: 'runtime_view' as const
+    }
+    const input: TapeViewManifestBuildInput = {
+      sessionId: 's1',
+      messageId: 'a1',
+      requestSeq: 3,
+      taskType: 'tool_loop',
+      policy: 'tool_loop_shadow',
+      policyVersion: null,
+      messages: [{ role: 'tool', content: response, tool_call_id: 'tool-call-1' }],
+      tools: [],
+      latestEntryId: materializationReceipt.entryId,
+      anchorEntryIds: [1],
+      included: [],
+      excluded: [],
+      tokenBudget: {
+        contextLength: 1000,
+        requestedMaxTokens: 100,
+        effectiveMaxTokens: 100,
+        reserveTokens: 100,
+        toolReserveTokens: 0
+      },
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      summaryCursorOrderSeq: 1,
+      supportsVision: false,
+      supportsAudioInput: false,
+      traceDebugEnabled: false,
+      runId: 'run-2',
+      tapeIncarnationId,
+      skillContexts: [runtimeContext],
+      assembledAt: 300
+    }
+    const manifest = createTapeViewManifest(input)
+    expect(manifest).toMatchObject({ schemaVersion: 7, hashVersion: 5 })
+
+    const materializedOnlyManifest = structuredClone(manifest) as any
+    materializedOnlyManifest.skillContexts = [
+      {
+        activationScope: 'session',
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'builtin-skills',
+        skillName: 'runtime-skill',
+        authoritativeRef: executionRef,
+        providerRole: 'system',
+        sourceEntryIds: [],
+        projectedContentHash: executionRef.effectiveContentHash,
+        projectionVersion: 1,
+        deduplicationSource: 'session'
+      }
+    ]
+    const hashable = structuredClone(materializedOnlyManifest)
+    delete hashable.assembledAt
+    delete hashable.viewId
+    hashable.hashes = {
+      promptHash: materializedOnlyManifest.hashes.promptHash,
+      toolDefinitionsHash: materializedOnlyManifest.hashes.toolDefinitionsHash
+    }
+    const materializedOnlyHash = hashJsonData(hashable)
+    materializedOnlyManifest.hashes.manifestHash = materializedOnlyHash
+    materializedOnlyManifest.viewId = `view_${materializedOnlyHash.slice(0, 16)}`
+    expect(() => service.appendViewManifest(materializedOnlyManifest)).toThrow(
+      /require executable runtime-view authority/
+    )
+
+    const toolResultIndex = entries.findIndex(
+      (entry) => entry.entry_id === toolResultReceipt.entryId
+    )
+    const [toolResultRow] = entries.splice(toolResultIndex, 1)
+    expect(() => service.appendViewManifest(manifest)).toThrow(/authority is missing/)
+    entries.splice(toolResultIndex, 0, toolResultRow)
+
+    const materializationIndex = entries.findIndex(
+      (entry) => entry.entry_id === materializationReceipt.entryId
+    )
+    const [materializationRow] = entries.splice(materializationIndex, 1)
+    expect(() => service.appendViewManifest(manifest)).toThrow(/execution authority is missing/)
+    entries.splice(materializationIndex, 0, materializationRow)
+
+    const manifestRow = service.appendViewManifest(manifest)
+    expect(
+      service.getViewManifestByExecutionBinding({
+        sessionId: 's1',
+        runId: 'run-2',
+        requestSeq: 3
+      })?.entryId
+    ).toBe(manifestRow.entry_id)
+    expect(
+      service.getLatestViewManifestByRunBinding({
+        sessionId: 's1',
+        messageId: 'a1',
+        runId: 'run-2'
+      })?.entryId
+    ).toBe(manifestRow.entry_id)
+    const replay = service.exportReplaySlice('s1', 'a1', { requestSeq: 3 })
+    expect(replay?.integrity).toBe('valid')
+    expect(replay?.refs.skillContextEntryIds).toEqual(
+      expect.arrayContaining([toolResultReceipt.entryId, materializationReceipt.entryId])
+    )
+
+    const legacyManifest = createTapeViewManifest({
+      ...input,
+      skillContexts: [
+        {
+          ...runtimeContext,
+          executionRef: undefined
+        }
+      ].map(({ executionRef: _executionRef, ...context }) => context)
+    })
+    expect(legacyManifest.schemaVersion).toBe(6)
+    expect(() => service.appendViewManifest(legacyManifest)).toThrow(
+      /Conflicting Skill-bearing ViewManifest execution binding/
+    )
+
+    const laterManifest = createTapeViewManifest({ ...input, requestSeq: 4, assembledAt: 400 })
+    const laterRow = service.appendViewManifest(laterManifest)
+    const laterPayload = JSON.parse(laterRow.payload_json)
+    delete laterPayload.data.manifest.skillContexts[0].executionRef
+    laterRow.payload_json = JSON.stringify(laterPayload)
+    expect(() =>
+      service.getLatestViewManifestByRunBinding({
+        sessionId: 's1',
+        messageId: 'a1',
+        runId: 'run-2'
+      })
+    ).toThrow(/latest Skill-bearing ViewManifest Run binding is corrupt/i)
+
+    laterRow.payload_json = JSON.stringify({
+      ...laterPayload,
+      data: { manifest: laterManifest }
+    })
+    laterRow.source_seq = null
+    expect(() =>
+      service.getLatestViewManifestByRunBinding({
+        sessionId: 's1',
+        messageId: 'a1',
+        runId: 'run-2'
+      })
+    ).toThrow(/Skill-bearing ViewManifest Run occurrence is corrupt/i)
+
+    entries.find((entry) => entry.entry_id === materializationReceipt.entryId)!.payload_json = '{}'
+    expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 3 })?.integrity).toBe('invalid')
   })
 
   it('stores and lists view manifests as idempotent tape events', () => {

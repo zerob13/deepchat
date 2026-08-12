@@ -56,6 +56,7 @@ import type {
   TapeMessageFactWriter,
   TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
+  TapeRunViewManifestReader,
   TapeRuntimeSkillViewContextReader,
   TapeSkillViewResultFactWriter,
   TapeSkillMaterializationReader,
@@ -123,6 +124,7 @@ export class SessionTape
     TapeViewManifestReader,
     TapeEffectiveUserMessageSourceReader,
     TapeExecutionViewManifestReader,
+    TapeRunViewManifestReader,
     TapeViewManifestWriter,
     TapeAnchorReader,
     TapeAnchorWriter,
@@ -292,6 +294,14 @@ export class SessionTape
     requestSeq: number
   }): DeepChatTapeViewManifestRecord | null {
     return this.viewReplay.getViewManifestByExecutionBinding(input)
+  }
+
+  getLatestViewManifestByRunBinding(input: {
+    sessionId: string
+    messageId: string
+    runId: string
+  }): DeepChatTapeViewManifestRecord | null {
+    return this.viewReplay.getLatestViewManifestByRunBinding(input)
   }
 
   exportReplaySlice(

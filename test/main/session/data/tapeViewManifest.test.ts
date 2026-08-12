@@ -128,6 +128,36 @@ function createSkillContext() {
   }
 }
 
+function createRuntimeSkillContext() {
+  return {
+    activationScope: 'runtime_view' as const,
+    agentId: 'deepchat',
+    sourceType: 'builtin' as const,
+    sourceId: 'builtin-skills',
+    skillName: 'review',
+    authoritativeRef: {
+      kind: 'tool_result' as const,
+      entryId: 7,
+      contentHash: 'b'.repeat(64)
+    },
+    executionRef: {
+      kind: 'materialization' as const,
+      entryId: 6,
+      tapeIncarnationId: 'tape-1',
+      agentId: 'deepchat',
+      sourceType: 'builtin' as const,
+      sourceId: 'builtin-skills',
+      skillName: 'review',
+      effectiveContentHash: 'a'.repeat(64)
+    },
+    providerRole: 'tool' as const,
+    sourceEntryIds: [],
+    projectedContentHash: 'b'.repeat(64),
+    projectionVersion: 1,
+    deduplicationSource: 'runtime_view' as const
+  }
+}
+
 describe('tapeViewManifest', () => {
   it('hashes JSON with stable object key ordering', () => {
     expect(hashJson({ b: 1, a: { d: 4, c: 3 } })).toBe(hashJson({ a: { c: 3, d: 4 }, b: 1 }))
@@ -356,6 +386,74 @@ describe('tapeViewManifest', () => {
     )
   })
 
+  it('versions executable runtime Skill evidence without changing schema-v6 reads', () => {
+    const { input, executionContract } = createV5Fixture()
+    const manifest = createTapeViewManifest({
+      ...input,
+      runId: executionContract.request.runId,
+      tapeIncarnationId: 'tape-1',
+      skillContexts: [createRuntimeSkillContext()]
+    })
+
+    expect(manifest).toMatchObject({ schemaVersion: 7, hashVersion: 5 })
+    expect(verifyTapeViewManifestHash(manifest)).toBe('valid')
+    expect(normalizeStoredTapeViewManifest(JSON.parse(JSON.stringify(manifest)), 's1')).toEqual(
+      manifest
+    )
+
+    const missingExecutionRef = structuredClone(manifest) as any
+    delete missingExecutionRef.skillContexts[0].executionRef
+    expect(normalizeStoredTapeViewManifest(missingExecutionRef, 's1')).toBeNull()
+
+    const materializedOnlySchema7 = {
+      ...structuredClone(manifest),
+      skillContexts: [createSkillContext()]
+    }
+    expect(normalizeStoredTapeViewManifest(materializedOnlySchema7, 's1')).toBeNull()
+
+    const schema6 = createTapeViewManifest({
+      ...input,
+      runId: executionContract.request.runId,
+      tapeIncarnationId: 'tape-1',
+      skillContexts: [
+        {
+          ...createRuntimeSkillContext(),
+          executionRef: undefined
+        }
+      ].map(({ executionRef: _executionRef, ...context }) => context)
+    })
+    expect(schema6).toMatchObject({ schemaVersion: 6, hashVersion: 4 })
+    expect(normalizeStoredTapeViewManifest(JSON.parse(JSON.stringify(schema6)), 's1')).toEqual(
+      schema6
+    )
+  })
+
+  it.each([
+    ['agent', { agentId: 'other-agent' }],
+    ['source type', { sourceType: 'plugin' as const }],
+    ['source id', { sourceId: 'other-source' }],
+    ['Skill name', { skillName: 'other-skill' }],
+    ['Tape incarnation', { tapeIncarnationId: '' }],
+    ['content hash', { effectiveContentHash: 'invalid' }]
+  ])('rejects runtime execution authority with mismatched %s identity', (_name, drift) => {
+    const { input, executionContract } = createV5Fixture()
+    const context = createRuntimeSkillContext()
+
+    expect(() =>
+      createTapeViewManifest({
+        ...input,
+        runId: executionContract.request.runId,
+        tapeIncarnationId: 'tape-1',
+        skillContexts: [
+          {
+            ...context,
+            executionRef: { ...context.executionRef, ...drift }
+          }
+        ]
+      })
+    ).toThrow(/materialization reference/)
+  })
+
   it('fails closed on malformed or mismatched Skill-manifest identity', () => {
     const { input, executionContract } = createV5Fixture()
     const skillInput = {
@@ -392,7 +490,7 @@ describe('tapeViewManifest', () => {
           }
         ]
       })
-    ).toThrow(/materialized Skill context/)
+    ).toThrow(/Skill materialization reference/)
     expect(() =>
       createTapeViewManifest({
         ...skillInput,

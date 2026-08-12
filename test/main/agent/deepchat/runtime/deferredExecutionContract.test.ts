@@ -140,7 +140,7 @@ describe('deferred ExecutionContract recovery', () => {
     )
   })
 
-  it('recovers a schema-v6 contract only through its exact execution binding', () => {
+  it('recovers Skill-bearing contracts only through their exact execution binding', () => {
     const fixture = createFixture()
     const manifest = createTapeViewManifest({
       ...fixture.record.manifest,
@@ -197,6 +197,61 @@ describe('deferred ExecutionContract recovery', () => {
       requestSeq: 3
     })
     expect(viewManifests.listViewManifestsByMessage).not.toHaveBeenCalled()
+
+    const executableManifest = createTapeViewManifest({
+      ...manifest,
+      messages: [{ role: 'user', content: 'Write a.txt' }],
+      tools: [TOOL],
+      providerId: 'openai',
+      modelId: 'gpt-5',
+      summaryCursorOrderSeq: 1,
+      supportsVision: false,
+      supportsAudioInput: false,
+      traceDebugEnabled: false,
+      skillContexts: [
+        ...manifest.skillContexts,
+        {
+          activationScope: 'runtime_view',
+          agentId: 'deepchat',
+          sourceType: 'builtin',
+          sourceId: 'builtin-skills',
+          skillName: 'runner',
+          authoritativeRef: {
+            kind: 'tool_result',
+            entryId: 7,
+            contentHash: 'b'.repeat(64)
+          },
+          executionRef: {
+            kind: 'materialization',
+            entryId: 6,
+            tapeIncarnationId: 'tape-1',
+            agentId: 'deepchat',
+            sourceType: 'builtin',
+            sourceId: 'builtin-skills',
+            skillName: 'runner',
+            effectiveContentHash: 'c'.repeat(64)
+          },
+          providerRole: 'tool',
+          sourceEntryIds: [],
+          projectedContentHash: 'b'.repeat(64),
+          projectionVersion: 1,
+          deduplicationSource: 'runtime_view'
+        }
+      ]
+    })
+    expect(executableManifest.schemaVersion).toBe(7)
+    viewManifests.getViewManifestByExecutionBinding.mockReturnValue({
+      ...record,
+      manifest: executableManifest
+    })
+    expect(
+      resolveDeferredExecutionContract({
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        rawBinding: fixture.rawBinding,
+        viewManifests
+      })
+    ).toEqual(fixture.executionContract)
   })
 
   it('keeps legacy unbound interactions compatible without reading Tape', () => {

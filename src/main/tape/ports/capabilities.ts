@@ -72,6 +72,14 @@ export interface TapeExecutionViewManifestReader {
   }): DeepChatTapeViewManifestRecord | null
 }
 
+export interface TapeRunViewManifestReader {
+  getLatestViewManifestByRunBinding(input: {
+    sessionId: string
+    messageId: string
+    runId: string
+  }): DeepChatTapeViewManifestRecord | null
+}
+
 export interface TapeEffectiveUserMessageSourceReader {
   getEffectiveUserMessageSourceEntryId(sessionId: string, messageId: string): number | null
 }

@@ -64,8 +64,7 @@ function fixture() {
         })
     ),
     readSkillMaterialization: vi.fn((ref: { entryId: number }) => receipts.get(ref.entryId)!),
-    listViewManifestsByMessage: vi.fn(() => [] as any[]),
-    getViewManifestByExecutionBinding: vi.fn(() => null as any)
+    getLatestViewManifestByRunBinding: vi.fn(() => null as any)
   }
   return {
     skills,
@@ -244,7 +243,7 @@ describe('SkillContextMaterializer', () => {
       entryId: 40,
       createdAt: 1,
       manifest: {
-        schemaVersion: 6,
+        schemaVersion: 7,
         runId: 'prior-run',
         requestSeq: 4,
         sessionId: 'session-1',
@@ -262,6 +261,16 @@ describe('SkillContextMaterializer', () => {
               entryId: 39,
               contentHash: 'b'.repeat(64)
             },
+            executionRef: {
+              kind: 'materialization',
+              entryId: 38,
+              tapeIncarnationId: 'incarnation-1',
+              agentId: 'agent-1',
+              sourceType: 'builtin',
+              sourceId: 'source:runtime',
+              skillName: 'runtime',
+              effectiveContentHash: 'c'.repeat(64)
+            },
             providerRole: 'tool',
             sourceEntryIds: [],
             projectedContentHash: 'b'.repeat(64),
@@ -272,16 +281,7 @@ describe('SkillContextMaterializer', () => {
         ]
       }
     }
-    tape.listViewManifestsByMessage.mockReturnValue([
-      {
-        ...exact,
-        requestSeq: 99,
-        manifest: { ...exact.manifest, runId: 'other-run', requestSeq: 99 }
-      },
-      exact,
-      { ...exact, requestSeq: 2, manifest: { ...exact.manifest, requestSeq: 2 } }
-    ])
-    tape.getViewManifestByExecutionBinding.mockReturnValue(exact)
+    tape.getLatestViewManifestByRunBinding.mockReturnValue(exact)
     const resolveCalls = skills.resolveFreshEffectiveSkillContents.mock.calls.length
     tape.readSkillMaterialization.mockClear()
     expect(
@@ -291,10 +291,10 @@ describe('SkillContextMaterializer', () => {
         assistantMessageId: 'assistant-1'
       }).projections[0].effectiveContent
     ).toBe('body:one')
-    expect(tape.getViewManifestByExecutionBinding).toHaveBeenCalledWith({
+    expect(tape.getLatestViewManifestByRunBinding).toHaveBeenCalledWith({
       sessionId: 'session-1',
-      runId: 'prior-run',
-      requestSeq: 4
+      messageId: 'assistant-1',
+      runId: 'prior-run'
     })
     expect(tape.readSkillMaterialization).toHaveBeenCalledOnce()
     expect(skills.resolveFreshEffectiveSkillContents).toHaveBeenCalledTimes(resolveCalls)
@@ -325,8 +325,7 @@ describe('SkillContextMaterializer', () => {
         skillContexts: [{ ...projection.context, projectionVersion: 2 }]
       }
     }
-    tape.listViewManifestsByMessage.mockReturnValue([record])
-    tape.getViewManifestByExecutionBinding.mockReturnValue(record)
+    tape.getLatestViewManifestByRunBinding.mockReturnValue(record)
     expect(() =>
       service.recoverResume({
         sessionId: 'session-1',
@@ -361,8 +360,7 @@ describe('SkillContextMaterializer', () => {
         skillContexts: [{ ...projection.context, sourceEntryIds: [9] }]
       }
     }
-    tape.listViewManifestsByMessage.mockReturnValue([record])
-    tape.getViewManifestByExecutionBinding.mockReturnValue(record)
+    tape.getLatestViewManifestByRunBinding.mockReturnValue(record)
     expect(() =>
       service.recoverResume({
         sessionId: 'session-1',

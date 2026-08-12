@@ -1,16 +1,17 @@
 import type { SkillServicePort, EffectiveSkillContentResolution } from '@shared/types/skill'
 import type {
   DeepChatTapeMaterializedSkillContext,
+  DeepChatTapeSkillContext,
+  DeepChatTapeSkillContextV7,
   DeepChatTapeViewManifestRecord
 } from '@shared/types/tape-view-manifest'
 import { renderSessionSkillBody } from '../resources/systemPromptBuilder'
 import type {
-  TapeExecutionViewManifestReader,
   TapeEffectiveUserMessageSourceReader,
   TapeIncarnationReader,
+  TapeRunViewManifestReader,
   TapeSkillMaterializationReader,
-  TapeSkillMaterializationWriter,
-  TapeViewManifestReader
+  TapeSkillMaterializationWriter
 } from '@/tape/ports/capabilities'
 import {
   buildTapeSkillMaterializationPayloadHash,
@@ -24,7 +25,10 @@ import {
   type TapeSkillMaterializationReceipt,
   type TapeSkillMaterializationRef
 } from '@/tape/domain/skillMaterialization'
-import { validateSchema6SkillContexts } from '@/tape/domain/skillContext'
+import {
+  validateSchema6SkillContexts,
+  validateSchema7SkillContexts
+} from '@/tape/domain/skillContext'
 import { canonicalJsonStringifyData } from '@/tape/domain/canonicalJson'
 
 export type MaterializedSkillScope = 'message' | 'session'
@@ -64,8 +68,7 @@ type MaterializationTapePort = TapeSkillMaterializationWriter &
   TapeSkillMaterializationReader &
   TapeEffectiveUserMessageSourceReader
 type RecoveryTapePort = TapeSkillMaterializationReader &
-  TapeViewManifestReader &
-  TapeExecutionViewManifestReader
+  TapeRunViewManifestReader
 type SkillContextTapePort = FreshTapePort & MaterializationTapePort & RecoveryTapePort
 
 function canonicalName(name: string, field: string): string {
@@ -416,21 +419,15 @@ export class SkillContextMaterializer {
     const sessionId = requireId(input.sessionId, 'sessionId')
     const previousRunId = requireId(input.previousRunId, 'previousRunId')
     const assistantMessageId = requireId(input.assistantMessageId, 'assistantMessageId')
-    const records = this.dependencies.tape
-      .listViewManifestsByMessage(sessionId, assistantMessageId)
-      .filter(
-        (record) => record.manifest.schemaVersion === 6 && record.manifest.runId === previousRunId
-      )
-    if (records.length === 0) {
+    const exact = this.dependencies.tape.getLatestViewManifestByRunBinding({
+      sessionId,
+      messageId: assistantMessageId,
+      runId: previousRunId
+    })
+    if (!exact) {
       return Object.freeze({ foundSkillManifest: false, projections: Object.freeze([]) })
     }
-    const requestSeq = Math.max(...records.map((record) => record.requestSeq))
-    const exact = this.dependencies.tape.getViewManifestByExecutionBinding({
-      sessionId,
-      runId: previousRunId,
-      requestSeq
-    })
-    if (!exact || exact.messageId !== assistantMessageId) {
+    if (exact.messageId !== assistantMessageId) {
       throw new Error('Exact prior-run Skill ViewManifest could not be recovered.')
     }
     return Object.freeze({
@@ -443,13 +440,17 @@ export class SkillContextMaterializer {
     record: DeepChatTapeViewManifestRecord
   ): readonly MaterializedSkillProjection[] {
     const manifest = record.manifest
-    if (manifest.schemaVersion !== 6) return Object.freeze([])
-    const contexts = validateSchema6SkillContexts(manifest.skillContexts).filter(
+    if (manifest.schemaVersion !== 6 && manifest.schemaVersion !== 7) return Object.freeze([])
+    const contexts: DeepChatTapeSkillContext[] | DeepChatTapeSkillContextV7[] =
+      manifest.schemaVersion === 6
+        ? validateSchema6SkillContexts(manifest.skillContexts)
+        : validateSchema7SkillContexts(manifest.skillContexts)
+    const materializedContexts = contexts.filter(
       (context): context is DeepChatTapeMaterializedSkillContext =>
         context.activationScope === 'message' || context.activationScope === 'session'
     )
-    if (contexts.length === 0) return Object.freeze([])
-    const projections = contexts.map((context) => {
+    if (materializedContexts.length === 0) return Object.freeze([])
+    const projections = materializedContexts.map((context) => {
       const ref: TapeSkillMaterializationRef = {
         sessionId: manifest.sessionId,
         ...context.authoritativeRef

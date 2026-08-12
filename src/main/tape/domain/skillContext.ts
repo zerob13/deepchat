@@ -1,4 +1,8 @@
-import type { DeepChatTapeSkillContext } from '@shared/types/tape-view-manifest'
+import type {
+  DeepChatTapeSkillContext,
+  DeepChatTapeSkillContextV7,
+  DeepChatTapeSkillMaterializationRef
+} from '@shared/types/tape-view-manifest'
 import { isSkillSourceType } from '@shared/types/skillManagement'
 import { SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES } from '@shared/types/skill'
 import type { DeepChatTapeEntryRow } from './entry'
@@ -198,9 +202,49 @@ export function validateRuntimeSkillJournalChain(input: {
   return evidence
 }
 
-export function validateSchema6SkillContexts(value: unknown): DeepChatTapeSkillContext[] {
+function validateMaterializationRef(
+  ref: DeepChatTapeSkillMaterializationRef,
+  context: Pick<DeepChatTapeSkillContext, 'agentId' | 'sourceType' | 'sourceId' | 'skillName'>,
+  projectedContentHash?: string
+): void {
+  const refKeys = [
+    'agentId',
+    'effectiveContentHash',
+    'entryId',
+    'kind',
+    'skillName',
+    'sourceId',
+    'sourceType',
+    'tapeIncarnationId'
+  ]
+  if (
+    Object.keys(ref).sort().join('\0') !== refKeys.sort().join('\0') ||
+    ref.kind !== 'materialization' ||
+    !positive(ref.entryId) ||
+    !id(ref.tapeIncarnationId) ||
+    !id(ref.agentId) ||
+    !isSkillSourceType(ref.sourceType) ||
+    !id(ref.sourceId) ||
+    !id(ref.skillName) ||
+    !HASH.test(ref.effectiveContentHash) ||
+    (projectedContentHash !== undefined && projectedContentHash !== ref.effectiveContentHash) ||
+    ref.agentId !== context.agentId ||
+    ref.sourceType !== context.sourceType ||
+    ref.sourceId !== context.sourceId ||
+    ref.skillName !== context.skillName
+  ) {
+    throw new TypeError('Invalid Skill materialization reference.')
+  }
+}
+
+function validateSkillContexts(
+  value: unknown,
+  schemaVersion: 6 | 7
+): DeepChatTapeSkillContext[] | DeepChatTapeSkillContextV7[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_SKILL_CONTEXTS_PER_VIEW) {
-    throw new TypeError('Schema-6 Skill contexts must contain between 1 and 64 entries.')
+    throw new TypeError(
+      `Schema-${schemaVersion} Skill contexts must contain between 1 and 64 entries.`
+    )
   }
   const identities = new Set<string>()
   return value.map((item) => {
@@ -221,6 +265,9 @@ export function validateSchema6SkillContexts(value: unknown): DeepChatTapeSkillC
       'sourceId',
       'sourceType'
     ]
+    if (schemaVersion === 7 && context.activationScope === 'runtime_view') {
+      contextKeys.push('executionRef')
+    }
     if (
       Object.keys(item).sort().join('\0') !== contextKeys.sort().join('\0') ||
       !id(context.agentId) ||
@@ -247,6 +294,9 @@ export function validateSchema6SkillContexts(value: unknown): DeepChatTapeSkillC
     if (identities.has(identity)) throw new TypeError('Duplicate canonical Skill context identity.')
     identities.add(identity)
     if (context.activationScope === 'runtime_view') {
+      const runtimeContext = context as DeepChatTapeSkillContextV7 & {
+        executionRef?: DeepChatTapeSkillMaterializationRef
+      }
       const refKeys = ['contentHash', 'entryId', 'kind']
       if (
         Object.keys(ref).sort().join('\0') !== refKeys.sort().join('\0') ||
@@ -258,41 +308,38 @@ export function validateSchema6SkillContexts(value: unknown): DeepChatTapeSkillC
         context.deduplicationSource !== 'runtime_view'
       )
         throw new TypeError('Invalid runtime-view Skill context.')
+      if (schemaVersion === 7) {
+        if (!runtimeContext.executionRef) {
+          throw new TypeError('Schema-7 runtime-view Skill context requires execution authority.')
+        }
+        validateMaterializationRef(runtimeContext.executionRef, context)
+      }
     } else if (context.activationScope === 'message' || context.activationScope === 'session') {
       const expectedRole = context.activationScope === 'message' ? 'user' : 'system'
-      const refKeys = [
-        'agentId',
-        'effectiveContentHash',
-        'entryId',
-        'kind',
-        'skillName',
-        'sourceId',
-        'sourceType',
-        'tapeIncarnationId'
-      ]
       if (
-        Object.keys(ref).sort().join('\0') !== refKeys.sort().join('\0') ||
         context.providerRole !== expectedRole ||
         ref.kind !== 'materialization' ||
         context.deduplicationSource !== context.activationScope ||
-        !id(ref.tapeIncarnationId) ||
-        !id(ref.agentId) ||
-        !isSkillSourceType(ref.sourceType) ||
-        !id(ref.sourceId) ||
-        !id(ref.skillName) ||
-        !HASH.test(ref.effectiveContentHash) ||
-        context.projectedContentHash !== ref.effectiveContentHash ||
-        ref.agentId !== context.agentId ||
-        ref.sourceType !== context.sourceType ||
-        ref.sourceId !== context.sourceId ||
-        ref.skillName !== context.skillName ||
         (context.activationScope === 'message'
           ? context.sourceEntryIds.length !== 1
           : context.sourceEntryIds.length !== 0)
       ) {
         throw new TypeError('Invalid materialized Skill context.')
       }
+      validateMaterializationRef(ref, context, context.projectedContentHash)
     } else throw new TypeError('Invalid Skill activation scope.')
     return context
   })
+}
+
+export function validateSchema6SkillContexts(value: unknown): DeepChatTapeSkillContext[] {
+  return validateSkillContexts(value, 6) as DeepChatTapeSkillContext[]
+}
+
+export function validateSchema7SkillContexts(value: unknown): DeepChatTapeSkillContextV7[] {
+  const contexts = validateSkillContexts(value, 7) as DeepChatTapeSkillContextV7[]
+  if (!contexts.some((context) => context.activationScope === 'runtime_view')) {
+    throw new TypeError('Schema-7 Skill contexts require executable runtime-view authority.')
+  }
+  return contexts
 }

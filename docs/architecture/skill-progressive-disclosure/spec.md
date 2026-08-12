@@ -188,11 +188,12 @@ Runtime instructions include the resolved Skill root, relative-path semantics, `
 preference, enabled script inventory, and path-safety guidance. Root `skill_view`, message Skill
 projection, and Session-active projection must use this same builder and builder version.
 
-The execution snapshot freezes the scoped Agent/Skill identity, rendered manifest hash, and
-provider-visible script inventory with file hashes. Script bytes are not copied into the context
-fact. `skill_run` retains live permission, cancellation, path-confinement, enablement, existence,
-and file-hash checks; a changed executable fails closed and requires a new execution rather than
-silently running code different from the provider-visible contract.
+The execution snapshot freezes the scoped Agent/Skill identity, rendered manifest hash,
+provider-visible script inventory, and a bounded private package of authorized runtime files with
+their bytes and hashes. `skill_run` must retain live permission and cancellation checks, but execute
+only a verified copy extracted from the exact request-bound package. A changed environment binding
+or missing/corrupt package fails closed and requires a new execution rather than silently running
+code different from the provider-visible contract.
 
 ### Projection By Scope
 
@@ -220,6 +221,9 @@ supporting files are not part of the root effective body.
 
 - Tape entry payloads are content facts.
 - ViewManifest records which entry-backed content was selected and proves the exact projection.
+- Schema-7 runtime Skill occurrences bind the provider-visible tool-result fact and executable
+  materialization fact to the same Run/request/Tape incarnation; schema 6 remains a readable legacy
+  occurrence without executable authority.
 - ExecutionContract freezes its existing contract-bearing execution boundary; ordinary
   interactive chat does not gain a mandatory ExecutionContract in this increment.
 - Provider-attempt facts describe actual attempts and never replace ViewManifest selection facts.

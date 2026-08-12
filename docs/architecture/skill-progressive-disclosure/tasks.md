@@ -104,12 +104,14 @@
 
 ## Final Validation
 
-- [ ] Extend canonical materializations with bounded private `scripts/` execution packages and
+- [x] Extend canonical materializations with bounded private `scripts/` execution packages and
       non-secret environment revision bindings.
+- [x] Add ViewManifest schema 7/hash 5 to bind runtime tool-result bodies and execution packages to
+      one exact Provider request, including strict replay and continuation recovery.
 - [ ] Execute `skill_run` only from an exact execution-bound package ref and fail closed on package,
       environment, extraction, or hash drift.
-- [ ] Revalidate the exact schema-6 request authority after rate/retry waits and immediately before
-      every physical Provider attempt.
+- [ ] Revalidate the exact Skill-bearing request authority after rate/retry waits and immediately
+      before every physical Provider attempt.
 - [ ] Run format, i18n, lint, Node/web type checks, main/renderer tests, and build.
 - [ ] Review generated provider and ACP registry output.
 - [ ] Review the complete `dev...HEAD` diff by severity and fix every material finding.

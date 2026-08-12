@@ -76,6 +76,14 @@ ExecutionContract, and a `requireDurableManifest` path independent from `strictV
 versions retain their exact parsers and hash recipes. New Skill-context provenance accepts generic
 source entry refs rather than assuming every source is a transcript anchor.
 
+Add ViewManifest schema 7/hash 5 when a runtime `skill_view` also has executable authority. Its
+runtime context references both the exact provider-visible `tool_result` fact and the exact
+`skill/materialized` execution package. Both refs are inside the same execution-bound occurrence,
+must resolve before append/replay, and are exported as replay evidence. Schema 6 remains readable
+without an execution ref. A narrow Run reader selects the latest raw occurrence for continuation
+and fails closed when a newer occurrence is malformed instead of falling back to an older parsed
+manifest.
+
 Add explicit filters for materialization facts in effective views, transcript rendering, FTS and
 fallback search, Agent Tape tools, Memory ingestion/recall, and fork merge. Compatibility tests
 exercise the previous reader semantics and prove unknown `context` rows are non-effective.
@@ -104,9 +112,10 @@ Migrate root `skill_view` in this order:
 4. commit the existing strict `execution/tool_outcome` operation-settlement hash;
 5. through a narrow strict writer, persist and read back the canonical ordinary `tool_result` as
    the exact content authority, validating it against the Journal outcome;
-6. only then mark runtime activation;
-7. refresh the tool catalog/allow-list;
-8. remove full-body reinjection through leading-system refresh.
+6. materialize and read back the matching execution package, then bind both facts into schema 7;
+7. only then mark runtime activation;
+8. refresh the tool catalog/allow-list;
+9. remove full-body reinjection through leading-system refresh.
 
 The later normal transcript/tool-fact path reuses the strict result's provenance key and verifies
 canonical equality; it never writes a second result fact. Do not change supporting-file view

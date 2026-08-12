@@ -61,13 +61,13 @@ export function resolveDeferredExecutionContract(
 
   let records
   try {
-    const schema6Record = viewManifests.getViewManifestByExecutionBinding({
+    const skillManifestRecord = viewManifests.getViewManifestByExecutionBinding({
       sessionId,
       runId: binding.request.runId,
       requestSeq: binding.request.requestSeq
     })
-    records = schema6Record
-      ? [schema6Record]
+    records = skillManifestRecord
+      ? [skillManifestRecord]
       : viewManifests
           .listViewManifestsByMessage(sessionId, messageId)
           .filter(
@@ -91,9 +91,11 @@ export function resolveDeferredExecutionContract(
 
   const manifest = records[0].manifest
   if (
-    (manifest.schemaVersion !== 5 && manifest.schemaVersion !== 6) ||
+    (manifest.schemaVersion !== 5 &&
+      manifest.schemaVersion !== 6 &&
+      manifest.schemaVersion !== 7) ||
     !manifest.executionContract ||
-    (manifest.schemaVersion === 6 && manifest.runId !== binding.request.runId) ||
+    (manifest.schemaVersion !== 5 && manifest.runId !== binding.request.runId) ||
     verifyTapeViewManifestHash(manifest) !== 'valid'
   ) {
     throw new ExecutionContractDispatchError(

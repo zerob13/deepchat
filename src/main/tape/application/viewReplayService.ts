@@ -1,6 +1,8 @@
 import type {
   DeepChatTapeViewManifest,
-  DeepChatTapeViewManifestRecord
+  DeepChatTapeViewManifestRecord,
+  DeepChatTapeViewManifestV6,
+  DeepChatTapeViewManifestV7
 } from '@shared/types/tape-view-manifest'
 import type {
   DeepChatCausalObservationReadOptions,
@@ -33,14 +35,14 @@ import type {
   TapeMessageTraceRow as DeepChatMessageTraceRow
 } from '../ports/application'
 import { toTapeSessionId } from '../domain/facts'
-import type {
-  TapeRuntimeSkillViewContextReceipt,
-  TapeRuntimeSkillViewRecoveryInput
-} from '../domain/skillContext'
 import {
   MAX_SKILL_VIEW_RESULT_FACT_BYTES,
   readSkillContextEvidence,
+  validateSchema6SkillContexts,
+  validateSchema7SkillContexts,
   validateRuntimeSkillJournalChain,
+  type TapeRuntimeSkillViewContextReceipt,
+  type TapeRuntimeSkillViewRecoveryInput,
   type TapeSkillContextEvidence
 } from '../domain/skillContext'
 import { buildExecutionOperationProvenanceKey } from '../domain/executionJournal'
@@ -114,9 +116,9 @@ function readNonNegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-function canonicalSchema6Occurrence(
-  manifest: DeepChatTapeViewManifest & { schemaVersion: 6 }
-): string {
+type DeepChatTapeSkillViewManifest = DeepChatTapeViewManifestV6 | DeepChatTapeViewManifestV7
+
+function canonicalSkillManifestOccurrence(manifest: DeepChatTapeSkillViewManifest): string {
   return canonicalJsonStringifyData({ ...manifest, assembledAt: 0 })
 }
 
@@ -498,21 +500,32 @@ export class TapeViewReplayService {
   appendViewManifest(manifest: DeepChatTapeViewManifest): DeepChatTapeEntryRow {
     const table = this.table
     table.ensureBootstrapAnchor(manifest.sessionId)
-    if (manifest.schemaVersion === 6) {
+    if (manifest.schemaVersion === 6 || manifest.schemaVersion === 7) {
       return table.runInTransaction(() => {
         if (verifyTapeViewManifestHash(manifest) !== 'valid') {
-          throw new Error('Schema-6 ViewManifest integrity is invalid.')
+          throw new Error('Skill-bearing ViewManifest integrity is invalid.')
         }
         if (table.getBootstrapIncarnation(manifest.sessionId) !== manifest.tapeIncarnationId) {
-          throw new Error('Schema-6 ViewManifest Tape incarnation does not match the Session Tape.')
+          throw new Error(
+            'Skill-bearing ViewManifest Tape incarnation does not match the Session Tape.'
+          )
         }
-        this.validateSchema6Evidence(manifest)
-        const provenanceKey = this.schema6ProvenanceKey(manifest)
+        this.validateSkillManifestEvidence(manifest)
+        const provenanceKey = this.skillManifestProvenanceKey(manifest)
+        const conflictingSchemaVersion = manifest.schemaVersion === 6 ? 7 : 6
+        if (
+          table.getByProvenanceKey(
+            manifest.sessionId,
+            this.skillManifestBindingProvenanceKey(conflictingSchemaVersion, manifest)
+          )
+        ) {
+          throw new Error('Conflicting Skill-bearing ViewManifest execution binding.')
+        }
         const row = table.getByProvenanceKey(manifest.sessionId, provenanceKey)
         if (row) {
-          return this.requireEqualSchema6ManifestRow(row, manifest, provenanceKey)
+          return this.requireEqualSkillManifestRow(row, manifest, provenanceKey)
         }
-        return this.requireEqualSchema6ManifestRow(
+        return this.requireEqualSkillManifestRow(
           this.appendViewManifestEvent(manifest),
           manifest,
           provenanceKey
@@ -533,8 +546,8 @@ export class TapeViewReplayService {
         seq: manifest.requestSeq
       },
       provenanceKey:
-        manifest.schemaVersion === 6
-          ? this.schema6ProvenanceKey(manifest)
+        manifest.schemaVersion === 6 || manifest.schemaVersion === 7
+          ? this.skillManifestProvenanceKey(manifest)
           : `view:${manifest.sessionId}:${manifest.messageId}:${manifest.requestSeq}:${manifest.hashes.manifestHash}`,
       data: {
         manifest
@@ -551,17 +564,20 @@ export class TapeViewReplayService {
     })
   }
 
-  private schema6ProvenanceKey(manifest: DeepChatTapeViewManifest & { schemaVersion: 6 }): string {
-    return this.schema6BindingProvenanceKey(manifest)
+  private skillManifestProvenanceKey(manifest: DeepChatTapeSkillViewManifest): string {
+    return this.skillManifestBindingProvenanceKey(manifest.schemaVersion, manifest)
   }
 
-  private schema6BindingProvenanceKey(input: {
-    sessionId: string
-    tapeIncarnationId: string
-    runId: string
-    requestSeq: number
-  }): string {
-    return `view6:${hashJsonData({
+  private skillManifestBindingProvenanceKey(
+    schemaVersion: 6 | 7,
+    input: {
+      sessionId: string
+      tapeIncarnationId: string
+      runId: string
+      requestSeq: number
+    }
+  ): string {
+    return `view${schemaVersion}:${hashJsonData({
       sessionId: input.sessionId,
       tapeIncarnationId: input.tapeIncarnationId,
       runId: input.runId,
@@ -569,32 +585,35 @@ export class TapeViewReplayService {
     })}`
   }
 
-  private requireEqualSchema6ManifestRow(
+  private requireEqualSkillManifestRow(
     row: DeepChatTapeEntryRow,
-    manifest: DeepChatTapeViewManifest & { schemaVersion: 6 },
+    manifest: DeepChatTapeSkillViewManifest,
     provenanceKey: string
   ): DeepChatTapeEntryRow {
     const record = this.toViewManifestRecord(row)
     if (
       !record ||
-      record.manifest.schemaVersion !== 6 ||
+      record.manifest.schemaVersion !== manifest.schemaVersion ||
       verifyTapeViewManifestHash(record.manifest) !== 'valid'
     ) {
-      throw new Error('Malformed row occupies the schema-6 ViewManifest binding.')
+      throw new Error('Malformed row occupies the Skill-bearing ViewManifest binding.')
     }
-    this.requireValidStoredSchema6Occurrence(row, record.manifest, provenanceKey)
+    this.requireValidStoredSkillManifestOccurrence(row, record.manifest, provenanceKey)
     if (record.manifest.hashes.manifestHash !== manifest.hashes.manifestHash) {
-      throw new Error('Conflicting schema-6 ViewManifest binding.')
+      throw new Error('Conflicting Skill-bearing ViewManifest binding.')
     }
-    if (canonicalSchema6Occurrence(record.manifest) !== canonicalSchema6Occurrence(manifest)) {
-      throw new Error('Schema-6 ViewManifest canonical retry is not equal.')
+    if (
+      canonicalSkillManifestOccurrence(record.manifest) !==
+      canonicalSkillManifestOccurrence(manifest)
+    ) {
+      throw new Error('Skill-bearing ViewManifest canonical retry is not equal.')
     }
     return row
   }
 
-  private requireSchema6ManifestEnvelope(
+  private requireSkillManifestEnvelope(
     row: DeepChatTapeEntryRow,
-    manifest: DeepChatTapeViewManifest & { schemaVersion: 6 },
+    manifest: DeepChatTapeSkillViewManifest,
     provenanceKey: string
   ): void {
     const expectedPayload = { name: TAPE_VIEW_MANIFEST_EVENT_NAME, data: { manifest } }
@@ -618,27 +637,29 @@ export class TapeViewReplayService {
       canonicalJsonStringifyData(parseJsonObject(row.meta_json)) !==
         canonicalJsonStringifyData(expectedMeta)
     ) {
-      throw new Error('Schema-6 ViewManifest physical envelope is corrupt.')
+      throw new Error('Skill-bearing ViewManifest physical envelope is corrupt.')
     }
   }
 
-  private requireValidStoredSchema6Occurrence(
+  private requireValidStoredSkillManifestOccurrence(
     row: DeepChatTapeEntryRow,
-    manifest: DeepChatTapeViewManifest & { schemaVersion: 6 },
-    provenanceKey = this.schema6ProvenanceKey(manifest)
+    manifest: DeepChatTapeSkillViewManifest,
+    provenanceKey = this.skillManifestProvenanceKey(manifest)
   ): void {
     if (
       verifyTapeViewManifestHash(manifest) !== 'valid' ||
       this.table.getBootstrapIncarnation(manifest.sessionId) !== manifest.tapeIncarnationId
     ) {
-      throw new Error('Schema-6 ViewManifest occurrence identity is invalid.')
+      throw new Error('Skill-bearing ViewManifest occurrence identity is invalid.')
     }
-    this.requireSchema6ManifestEnvelope(row, manifest, provenanceKey)
-    this.validateSchema6Evidence(manifest)
+    this.requireSkillManifestEnvelope(row, manifest, provenanceKey)
+    this.validateSkillManifestEvidence(manifest)
   }
 
-  private validateSchema6Evidence(manifest: DeepChatTapeViewManifest & { schemaVersion: 6 }): void {
+  private validateSkillManifestEvidence(manifest: DeepChatTapeSkillViewManifest): void {
     const table = this.table
+    if (manifest.schemaVersion === 6) validateSchema6SkillContexts(manifest.skillContexts)
+    else validateSchema7SkillContexts(manifest.skillContexts)
     const evidenceRows = new Map(
       table
         .getByEntryIds(
@@ -646,6 +667,7 @@ export class TapeViewReplayService {
           collectEntryIds(
             manifest.skillContexts.flatMap((context) => [
               context.authoritativeRef.entryId,
+              ...('executionRef' in context ? [context.executionRef.entryId] : []),
               ...context.sourceEntryIds
             ])
           )
@@ -655,16 +677,16 @@ export class TapeViewReplayService {
     for (const context of manifest.skillContexts) {
       const authoritativeRef = context.authoritativeRef
       if (authoritativeRef.entryId > manifest.latestEntryId) {
-        throw new Error('Schema-6 Skill context references content after the View head.')
+        throw new Error('Skill context references content after the View head.')
       }
       const authoritativeRow = evidenceRows.get(authoritativeRef.entryId)
       if (!authoritativeRow) {
-        throw new Error('Schema-6 Skill context authority is missing.')
+        throw new Error('Skill context authority is missing.')
       }
 
       if (authoritativeRef.kind === 'materialization') {
         if (authoritativeRef.tapeIncarnationId !== manifest.tapeIncarnationId) {
-          throw new Error('Schema-6 Skill materialization belongs to another Tape incarnation.')
+          throw new Error('Skill materialization belongs to another Tape incarnation.')
         }
         readTapeSkillMaterializationRef(authoritativeRow, {
           sessionId: manifest.sessionId,
@@ -711,7 +733,7 @@ export class TapeViewReplayService {
           typeof payload.response !== 'string' ||
           hashString(payload.response) !== authoritativeRef.contentHash
         ) {
-          throw new Error('Schema-6 Skill tool-result authority is invalid.')
+          throw new Error('Skill tool-result authority is invalid.')
         }
         assertTapeToolFactPhysicalEnvelope(
           authoritativeRow,
@@ -748,11 +770,42 @@ export class TapeViewReplayService {
             }
           }
         )
+        if ('executionRef' in context) {
+          const executionRef = context.executionRef
+          if (
+            executionRef.entryId > manifest.latestEntryId ||
+            executionRef.tapeIncarnationId !== manifest.tapeIncarnationId
+          ) {
+            throw new Error('Runtime Skill execution authority is outside the View boundary.')
+          }
+          const executionRow = evidenceRows.get(executionRef.entryId)
+          if (!executionRow) throw new Error('Runtime Skill execution authority is missing.')
+          const executionReceipt = readTapeSkillMaterializationRef(executionRow, {
+            sessionId: manifest.sessionId,
+            ...executionRef
+          })
+          let result: Record<string, unknown>
+          try {
+            const parsed = JSON.parse(payload.response as string) as unknown
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error()
+            result = parsed as Record<string, unknown>
+          } catch {
+            throw new Error('Runtime Skill result cannot bind execution authority.')
+          }
+          if (
+            typeof result.content !== 'string' ||
+            hashString(result.content) !== executionReceipt.payload.effectiveContentHash
+          ) {
+            throw new Error(
+              'Runtime Skill body and execution package resolved from different facts.'
+            )
+          }
+        }
       }
 
       for (const sourceEntryId of context.sourceEntryIds) {
         if (sourceEntryId > manifest.latestEntryId || !evidenceRows.has(sourceEntryId)) {
-          throw new Error('Schema-6 Skill context source evidence is missing.')
+          throw new Error('Skill context source evidence is missing.')
         }
       }
       if (context.activationScope === 'message') {
@@ -767,10 +820,10 @@ export class TapeViewReplayService {
           sourceRecord?.sessionId !== manifest.sessionId ||
           sourceRecord.role !== 'user'
         ) {
-          throw new Error('Schema-6 message Skill source is not a user-message fact.')
+          throw new Error('Message Skill source is not a user-message fact.')
         }
       } else if (context.activationScope === 'session' && context.sourceEntryIds.length !== 0) {
-        throw new Error('Schema-6 Session Skill context must not claim message sources.')
+        throw new Error('Session Skill context must not claim message sources.')
       }
     }
   }
@@ -793,26 +846,128 @@ export class TapeViewReplayService {
     requestSeq: number
   }): DeepChatTapeViewManifestRecord | null {
     if (!input.sessionId.trim() || !input.runId.trim() || !isPositiveInteger(input.requestSeq)) {
-      throw new Error('Schema-6 ViewManifest execution binding is invalid.')
+      throw new Error('Skill-bearing ViewManifest execution binding is invalid.')
     }
     const tapeIncarnationId = this.table.getBootstrapIncarnation(input.sessionId)
     if (!tapeIncarnationId) return null
-    const provenanceKey = this.schema6BindingProvenanceKey({ ...input, tapeIncarnationId })
-    const row = this.table.getByProvenanceKey(input.sessionId, provenanceKey)
-    if (!row) return null
+    const candidates = ([6, 7] as const).flatMap((schemaVersion) => {
+      const provenanceKey = this.skillManifestBindingProvenanceKey(schemaVersion, {
+        ...input,
+        tapeIncarnationId
+      })
+      const row = this.table.getByProvenanceKey(input.sessionId, provenanceKey)
+      return row ? [{ row, provenanceKey }] : []
+    })
+    if (candidates.length === 0) return null
+    if (candidates.length !== 1)
+      throw new Error('Skill-bearing ViewManifest execution binding is ambiguous.')
+    const [{ row, provenanceKey }] = candidates
     const record = this.toViewManifestRecord(row)
     if (
       !record ||
-      record.manifest.schemaVersion !== 6 ||
+      (record.manifest.schemaVersion !== 6 && record.manifest.schemaVersion !== 7) ||
       record.manifest.runId !== input.runId ||
       record.manifest.requestSeq !== input.requestSeq ||
       record.manifest.tapeIncarnationId !== tapeIncarnationId ||
       verifyTapeViewManifestHash(record.manifest) !== 'valid'
     ) {
-      throw new Error('Schema-6 ViewManifest execution binding is corrupt.')
+      throw new Error('Skill-bearing ViewManifest execution binding is corrupt.')
     }
-    this.requireValidStoredSchema6Occurrence(row, record.manifest, provenanceKey)
+    this.requireValidStoredSkillManifestOccurrence(row, record.manifest, provenanceKey)
     return record
+  }
+
+  getLatestViewManifestByRunBinding(input: {
+    sessionId: string
+    messageId: string
+    runId: string
+  }): DeepChatTapeViewManifestRecord | null {
+    if (!input.sessionId.trim() || !input.messageId.trim() || !input.runId.trim()) {
+      throw new Error('Skill-bearing ViewManifest Run binding is invalid.')
+    }
+    const tapeIncarnationId = this.table.getBootstrapIncarnation(input.sessionId)
+    if (!tapeIncarnationId) return null
+    const candidates = this.table
+      .getViewManifestEventsByMessage(input.sessionId, input.messageId)
+      .flatMap((row) => {
+        const payload = parseJsonObject(row.payload_json)
+        const data = payload.data
+        const rawManifest =
+          data && typeof data === 'object' && !Array.isArray(data)
+            ? (data as Record<string, unknown>).manifest
+            : null
+        const rawManifestMatches =
+          rawManifest !== null &&
+          typeof rawManifest === 'object' &&
+          !Array.isArray(rawManifest) &&
+          (rawManifest as Record<string, unknown>).runId === input.runId &&
+          ((rawManifest as Record<string, unknown>).schemaVersion === 6 ||
+            (rawManifest as Record<string, unknown>).schemaVersion === 7)
+        const sourceSeq =
+          row.source_seq !== null && isPositiveInteger(row.source_seq) ? row.source_seq : null
+        const schemaKeys =
+          sourceSeq === null
+            ? []
+            : ([6, 7] as const).map((schemaVersion) =>
+                this.skillManifestBindingProvenanceKey(schemaVersion, {
+                  sessionId: input.sessionId,
+                  tapeIncarnationId,
+                  runId: input.runId,
+                  requestSeq: sourceSeq
+                })
+              )
+        const provenanceMatches =
+          row.provenance_key !== null && schemaKeys.includes(row.provenance_key)
+        if (!rawManifestMatches && !provenanceMatches) return []
+        const rawRequestSeq = rawManifestMatches
+          ? readNonNegativeNumber((rawManifest as Record<string, unknown>).requestSeq)
+          : null
+        if (
+          rawManifestMatches &&
+          (rawRequestSeq === null ||
+            !isPositiveInteger(rawRequestSeq) ||
+            sourceSeq === null ||
+            sourceSeq !== rawRequestSeq)
+        ) {
+          throw new Error('Skill-bearing ViewManifest Run occurrence is corrupt.')
+        }
+        return [{ row, requestSeq: sourceSeq }]
+      })
+      .toSorted(
+        (left, right) =>
+          (right.requestSeq ?? 0) - (left.requestSeq ?? 0) || right.row.entry_id - left.row.entry_id
+      )
+    if (candidates.length === 0) return null
+    const latest = candidates[0]
+    const requestSeq = latest.requestSeq
+    if (
+      requestSeq === null ||
+      latest.row.source_seq === null ||
+      !isPositiveInteger(latest.row.source_seq) ||
+      latest.row.source_seq !== requestSeq
+    ) {
+      throw new Error('Latest Skill-bearing ViewManifest Run binding is corrupt.')
+    }
+    if (candidates.filter((candidate) => candidate.requestSeq === requestSeq).length !== 1) {
+      throw new Error('Latest Skill-bearing ViewManifest Run binding is ambiguous.')
+    }
+    const record = this.toViewManifestRecord(latest.row)
+    if (
+      !record ||
+      (record.manifest.schemaVersion !== 6 && record.manifest.schemaVersion !== 7) ||
+      record.manifest.runId !== input.runId
+    ) {
+      throw new Error('Latest Skill-bearing ViewManifest Run binding is corrupt.')
+    }
+    const exact = this.getViewManifestByExecutionBinding({
+      sessionId: input.sessionId,
+      runId: input.runId,
+      requestSeq
+    })
+    if (!exact || exact.entryId !== record.entryId || exact.messageId !== input.messageId) {
+      throw new Error('Latest Skill-bearing ViewManifest Run occurrence is not exact.')
+    }
+    return exact
   }
 
   exportReplaySlice(
@@ -956,10 +1111,11 @@ export class TapeViewReplayService {
       manifest.included.flatMap((ref) => ref.sourceEntryIds ?? [])
     )
     const skillContextEntryIds =
-      manifest.schemaVersion === 6
+      manifest.schemaVersion === 6 || manifest.schemaVersion === 7
         ? collectEntryIds(
             manifest.skillContexts.flatMap((context) => [
               context.authoritativeRef.entryId,
+              ...('executionRef' in context ? [context.executionRef.entryId] : []),
               ...context.sourceEntryIds
             ])
           )
@@ -981,11 +1137,11 @@ export class TapeViewReplayService {
     )
     const foundEntryIds = new Set(entries.map((entry) => entry.entryId))
     let skillEvidenceValid = skillContextEntryIds.every((entryId) => foundEntryIds.has(entryId))
-    if (skillEvidenceValid && manifest.schemaVersion === 6) {
+    if (skillEvidenceValid && (manifest.schemaVersion === 6 || manifest.schemaVersion === 7)) {
       try {
         const manifestRow = selectedRows.find((row) => row.entry_id === manifestRecord.entryId)
-        if (!manifestRow) throw new Error('Schema-6 ViewManifest occurrence is missing.')
-        this.requireValidStoredSchema6Occurrence(manifestRow, manifest)
+        if (!manifestRow) throw new Error('Skill-bearing ViewManifest occurrence is missing.')
+        this.requireValidStoredSkillManifestOccurrence(manifestRow, manifest)
       } catch {
         skillEvidenceValid = false
       }
@@ -1015,7 +1171,9 @@ export class TapeViewReplayService {
         includedEntryIds,
         excludedEntryIds,
         anchorEntryIds,
-        ...(manifest.schemaVersion === 6 ? { skillContextEntryIds } : {})
+        ...(manifest.schemaVersion === 6 || manifest.schemaVersion === 7
+          ? { skillContextEntryIds }
+          : {})
       },
       hashes: {
         manifestHash: manifest.hashes.manifestHash,

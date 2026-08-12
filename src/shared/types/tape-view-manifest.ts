@@ -171,9 +171,17 @@ export interface DeepChatTapeRuntimeViewSkillContext extends DeepChatTapeSkillCo
   providerRole: 'tool'
 }
 
+export interface DeepChatTapeRuntimeViewSkillContextV7 extends DeepChatTapeRuntimeViewSkillContext {
+  executionRef: DeepChatTapeSkillMaterializationRef
+}
+
 export type DeepChatTapeSkillContext =
   | DeepChatTapeMaterializedSkillContext
   | DeepChatTapeRuntimeViewSkillContext
+
+export type DeepChatTapeSkillContextV7 =
+  | DeepChatTapeMaterializedSkillContext
+  | DeepChatTapeRuntimeViewSkillContextV7
 
 export interface DeepChatTapeViewManifestV6 extends DeepChatTapeViewManifestBase {
   schemaVersion: 6
@@ -184,10 +192,20 @@ export interface DeepChatTapeViewManifestV6 extends DeepChatTapeViewManifestBase
   executionContract?: DeepChatExecutionContract
 }
 
+export interface DeepChatTapeViewManifestV7 extends DeepChatTapeViewManifestBase {
+  schemaVersion: 7
+  hashVersion: 5
+  runId: string
+  tapeIncarnationId: string
+  skillContexts: DeepChatTapeSkillContextV7[]
+  executionContract?: DeepChatExecutionContract
+}
+
 export type DeepChatTapeViewManifest =
   | DeepChatTapeViewManifestLegacy
   | DeepChatTapeViewManifestV5
   | DeepChatTapeViewManifestV6
+  | DeepChatTapeViewManifestV7
 
 export type DeepChatTapeViewManifestIntegrity = 'valid' | 'invalid' | 'unverified'
 
