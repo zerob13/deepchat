@@ -3213,6 +3213,165 @@ export function createFullToolSurfaceRunController(input: {
   return Object.freeze(controller)
 }
 
+/** @internal Use the programmatic domain factory so Run projection preflight cannot be bypassed. */
+export function createCliProgrammaticToolSurfaceRunControllerDelegate(input: {
+  readonly ceilingDefinitions: readonly MCPToolDefinition[]
+  /** Fixed provider-delivery assignments; live eligibility may only shrink their current View. */
+  readonly providerActiveDefinitions: readonly MCPToolDefinition[]
+  readonly policyVersion: string
+}): ToolSurfaceRunController {
+  if (!input || typeof input !== 'object') {
+    throw new ToolSurfaceError(
+      'CLI Programmatic Tool Surface Run input is invalid.',
+      'invalid_definition'
+    )
+  }
+  const ceiling = buildToolSurfaceRunCeiling(input.ceilingDefinitions)
+  const providerActiveCatalog = buildCanonicalToolCatalog(input.providerActiveDefinitions)
+  const ceilingEntryByTarget = new Map(
+    ceiling.catalog.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  const providerActiveTargets = new Set<string>()
+  for (const entry of providerActiveCatalog.entries) {
+    const ceilingEntry = ceilingEntryByTarget.get(entry.stableTargetKey)
+    if (!ceilingEntry || !catalogEntryMatches(ceilingEntry, entry)) {
+      throw new ToolSurfaceError(
+        'CLI Programmatic Provider Active Surface is outside the Run Tool Ceiling.',
+        'conflicting_tool'
+      )
+    }
+    providerActiveTargets.add(entry.stableTargetKey)
+  }
+  const missingAgentEntry = ceiling.catalog.entries.find(
+    (entry) => entry.target.source === 'agent' && !providerActiveTargets.has(entry.stableTargetKey)
+  )
+  if (missingAgentEntry) {
+    throw new ToolSurfaceError(
+      'CLI Programmatic Provider Active Surface must include every Agent tool.',
+      'ineligible_exposure'
+    )
+  }
+  const execEntry = providerActiveCatalog.entries.find(
+    (entry) => entry.target.source === 'agent' && entry.target.providerVisibleName === 'exec'
+  )
+  if (!execEntry) {
+    throw new ToolSurfaceError(
+      'CLI Programmatic Provider Active Surface requires the Agent exec tool.',
+      'ineligible_exposure'
+    )
+  }
+
+  const activationLedger = createProviderOrderedActivationLedgerFromCatalog(
+    providerActiveCatalog,
+    input.providerActiveDefinitions
+  )
+  const selectionReasons = activationLedger.entries.map((entry) => ({
+    stableTargetKey: entry.stableTargetKey,
+    reason:
+      ceilingEntryByTarget.get(entry.stableTargetKey)?.target.providerVisibleName === 'exec'
+        ? ('core' as const)
+        : ('policy-required' as const)
+  }))
+  const proposals = new WeakMap<ToolSurfaceSnapshot, number>()
+  const admittedSnapshots = new WeakSet<ToolSurfaceSnapshot>()
+  let admissionGeneration = 0
+  let latestAdmittedRequest: ToolSurfaceRequestIdentity | null = null
+  let latestExecutionEligibleSnapshot: ToolSurfaceSnapshot | null = null
+
+  const controller: ToolSurfaceRunController = {
+    ceiling,
+    policyVersion: input.policyVersion,
+    adapterMode: 'cli-programmatic',
+    virtualizationTriggered: true,
+    stageActivationBatch: (candidates) => {
+      const candidateBatch = readDataArray(
+        candidates,
+        'Tool Surface activation candidate batch',
+        MAX_TOOL_SURFACE_ACTIVATION_CANDIDATES
+      )
+      if (candidateBatch.length === 0) return
+      throw new ToolSurfaceError(
+        'CLI Programmatic Tool Surface does not accept native activation candidates.',
+        'invalid_definition'
+      )
+    },
+    build: ({ request, eligibleDefinitions }) => {
+      if (
+        latestAdmittedRequest &&
+        (request.sessionId !== latestAdmittedRequest.sessionId ||
+          request.messageId !== latestAdmittedRequest.messageId ||
+          request.runId !== latestAdmittedRequest.runId ||
+          request.requestSeq <= latestAdmittedRequest.requestSeq)
+      ) {
+        throw new ToolSurfaceError(
+          'CLI Programmatic proposal must advance the admitted Run View.',
+          'invalid_definition'
+        )
+      }
+      const eligibleCatalog = buildCanonicalToolCatalog(eligibleDefinitions)
+      const eligibleTargets = new Set(
+        eligibleCatalog.entries.map((entry) => entry.stableTargetKey)
+      )
+      if (
+        !latestAdmittedRequest &&
+        [...providerActiveTargets].some((target) => !eligibleTargets.has(target))
+      ) {
+        throw new ToolSurfaceError(
+          'Initial CLI Programmatic View requires every fixed provider target.',
+          'ineligible_exposure'
+        )
+      }
+      const snapshot = createToolSurfaceSnapshot({
+        request,
+        policyVersion: input.policyVersion,
+        adapterMode: 'cli-programmatic',
+        virtualizationTriggered: true,
+        ceiling,
+        eligibleDefinitions,
+        activationLedger,
+        selectionReasons: selectionReasons.filter((reason) =>
+          eligibleTargets.has(reason.stableTargetKey)
+        )
+      })
+      proposals.set(snapshot, admissionGeneration)
+      return snapshot
+    },
+    admit: (snapshot) => {
+      assertIssuedToolSurfaceSnapshot(snapshot)
+      if (revokedToolSurfaceExecutionSnapshots.has(snapshot)) {
+        throw new ToolSurfaceError(
+          'A revoked CLI Programmatic snapshot cannot be admitted.',
+          'invalid_definition'
+        )
+      }
+      if (admittedSnapshots.has(snapshot)) return
+      const proposalGeneration = proposals.get(snapshot)
+      if (proposalGeneration === undefined) {
+        throw new ToolSurfaceError(
+          'Tool Surface snapshot was not prepared by this Run controller.',
+          'invalid_definition'
+        )
+      }
+      if (proposalGeneration !== admissionGeneration) {
+        throw new ToolSurfaceError(
+          'CLI Programmatic snapshot was prepared from a stale provider View.',
+          'conflicting_tool'
+        )
+      }
+      if (latestExecutionEligibleSnapshot) {
+        revokeToolSurfaceExecutionEligibility(latestExecutionEligibleSnapshot)
+      }
+      admissionGeneration += 1
+      latestAdmittedRequest = snapshot.request
+      proposals.delete(snapshot)
+      admittedSnapshots.add(snapshot)
+      admittedToolSurfaceSnapshots.add(snapshot)
+      latestExecutionEligibleSnapshot = snapshot
+    }
+  }
+  return Object.freeze(controller)
+}
+
 export function createPolicySelectedToolSurfaceRun(input: {
   readonly ceilingDefinitions: readonly MCPToolDefinition[]
   readonly initialEligibleDefinitions: readonly MCPToolDefinition[]

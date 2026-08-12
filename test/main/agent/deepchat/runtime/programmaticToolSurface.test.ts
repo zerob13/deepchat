@@ -11,6 +11,7 @@ import {
   assertProgrammaticToolCapabilityViewActive,
   buildProgrammaticToolCapabilityV1,
   buildProgrammaticToolSurfaceV1,
+  createProgrammaticToolSurfaceRunControllerV1,
   preflightProgrammaticToolRunCeilingV1,
   type ProgrammaticToolCapabilityCeilingsV1,
   type ProgrammaticToolCapabilityQuotasV1
@@ -19,7 +20,8 @@ import {
   ToolSurfaceError,
   buildToolSurfaceRunCeiling,
   createToolSurfaceActivationLedger,
-  createToolSurfaceSnapshot
+  createToolSurfaceSnapshot,
+  revokeToolSurfaceExecutionEligibility
 } from '@/agent/deepchat/runtime/toolSurface'
 import { buildTaskContract } from '@/tape/domain/taskContract'
 
@@ -76,24 +78,41 @@ function buildSnapshot(input: {
   eligibleDefinitions?: readonly MCPToolDefinition[]
   requestSeq?: number
   policyVersion?: string
+  directSnapshot?: boolean
   requestOverrides?: Partial<{
     sessionId: string
     messageId: string
     runId: string
   }>
 }) {
+  const request = {
+    sessionId: input.requestOverrides?.sessionId ?? 'session-1',
+    messageId: input.requestOverrides?.messageId ?? 'message-1',
+    runId: input.requestOverrides?.runId ?? 'run-1',
+    requestSeq: input.requestSeq ?? 1
+  }
+  const policyVersion = input.policyVersion ?? 'programmatic-test-v1'
+  const providerActiveDefinitions = input.definitions.filter((definition) =>
+    input.activeNames.includes(definition.function.name)
+  )
+  if (!input.directSnapshot) {
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: input.definitions,
+      providerActiveDefinitions,
+      policyVersion
+    })
+    return controller.build({
+      request,
+      eligibleDefinitions: input.eligibleDefinitions ?? input.definitions
+    })
+  }
   const ceiling = buildToolSurfaceRunCeiling(input.definitions)
   const activeEntries = ceiling.catalog.entries.filter((entry) =>
     input.activeNames.includes(entry.target.providerVisibleName)
   )
   return createToolSurfaceSnapshot({
-    request: {
-      sessionId: input.requestOverrides?.sessionId ?? 'session-1',
-      messageId: input.requestOverrides?.messageId ?? 'message-1',
-      runId: input.requestOverrides?.runId ?? 'run-1',
-      requestSeq: input.requestSeq ?? 1
-    },
-    policyVersion: input.policyVersion ?? 'programmatic-test-v1',
+    request,
+    policyVersion,
     adapterMode: PROGRAMMATIC_TOOL_ADAPTER_MODE,
     virtualizationTriggered: true,
     ceiling,
@@ -476,7 +495,8 @@ describe('Programmatic Tool Surface', () => {
     const snapshot = buildSnapshot({
       definitions: [exec, ...remoteTools],
       eligibleDefinitions: [exec, remoteTools[0]],
-      activeNames: ['exec']
+      activeNames: ['exec'],
+      directSnapshot: true
     })
     expect(buildProgrammaticToolSurfaceV1(snapshot).entries).toHaveLength(1)
     expectSurfaceError(
@@ -486,15 +506,25 @@ describe('Programmatic Tool Surface', () => {
         }),
       'limit_exceeded'
     )
+    expectSurfaceError(
+      () =>
+        createProgrammaticToolSurfaceRunControllerV1({
+          ceilingDefinitions: [exec, ...remoteTools],
+          providerActiveDefinitions: [exec],
+          policyVersion: 'programmatic-test-v1'
+        }),
+      'limit_exceeded'
+    )
     expect(MAX_PROGRAMMATIC_TOOL_AUTHORITY_PROJECTION_BYTES).toBe(1024 * 1024)
   })
 
   it('separates capability issuance from active provider-View authority', () => {
+    const snapshot = buildSnapshot({
+      definitions: [agentTool('exec'), mcpTool('remote_read')],
+      activeNames: ['exec']
+    })
     const capability = buildProgrammaticToolCapabilityV1({
-      snapshot: buildSnapshot({
-        definitions: [agentTool('exec'), mcpTool('remote_read')],
-        activeNames: ['exec']
-      }),
+      snapshot,
       taskContractContext: null,
       ceilings,
       quotas
@@ -502,9 +532,274 @@ describe('Programmatic Tool Surface', () => {
 
     expect(() => assertIssuedProgrammaticToolCapability(capability)).not.toThrow()
     expectSurfaceError(
-      () => assertProgrammaticToolCapabilityViewActive(capability),
+      () => assertProgrammaticToolCapabilityViewActive(capability, snapshot),
       'invalid_definition'
     )
+  })
+
+  it('activates capabilities only with their admitted View and revokes superseded Views', () => {
+    const exec = agentTool('exec')
+    const pinned = mcpTool('remote_read')
+    const hidden = mcpTool('remote_search')
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: [hidden, exec, pinned],
+      providerActiveDefinitions: [exec, pinned],
+      policyVersion: 'programmatic-test-v1'
+    })
+    const request = (requestSeq: number) => ({
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: 'run-1',
+      requestSeq
+    })
+    const firstSnapshot = controller.build({
+      request: request(1),
+      eligibleDefinitions: [hidden, exec, pinned]
+    })
+    const firstCapability = buildProgrammaticToolCapabilityV1({
+      snapshot: firstSnapshot,
+      taskContractContext: null,
+      ceilings,
+      quotas
+    })
+
+    expect(firstSnapshot.adapterMode).toBe('cli-programmatic')
+    expect(firstSnapshot.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'exec',
+      'remote_read'
+    ])
+    expect(firstCapability.entries.map((entry) => entry.target.providerVisibleName)).toEqual([
+      'remote_search'
+    ])
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(firstCapability, firstSnapshot),
+      'invalid_definition'
+    )
+
+    controller.admit(firstSnapshot)
+    expect(() =>
+      assertProgrammaticToolCapabilityViewActive(firstCapability, firstSnapshot)
+    ).not.toThrow()
+    expect(() =>
+      assertProgrammaticToolCapabilityViewActive(firstCapability, firstSnapshot)
+    ).not.toThrow()
+
+    const secondSnapshot = controller.build({
+      request: request(2),
+      eligibleDefinitions: [exec]
+    })
+    const secondCapability = buildProgrammaticToolCapabilityV1({
+      snapshot: secondSnapshot,
+      taskContractContext: null,
+      ceilings,
+      quotas
+    })
+    controller.admit(secondSnapshot)
+
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(firstCapability, firstSnapshot),
+      'invalid_definition'
+    )
+    expect(() =>
+      assertProgrammaticToolCapabilityViewActive(secondCapability, secondSnapshot)
+    ).not.toThrow()
+    expect(secondCapability.entries).toEqual([])
+
+    const restoredSnapshot = controller.build({
+      request: request(3),
+      eligibleDefinitions: [hidden, pinned, exec]
+    })
+    const restoredCapability = buildProgrammaticToolCapabilityV1({
+      snapshot: restoredSnapshot,
+      taskContractContext: null,
+      ceilings,
+      quotas
+    })
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(restoredCapability, restoredSnapshot),
+      'invalid_definition'
+    )
+    controller.admit(restoredSnapshot)
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(secondCapability, secondSnapshot),
+      'invalid_definition'
+    )
+    expect(restoredSnapshot.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'exec',
+      'remote_read'
+    ])
+    expect(restoredCapability.entries.map((entry) => entry.target.providerVisibleName)).toEqual([
+      'remote_search'
+    ])
+    revokeToolSurfaceExecutionEligibility(restoredSnapshot)
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(restoredCapability, restoredSnapshot),
+      'invalid_definition'
+    )
+  })
+
+  it('rejects a live capability outside its exact current provider View', () => {
+    const definitions = [agentTool('exec'), mcpTool('remote_search')]
+    const createController = () =>
+      createProgrammaticToolSurfaceRunControllerV1({
+        ceilingDefinitions: definitions,
+        providerActiveDefinitions: [definitions[0]],
+        policyVersion: 'programmatic-test-v1'
+      })
+    const firstController = createController()
+    const secondController = createController()
+    const request = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: 'run-1',
+      requestSeq: 1
+    }
+    const firstSnapshot = firstController.build({ request, eligibleDefinitions: definitions })
+    const secondSnapshot = secondController.build({ request, eligibleDefinitions: definitions })
+    const firstCapability = buildProgrammaticToolCapabilityV1({
+      snapshot: firstSnapshot,
+      taskContractContext: null,
+      ceilings,
+      quotas
+    })
+    firstController.admit(firstSnapshot)
+    secondController.admit(secondSnapshot)
+
+    expect(() =>
+      assertProgrammaticToolCapabilityViewActive(firstCapability, firstSnapshot)
+    ).not.toThrow()
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(firstCapability, secondSnapshot),
+      'invalid_definition'
+    )
+  })
+
+  it('keeps the provider path fixed and rejects unsafe Programmatic Run admission', () => {
+    const exec = agentTool('exec')
+    const question = agentTool('question')
+    const hidden = mcpTool('remote_search')
+    const pinned = mcpTool('remote_read')
+
+    expectSurfaceError(
+      () =>
+        createProgrammaticToolSurfaceRunControllerV1({
+          ceilingDefinitions: [question, hidden],
+          providerActiveDefinitions: [question],
+          policyVersion: 'programmatic-test-v1'
+        }),
+      'ineligible_exposure'
+    )
+    expectSurfaceError(
+      () =>
+        createProgrammaticToolSurfaceRunControllerV1({
+          ceilingDefinitions: [exec, question, hidden],
+          providerActiveDefinitions: [exec],
+          policyVersion: 'programmatic-test-v1'
+        }),
+      'ineligible_exposure'
+    )
+
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: [exec, hidden, pinned],
+      providerActiveDefinitions: [exec, pinned],
+      policyVersion: 'programmatic-test-v1'
+    })
+    expectSurfaceError(
+      () =>
+        controller.build({
+          request: {
+            sessionId: 'session-1',
+            messageId: 'message-1',
+            runId: 'run-1',
+            requestSeq: 1
+          },
+          eligibleDefinitions: [exec, hidden]
+        }),
+      'ineligible_exposure'
+    )
+    expectSurfaceError(
+      () =>
+        controller.build({
+          request: {
+            sessionId: 'session-1',
+            messageId: 'message-1',
+            runId: 'run-1',
+            requestSeq: 1
+          },
+          eligibleDefinitions: [hidden, pinned]
+        }),
+      'ineligible_exposure'
+    )
+    const first = controller.build({
+      request: { sessionId: 'session-1', messageId: 'message-1', runId: 'run-1', requestSeq: 1 },
+      eligibleDefinitions: [exec, hidden, pinned]
+    })
+    const competing = controller.build({
+      request: { sessionId: 'session-1', messageId: 'message-1', runId: 'run-1', requestSeq: 2 },
+      eligibleDefinitions: [exec, hidden, pinned]
+    })
+    controller.admit(first)
+
+    expectSurfaceError(() => controller.admit(competing), 'conflicting_tool')
+    const firstCapability = buildProgrammaticToolCapabilityV1({
+      snapshot: first,
+      taskContractContext: null,
+      ceilings,
+      quotas
+    })
+    const revokedBeforeAdmission = controller.build({
+      request: { sessionId: 'session-1', messageId: 'message-1', runId: 'run-1', requestSeq: 3 },
+      eligibleDefinitions: [exec, hidden, pinned]
+    })
+    revokeToolSurfaceExecutionEligibility(revokedBeforeAdmission)
+    expectSurfaceError(() => controller.admit(revokedBeforeAdmission), 'invalid_definition')
+    expect(() =>
+      assertProgrammaticToolCapabilityViewActive(firstCapability, first)
+    ).not.toThrow()
+    expectSurfaceError(
+      () => controller.stageActivationBatch([{} as never]),
+      'invalid_definition'
+    )
+    expectSurfaceError(
+      () =>
+        controller.build({
+          request: {
+            sessionId: 'other-session',
+            messageId: 'message-1',
+            runId: 'run-1',
+            requestSeq: 3
+          },
+          eligibleDefinitions: [exec, hidden, pinned]
+        }),
+      'invalid_definition'
+    )
+  })
+
+  it('does not charge fixed native MCP tools against Programmatic effect authority', () => {
+    const exec = agentTool('exec')
+    const nativeWrite = mcpTool('remote_send', 'write')
+    const programmaticRead = mcpTool('remote_search')
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: [exec, nativeWrite, programmaticRead],
+      providerActiveDefinitions: [exec, nativeWrite],
+      policyVersion: 'programmatic-test-v1'
+    })
+    const snapshot = controller.build({
+      request: { sessionId: 'session-1', messageId: 'message-1', runId: 'run-1', requestSeq: 1 },
+      eligibleDefinitions: [exec, nativeWrite, programmaticRead]
+    })
+
+    const capability = buildProgrammaticToolCapabilityV1({
+      snapshot,
+      taskContractContext: null,
+      ceilings: { ...ceilings, maxToolEffect: 'read' },
+      quotas
+    })
+
+    expect(capability.entries.map((entry) => entry.target.providerVisibleName)).toEqual([
+      'remote_search'
+    ])
+    expect(capability.ceilings.maxToolEffect).toBe('read')
   })
 
   it('rejects forged snapshots, surfaces, and capabilities', () => {
@@ -536,6 +831,21 @@ describe('Programmatic Tool Surface', () => {
       () =>
         buildProgrammaticToolCapabilityV1({
           snapshot: nativeSnapshot,
+          taskContractContext: null,
+          ceilings,
+          quotas
+        }),
+      'ineligible_exposure'
+    )
+    const unboundProgrammaticSnapshot = buildSnapshot({
+      definitions: [agentTool('exec'), mcpTool('remote_read')],
+      activeNames: ['exec'],
+      directSnapshot: true
+    })
+    expectSurfaceError(
+      () =>
+        buildProgrammaticToolCapabilityV1({
+          snapshot: unboundProgrammaticSnapshot,
           taskContractContext: null,
           ceilings,
           quotas

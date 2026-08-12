@@ -22,6 +22,9 @@ import {
   assertActiveToolSurfaceSnapshot,
   assertIssuedToolSurfaceRunCeiling,
   assertIssuedToolSurfaceSnapshot,
+  buildCanonicalToolCatalog,
+  createCliProgrammaticToolSurfaceRunControllerDelegate,
+  type ToolSurfaceRunController,
   type ToolSurfaceRequestIdentity,
   type ToolSurfaceRunCeiling,
   type ToolSurfaceSnapshot
@@ -102,6 +105,12 @@ export interface ProgrammaticToolRunCeilingPreflightV1 {
   readonly authorityProjectionBytes: number
 }
 
+export interface CreateProgrammaticToolSurfaceRunControllerInput {
+  readonly ceilingDefinitions: readonly MCPToolDefinition[]
+  readonly providerActiveDefinitions: readonly MCPToolDefinition[]
+  readonly policyVersion: string
+}
+
 const issuedProgrammaticToolSurfaces = new WeakSet<ProgrammaticToolSurfaceV1>()
 const issuedProgrammaticToolCapabilities = new WeakSet<ProgrammaticToolCapabilityV1>()
 const programmaticToolRunPreflights = new WeakMap<
@@ -111,6 +120,12 @@ const programmaticToolRunPreflights = new WeakMap<
 const programmaticToolCapabilitySnapshots = new WeakMap<
   ProgrammaticToolCapabilityV1,
   ToolSurfaceSnapshot
+>()
+const programmaticToolSnapshotRunBindings = new WeakMap<
+  ToolSurfaceSnapshot,
+  {
+    readonly maximumEntries: readonly ProgrammaticToolSurfaceEntryV1[]
+  }
 >()
 
 function requirePositiveInteger(value: number, maximum: number, label: string): number {
@@ -148,7 +163,7 @@ function normalizeWorkspace(
 function normalizeCeilings(
   ceilings: ProgrammaticToolCapabilityCeilingsV1,
   surface: ProgrammaticToolSurfaceV1,
-  runCeiling: ToolSurfaceRunCeiling
+  maximumEntries: readonly ProgrammaticToolSurfaceEntryV1[]
 ): ProgrammaticToolCapabilityCeilingsV1 {
   if (
     !ceilings ||
@@ -163,10 +178,8 @@ function normalizeCeilings(
   const currentSurfaceExceedsEffect = surface.entries.some(
     (entry) => !isToolEffectWithinCeiling(entry.execution.effect, ceilings.maxToolEffect)
   )
-  const maximumRunSurfaceExceedsEffect = runCeiling.catalog.entries.some(
-    (entry) =>
-      entry.target.source === 'mcp' &&
-      !isToolEffectWithinCeiling(entry.execution.effect, ceilings.maxToolEffect)
+  const maximumRunSurfaceExceedsEffect = maximumEntries.some(
+    (entry) => !isToolEffectWithinCeiling(entry.execution.effect, ceilings.maxToolEffect)
   )
   if (currentSurfaceExceedsEffect || maximumRunSurfaceExceedsEffect) {
     throw new ToolSurfaceError(
@@ -371,27 +384,72 @@ export function preflightProgrammaticToolRunCeilingV1(input: {
   assertIssuedToolSurfaceRunCeiling(input.ceiling)
   const cached = programmaticToolRunPreflights.get(input.ceiling)
   if (cached) return cached
+  const { preflight } = buildProgrammaticToolRunProjection(input.ceiling, new Set())
+  programmaticToolRunPreflights.set(input.ceiling, preflight)
+  return preflight
+}
+
+function buildProgrammaticToolRunProjection(
+  ceiling: ToolSurfaceRunCeiling,
+  providerActiveTargets: ReadonlySet<string>
+): {
+  readonly entries: readonly ProgrammaticToolSurfaceEntryV1[]
+  readonly preflight: ProgrammaticToolRunCeilingPreflightV1
+} {
   const entries = projectProgrammaticEntries(
-    input.ceiling,
-    input.ceiling.catalog.entries,
-    new Set()
+    ceiling,
+    ceiling.catalog.entries,
+    providerActiveTargets
   )
   const projection = surfaceHashInput({
     schemaVersion: PROGRAMMATIC_TOOL_SURFACE_SCHEMA_VERSION,
     canonicalizationVersion: TOOL_SURFACE_CANONICALIZATION_VERSION,
-    catalogHash: input.ceiling.catalog.fullCatalogHash,
+    catalogHash: ceiling.catalog.fullCatalogHash,
     entries
   })
   const preflight = Object.freeze({
-    catalogHash: input.ceiling.catalog.fullCatalogHash,
+    catalogHash: ceiling.catalog.fullCatalogHash,
     maximumTargetCount: entries.length,
     authorityProjectionBytes: measureCanonicalAuthorityProjection(
       projection,
       'Programmatic Run ceiling'
     )
   })
-  programmaticToolRunPreflights.set(input.ceiling, preflight)
-  return preflight
+  return Object.freeze({ entries, preflight })
+}
+
+export function createProgrammaticToolSurfaceRunControllerV1(
+  input: CreateProgrammaticToolSurfaceRunControllerInput
+): ToolSurfaceRunController {
+  if (!input || typeof input !== 'object') {
+    throw new ToolSurfaceError(
+      'Programmatic Tool Surface Run input is invalid.',
+      'invalid_definition'
+    )
+  }
+  const delegate = createCliProgrammaticToolSurfaceRunControllerDelegate(input)
+  const providerActiveCatalog = buildCanonicalToolCatalog(input.providerActiveDefinitions)
+  const providerActiveTargets = new Set(
+    providerActiveCatalog.entries.map((entry) => entry.stableTargetKey)
+  )
+  const { entries: maximumEntries } = buildProgrammaticToolRunProjection(
+    delegate.ceiling,
+    providerActiveTargets
+  )
+  const controller: ToolSurfaceRunController = {
+    ceiling: delegate.ceiling,
+    policyVersion: delegate.policyVersion,
+    adapterMode: delegate.adapterMode,
+    virtualizationTriggered: delegate.virtualizationTriggered,
+    stageActivationBatch: (candidates) => delegate.stageActivationBatch(candidates),
+    build: (buildInput) => {
+      const snapshot = delegate.build(buildInput)
+      programmaticToolSnapshotRunBindings.set(snapshot, { maximumEntries })
+      return snapshot
+    },
+    admit: (snapshot) => delegate.admit(snapshot)
+  }
+  return Object.freeze(controller)
 }
 
 export function buildProgrammaticToolSurfaceV1(
@@ -433,10 +491,16 @@ export function buildProgrammaticToolCapabilityV1(
       'ineligible_exposure'
     )
   }
-  preflightProgrammaticToolRunCeilingV1({ ceiling: input.snapshot.ceiling })
+  const runBinding = programmaticToolSnapshotRunBindings.get(input.snapshot)
+  if (!runBinding) {
+    throw new ToolSurfaceError(
+      'Programmatic capability requires its canonical Run controller binding.',
+      'ineligible_exposure'
+    )
+  }
   const surface = buildProgrammaticToolSurfaceV1(input.snapshot)
   const request = Object.freeze({ ...input.snapshot.request })
-  const ceilings = normalizeCeilings(input.ceilings, surface, input.snapshot.ceiling)
+  const ceilings = normalizeCeilings(input.ceilings, surface, runBinding.maximumEntries)
   const draft: Omit<ProgrammaticToolCapabilityV1, 'capabilityHash'> = {
     schemaVersion: PROGRAMMATIC_TOOL_CAPABILITY_SCHEMA_VERSION,
     hashVersion: PROGRAMMATIC_TOOL_CAPABILITY_HASH_VERSION,
@@ -481,15 +545,20 @@ export function assertIssuedProgrammaticToolCapability(
   }
 }
 
-/** Proves provider-View liveness only; every target call must still recheck runtime authority. */
+/**
+ * Proves exact provider-View liveness only. `expectedSnapshot` must come from the runtime-owned
+ * active request binding; every target call must still recheck runtime authority.
+ */
 export function assertProgrammaticToolCapabilityViewActive(
-  capability: unknown
+  capability: unknown,
+  expectedSnapshot: unknown
 ): asserts capability is ProgrammaticToolCapabilityV1 {
   assertIssuedProgrammaticToolCapability(capability)
+  assertIssuedToolSurfaceSnapshot(expectedSnapshot)
   const snapshot = programmaticToolCapabilitySnapshots.get(capability)
-  if (!snapshot) {
+  if (!snapshot || snapshot !== expectedSnapshot) {
     throw new ToolSurfaceError(
-      'Programmatic capability lost its originating provider View.',
+      'Programmatic capability does not belong to the current provider View.',
       'invalid_definition'
     )
   }
