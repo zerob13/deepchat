@@ -47,6 +47,7 @@ import type {
   ExecutionRecoveryReport
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalRecoveryReader } from '@/tape/ports/capabilities'
+import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 
 const MAX_STARTUP_RECOVERY_DETAILS = 100
 const MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS = 2_048
@@ -294,6 +295,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
   })
   const interactionParking = new InteractionParkingRegistry()
   const toolSurfaceDiagnostics = new ToolSurfaceShadowDiagnosticsRegistry()
+  const programmaticToolParents =
+    deps.programmaticToolParents ?? new ProgrammaticToolParentRegistry()
   const sessionLifecycle = new SessionLifecycleCoordinator({
     registry: runtime,
     providerSettings,
@@ -340,7 +343,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     identity,
     messageProjection,
     commandShell,
-    executionJournal: tapeService
+    executionJournal: tapeService,
+    programmaticToolParents
   })
   const inputPreparationCoordinator = new InputPreparationCoordinator()
   const contextCoordinator = new DeepChatContextCoordinator()
@@ -361,6 +365,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     contextCoordinator,
     toolSurfaceDiagnostics,
     toolSurfaceRunMode: deps.toolSurfaceRunMode,
+    programmaticToolParents,
     memoryIngestionObserver: memory,
     toolExecutionPort,
     toolResultPort,

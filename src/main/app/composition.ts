@@ -146,6 +146,7 @@ import { SessionTranscriptMutations } from '@/session/transcriptMutations'
 import { SessionTurn } from '@/session/turn'
 import { SessionLifecycle } from '@/session/lifecycle'
 import { createDeepChatAgentHarness, type DeepChatAgentHarness } from '@/agent/deepchat/harness'
+import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 import { AcpAgentRuntime } from '@/agent/acp/instance'
 import { createAcpRuntimeOwner } from '@/agent/acp/createRuntimeOwner'
 import { createAcpRoutes } from '@/agent/acp/routes'
@@ -419,6 +420,7 @@ export async function createMainProcessControl(dependencies: {
     getBoundRendererIds: (sessionId) => resolveBoundRendererIds(sessionId)
   })
   const agentCliTokenAuthority = new AgentCliTokenAuthority()
+  const programmaticToolParents = new ProgrammaticToolParentRegistry()
   const artifactSpool = new ArtifactSpool({
     directory: path.join(app.getPath('userData'), 'local-control', 'artifacts'),
     consumeAgentBytes: (tokenId, bytes) => agentCliTokenAuthority.consumeBytes(tokenId, bytes),
@@ -1483,7 +1485,8 @@ export async function createMainProcessControl(dependencies: {
     },
     taskContractContext: {
       prepare: (sessionId) => liveDelegationService.prepareTaskContractContext(sessionId)
-    }
+    },
+    programmaticToolParents
   })
   const sessionTranscriptMutations = new SessionTranscriptMutations({
     transcript: sessionData.transcript,

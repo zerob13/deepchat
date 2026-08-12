@@ -168,7 +168,12 @@ function createHarness(
         profile === 'git-bash' ? GIT_BASH_COMMAND_SHELL : POSIX_COMMAND_SHELL
       )
     },
-    executionJournal
+    executionJournal,
+    programmaticToolParents: {
+      commitRunTerminal: vi.fn(
+        (_run: { sessionId: string; runId: string }, commit: () => unknown) => commit()
+      )
+    }
   } as unknown as DeferredToolExecutorDependencies
 
   const executor = new DeferredToolExecutor(dependencies)
@@ -240,6 +245,10 @@ describe('DeferredToolExecutor Execution Journal', () => {
       outcome: 'completed',
       stopReason: 'tool_result'
     })
+    expect(dependencies.programmaticToolParents.commitRunTerminal).toHaveBeenCalledWith(
+      { sessionId: SESSION_ID, runId: started.runId },
+      expect.any(Function)
+    )
   })
 
   it('uses the originating provider View identity while journaling a distinct deferred run', async () => {

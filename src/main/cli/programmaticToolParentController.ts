@@ -213,6 +213,10 @@ export class ProgrammaticToolParentController {
     return this.stateValue
   }
 
+  get operation(): AgentCliProgrammaticOperationIdentity {
+    return this.preparedGrant.binding.operation
+  }
+
   armOuterDispatch(
     receipt: ExecutionJournalCommitReceipt & {
       operation: AgentCliProgrammaticOperationIdentity

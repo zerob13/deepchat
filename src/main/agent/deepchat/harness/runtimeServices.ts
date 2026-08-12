@@ -37,6 +37,7 @@ import type {
 import type { ToolSurfaceShadowDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
 import type { ToolSurfaceRunModePort } from '@/agent/deepchat/runtime/deepChatLoopRunner'
+import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 
 export type DeepChatHarnessSkillPort = Pick<
   SkillServicePort,
@@ -81,6 +82,8 @@ export interface DeepChatHarnessDependencies {
   commandShell: Pick<CommandShellService, 'resolveForTurn' | 'resolveProfile'>
   /** Internal rollout seam. Production remains on the legacy path unless explicitly assigned. */
   toolSurfaceRunMode?: ToolSurfaceRunModePort
+  /** Process-live causality owner. It never reconstructs dispatch authority from Tape. */
+  programmaticToolParents?: ProgrammaticToolParentRegistry
 }
 
 /**

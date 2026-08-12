@@ -87,6 +87,8 @@
 
 - [ ] Add discriminated provider/nested operation identities with v1/v2 coexistence.
 - [ ] Persist only canonical hashes, status, and bounded provenance; reject conflicting payloads.
+- [x] Add the process-live parent registry and route the loop and deferred Run terminal writers
+      through its no-Tape-read causality fence.
 - [ ] Add process-live parent controller and settlement receipts across the CLI boundary.
 - [ ] Bind receipts to canonical outer-result hashes instead of trusting stdout for settlement.
 - [ ] Before opening any Agent tool route, make the process-live controller the sole production

@@ -70,6 +70,7 @@ import {
   TAPE_TOOL_CATALOG_EVENT_NAME,
   TAPE_TOOL_SURFACE_EVENT_NAME
 } from '@/tape/domain/toolSurfaceFacts'
+import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 
 vi.mock('nanoid', () => ({ nanoid: vi.fn(() => 'mock-msg-id') }))
 
@@ -484,6 +485,47 @@ function createMockSqlitePresenter() {
         tapeEntries.filter(
           (entry) => entry.kind === 'event' && entry.name?.startsWith('execution/')
         )
+      ),
+      listNestedOperationEventsForRun: vi.fn((sessionId: string, runId: string) =>
+        tapeEntries.filter((entry) => {
+          if (
+            entry.session_id !== sessionId ||
+            (entry.name !== 'execution/dispatch_committed' &&
+              entry.name !== 'execution/tool_outcome')
+          ) {
+            return false
+          }
+          const data = JSON.parse(entry.payload_json).data ?? {}
+          return data.protocolVersion === 2 && data.operation?.runId === runId
+        })
+      ),
+      listNestedOperationEventsForParent: vi.fn(
+        (
+          sessionId: string,
+          runId: string,
+          requestSeq: number,
+          providerToolCallId: string,
+          parentOperationKey: string
+        ) =>
+          tapeEntries.filter((entry) => {
+            if (entry.session_id !== sessionId) return false
+            if (entry.provenance_key?.startsWith(`execution:v2:parent:${parentOperationKey}:`)) {
+              return true
+            }
+            if (
+              entry.name !== 'execution/dispatch_committed' &&
+              entry.name !== 'execution/tool_outcome'
+            ) {
+              return false
+            }
+            const data = JSON.parse(entry.payload_json).data ?? {}
+            return (
+              data.protocolVersion === 2 &&
+              data.operation?.runId === runId &&
+              data.operation?.requestSeq === requestSeq &&
+              data.operation?.providerToolCallId === providerToolCallId
+            )
+          })
       ),
       getBySession: vi.fn((sessionId: string) =>
         tapeEntries.filter((entry) => entry.session_id === sessionId)
@@ -1057,6 +1099,7 @@ describe('DeepChatAgentHarness', () => {
   let transcriptMutations: SessionTranscriptMutations
   let sessionData: ReturnType<typeof createSessionData>
   let hookDispatcher: { dispatchEvent: ReturnType<typeof vi.fn> }
+  let programmaticToolParents: ProgrammaticToolParentRegistry
   let tempHome: string | null = null
   let getPathSpy: ReturnType<typeof vi.spyOn> | null = null
 
@@ -1296,7 +1339,8 @@ describe('DeepChatAgentHarness', () => {
       sessionData,
       toolService,
       hookObserver: createHookObserver(hookDispatcher),
-      toolSurfaceRunMode: { resolve }
+      toolSurfaceRunMode: { resolve },
+      programmaticToolParents
     })
   }
 
@@ -1352,6 +1396,7 @@ describe('DeepChatAgentHarness', () => {
       revokeOneShotCommandPermission: vi.fn()
     }
     hookDispatcher = { dispatchEvent: vi.fn() }
+    programmaticToolParents = new ProgrammaticToolParentRegistry()
     sessionData = createSessionDataFromDatabase(sqlitePresenter as never, {
       publishPendingInputsChanged: vi.fn(),
       publishMessagesChanged: vi.fn()
@@ -1375,7 +1420,8 @@ describe('DeepChatAgentHarness', () => {
       database: sqlitePresenter,
       sessionData: sessionData,
       toolService: toolService,
-      hookObserver: createHookObserver(hookDispatcher)
+      hookObserver: createHookObserver(hookDispatcher),
+      programmaticToolParents
     })
     transcriptMutations = new SessionTranscriptMutations({
       transcript: sessionData.transcript,
@@ -4223,6 +4269,7 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const instance = agent.deepChatRuntime.getOrHydrate(toAppSessionId('s1'))
       const order: string[] = []
+      const terminalFence = vi.spyOn(programmaticToolParents, 'commitRunTerminal')
       const tape = sessionData.tapeStore
       const commitRunStarted = tape.commitRunStarted.bind(tape)
       const commitRunTerminal = tape.commitRunTerminal.bind(tape)
@@ -4266,6 +4313,10 @@ describe('DeepChatAgentHarness', () => {
         outcome: 'completed',
         stopReason: 'complete'
       })
+      expect(terminalFence).toHaveBeenCalledWith(
+        { sessionId: 's1', runId: started.runId },
+        expect.any(Function)
+      )
     })
 
     it('does not register or terminally project a Run when its start commit fails', async () => {

@@ -155,6 +155,7 @@ import type { PromptAssemblyService } from './promptAssemblyService'
 import type { SessionIdentityService } from './sessionIdentityService'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { ToolPermissionReviewer } from './toolRuntimeBindings'
+import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 import { CommittedRunProjectionError } from './runTerminalProjectionError'
 
 function wrapTerminalCommitFailure(
@@ -300,6 +301,7 @@ export interface DeepChatLoopRunnerPorts {
   inputPreparationCoordinator: InputPreparationCoordinator
   contextCoordinator: DeepChatContextCoordinator
   toolSurfaceRunMode?: ToolSurfaceRunModePort
+  programmaticToolParents: Pick<ProgrammaticToolParentRegistry, 'commitRunTerminal'>
   toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistryPort
   memoryIngestionObserver: MemoryIngestionObserver
   toolExecutionPort: ToolExecutionPort
@@ -720,16 +722,20 @@ export class DeepChatLoopRunner {
       }
 
       terminalCommitAttempted = true
-      const receipt = this.ports.tape.commitRunTerminal({
-        sessionId,
-        runId: loopRun.runId,
-        messageId,
-        outcome: selection.outcome,
-        stopReason: selection.stopReason,
-        ...(selection.errorMessage === undefined
-          ? {}
-          : { errorMessage: selection.errorMessage })
-      })
+      const receipt = this.ports.programmaticToolParents.commitRunTerminal(
+        { sessionId, runId: loopRun.runId },
+        () =>
+          this.ports.tape.commitRunTerminal({
+            sessionId,
+            runId: loopRun.runId,
+            messageId,
+            outcome: selection.outcome,
+            stopReason: selection.stopReason,
+            ...(selection.errorMessage === undefined
+              ? {}
+              : { errorMessage: selection.errorMessage })
+          })
+      )
       if (!receipt.created) {
         throw new ExecutionJournalCorruptionError(
           `Execution Journal terminal for Run ${loopRun.runId} already existed.`

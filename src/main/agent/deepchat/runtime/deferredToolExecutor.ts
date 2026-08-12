@@ -34,6 +34,7 @@ import { CommandShellProfileSchema, type CommandShellProfile } from '@shared/com
 import type { CommandShellService } from '@/agent/shared/process/commandShellService'
 import type { ToolSurfaceDeferredDispatch } from './toolSurface'
 import type { ToolPermissionLeaseCapability } from '@shared/types/tool'
+import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 
 export type DeferredToolExecutionResult = {
   responseText: string
@@ -71,6 +72,7 @@ export interface DeferredToolExecutorDependencies {
   identity: Pick<SessionIdentityService, 'getAgentId'>
   messageProjection: Pick<MessageProjectionService, 'updateSubagentToolCallProgress'>
   executionJournal: ExecutionJournalWriter
+  programmaticToolParents: Pick<ProgrammaticToolParentRegistry, 'commitRunTerminal'>
   commandShell: Pick<CommandShellService, 'resolveForTurn' | 'resolveProfile'>
 }
 
@@ -171,12 +173,16 @@ export class DeferredToolExecutor {
       const committedRunId = runId
       terminalCommitAttempted = true
       const receipt = commitExecutionJournalFact('run_terminal', () =>
-        this.dependencies.executionJournal.commitRunTerminal({
-          sessionId,
-          runId: committedRunId,
-          messageId,
-          ...input
-        })
+        this.dependencies.programmaticToolParents.commitRunTerminal(
+          { sessionId, runId: committedRunId },
+          () =>
+            this.dependencies.executionJournal.commitRunTerminal({
+              sessionId,
+              runId: committedRunId,
+              messageId,
+              ...input
+            })
+        )
       )
       if (!receipt.created) {
         throw new ExecutionJournalCorruptionError(

@@ -11,6 +11,11 @@ export {
   resolveBundledCliDirectory,
   type AgentCliCommandAccessOptions
 } from './agentCommandAccess'
+export {
+  ProgrammaticToolParentRegistry,
+  type ProgrammaticToolParentRegistration,
+  type ProgrammaticToolParentRunIdentity
+} from './programmaticToolParentRegistry'
 export { CliAuditLog, type CliAuditLogOptions } from './auditLog'
 export { ArtifactSpool, type ArtifactSpoolOptions } from './artifactSpool'
 export { createArtifactRoutes } from './artifactRoutes'

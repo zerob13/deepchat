@@ -110,6 +110,46 @@ function createMockSqlitePresenter() {
     listUnterminatedRunEvents: vi.fn(() =>
       tapeEntries.filter((entry) => entry.kind === 'event' && entry.name?.startsWith('execution/'))
     ),
+    listNestedOperationEventsForRun: vi.fn((sessionId: string, runId: string) =>
+      tapeEntries.filter((entry) => {
+        if (
+          entry.session_id !== sessionId ||
+          (entry.name !== 'execution/dispatch_committed' && entry.name !== 'execution/tool_outcome')
+        ) {
+          return false
+        }
+        const data = JSON.parse(entry.payload_json).data ?? {}
+        return data.protocolVersion === 2 && data.operation?.runId === runId
+      })
+    ),
+    listNestedOperationEventsForParent: vi.fn(
+      (
+        sessionId: string,
+        runId: string,
+        requestSeq: number,
+        providerToolCallId: string,
+        parentOperationKey: string
+      ) =>
+        tapeEntries.filter((entry) => {
+          if (entry.session_id !== sessionId) return false
+          if (entry.provenance_key?.startsWith(`execution:v2:parent:${parentOperationKey}:`)) {
+            return true
+          }
+          if (
+            entry.name !== 'execution/dispatch_committed' &&
+            entry.name !== 'execution/tool_outcome'
+          ) {
+            return false
+          }
+          const data = JSON.parse(entry.payload_json).data ?? {}
+          return (
+            data.protocolVersion === 2 &&
+            data.operation?.runId === runId &&
+            data.operation?.requestSeq === requestSeq &&
+            data.operation?.providerToolCallId === providerToolCallId
+          )
+        })
+    ),
     getBySession: vi.fn((sessionId: string) =>
       tapeEntries.filter((entry) => entry.session_id === sessionId)
     ),
