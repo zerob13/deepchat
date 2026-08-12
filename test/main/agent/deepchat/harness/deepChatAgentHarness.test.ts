@@ -9804,8 +9804,109 @@ describe('DeepChatAgentHarness', () => {
       expect(providerCoreStream).toHaveBeenCalledTimes(1)
       expect(events).toEqual([
         { type: 'text', content: 'partial' },
-        { type: 'error', error_message: 'context window exceeded' }
+        {
+          type: 'error',
+          error_message:
+            'The provider reported a context overflow after response output began. DeepChat preserved the partial output and did not retry.',
+          failure: { code: 'context_overflow_after_output', retryable: false }
+        }
       ])
+      expect(JSON.stringify(events)).not.toContain('context window exceeded')
+      expect(llmProvider.generateText).not.toHaveBeenCalled()
+    })
+
+    it('uses an explicit provider limit as a runtime ceiling without overwriting model config', async () => {
+      providerSettings.resolveDeepChatAgentConfig.mockResolvedValue({
+        autoCompactionEnabled: false
+      })
+      await agent.initSession('s1', {
+        providerId: 'new-api',
+        modelId: 'custom-model',
+        generationSettings: {
+          contextLength: 8192,
+          maxTokens: 1024
+        }
+      })
+      await agent.processMessage('s1', 'Hello')
+
+      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      const providerCoreStream = llmProvider.providerInstance.coreStream
+      providerCoreStream.mockReset()
+      providerCoreStream.mockImplementation(async function* () {
+        yield {
+          type: 'error',
+          error_message: 'Prompt has 4,100 tokens, maximum is 4,096 tokens.'
+        }
+      })
+      llmProvider.generateText.mockClear()
+
+      const errorMessage = await collectProviderErrorMessage(callArgs, [
+        { role: 'system', content: 'Base system prompt' },
+        { role: 'user', content: makeTextWithEstimatedTokens(3500) }
+      ])
+      const observation = agent.deepChatRuntime
+        .getHydrated(toAppSessionId('s1'))
+        ?.getContextWindowObservation('new-api', 'custom-model')
+      const manifests = getViewManifests()
+
+      expect(providerCoreStream).toHaveBeenCalledTimes(2)
+      expect(providerCoreStream.mock.calls[1][4]).toBeLessThan(512)
+      expect(providerCoreStream.mock.calls[1][2].contextLength).toBe(8192)
+      expect(manifests.map((manifest: any) => manifest.tokenBudget.contextLength)).toEqual([
+        8192, 8192
+      ])
+      expect(observation).toEqual({
+        providerId: 'new-api',
+        modelId: 'custom-model',
+        providerLimitTokens: 4096,
+        metadataSuspect: false
+      })
+      expect(errorMessage).toContain('Provider observation: actual 4100 tokens, limit 4096 tokens')
+      expect(errorMessage).toContain('Configured context length: 8192 tokens')
+      expect(errorMessage).not.toContain('Prompt has 4,100 tokens')
+      expect(llmProvider.generateText).not.toHaveBeenCalled()
+    })
+
+    it('marks generic overflow metadata suspect and skips an identical provider retry', async () => {
+      providerSettings.resolveDeepChatAgentConfig.mockResolvedValue({
+        autoCompactionEnabled: false
+      })
+      await agent.initSession('s1', {
+        providerId: 'new-api',
+        modelId: 'custom-model',
+        generationSettings: {
+          contextLength: 8192,
+          maxTokens: 1
+        }
+      })
+      await agent.processMessage('s1', 'Hello')
+
+      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      const providerCoreStream = llmProvider.providerInstance.coreStream
+      providerCoreStream.mockReset()
+      providerCoreStream.mockImplementationOnce(async function* () {
+        yield { type: 'error', error_message: 'input exceeds the context window' }
+      })
+      llmProvider.generateText.mockClear()
+
+      const errorMessage = await collectProviderErrorMessage(callArgs, [
+        { role: 'system', content: 'Base system prompt' },
+        { role: 'user', content: 'Protected current input' }
+      ])
+      const observation = agent.deepChatRuntime
+        .getHydrated(toAppSessionId('s1'))
+        ?.getContextWindowObservation('new-api', 'custom-model')
+
+      expect(providerCoreStream).toHaveBeenCalledTimes(1)
+      expect(observation).toEqual({
+        providerId: 'new-api',
+        modelId: 'custom-model',
+        metadataSuspect: true
+      })
+      expect(errorMessage).toContain('skipped a second provider call')
+      expect(errorMessage).toContain('provider did not report a numeric context limit')
+      expect(errorMessage).toContain('configured model context metadata may be inaccurate')
+      expect(errorMessage).toContain('Configured context length: 8192 tokens')
       expect(llmProvider.generateText).not.toHaveBeenCalled()
     })
 

@@ -94,12 +94,13 @@
 
 ## P2: Provider Overflow Facts
 
-- [ ] Parse structured actual/limit observations from provider errors.
-- [ ] Keep configured context, provider limit, Session ceiling, and estimator calibration separate.
-- [ ] Retry only when optional context materially changes.
-- [ ] Skip doomed protected-only retries and surface model-setting guidance.
-- [ ] Add explicit-limit, generic-error, metadata-suspect, and retry-decision tests.
-- [ ] Review and commit the overflow-facts slice.
+- [x] Parse structured actual/limit observations from provider errors.
+- [x] Keep configured context, explicit Provider limit, and derived Session ceiling separate; leave
+      estimator calibration unchanged.
+- [x] Retry only when the final Provider messages or effective output limit materially change.
+- [x] Skip unchanged or locally inadmissible retries and surface model-setting guidance.
+- [x] Add explicit-limit, generic-error, metadata-suspect, and retry-decision tests.
+- [x] Review and commit the overflow-facts slice.
 
 ## Final Validation
 

@@ -819,6 +819,104 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
   })
 
+  it('skips a context retry when its final provider projection would be identical', async () => {
+    const fixture = createAttemptInput({
+      providerEvents: [[{ type: 'error', error_message: 'context overflow' }]]
+    })
+    fixture.input.budget.getStrictRetryMaxTokens = (maxTokens: number) => maxTokens
+    fixture.input.budget.getStrictRetryExtraReserve = () => 0
+    const facts = {
+      matched: true,
+      actualTokens: 1200,
+      limitTokens: 1000,
+      scope: 'prompt' as const,
+      confidence: 'explicit' as const
+    }
+    fixture.input.inspectContextOverflow = () => facts
+    fixture.input.onContextOverflowFacts = vi.fn()
+    fixture.input.budget.buildOverflowAfterRecoveryError = vi.fn(
+      (_preflight, observedFacts) =>
+        new Error(`provider still overflowed: ${JSON.stringify(observedFacts)}`)
+    )
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow(`provider still overflowed: ${JSON.stringify(facts)}`)
+
+    expect(fixture.providerRequests).toHaveLength(1)
+    expect(fixture.input.recovery.recover).toHaveBeenCalledOnce()
+    expect(fixture.input.onContextOverflowFacts).toHaveBeenCalledWith(facts)
+  })
+
+  it('does not send a retry that fails the calibrated local preflight', async () => {
+    const fixture = createAttemptInput({
+      providerEvents: [[{ type: 'error', error_message: 'context overflow' }]]
+    })
+    fixture.input.budget.preflight = vi
+      .fn()
+      .mockImplementationOnce(({ messages, requestedMaxTokens }) =>
+        createPreflight(messages, { requestedMaxTokens, effectiveMaxTokens: requestedMaxTokens })
+      )
+      .mockImplementationOnce(({ messages, requestedMaxTokens }) =>
+        createPreflight(messages, {
+          fitsWithinContext: false,
+          requestedMaxTokens,
+          effectiveMaxTokens: 0
+        })
+      )
+    const buildFailure = vi.fn(() => new Error('calibrated request cannot fit'))
+    fixture.input.budget.buildOverflowAfterRecoveryError = buildFailure
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow('calibrated request cannot fit')
+
+    expect(fixture.providerRequests).toHaveLength(1)
+    expect(buildFailure).toHaveBeenCalledWith(
+      expect.objectContaining({ fitsWithinContext: false }),
+      undefined,
+      'retry_projection_cannot_fit'
+    )
+  })
+
+  it('commits the admitted retry projection before preparing the next request', async () => {
+    const fixture = createAttemptInput({
+      providerEvents: [
+        [{ type: 'error', error_message: 'context overflow' }],
+        [
+          { type: 'text', content: 'recovered' },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
+      ]
+    })
+    const optionalHistory: ChatMessage = { role: 'assistant', content: 'optional history' }
+    const currentInput: ChatMessage = { role: 'user', content: 'current input' }
+    fixture.input.requestMessages.splice(
+      0,
+      fixture.input.requestMessages.length,
+      optionalHistory,
+      currentInput
+    )
+    let projected = false
+    fixture.input.budget.fitStrictRetry = vi.fn(({ messages }) => {
+      if (projected) return messages
+      projected = true
+      return messages.filter((message) => message !== optionalHistory)
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).resolves.toEqual([
+      { type: 'text', content: 'recovered' },
+      { type: 'stop', stop_reason: 'complete' }
+    ])
+
+    expect(fixture.providerRequests).toHaveLength(2)
+    expect(fixture.providerRequests[0].messages).toEqual([optionalHistory, currentInput])
+    expect(fixture.providerRequests[1].messages).toEqual([currentInput])
+    expect(fixture.manifests[1].messages).toEqual(fixture.providerRequests[1].messages)
+  })
+
   it('runs pressure recovery before manifesting the provider request', async () => {
     const fixture = createAttemptInput()
     const preflight = vi
@@ -1249,6 +1347,47 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.outcomes[0]).toMatchObject({
       status: 'error',
       failureClassification: 'transient',
+      retryDecision: 'output_committed'
+    })
+  })
+
+  it('sanitizes a thrown context overflow after partial output', async () => {
+    const rawError = new Error('context overflow')
+    const fixture = createAttemptInput({
+      providerAttempts: [
+        {
+          events: [{ type: 'text', content: 'partial' }],
+          error: rawError
+        }
+      ]
+    })
+    const projected: LLMCoreStreamEvent[] = []
+
+    const consume = async () => {
+      for await (const event of new DeepChatContextCoordinator().streamProviderAttempts(
+        fixture.input
+      )) {
+        projected.push(event)
+      }
+    }
+
+    let thrown: unknown
+    try {
+      await consume()
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toEqual(
+      expect.objectContaining({
+        message:
+          'The provider reported a context overflow after response output began. DeepChat preserved the partial output and did not retry.'
+      })
+    )
+    expect(thrown).not.toBe(rawError)
+    expect(projected).toEqual([{ type: 'text', content: 'partial' }])
+    expect(fixture.providerRequests).toHaveLength(1)
+    expect(fixture.outcomes[0]).toMatchObject({
+      failureClassification: 'context_overflow',
       retryDecision: 'output_committed'
     })
   })

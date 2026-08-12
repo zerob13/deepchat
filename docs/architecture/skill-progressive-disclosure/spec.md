@@ -366,9 +366,11 @@ project instructions, current input, required tool protocol state, and complete 
 contracts are never silently truncated.
 
 Provider overflow parsing records structured observations. Only an explicit provider-reported
-limit may establish a Session ceiling. Generic overflow marks configured metadata suspect and may
-perform one retry only when the retry materially removes optional content. Derived estimates and a
-single rejected request never overwrite provider configuration.
+limit may establish a model-scoped, runtime-only Session ceiling. Generic overflow marks configured
+metadata suspect but establishes no numeric limit. A second Provider call occurs only when recovery
+materially changes the final messages or effective output limit; unchanged and locally inadmissible
+projections fail with actionable diagnostics. Derived estimates and a single rejected request never
+overwrite provider configuration or become Tape facts.
 
 ## Acceptance Criteria
 

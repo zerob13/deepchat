@@ -54,7 +54,11 @@ import {
 import type { ContextBuildMetadata } from '@/agent/deepchat/runtime/contextBuilder'
 import type { CompactionService } from '@/agent/deepchat/runtime/compactionService'
 import { resolveInterleavedReasoningConfig } from '@/agent/deepchat/runtime/generationSettings'
-import { isContextWindowErrorLike } from '@/agent/deepchat/runtime/contextWindowError'
+import {
+  inspectContextOverflow,
+  isContextWindowErrorLike,
+  type ContextOverflowFacts
+} from '@/agent/deepchat/runtime/contextWindowError'
 import { buildPersistableMessageTracePayload } from '@/agent/deepchat/runtime/messageTracePayload'
 import { cloneBlocksForRenderer } from '@/session/clientMessageProjection'
 import type { SessionTranscript } from '@/session/data/transcript'
@@ -98,7 +102,10 @@ import type {
   ProviderRequestTracePayload
 } from '@/provider/requestTrace'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
-import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
+import type {
+  DeepChatContextCoordinator,
+  ProviderContextOverflowDisposition
+} from '@/agent/deepchat/loop/contextCoordinator'
 import {
   collectRuntimeSkillViewProjections,
   createLoopRun,
@@ -315,15 +322,40 @@ function isFirstProviderContextOverflowEvent(event: LLMCoreStreamEvent): boolean
 
 function buildProviderContextOverflowAfterRecoveryErrorMessage(
   preflight: ReturnType<typeof preflightRequestContext>,
-  ledger: ReturnType<typeof buildRequestContextLedger>
+  ledger: ReturnType<typeof buildRequestContextLedger>,
+  facts: ContextOverflowFacts | undefined,
+  configuredContextLength: number,
+  sessionObservation: {
+    providerLimitTokens?: number
+    metadataSuspect: boolean
+  } | undefined,
+  disposition: ProviderContextOverflowDisposition = 'provider_rejected_retry'
 ): string {
   const diagnostics = buildRequestContextBudgetDiagnostics(preflight)
   const formatTokenCount = (value: number): string =>
     Number.isFinite(value) ? String(Math.floor(value)) : 'unknown'
 
+  const providerFacts =
+    facts?.confidence === 'explicit'
+      ? `Provider observation: ${facts.actualTokens === undefined ? 'actual token count not reported' : `actual ${formatTokenCount(facts.actualTokens)} tokens`}, ${facts.limitTokens === undefined ? 'limit not reported' : `limit ${formatTokenCount(facts.limitTokens)} tokens`}.`
+      : 'The provider did not report a numeric context limit for this rejection.'
+  const sessionCeiling = sessionObservation?.providerLimitTokens
+    ? ` This Session is using the explicit provider limit of ${formatTokenCount(sessionObservation.providerLimitTokens)} tokens as a local ceiling.`
+    : ''
+  const metadataGuidance = sessionObservation?.metadataSuspect
+    ? ' The configured model context metadata may be inaccurate; check the custom model settings.'
+    : ''
+  const summary =
+    disposition === 'retry_projection_unchanged'
+      ? 'The provider reported a context overflow. DeepChat skipped a second provider call because recovery would not change the messages or output limit.'
+      : disposition === 'retry_projection_cannot_fit'
+        ? 'The provider reported a context overflow. After applying the available context ceiling, the protected request still cannot fit, so DeepChat did not send a doomed retry.'
+        : 'The provider still reported a context overflow after DeepChat compacted or trimmed the request.'
+
   return [
-    'The provider still reported a context overflow after DeepChat compacted or trimmed the request.',
+    summary,
     `DeepChat local estimate: usable context ${formatTokenCount(diagnostics.usableContextLength)} tokens, estimated input ${formatTokenCount(diagnostics.inputTokens)} tokens, tool schemas ${formatTokenCount(diagnostics.toolReserveTokens)} tokens, requested output ${formatTokenCount(diagnostics.requestedMaxTokens)} tokens, effective output ${formatTokenCount(diagnostics.effectiveMaxTokens)} tokens, remaining output room ${formatTokenCount(diagnostics.remainingOutputTokens)} tokens.`,
+    `${providerFacts} Configured context length: ${formatTokenCount(configuredContextLength)} tokens.${sessionCeiling}${metadataGuidance}`,
     formatRequestContextLedger(ledger),
     'The provider may count tokens, system prompts, or tool schemas differently. Try shortening the latest input or attachments, reducing active tools, skills, or system prompt content, lowering max output tokens, or increasing context length.'
   ].join('\n')
@@ -744,6 +776,20 @@ export class DeepChatLoopRunner {
           const effectiveRequestTools: MCPToolDefinition[] = isTtsRequest ? [] : requestTools
           // ACP and non-chat media routes are not safe to replay before their first visible event.
           const allowTransientRetry = !requestBypassesContextBudget && !isTtsRequest
+          const getEffectiveContextLength = (): number => {
+            const providerLimitTokens = resourceInstance.getContextWindowObservation(
+              state.providerId,
+              requestModelId
+            )?.providerLimitTokens
+            if (!providerLimitTokens) return requestModelConfig.contextLength
+            if (
+              !Number.isFinite(requestModelConfig.contextLength) ||
+              requestModelConfig.contextLength <= 0
+            ) {
+              return providerLimitTokens
+            }
+            return Math.min(requestModelConfig.contextLength, providerLimitTokens)
+          }
           const buildCurrentContextLedger = (
             preflight: ReturnType<typeof preflightRequestContext>
           ) =>
@@ -779,21 +825,21 @@ export class DeepChatLoopRunner {
                 preflightRequestContext({
                   messages,
                   tools,
-                  contextLength: requestModelConfig.contextLength,
+                  contextLength: getEffectiveContextLength(),
                   requestedMaxTokens,
                   contextContributions: activeContextContributions
                 }),
               fitStrictRetry: ({ messages, reserveTokens }) =>
                 fitRequestMessagesToContextWindow({
                   messages,
-                  contextLength: requestModelConfig.contextLength,
+                  contextLength: getEffectiveContextLength(),
                   reserveTokens,
                   minimumProtectedTailCount: 0,
                   contextContributions: activeContextContributions
                 }),
               getStrictRetryMaxTokens: getProviderOverflowRetryMaxTokens,
               getStrictRetryExtraReserve: () =>
-                getProviderOverflowRetryExtraReserve(requestModelConfig.contextLength),
+                getProviderOverflowRetryExtraReserve(getEffectiveContextLength()),
               buildOverflowError: (preflight) =>
                 new Error(
                   buildRequestContextOverflowErrorMessage(
@@ -801,11 +847,15 @@ export class DeepChatLoopRunner {
                     buildCurrentContextLedger(preflight)
                   )
                 ),
-              buildOverflowAfterRecoveryError: (preflight) =>
+              buildOverflowAfterRecoveryError: (preflight, facts, disposition) =>
                 new Error(
                   buildProviderContextOverflowAfterRecoveryErrorMessage(
                     preflight,
-                    buildCurrentContextLedger(preflight)
+                    buildCurrentContextLedger(preflight),
+                    facts,
+                    requestModelConfig.contextLength,
+                    resourceInstance.getContextWindowObservation(state.providerId, requestModelId),
+                    disposition
                   )
                 )
             },
@@ -817,7 +867,7 @@ export class DeepChatLoopRunner {
                   modelId: requestModelId,
                   requestMessages,
                   baseSystemPrompt,
-                  contextLength: requestModelConfig.contextLength,
+                  contextLength: getEffectiveContextLength(),
                   requestedMaxTokens,
                   tools,
                   supportsVision,
@@ -1017,6 +1067,14 @@ export class DeepChatLoopRunner {
             },
             isContextOverflowEvent: isFirstProviderContextOverflowEvent,
             isContextOverflowError: isContextWindowErrorLike,
+            inspectContextOverflow,
+            onContextOverflowFacts: (facts) =>
+              resourceInstance.recordContextWindowObservation({
+                providerId: state.providerId,
+                modelId: requestModelId,
+                confidence: facts.confidence,
+                limitTokens: facts.limitTokens
+              }),
             createAbortError
           })
         },

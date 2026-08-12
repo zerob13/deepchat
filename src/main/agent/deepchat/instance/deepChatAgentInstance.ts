@@ -39,6 +39,15 @@ export interface DeepChatToolProfileCacheEntry {
   readonly tools: MCPToolDefinition[]
 }
 
+export interface DeepChatContextWindowObservation {
+  readonly providerId: string
+  readonly modelId: string
+  readonly providerLimitTokens?: number
+  readonly metadataSuspect: boolean
+}
+
+const MAX_CONTEXT_WINDOW_OBSERVATIONS = 16
+
 export class DeepChatAgentInstance {
   readonly kind = 'deepchat' as const
   private runtimeState?: DeepChatSessionState
@@ -61,6 +70,7 @@ export class DeepChatAgentInstance {
   private readonly runtimeActivatedSkills = new Set<string>()
   private toolProfileCache?: DeepChatToolProfileCacheEntry
   private compactionState?: SessionCompactionState
+  private readonly contextWindowObservations = new Map<string, DeepChatContextWindowObservation>()
   private readonly memorySessionHandle: MemorySessionHandle
 
   constructor(readonly sessionId: AppSessionId) {
@@ -81,6 +91,55 @@ export class DeepChatAgentInstance {
 
   setGenerationSettings(settings: SessionGenerationSettings): void {
     this.generationSettings = settings
+  }
+
+  getContextWindowObservation(
+    providerId: string,
+    modelId: string
+  ): DeepChatContextWindowObservation | undefined {
+    const observation = this.contextWindowObservations.get(
+      this.contextWindowObservationKey(providerId, modelId)
+    )
+    return observation ? { ...observation } : undefined
+  }
+
+  recordContextWindowObservation(input: {
+    providerId: string
+    modelId: string
+    confidence: 'none' | 'qualitative' | 'explicit'
+    limitTokens?: number
+  }): void {
+    if (!input.providerId.trim() || !input.modelId.trim() || input.confidence === 'none') return
+    const limitTokens =
+      input.confidence === 'explicit' &&
+      Number.isSafeInteger(input.limitTokens) &&
+      (input.limitTokens ?? 0) > 0
+        ? input.limitTokens
+        : undefined
+    const current = this.getContextWindowObservation(input.providerId, input.modelId)
+    const providerLimitTokens =
+      limitTokens === undefined
+        ? current?.providerLimitTokens
+        : current?.providerLimitTokens === undefined
+          ? limitTokens
+          : Math.min(current.providerLimitTokens, limitTokens)
+    const key = this.contextWindowObservationKey(input.providerId, input.modelId)
+    if (!current && this.contextWindowObservations.size >= MAX_CONTEXT_WINDOW_OBSERVATIONS) {
+      const oldestKey = this.contextWindowObservations.keys().next().value
+      if (oldestKey !== undefined) this.contextWindowObservations.delete(oldestKey)
+    }
+    this.contextWindowObservations.set(
+      key,
+      Object.freeze({
+        providerId: input.providerId,
+        modelId: input.modelId,
+        ...(providerLimitTokens !== undefined ? { providerLimitTokens } : {}),
+        metadataSuspect:
+          current?.metadataSuspect === true ||
+          input.confidence === 'qualitative' ||
+          limitTokens === undefined
+      })
+    )
   }
 
   getAgentId(): string | undefined {
@@ -499,6 +558,11 @@ export class DeepChatAgentInstance {
     this.runtimeActivatedSkills.clear()
     this.invalidateToolProfileCache()
     this.clearCompactionState()
+    this.contextWindowObservations.clear()
+  }
+
+  private contextWindowObservationKey(providerId: string, modelId: string): string {
+    return JSON.stringify([providerId, modelId])
   }
 
   private settleFirstTurnReadyWaiters(ready: boolean): void {

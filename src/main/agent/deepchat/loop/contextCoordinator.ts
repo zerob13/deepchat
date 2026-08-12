@@ -16,6 +16,7 @@ import {
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
+import { isDeepStrictEqual } from 'node:util'
 import type {
   DeepChatProviderAttemptIdentity,
   DeepChatProviderAttemptOrigin,
@@ -109,7 +110,24 @@ export interface ProviderAttemptBudgetPort {
   getStrictRetryMaxTokens(maxTokens: number): number
   getStrictRetryExtraReserve(): number
   buildOverflowError(preflight: RequestContextPreflight): Error
-  buildOverflowAfterRecoveryError(preflight: RequestContextPreflight): Error
+  buildOverflowAfterRecoveryError(
+    preflight: RequestContextPreflight,
+    facts?: ProviderContextOverflowFacts,
+    disposition?: ProviderContextOverflowDisposition
+  ): Error
+}
+
+export type ProviderContextOverflowDisposition =
+  | 'provider_rejected_retry'
+  | 'retry_projection_unchanged'
+  | 'retry_projection_cannot_fit'
+
+export interface ProviderContextOverflowFacts {
+  matched: boolean
+  actualTokens?: number
+  limitTokens?: number
+  scope?: 'prompt' | 'input' | 'request' | 'messages' | 'unknown'
+  confidence: 'none' | 'qualitative' | 'explicit'
 }
 
 export interface ProviderAttemptRecoveryPort {
@@ -320,6 +338,8 @@ function isProviderControlEvent(
 }
 
 const PREMATURE_PROVIDER_STREAM_ERROR = 'Provider stream ended without a terminal stop event.'
+const CONTEXT_OVERFLOW_AFTER_OUTPUT_ERROR =
+  'The provider reported a context overflow after response output began. DeepChat preserved the partial output and did not retry.'
 
 interface ProviderAttemptObservation {
   outputCommitted: boolean
@@ -331,6 +351,7 @@ interface ProviderAttemptObservation {
   stopReason: ProviderRoundStopReason | null
   prematureEof: boolean
   usage: ProviderAttemptUsage | null
+  contextOverflowFacts: ProviderContextOverflowFacts | null
 }
 
 function createProviderAttemptObservation(): ProviderAttemptObservation {
@@ -343,7 +364,8 @@ function createProviderAttemptObservation(): ProviderAttemptObservation {
     stopEvent: null,
     stopReason: null,
     prematureEof: false,
-    usage: null
+    usage: null,
+    contextOverflowFacts: null
   }
 }
 
@@ -400,12 +422,19 @@ async function* observeProviderAttempt(input: {
   bypassContextBudget: boolean
   isContextOverflowEvent(event: LLMCoreStreamEvent): boolean
   isContextOverflowError(error: unknown): boolean
+  inspectContextOverflow?: (value: unknown) => ProviderContextOverflowFacts
+  onContextOverflowFacts?: (facts: ProviderContextOverflowFacts) => void
 }): AsyncGenerator<LLMCoreStreamEvent, void, void> {
   const { observation } = input
   try {
     for await (const event of input.provider.stream(input.streamInput)) {
       if (!input.bypassContextBudget && input.isContextOverflowEvent(event)) {
         observation.contextOverflowObserved = true
+        const facts = input.inspectContextOverflow?.(event)
+        if (facts?.matched) {
+          observation.contextOverflowFacts = facts
+          input.onContextOverflowFacts?.(facts)
+        }
       }
       if (event.type === 'usage') {
         observation.usage = providerAttemptUsageFromEvent(event)
@@ -429,6 +458,11 @@ async function* observeProviderAttempt(input: {
     observation.providerError = error
     if (!input.bypassContextBudget && input.isContextOverflowError(error)) {
       observation.contextOverflowObserved = true
+      const facts = input.inspectContextOverflow?.(error)
+      if (facts?.matched) {
+        observation.contextOverflowFacts = facts
+        input.onContextOverflowFacts?.(facts)
+      }
     }
   }
 
@@ -470,6 +504,8 @@ export interface ProviderAttemptInput<TSelection> {
   retryObserver?: ProviderRetryObserver
   isContextOverflowEvent(event: LLMCoreStreamEvent): boolean
   isContextOverflowError(error: unknown): boolean
+  inspectContextOverflow?(value: unknown): ProviderContextOverflowFacts
+  onContextOverflowFacts?(facts: ProviderContextOverflowFacts): void
   createAbortError(): Error
 }
 
@@ -748,17 +784,46 @@ export class DeepChatContextCoordinator {
       input.requestMessages.splice(0, input.requestMessages.length, ...recovered.messages)
     }
 
+    const projectContextOverflowRetry = (inputMessages: {
+      providerMessages: ChatMessage[]
+      providerMaxTokens: number
+      strictProviderOverflowRetry: boolean
+    }): RequestContextPreflight => {
+      let candidateMessages = input.requestMessages
+      let candidateMaxTokens = input.maxTokens
+      if (inputMessages.strictProviderOverflowRetry) {
+        candidateMaxTokens = input.budget.getStrictRetryMaxTokens(input.maxTokens)
+        candidateMessages = input.budget.fitStrictRetry({
+          messages: candidateMessages,
+          reserveTokens:
+            candidateMaxTokens +
+            effectiveRequestToolReserveTokens +
+            input.budget.getStrictRetryExtraReserve()
+        })
+      }
+      return input.budget.preflight({
+        messages: candidateMessages,
+        tools: input.tools,
+        requestedMaxTokens: candidateMaxTokens
+      })
+    }
+
     const buildProviderOverflowRetryFailure = (
       providerMessages: ChatMessage[],
-      providerMaxTokens: number
+      providerMaxTokens: number,
+      facts?: ProviderContextOverflowFacts,
+      disposition: ProviderContextOverflowDisposition = 'provider_rejected_retry'
     ): Error => {
       const retryPreflight = input.budget.preflight({
         messages: providerMessages,
         tools: input.tools,
         requestedMaxTokens: providerMaxTokens
       })
-      return retryPreflight.fitsWithinContext
-        ? input.budget.buildOverflowAfterRecoveryError(retryPreflight)
+      const resolvedDisposition = retryPreflight.fitsWithinContext
+        ? disposition
+        : 'retry_projection_cannot_fit'
+      return retryPreflight.fitsWithinContext || facts?.matched
+        ? input.budget.buildOverflowAfterRecoveryError(retryPreflight, facts, resolvedDisposition)
         : input.budget.buildOverflowError(retryPreflight)
     }
 
@@ -843,7 +908,9 @@ export class DeepChatContextCoordinator {
               observation,
               bypassContextBudget: input.bypassContextBudget,
               isContextOverflowEvent: input.isContextOverflowEvent,
-              isContextOverflowError: input.isContextOverflowError
+              isContextOverflowError: input.isContextOverflowError,
+              inspectContextOverflow: input.inspectContextOverflow,
+              onContextOverflowFacts: input.onContextOverflowFacts
             })
 
             const assessment = assessProviderAttemptObservation({
@@ -953,13 +1020,45 @@ export class DeepChatContextCoordinator {
 
             if (contextRecoveryAction) {
               if (contextRecoveryAction === 'fail') {
-                throw buildProviderOverflowRetryFailure(providerMessages, providerMaxTokens)
+                throw buildProviderOverflowRetryFailure(
+                  providerMessages,
+                  providerMaxTokens,
+                  observation.contextOverflowFacts ?? undefined
+                )
               }
               if (contextRecoveryAction === 'strict_retry') {
                 strictProviderOverflowRetryPending = true
               } else {
                 await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
               }
+              const retryProjection = projectContextOverflowRetry({
+                providerMessages,
+                providerMaxTokens,
+                strictProviderOverflowRetry: strictProviderOverflowRetryPending
+              })
+              if (!retryProjection.fitsWithinContext) {
+                throw input.budget.buildOverflowAfterRecoveryError(
+                  retryProjection,
+                  observation.contextOverflowFacts ?? undefined,
+                  'retry_projection_cannot_fit'
+                )
+              }
+              if (
+                retryProjection.effectiveMaxTokens === providerMaxTokens &&
+                isDeepStrictEqual(retryProjection.messages, providerMessages)
+              ) {
+                throw buildProviderOverflowRetryFailure(
+                  providerMessages,
+                  providerMaxTokens,
+                  observation.contextOverflowFacts ?? undefined,
+                  'retry_projection_unchanged'
+                )
+              }
+              input.requestMessages.splice(
+                0,
+                input.requestMessages.length,
+                ...retryProjection.messages
+              )
               nextRequestOrigin = 'context_recovery'
               continue providerRequestLoop
             }
@@ -973,12 +1072,20 @@ export class DeepChatContextCoordinator {
               yield createAggregatedUsageEvent(aggregateUsage)
             }
             if (observation.errorEvent) {
-              yield observation.errorEvent
+              yield failureClassification === 'context_overflow' && observation.outputCommitted
+                ? createStreamEvent.error(CONTEXT_OVERFLOW_AFTER_OUTPUT_ERROR, {
+                    code: 'context_overflow_after_output',
+                    retryable: false
+                  })
+                : observation.errorEvent
             }
             if (observation.stopEvent) {
               yield observation.stopEvent
             }
             if (observation.providerThrew) {
+              if (failureClassification === 'context_overflow' && observation.outputCommitted) {
+                throw new Error(CONTEXT_OVERFLOW_AFTER_OUTPUT_ERROR)
+              }
               throw observation.providerError
             }
             return

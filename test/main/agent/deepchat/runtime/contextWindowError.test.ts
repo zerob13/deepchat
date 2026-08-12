@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { isContextWindowErrorLike } from '@/agent/deepchat/runtime/contextWindowError'
+import {
+  inspectContextOverflow,
+  isContextWindowErrorLike
+} from '@/agent/deepchat/runtime/contextWindowError'
 
 describe('isContextWindowErrorLike', () => {
   it('matches common provider context overflow messages', () => {
@@ -184,5 +187,114 @@ describe('isContextWindowErrorLike', () => {
         error_message: 'rate limit exceeded: too many tokens per minute'
       })
     ).toBe(false)
+  })
+
+  it.each([
+    {
+      message: 'Prompt has 142,321 tokens, maximum is 131,072 tokens.',
+      actualTokens: 142321,
+      limitTokens: 131072,
+      scope: 'prompt'
+    },
+    {
+      message:
+        "This model's maximum context length is 8,192 tokens. However, your messages resulted in 9,001 tokens.",
+      actualTokens: 9001,
+      limitTokens: 8192,
+      scope: 'messages'
+    },
+    {
+      message: 'prompt is too long: 209859 tokens > 200000 maximum',
+      actualTokens: 209859,
+      limitTokens: 200000,
+      scope: 'prompt'
+    }
+  ])('extracts explicit provider context numbers from $message', (fixture) => {
+    expect(inspectContextOverflow(fixture.message)).toEqual({
+      matched: true,
+      actualTokens: fixture.actualTokens,
+      limitTokens: fixture.limitTokens,
+      scope: fixture.scope,
+      confidence: 'explicit'
+    })
+  })
+
+  it('keeps a generic context rejection qualitative', () => {
+    expect(inspectContextOverflow('Your input exceeds the context window of this model.')).toEqual({
+      matched: true,
+      scope: 'input',
+      confidence: 'qualitative'
+    })
+  })
+
+  it('does not promote quota numbers into context facts', () => {
+    expect(
+      inspectContextOverflow('rate limit exceeded: 142321 tokens per minute, maximum is 131072')
+    ).toEqual({ matched: false, confidence: 'none' })
+  })
+
+  it('continues past a qualitative wrapper to an explicit nested provider limit', () => {
+    expect(
+      inspectContextOverflow({
+        message: 'context length exceeded',
+        response: {
+          data: {
+            error: { message: 'Prompt has 142321 tokens, maximum is 131072 tokens.' }
+          }
+        }
+      })
+    ).toMatchObject({
+      matched: true,
+      actualTokens: 142321,
+      limitTokens: 131072,
+      confidence: 'explicit'
+    })
+  })
+
+  it('prefers a complete nested observation over a limit-only wrapper', () => {
+    expect(
+      inspectContextOverflow({
+        message: 'maximum context length is 131072 tokens',
+        response: {
+          data: {
+            error: { message: 'Prompt has 142321 tokens, maximum is 131072 tokens.' }
+          }
+        }
+      })
+    ).toEqual({
+      matched: true,
+      actualTokens: 142321,
+      limitTokens: 131072,
+      scope: 'prompt',
+      confidence: 'explicit'
+    })
+  })
+
+  it('does not pair unrelated token comparisons with a generic context rejection', () => {
+    expect(
+      inspectContextOverflow(
+        'context window exceeded. Cache accounting observed 9001 tokens > 8192 maximum.'
+      )
+    ).toEqual({
+      matched: true,
+      scope: 'unknown',
+      confidence: 'qualitative'
+    })
+  })
+
+  it.each([
+    'context window exceeded; configured context length: 8192 tokens',
+    'context window exceeded; requested context length: 8192 tokens',
+    'maximum context length is 8. tokens',
+    'maximum context length is 8.5 tokens',
+    'maximum context length is 8__192 tokens',
+    'maximum context length is 1,234.567 tokens'
+  ])('does not promote non-authoritative or malformed limits from %s', (message) => {
+    const facts = inspectContextOverflow(message)
+    expect(facts).toMatchObject({
+      matched: true,
+      confidence: 'qualitative'
+    })
+    expect(facts).not.toHaveProperty('limitTokens')
   })
 })

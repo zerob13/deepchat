@@ -1,13 +1,15 @@
-const MAX_ERROR_TEXT_DEPTH = 4
+const MAX_ERROR_TEXT_DEPTH = 6
 const MAX_ERROR_TEXT_FIELD_CHARS = 12_000
 const MAX_ERROR_TEXT_TOTAL_CHARS = 48_000
 const MAX_ERROR_ARRAY_ITEMS = 16
+const MAX_CONTEXT_ERROR_MATCHES = 16
 
 const STRONG_CONTEXT_WINDOW_ERROR_PATTERNS = [
   'context window',
   'context length',
   'maximum context',
-  'prompt too long'
+  'prompt too long',
+  'prompt is too long'
 ]
 
 const TOKEN_CONTEXT_ERROR_PATTERNS = ['token limit', 'too many tokens', 'reduce the length']
@@ -45,8 +47,70 @@ const NON_CONTEXT_TOKEN_ERROR_PATTERNS = [
   'rpm'
 ]
 
+const TOKEN_COUNT_CAPTURE = '([0-9](?:[0-9,._ ]{0,17}[0-9])?)(?![0-9,._])'
+const ACTUAL_THEN_LIMIT_PATTERN = new RegExp(
+  `(?:prompt|input|messages?|request)[^\\d]{0,48}${TOKEN_COUNT_CAPTURE}\\s*tokens?[^.\\n]{0,96}(?:maximum|max|limit)(?:\\s+(?:is|of))?\\s*[:=]?\\s*${TOKEN_COUNT_CAPTURE}`,
+  'i'
+)
+const LIMIT_THEN_ACTUAL_PATTERN = new RegExp(
+  `(?:maximum|max)\\s+(?:context\\s+)?(?:length|window|tokens?)(?:\\s+(?:is|of))?\\s*[:=]?\\s*${TOKEN_COUNT_CAPTURE}\\s*tokens?[\\s\\S]{0,200}?(?:resulted\\s+in|contains?|has|uses?)\\s*${TOKEN_COUNT_CAPTURE}\\s*tokens?`,
+  'i'
+)
+const CONTEXT_COUNT_COMPARISON_PATTERN = new RegExp(
+  `(?:prompt|input|messages?|request)[^\\n]{0,96}?${TOKEN_COUNT_CAPTURE}\\s*tokens?\\s*(?:>|exceeds?)\\s*${TOKEN_COUNT_CAPTURE}(?:\\s*tokens?)?(?:\\s*(?:maximum|max|limit))?`,
+  'i'
+)
+const EXPLICIT_CONTEXT_LIMIT_PATTERN = new RegExp(
+  `(?:maximum\\s+(?:context\\s+)?(?:length|window|tokens?)|context\\s+limit)(?:\\s+(?:is|of))?\\s*[:=]?\\s*${TOKEN_COUNT_CAPTURE}(?:\\s*tokens?)?`,
+  'i'
+)
+
+export interface ContextOverflowFacts {
+  matched: boolean
+  actualTokens?: number
+  limitTokens?: number
+  scope?: 'prompt' | 'input' | 'request' | 'messages' | 'unknown'
+  confidence: 'none' | 'qualitative' | 'explicit'
+}
+
 export function isContextWindowErrorLike(value: unknown): boolean {
   return hasContextWindowErrorText(value, new Set<unknown>(), 0, { totalChars: 0 })
+}
+
+export function inspectContextOverflow(value: unknown): ContextOverflowFacts {
+  const matches: string[] = []
+  const matched = hasContextWindowErrorText(value, new Set<unknown>(), 0, { totalChars: 0 }, matches)
+  if (!matched) return { matched: false, confidence: 'none' }
+
+  let explicitMatch:
+    | (ReturnType<typeof parseExplicitContextNumbers> & { text: string })
+    | undefined
+  for (const text of matches) {
+    const numbers = parseExplicitContextNumbers(text)
+    if (numbers.actualTokens === undefined && numbers.limitTokens === undefined) continue
+    if (numbers.actualTokens !== undefined && numbers.limitTokens !== undefined) {
+      explicitMatch = { ...numbers, text }
+      break
+    }
+    explicitMatch ??= { ...numbers, text }
+  }
+  if (explicitMatch) {
+    return {
+      matched: true,
+      ...(explicitMatch.actualTokens !== undefined
+        ? { actualTokens: explicitMatch.actualTokens }
+        : {}),
+      ...(explicitMatch.limitTokens !== undefined ? { limitTokens: explicitMatch.limitTokens } : {}),
+      scope: resolveContextScope(explicitMatch.text),
+      confidence: 'explicit'
+    }
+  }
+
+  return {
+    matched: true,
+    scope: resolveContextScope(matches[0] ?? ''),
+    confidence: 'qualitative'
+  }
 }
 
 function isContextWindowErrorText(text: string): boolean {
@@ -55,6 +119,14 @@ function isContextWindowErrorText(text: string): boolean {
     return false
   }
   if (STRONG_CONTEXT_WINDOW_ERROR_PATTERNS.some((pattern) => normalized.includes(pattern))) {
+    return true
+  }
+  const explicit = parseExplicitContextNumbers(text)
+  if (
+    explicit.actualTokens !== undefined &&
+    explicit.limitTokens !== undefined &&
+    TOKEN_CONTEXT_HINTS.some((hint) => normalized.includes(hint))
+  ) {
     return true
   }
   return (
@@ -69,7 +141,8 @@ function hasContextWindowErrorText(
   value: unknown,
   seen: Set<unknown>,
   depth: number,
-  state: { totalChars: number }
+  state: { totalChars: number },
+  matches?: string[]
 ): boolean {
   if (depth > MAX_ERROR_TEXT_DEPTH || state.totalChars >= MAX_ERROR_TEXT_TOTAL_CHARS) {
     return false
@@ -81,34 +154,45 @@ function hasContextWindowErrorText(
     }
     const text = value.slice(0, Math.min(MAX_ERROR_TEXT_FIELD_CHARS, remainingChars))
     state.totalChars += text.length
-    return isContextWindowErrorText(text)
+    const matched = isContextWindowErrorText(text)
+    if (matched && matches && matches.length < MAX_CONTEXT_ERROR_MATCHES) matches.push(text)
+    return matched
   }
   if (Array.isArray(value)) {
     if (seen.has(value)) {
       return false
     }
     seen.add(value)
+    let matched = false
     for (const item of value.slice(0, MAX_ERROR_ARRAY_ITEMS)) {
-      if (hasContextWindowErrorText(item, seen, depth, state)) {
-        return true
+      if (hasContextWindowErrorText(item, seen, depth + 1, state, matches)) {
+        matched = true
+        if (!matches) return true
       }
     }
-    return false
+    return matched
   }
   if (value instanceof Error) {
     if (seen.has(value)) {
       return false
     }
     seen.add(value)
+    let matched = false
+    for (const field of [value.message, value.name, value.cause]) {
+      if (hasContextWindowErrorText(field, seen, depth + 1, state, matches)) {
+        matched = true
+        if (!matches) return true
+      }
+    }
     return (
-      hasContextWindowErrorText(value.message, seen, depth + 1, state) ||
-      hasContextWindowErrorText(value.name, seen, depth + 1, state) ||
-      hasContextWindowErrorText(value.cause, seen, depth + 1, state) ||
-      hasContextWindowErrorFields(value as unknown as Record<string, unknown>, seen, depth, state, [
-        'message',
-        'name',
-        'cause'
-      ])
+      hasContextWindowErrorFields(
+        value as unknown as Record<string, unknown>,
+        seen,
+        depth,
+        state,
+        ['message', 'name', 'cause'],
+        matches
+      ) || matched
     )
   }
   if (!value || typeof value !== 'object' || seen.has(value)) {
@@ -116,7 +200,7 @@ function hasContextWindowErrorText(
   }
 
   seen.add(value)
-  return hasContextWindowErrorFields(value as Record<string, unknown>, seen, depth, state)
+  return hasContextWindowErrorFields(value as Record<string, unknown>, seen, depth, state, [], matches)
 }
 
 function hasContextWindowErrorFields(
@@ -124,16 +208,71 @@ function hasContextWindowErrorFields(
   seen: Set<unknown>,
   depth: number,
   state: { totalChars: number },
-  skipKeys: string[] = []
+  skipKeys: string[] = [],
+  matches?: string[]
 ): boolean {
   const skipped = new Set(skipKeys)
+  let matched = false
   for (const key of CONTEXT_ERROR_TEXT_FIELD_PRIORITY) {
     if (skipped.has(key)) {
       continue
     }
-    if (hasContextWindowErrorText(record[key], seen, depth + 1, state)) {
-      return true
+    if (hasContextWindowErrorText(record[key], seen, depth + 1, state, matches)) {
+      matched = true
+      if (!matches) return true
     }
   }
-  return false
+  return matched
+}
+
+function parseTokenCount(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const trimmed = value.trim()
+  const grouped = /^(\d{1,3})([ ,._])\d{3}(?:\2\d{3}){0,5}$/.test(trimmed)
+  if (!/^\d+$/.test(trimmed) && !grouped) return undefined
+  const normalized = trimmed.replace(/[ ,._]/g, '')
+  const parsed = Number(normalized)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function parseExplicitContextNumbers(text: string): {
+  actualTokens?: number
+  limitTokens?: number
+} {
+  const actualThenLimit = ACTUAL_THEN_LIMIT_PATTERN.exec(text)
+  if (actualThenLimit) {
+    return {
+      actualTokens: parseTokenCount(actualThenLimit[1]),
+      limitTokens: parseTokenCount(actualThenLimit[2])
+    }
+  }
+
+  const limitThenActual = LIMIT_THEN_ACTUAL_PATTERN.exec(text)
+  if (limitThenActual) {
+    return {
+      actualTokens: parseTokenCount(limitThenActual[2]),
+      limitTokens: parseTokenCount(limitThenActual[1])
+    }
+  }
+
+  const comparison = CONTEXT_COUNT_COMPARISON_PATTERN.exec(text)
+  if (comparison) {
+    return {
+      actualTokens: parseTokenCount(comparison[1]),
+      limitTokens: parseTokenCount(comparison[2])
+    }
+  }
+
+  const explicitLimit = EXPLICIT_CONTEXT_LIMIT_PATTERN.exec(text)
+  const limitTokens = parseTokenCount(explicitLimit?.[1])
+  return limitTokens === undefined ? {} : { limitTokens }
+}
+
+function resolveContextScope(text: string): ContextOverflowFacts['scope'] {
+  const normalized = text.toLowerCase()
+  if (normalized.includes('prompt')) return 'prompt'
+  if (normalized.includes('input')) return 'input'
+  if (normalized.includes('message')) return 'messages'
+  if (normalized.includes('request')) return 'request'
+  return 'unknown'
 }

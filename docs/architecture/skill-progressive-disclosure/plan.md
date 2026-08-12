@@ -163,10 +163,13 @@ cost with unavailable attribution instead of inventing precision.
 
 Upgrade overflow detection to a structured observation. Parse explicit actual/limit numbers when
 providers supply them; keep generic matches qualitative. Session ceiling, configured context
-length, and estimator calibration remain separate values with explicit source/confidence.
+length, and any future estimator calibration remain separate values with explicit
+source/confidence. Explicit limits are model-scoped runtime observations and do not overwrite
+Provider configuration or enter Tape.
 
-Retry only when optional context can be materially reduced. If protected content alone cannot fit,
-skip the doomed second provider call and return actionable category diagnostics.
+Retry only when the final Provider projection materially changes its messages or effective output
+limit. If the calibrated projection is unchanged or protected content cannot fit, skip the doomed
+second Provider call and return actionable category diagnostics.
 
 ## Compatibility And Rollback
 
