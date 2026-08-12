@@ -283,15 +283,6 @@ function addLedgerCost(costs: Map<string, number>, category: string, estimatedTo
   costs.set(category, (costs.get(category) ?? 0) + Math.floor(estimatedTokens))
 }
 
-function messageContainsText(message: ChatMessage, content: string): boolean {
-  if (!content) return false
-  if (typeof message.content === 'string') return message.content.includes(content)
-  return (
-    Array.isArray(message.content) &&
-    message.content.some((part) => part.type === 'text' && part.text.includes(content))
-  )
-}
-
 function estimateStandaloneText(content: string): number {
   return estimateMessageTokens({ role: 'user', content })
 }
@@ -358,7 +349,7 @@ export function buildRequestContextLedger(input: {
 
   const nonSystemMessages = leadingSystem ? messages.slice(1) : messages
   const currentUserIndex = messages.findLastIndex((message) => message.role === 'user')
-  const knownContributions = [
+  const activeTurnContributions = [
     {
       category: 'Memory',
       content:
@@ -378,28 +369,22 @@ export function buildRequestContextLedger(input: {
       content: input.contextContributions?.messageSkillActiveTurnContext ?? null
     }
   ] as const
-  const seenContributionContent = new Set<string>()
-  const contributionTargets = knownContributions.flatMap((contribution) => {
-    const content = contribution.content
-    if (!content || seenContributionContent.has(content)) return []
-    seenContributionContent.add(content)
-    const messageIndex = messages.findLastIndex((message) => messageContainsText(message, content))
-    return messageIndex >= 0 ? [{ ...contribution, content, messageIndex }] : []
-  })
 
   for (const [relativeIndex, message] of nonSystemMessages.entries()) {
     const absoluteIndex = relativeIndex + (leadingSystem ? 1 : 0)
     const messageTokens = estimateMessageTokens(message)
     attributedInputTokens += messageTokens
     let remainingTokens = messageTokens
-    for (const contribution of contributionTargets) {
-      if (contribution.messageIndex !== absoluteIndex || !contribution.content) continue
-      const contributionTokens = Math.min(
-        remainingTokens,
-        estimateStandaloneText(contribution.content)
-      )
-      addLedgerCost(costs, contribution.category, contributionTokens)
-      remainingTokens -= contributionTokens
+    if (absoluteIndex === currentUserIndex) {
+      for (const contribution of activeTurnContributions) {
+        if (!contribution.content) continue
+        const contributionTokens = Math.min(
+          remainingTokens,
+          estimateStandaloneText(contribution.content)
+        )
+        addLedgerCost(costs, contribution.category, contributionTokens)
+        remainingTokens -= contributionTokens
+      }
     }
     addLedgerCost(
       costs,

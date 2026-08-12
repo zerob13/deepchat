@@ -269,4 +269,39 @@ describe('agent request context budget', () => {
     })
     expect(ledger.items.some((item) => item.category === 'Configured prompt')).toBe(false)
   })
+
+  it('attributes equal active-turn contributions by structure instead of text identity', () => {
+    const sharedContent = 'SAME'
+    const preflight = preflightRequestContext({
+      messages: [
+        { role: 'user', content: `old quote: ${sharedContent}` },
+        {
+          role: 'user',
+          content: `${sharedContent}\n\n${sharedContent}\n\ncurrent question`
+        }
+      ],
+      tools: [],
+      contextLength: 0,
+      requestedMaxTokens: 100
+    })
+    const contextContributions = {
+      memory: { content: sharedContent },
+      memoryIncluded: true,
+      directives: { content: sharedContent },
+      directivesIncluded: true,
+      messageSkillActiveTurnContext: null
+    } as ContextRuntimeContributions
+
+    const ledger = buildRequestContextLedger({ preflight, contextContributions })
+
+    expect(ledger.items).toEqual(
+      expect.arrayContaining([
+        { category: 'Memory', estimatedTokens: sharedContent.length },
+        { category: 'User directives', estimatedTokens: sharedContent.length }
+      ])
+    )
+    expect(
+      ledger.items.find((item) => item.category === 'History and tool protocol')?.estimatedTokens
+    ).toBe(`old quote: ${sharedContent}`.length)
+  })
 })
