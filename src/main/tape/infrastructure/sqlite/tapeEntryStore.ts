@@ -19,7 +19,8 @@ import { DEFAULT_EXCLUDED_TAPE_EVENT_NAMES } from '@/tape/domain/effectiveView'
 import {
   EXECUTION_JOURNAL_EVENT_NAMES,
   isExecutionJournalReservedName,
-  type ExecutionJournalEventName
+  type ExecutionJournalEventName,
+  type ExecutionJournalRecoveryRow
 } from '@/tape/domain/executionJournal'
 import {
   CONTRACT_TAPE_EVENT_NAMES,
@@ -76,6 +77,21 @@ const TAPE_ENTRY_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_execution_run
     ON deepchat_tape_entries(name, session_id, source_id, entry_id)
     WHERE kind = 'event' AND source_type = 'runtime_event';
+  CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_execution_operation_payload
+    ON deepchat_tape_entries(
+      session_id,
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.protocolVersion') END),
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.operation.runId') END),
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.operation.requestSeq') END),
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.operation.providerToolCallId') END),
+      entry_id
+    )
+    WHERE kind = 'event'
+      AND name IN ('execution/dispatch_committed', 'execution/tool_outcome');
   CREATE UNIQUE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_provenance
     ON deepchat_tape_entries(session_id, provenance_key)
     WHERE provenance_key IS NOT NULL;
@@ -104,16 +120,90 @@ export const UNTERMINATED_EXECUTION_JOURNAL_EVENTS_SQL = `
           AND terminal.source_id = started.source_id
           AND terminal.entry_id > started.entry_id
       )
+  ),
+  provider_operation_keys AS (
+    SELECT
+      run.session_id,
+      run.run_id,
+      substr(
+        parent.provenance_key,
+        length('execution:v1:operation:') + 1,
+        64
+      ) AS operation_key
+    FROM unterminated_runs AS run
+    CROSS JOIN deepchat_tape_entries AS parent
+      INDEXED BY idx_deepchat_tape_entries_execution_run
+    WHERE parent.session_id = run.session_id
+      AND parent.kind = 'event'
+      AND parent.name = 'execution/dispatch_committed'
+      AND parent.source_type = 'runtime_event'
+      AND parent.source_id = run.run_id
+      AND length(parent.provenance_key) =
+        length('execution:v1:operation:') + 64 + length(':dispatch')
+      AND substr(parent.provenance_key, 1, length('execution:v1:operation:')) =
+        'execution:v1:operation:'
+      AND substr(parent.provenance_key, -length(':dispatch')) = ':dispatch'
+    UNION
+    SELECT
+      run.session_id,
+      run.run_id,
+      substr(
+        parent.provenance_key,
+        length('execution:v1:operation:') + 1,
+        64
+      ) AS operation_key
+    FROM unterminated_runs AS run
+    CROSS JOIN deepchat_tape_entries AS parent
+      INDEXED BY idx_deepchat_tape_entries_execution_operation_payload
+    WHERE parent.session_id = run.session_id
+      AND parent.kind = 'event'
+      AND parent.name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+      AND parent.name = 'execution/dispatch_committed'
+      AND (CASE WHEN json_valid(parent.payload_json)
+        THEN json_extract(parent.payload_json, '$.data.protocolVersion') END) = 1
+      AND (CASE WHEN json_valid(parent.payload_json)
+        THEN json_extract(parent.payload_json, '$.data.operation.runId') END) = run.run_id
+      AND length(parent.provenance_key) =
+        length('execution:v1:operation:') + 64 + length(':dispatch')
+      AND substr(parent.provenance_key, 1, length('execution:v1:operation:')) =
+        'execution:v1:operation:'
+      AND substr(parent.provenance_key, -length(':dispatch')) = ':dispatch'
   )
-  SELECT journal.*
-  FROM unterminated_runs AS run
-  JOIN deepchat_tape_entries AS journal
-    ON journal.session_id = run.session_id
-   AND journal.source_id = run.run_id
-  WHERE journal.kind = 'event'
-    AND journal.source_type = 'runtime_event'
-    AND journal.name IN (${EXECUTION_JOURNAL_EVENT_NAMES_SQL})
-  ORDER BY journal.session_id ASC, journal.entry_id ASC
+  SELECT recovered.*
+  FROM (
+    SELECT journal.*, run.run_id AS recovery_run_id
+    FROM unterminated_runs AS run
+    CROSS JOIN deepchat_tape_entries AS journal
+      INDEXED BY idx_deepchat_tape_entries_execution_run
+    WHERE journal.session_id = run.session_id
+      AND journal.source_id = run.run_id
+      AND journal.kind = 'event'
+      AND journal.source_type = 'runtime_event'
+      AND journal.name IN (${EXECUTION_JOURNAL_EVENT_NAMES_SQL})
+    UNION
+    SELECT nested.*, run.run_id AS recovery_run_id
+    FROM unterminated_runs AS run
+    CROSS JOIN deepchat_tape_entries AS nested
+      INDEXED BY idx_deepchat_tape_entries_execution_operation_payload
+    WHERE nested.session_id = run.session_id
+      AND nested.kind = 'event'
+      AND nested.name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+      AND (CASE WHEN json_valid(nested.payload_json)
+        THEN json_extract(nested.payload_json, '$.data.protocolVersion') END) = 2
+      AND (CASE WHEN json_valid(nested.payload_json)
+        THEN json_extract(nested.payload_json, '$.data.operation.runId') END) = run.run_id
+    UNION
+    SELECT nested.*, parent.run_id AS recovery_run_id
+    FROM provider_operation_keys AS parent
+    CROSS JOIN deepchat_tape_entries AS nested
+      INDEXED BY idx_deepchat_tape_entries_session_provenance
+    WHERE nested.session_id = parent.session_id
+      AND nested.provenance_key >=
+        'execution:v2:parent:' || parent.operation_key || ':'
+      AND nested.provenance_key <
+        'execution:v2:parent:' || parent.operation_key || ':~'
+  ) AS recovered
+  ORDER BY recovered.session_id ASC, recovered.entry_id ASC
 `
 
 function safeJsonStringify(value: Record<string, unknown> | undefined): string {
@@ -1335,10 +1425,182 @@ export class DeepChatExecutionJournalStore
   extends DeepChatTapeEntriesTable
   implements ExecutionJournalPersistenceStore
 {
-  listUnterminatedRunEvents(): Iterable<DeepChatTapeEntryRow> {
+  listUnterminatedRunEvents(): Iterable<ExecutionJournalRecoveryRow> {
     return this.db
       .prepare(UNTERMINATED_EXECUTION_JOURNAL_EVENTS_SQL)
-      .iterate() as IterableIterator<DeepChatTapeEntryRow>
+      .iterate() as IterableIterator<ExecutionJournalRecoveryRow>
+  }
+
+  listNestedOperationEventsForRun(sessionId: string, runId: string): DeepChatTapeEntryRow[] {
+    const v2Prefix = 'execution:v2:'
+    return this.db
+      .prepare(
+        `WITH provider_operation_keys AS (
+           SELECT substr(
+             provenance_key,
+             length('execution:v1:operation:') + 1,
+             64
+           ) AS operation_key
+           FROM deepchat_tape_entries
+             INDEXED BY idx_deepchat_tape_entries_execution_run
+           WHERE session_id = ?
+             AND kind = 'event'
+             AND name = 'execution/dispatch_committed'
+             AND source_type = 'runtime_event'
+             AND source_id = ?
+             AND length(provenance_key) =
+               length('execution:v1:operation:') + 64 + length(':dispatch')
+             AND substr(provenance_key, 1, length('execution:v1:operation:')) =
+               'execution:v1:operation:'
+             AND substr(provenance_key, -length(':dispatch')) = ':dispatch'
+           UNION
+           SELECT substr(
+             provenance_key,
+             length('execution:v1:operation:') + 1,
+             64
+           ) AS operation_key
+           FROM deepchat_tape_entries
+             INDEXED BY idx_deepchat_tape_entries_execution_operation_payload
+           WHERE session_id = ?
+             AND kind = 'event'
+             AND name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+             AND name = 'execution/dispatch_committed'
+             AND (CASE WHEN json_valid(payload_json)
+               THEN json_extract(payload_json, '$.data.protocolVersion') END) = 1
+             AND (CASE WHEN json_valid(payload_json)
+               THEN json_extract(payload_json, '$.data.operation.runId') END) = ?
+             AND length(provenance_key) =
+               length('execution:v1:operation:') + 64 + length(':dispatch')
+             AND substr(provenance_key, 1, length('execution:v1:operation:')) =
+               'execution:v1:operation:'
+             AND substr(provenance_key, -length(':dispatch')) = ':dispatch'
+         )
+         SELECT * FROM (
+           SELECT *
+           FROM deepchat_tape_entries
+             INDEXED BY idx_deepchat_tape_entries_execution_operation_payload
+           WHERE session_id = ?
+             AND kind = 'event'
+             AND name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+             AND (CASE WHEN json_valid(payload_json)
+               THEN json_extract(payload_json, '$.data.protocolVersion') END) = 2
+             AND (CASE WHEN json_valid(payload_json)
+               THEN json_extract(payload_json, '$.data.operation.runId') END) = ?
+           UNION
+           SELECT *
+           FROM deepchat_tape_entries
+             INDEXED BY idx_deepchat_tape_entries_execution_run
+           WHERE session_id = ?
+             AND kind = 'event'
+             AND name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+             AND source_type = 'runtime_event'
+             AND source_id = ?
+             AND (
+               (provenance_key >= ? AND provenance_key < ?)
+               OR (CASE WHEN json_valid(meta_json)
+                 THEN json_extract(meta_json, '$.protocolVersion') END) = 2
+               OR (CASE WHEN json_valid(payload_json)
+                 THEN json_extract(payload_json, '$.data.protocolVersion') END) = 2
+               OR (CASE WHEN json_valid(payload_json)
+                 THEN json_extract(payload_json, '$.data.operation.kind') END) = 'nested'
+             )
+           UNION
+           SELECT nested.*
+           FROM provider_operation_keys AS parent
+           CROSS JOIN deepchat_tape_entries AS nested
+             INDEXED BY idx_deepchat_tape_entries_session_provenance
+           WHERE nested.session_id = ?
+             AND nested.provenance_key >=
+               'execution:v2:parent:' || parent.operation_key || ':'
+             AND nested.provenance_key <
+               'execution:v2:parent:' || parent.operation_key || ':~'
+         )
+         ORDER BY entry_id ASC`
+      )
+      .all(
+        sessionId,
+        runId,
+        sessionId,
+        runId,
+        sessionId,
+        runId,
+        sessionId,
+        runId,
+        v2Prefix,
+        `${v2Prefix}~`,
+        sessionId
+      ) as DeepChatTapeEntryRow[]
+  }
+
+  listNestedOperationEventsForParent(
+    sessionId: string,
+    runId: string,
+    requestSeq: number,
+    providerToolCallId: string,
+    parentOperationKey: string
+  ): DeepChatTapeEntryRow[] {
+    const parentPrefix = `execution:v2:parent:${parentOperationKey}:`
+    return this.db
+      .prepare(
+        `SELECT * FROM (
+           SELECT *
+           FROM deepchat_tape_entries
+             INDEXED BY idx_deepchat_tape_entries_session_provenance
+           WHERE session_id = ?
+             AND provenance_key >= ?
+             AND provenance_key < ?
+           UNION
+           SELECT *
+           FROM deepchat_tape_entries
+             INDEXED BY idx_deepchat_tape_entries_execution_operation_payload
+           WHERE session_id = ?
+             AND kind = 'event'
+             AND name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+             AND (CASE WHEN json_valid(payload_json)
+               THEN json_extract(payload_json, '$.data.protocolVersion') END) = 2
+             AND (CASE WHEN json_valid(payload_json)
+               THEN json_extract(payload_json, '$.data.operation.runId') END) = ?
+             AND (CASE WHEN json_valid(payload_json)
+               THEN json_extract(payload_json, '$.data.operation.requestSeq') END) = ?
+             AND (CASE WHEN json_valid(payload_json)
+               THEN json_extract(
+                 payload_json,
+                 '$.data.operation.providerToolCallId'
+               ) END) = ?
+           UNION
+           SELECT *
+           FROM deepchat_tape_entries
+             INDEXED BY idx_deepchat_tape_entries_execution_run
+           WHERE session_id = ?
+             AND kind = 'event'
+             AND name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+             AND source_type = 'runtime_event'
+             AND source_id = ?
+             AND source_seq = ?
+             AND (
+               (provenance_key >= 'execution:v2:' AND provenance_key < 'execution:v2:~')
+               OR (CASE WHEN json_valid(meta_json)
+                 THEN json_extract(meta_json, '$.protocolVersion') END) = 2
+               OR (CASE WHEN json_valid(payload_json)
+                 THEN json_extract(payload_json, '$.data.protocolVersion') END) = 2
+               OR (CASE WHEN json_valid(payload_json)
+                 THEN json_extract(payload_json, '$.data.operation.kind') END) = 'nested'
+             )
+         )
+         ORDER BY entry_id ASC`
+      )
+      .all(
+        sessionId,
+        parentPrefix,
+        `${parentPrefix}~`,
+        sessionId,
+        runId,
+        requestSeq,
+        providerToolCallId,
+        sessionId,
+        runId,
+        requestSeq
+      ) as DeepChatTapeEntryRow[]
   }
 
   listDispatchEventsForRecoveryIdentity(

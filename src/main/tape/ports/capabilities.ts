@@ -16,6 +16,8 @@ import type {
   CommitExecutionRunStartedInput,
   CommitExecutionRunTerminalInput,
   CommitExecutionToolOutcomeInput,
+  CommitNestedExecutionDispatchInput,
+  CommitNestedExecutionToolOutcomeInput,
   ExecutionJournalCommitReceipt,
   ExecutionRecoveryReport
 } from '../domain/executionJournal'
@@ -152,6 +154,14 @@ export interface ExecutionJournalWriter {
   commitDispatch(input: CommitExecutionDispatchInput): ExecutionJournalCommitReceipt
   commitToolOutcome(input: CommitExecutionToolOutcomeInput): ExecutionJournalCommitReceipt
   commitRunTerminal(input: CommitExecutionRunTerminalInput): ExecutionJournalCommitReceipt
+}
+
+/** Reserved for the process-live Programmatic parent controller; ordinary loops do not receive it. */
+export interface NestedExecutionJournalWriter {
+  commitNestedDispatch(input: CommitNestedExecutionDispatchInput): ExecutionJournalCommitReceipt
+  commitNestedToolOutcome(
+    input: CommitNestedExecutionToolOutcomeInput
+  ): ExecutionJournalCommitReceipt
 }
 
 export interface ExecutionJournalRecoveryReader {

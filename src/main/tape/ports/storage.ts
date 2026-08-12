@@ -7,7 +7,10 @@ import type {
   TapeAnchorAppendInput,
   TapeEventAppendInput
 } from '../domain/entry'
-import type { ExecutionJournalEventName } from '../domain/executionJournal'
+import type {
+  ExecutionJournalEventName,
+  ExecutionJournalRecoveryRow
+} from '../domain/executionJournal'
 import type { ContractTapeEventName } from '../domain/contractFacts'
 import type { ToolSurfaceTapeEventName } from '../domain/toolSurfaceFacts'
 
@@ -101,7 +104,15 @@ export interface ExecutionJournalPersistenceStore
   appendExecutionJournalEvent(
     input: TapeEventAppendInput & { name: ExecutionJournalEventName }
   ): DeepChatTapeEntryRow
-  listUnterminatedRunEvents(): Iterable<DeepChatTapeEntryRow>
+  listUnterminatedRunEvents(): Iterable<ExecutionJournalRecoveryRow>
+  listNestedOperationEventsForRun(sessionId: string, runId: string): DeepChatTapeEntryRow[]
+  listNestedOperationEventsForParent(
+    sessionId: string,
+    runId: string,
+    requestSeq: number,
+    providerToolCallId: string,
+    parentOperationKey: string
+  ): DeepChatTapeEntryRow[]
   listDispatchEventsForRecoveryIdentity(
     sessionId: string,
     messageId: string,

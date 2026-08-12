@@ -64,6 +64,35 @@ function createTapeTableMock() {
   const entries: any[] = []
   let tapeIncarnationSequence = 0
   let inTransaction = false
+  const parseJsonRecord = (value: string): Record<string, any> => {
+    try {
+      const parsed = JSON.parse(value)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+  const providerOperationKeys = (sessionId: string, runId: string): string[] =>
+    entries.flatMap((entry) => {
+      if (
+        entry.session_id !== sessionId ||
+        entry.kind !== 'event' ||
+        entry.name !== 'execution/dispatch_committed'
+      ) {
+        return []
+      }
+      const data = parseJsonRecord(entry.payload_json).data ?? {}
+      if (
+        entry.source_id !== runId &&
+        !(data.protocolVersion === 1 && data.operation?.runId === runId)
+      ) {
+        return []
+      }
+      const match = /^execution:v1:operation:([0-9a-f]{64}):dispatch$/.exec(
+        entry.provenance_key ?? ''
+      )
+      return match ? [match[1]] : []
+    })
   const table = {
     ensureBootstrapAnchor: vi.fn((sessionId: string) => {
       if (
@@ -159,37 +188,114 @@ function createTapeTableMock() {
       })
     ),
     listUnterminatedRunEvents: vi.fn(() => {
-      const runKey = (sessionId: string, runId: string) => JSON.stringify([sessionId, runId])
-      const unterminatedRunKeys = new Set(
-        entries
-          .filter(
-            (entry) =>
-              entry.kind === 'event' &&
-              entry.name === 'execution/run_started' &&
-              entry.source_type === 'runtime_event' &&
-              entry.source_id !== null &&
-              !entries.some(
-                (terminal) =>
-                  terminal.kind === 'event' &&
-                  terminal.name === 'execution/run_terminal' &&
-                  terminal.source_type === 'runtime_event' &&
-                  terminal.source_seq === 0 &&
-                  terminal.session_id === entry.session_id &&
-                  terminal.source_id === entry.source_id &&
-                  terminal.entry_id > entry.entry_id
-              )
+      const unterminatedRuns = entries
+        .filter(
+          (entry) =>
+            entry.kind === 'event' &&
+            entry.name === 'execution/run_started' &&
+            entry.source_type === 'runtime_event' &&
+            entry.source_id !== null &&
+            !entries.some(
+              (terminal) =>
+                terminal.kind === 'event' &&
+                terminal.name === 'execution/run_terminal' &&
+                terminal.source_type === 'runtime_event' &&
+                terminal.source_seq === 0 &&
+                terminal.session_id === entry.session_id &&
+                terminal.source_id === entry.source_id &&
+                terminal.entry_id > entry.entry_id
+            )
+        )
+        .map((entry) => ({ sessionId: entry.session_id, runId: entry.source_id! }))
+      return unterminatedRuns.flatMap((run) =>
+        entries.flatMap((entry) => {
+          if (entry.session_id !== run.sessionId) return []
+          const data = parseJsonRecord(entry.payload_json).data ?? {}
+          const matchesSource =
+            entry.kind === 'event' &&
+            entry.source_type === 'runtime_event' &&
+            entry.source_id === run.runId &&
+            EXECUTION_JOURNAL_EVENT_NAMES.some((name) => entry.name === name)
+          const matchesPayload =
+            entry.kind === 'event' &&
+            (entry.name === 'execution/dispatch_committed' ||
+              entry.name === 'execution/tool_outcome') &&
+            data.protocolVersion === 2 &&
+            data.operation?.runId === run.runId
+          const matchesParent = providerOperationKeys(run.sessionId, run.runId).some(
+            (operationKey) =>
+              entry.provenance_key?.startsWith(`execution:v2:parent:${operationKey}:`)
           )
-          .map((entry) => runKey(entry.session_id, entry.source_id!))
-      )
-      return entries.filter(
-        (entry) =>
-          entry.kind === 'event' &&
-          entry.source_type === 'runtime_event' &&
-          entry.source_id !== null &&
-          EXECUTION_JOURNAL_EVENT_NAMES.some((name) => entry.name === name) &&
-          unterminatedRunKeys.has(runKey(entry.session_id, entry.source_id))
+          return matchesSource || matchesPayload || matchesParent
+            ? [{ ...entry, recovery_run_id: run.runId }]
+            : []
+        })
       )
     }),
+    listNestedOperationEventsForRun: vi.fn((sessionId: string, runId: string) =>
+      entries.filter((entry) => {
+        if (
+          entry.session_id !== sessionId ||
+          entry.kind !== 'event' ||
+          (entry.name !== 'execution/dispatch_committed' && entry.name !== 'execution/tool_outcome')
+        ) {
+          return false
+        }
+        const payload = parseJsonRecord(entry.payload_json)
+        const meta = parseJsonRecord(entry.meta_json)
+        const data = payload.data ?? {}
+        const operation = data.operation ?? {}
+        return (
+          (data.protocolVersion === 2 && operation.runId === runId) ||
+          (entry.source_id === runId &&
+            (entry.provenance_key?.startsWith('execution:v2:') ||
+              meta.protocolVersion === 2 ||
+              data.protocolVersion === 2 ||
+              operation.kind === 'nested')) ||
+          providerOperationKeys(sessionId, runId).some((operationKey) =>
+            entry.provenance_key?.startsWith(`execution:v2:parent:${operationKey}:`)
+          )
+        )
+      })
+    ),
+    listNestedOperationEventsForParent: vi.fn(
+      (
+        sessionId: string,
+        runId: string,
+        requestSeq: number,
+        providerToolCallId: string,
+        parentOperationKey: string
+      ) => {
+        const parentPrefix = `execution:v2:parent:${parentOperationKey}:`
+        return entries.filter((entry) => {
+          if (entry.session_id !== sessionId) return false
+          if (entry.provenance_key?.startsWith(parentPrefix)) return true
+          if (
+            entry.kind !== 'event' ||
+            (entry.name !== 'execution/dispatch_committed' &&
+              entry.name !== 'execution/tool_outcome')
+          ) {
+            return false
+          }
+          const data = parseJsonRecord(entry.payload_json).data ?? {}
+          const meta = parseJsonRecord(entry.meta_json)
+          const operation = data.operation ?? {}
+          return (
+            (data.protocolVersion === 2 &&
+              operation.runId === runId &&
+              operation.requestSeq === requestSeq &&
+              operation.providerToolCallId === providerToolCallId) ||
+            (entry.source_type === 'runtime_event' &&
+              entry.source_id === runId &&
+              entry.source_seq === requestSeq &&
+              (entry.provenance_key?.startsWith('execution:v2:') ||
+                meta.protocolVersion === 2 ||
+                data.protocolVersion === 2 ||
+                operation.kind === 'nested'))
+          )
+        })
+      }
+    ),
     runInTransaction: vi.fn((operation: () => unknown) => {
       const snapshot = entries.map((entry) => ({ ...entry }))
       const previousTransactionState = inTransaction
