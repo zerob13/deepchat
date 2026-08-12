@@ -26,6 +26,7 @@ import { CliRequestError } from '@/cli/errors'
 import {
   AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
   AgentCliTokenAuthority,
+  buildAgentCliProgrammaticInvocationHash,
   type AgentCliRequestBeginResult,
   type AgentCliTokenClaims
 } from '@/cli/agentTokenAuthority'
@@ -50,10 +51,72 @@ function grantAgentRequest(
     grant: {
       claims,
       signal: new AbortController().signal,
-      consumeBytes: () => true,
+      consumeInputBytes: () => true,
+      consumeOutputBytes: () => true,
       release
     }
   }
+}
+
+function createArmedProgrammaticAuthority(input: {
+  token: string
+  tokenId: string
+  params: Readonly<Record<string, unknown>>
+}): {
+  authority: AgentCliTokenAuthority
+  operation: Readonly<{
+    sessionId: string
+    messageId: string
+    runId: string
+    requestSeq: number
+    providerToolCallId: string
+  }>
+} {
+  const operation = {
+    sessionId: 'conversation-1',
+    messageId: 'message-1',
+    runId: 'run-1',
+    requestSeq: 1,
+    providerToolCallId: 'provider-call-1'
+  } as const
+  const authority = new AgentCliTokenAuthority({
+    createToken: () => input.token,
+    createTokenId: () => input.tokenId
+  })
+  authority
+    .prepareProgrammaticOperation({
+      binding: {
+        schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+        surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+        operation,
+        command: { domain: 'tool', verb: 'call' },
+        route: 'tool.call',
+        canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
+          command: { domain: 'tool', verb: 'call' },
+          route: 'tool.call',
+          params: input.params
+        }),
+        adapterMode: 'cli-programmatic',
+        capabilityHash: 'b'.repeat(64),
+        programmaticSurfaceHash: 'c'.repeat(64),
+        quotas: {
+          maxChildren: 1,
+          maxBatchSteps: 1,
+          maxInputBytes: 4_096,
+          maxOutputBytes: 4_096,
+          maxDurationMs: 30_000
+        }
+      },
+      assertAuthorityActive: () => undefined
+    })
+    .arm({
+      sessionId: operation.sessionId,
+      entryId: 1,
+      created: true,
+      preparedTokenId: input.tokenId,
+      operation
+    })
+  return { authority, operation }
 }
 
 const servers: CliServer[] = []
@@ -262,6 +325,7 @@ async function createTestServer(
       result: unknown
     }>
     dispatchStream?: NonNullable<CliServerDependencies['dispatchStream']>
+    dispatchProgrammaticTool?: NonNullable<CliServerDependencies['dispatchProgrammaticTool']>
     surface?: ReadonlyMap<string, CliSurfaceEntry>
     dispatchUpload?: (
       method: string,
@@ -277,6 +341,7 @@ async function createTestServer(
   server: CliServer
   descriptor: LocalControlDescriptor
   dispatch: ReturnType<typeof vi.fn>
+  dispatchProgrammaticTool: ReturnType<typeof vi.fn>
   dispatchUpload: ReturnType<typeof vi.fn>
   authorize: ReturnType<typeof vi.fn>
 }> {
@@ -296,11 +361,13 @@ async function createTestServer(
     }
   )
   const dispatchUpload = vi.fn(options.dispatchUpload ?? (async () => ({})))
+  const dispatchProgrammaticTool = vi.fn(options.dispatchProgrammaticTool ?? (async () => ({})))
   const authorize = vi.fn(options.authorize ?? (async () => ({ release: () => undefined })))
   server = new CliServer({
     userDataPath,
     appVersion: '1.2.3',
     dispatch,
+    ...(options.dispatchProgrammaticTool ? { dispatchProgrammaticTool } : {}),
     ...(options.dispatchStream
       ? { dispatchStream: options.dispatchStream }
       : options.streamOutput
@@ -332,7 +399,15 @@ async function createTestServer(
   })
   servers.push(server)
   const descriptor = await server.start()
-  return { userDataPath, server, descriptor, dispatch, dispatchUpload, authorize }
+  return {
+    userDataPath,
+    server,
+    descriptor,
+    dispatch,
+    dispatchProgrammaticTool,
+    dispatchUpload,
+    authorize
+  }
 }
 
 afterEach(async () => {
@@ -913,6 +988,7 @@ describe('CLI local transport', () => {
   it('recognizes an exact Programmatic route grant without opening that route early', async () => {
     const agentToken = 'v'.repeat(43)
     const tokenId = 'programmatic-v2-unavailable'
+    const params = { target: 'remote_search', arguments: {} }
     const operation = {
       sessionId: 'conversation-1',
       messageId: 'message-1',
@@ -932,7 +1008,11 @@ describe('CLI local transport', () => {
           operation,
           command: { domain: 'tool', verb: 'call' },
           route: 'tool.call',
-          canonicalInvocationHash: 'a'.repeat(64),
+          canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
+            command: { domain: 'tool', verb: 'call' },
+            route: 'tool.call',
+            params
+          }),
           adapterMode: 'cli-programmatic',
           capabilityHash: 'b'.repeat(64),
           programmaticSurfaceHash: 'c'.repeat(64),
@@ -960,19 +1040,117 @@ describe('CLI local transport', () => {
     const response = await rpcRequest(descriptor, {
       token: agentToken,
       method: 'tool.call',
-      params: { target: 'mcp:server:tool' }
+      params
     })
 
     expect(response).toMatchObject({
-      status: 404,
+      status: 503,
       body: {
         protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
         surfaceVersion: LOCAL_CONTROL_SURFACE_VERSION,
         ok: false,
-        error: { code: 'not_found' }
+        error: { code: 'unavailable' }
       }
     })
     expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('dispatches an admitted V2 request only through the Programmatic handler', async () => {
+    const token = 'w'.repeat(43)
+    const params = { target: 'remote_search', arguments: { query: 'weather' } }
+    const { authority, operation } = createArmedProgrammaticAuthority({
+      token,
+      tokenId: 'programmatic-v2-dispatch',
+      params
+    })
+    const dispatchProgrammaticTool = vi.fn(async () => ({
+      step: { childOrdinal: 0, status: 'success' as const, result: { found: true } }
+    }))
+    const { descriptor, dispatch } = await createTestServer({
+      beginAgentRequest: (candidate) => authority.beginRequest(candidate),
+      dispatchProgrammaticTool
+    })
+
+    const response = await rpcRequest(descriptor, {
+      token,
+      method: 'tool.call',
+      params
+    })
+    const replay = await rpcRequest(descriptor, {
+      token,
+      method: 'tool.call',
+      params
+    })
+
+    expect(response).toMatchObject({
+      status: 200,
+      body: {
+        ok: true,
+        result: { step: { childOrdinal: 0, status: 'success', result: { found: true } } }
+      }
+    })
+    expect(replay).toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: 'authentication_failed' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(dispatchProgrammaticTool).toHaveBeenCalledOnce()
+    expect(dispatchProgrammaticTool.mock.calls[0]?.[0]).toBe('tool.call')
+    expect(dispatchProgrammaticTool.mock.calls[0]?.[1]).toEqual(params)
+    expect(dispatchProgrammaticTool.mock.calls[0]?.[3]).toMatchObject({ operation })
+  })
+
+  it('burns a V2 grant before dispatch when the canonical body changes', async () => {
+    const token = 'y'.repeat(43)
+    const params = { target: 'remote_search', arguments: { query: 'weather' } }
+    const { authority } = createArmedProgrammaticAuthority({
+      token,
+      tokenId: 'programmatic-v2-body-mismatch',
+      params
+    })
+    const dispatchProgrammaticTool = vi.fn(async () => ({}))
+    const { descriptor, dispatch } = await createTestServer({
+      beginAgentRequest: (candidate) => authority.beginRequest(candidate),
+      dispatchProgrammaticTool
+    })
+
+    const response = await rpcRequest(descriptor, {
+      token,
+      method: 'tool.call',
+      params: { ...params, arguments: { query: 'x'.repeat(200 * 1024) } }
+    })
+    const replay = await rpcRequest(descriptor, {
+      token,
+      method: 'tool.call',
+      params
+    })
+
+    expect(response).toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: 'authentication_failed' } }
+    })
+    expect(replay).toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: 'authentication_failed' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(dispatchProgrammaticTool).not.toHaveBeenCalled()
+  })
+
+  it('keeps Programmatic routes unreachable to the public V1 descriptor token', async () => {
+    const { descriptor, dispatch, dispatchProgrammaticTool } = await createTestServer()
+
+    const response = await rpcRequest(descriptor, {
+      method: 'tool.call',
+      params: { target: 'remote_search', arguments: {} }
+    })
+
+    expect(response).toMatchObject({
+      status: 404,
+      body: { ok: false, error: { code: 'not_found' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(dispatchProgrammaticTool).not.toHaveBeenCalled()
   })
 
   it('rejects malformed Programmatic claims instead of selecting V2', async () => {

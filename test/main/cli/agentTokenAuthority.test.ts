@@ -91,12 +91,12 @@ describe('AgentCliTokenAuthority', () => {
     const first = authority.beginRequest(issued.token)
     expect(first.status).toBe('granted')
     if (first.status !== 'granted') throw new Error('Expected grant')
-    expect(first.grant.consumeBytes(3)).toBe(true)
+    expect(first.grant.consumeInputBytes(3)).toBe(true)
     first.grant.release()
     const second = authority.beginRequest(issued.token)
     expect(second.status).toBe('granted')
     if (second.status !== 'granted') throw new Error('Expected grant')
-    expect(second.grant.consumeBytes(3)).toBe(false)
+    expect(second.grant.consumeOutputBytes(3)).toBe(false)
     second.grant.release()
     expect(authority.beginRequest(issued.token)).toEqual({ status: 'quota-exhausted' })
 
@@ -235,6 +235,12 @@ describe('AgentCliTokenAuthority', () => {
 
   it('keeps an exact Programmatic operation token inert until a new outer T1 arms it', () => {
     const agentToken = token('p')
+    const params = { target: 'remote_search', arguments: {} }
+    const canonicalInvocationHash = buildAgentCliProgrammaticInvocationHash({
+      command: { domain: 'tool', verb: 'call' },
+      route: 'tool.call',
+      params
+    })
     const authority = new AgentCliTokenAuthority({
       now: () => 1_000,
       createToken: () => agentToken,
@@ -242,7 +248,7 @@ describe('AgentCliTokenAuthority', () => {
     })
     const assertAuthorityActive = vi.fn()
     const prepared = authority.prepareProgrammaticOperation({
-      binding: programmaticBinding(),
+      binding: programmaticBinding({ canonicalInvocationHash }),
       ttlMs: 10_000,
       assertAuthorityActive
     })
@@ -261,7 +267,7 @@ describe('AgentCliTokenAuthority', () => {
       maxCalls: 1,
       programmaticOperation: {
         route: 'tool.call',
-        canonicalInvocationHash: HASH_A,
+        canonicalInvocationHash,
         capabilityHash: HASH_B,
         programmaticSurfaceHash: HASH_C,
         outerDispatchReceipt: { sessionId: 'conversation-1', entryId: 17 }
@@ -271,10 +277,76 @@ describe('AgentCliTokenAuthority', () => {
     expect(request.status).toBe('granted')
     if (request.status !== 'granted') throw new Error('Expected armed Programmatic grant')
     expect(request.grant.claims.programmaticOperation).toBe(armed.programmaticOperation)
+    expect(authority.consumeBytes(prepared.tokenId, 1)).toBe(false)
+    expect(request.grant.consumeInputBytes(1)).toBe(true)
+    expect(request.grant.admitProgrammaticInvocation?.({ route: 'tool.call', params })).toBe(true)
     expect(authority.consumeBytes(prepared.tokenId, 1)).toBe(true)
     request.grant.release()
-    expect(authority.beginRequest(agentToken)).toEqual({ status: 'quota-exhausted' })
+    expect(authority.beginRequest(agentToken)).toEqual({ status: 'invalid' })
     expect(assertAuthorityActive).toHaveBeenCalledTimes(4)
+  })
+
+  it('burns an exact Programmatic token when its canonical request changes', () => {
+    const agentToken = token('q')
+    const expectedParams = { target: 'remote_search', arguments: { query: 'weather' } }
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => agentToken,
+      createTokenId: () => 'programmatic-token-mismatch'
+    })
+    const prepared = authority.prepareProgrammaticOperation({
+      binding: programmaticBinding({
+        canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
+          command: { domain: 'tool', verb: 'call' },
+          route: 'tool.call',
+          params: expectedParams
+        })
+      }),
+      assertAuthorityActive: () => undefined
+    })
+    prepared.arm(outerDispatchReceipt(prepared.tokenId))
+
+    const request = authority.beginRequest(agentToken)
+    if (request.status !== 'granted') throw new Error('Expected armed Programmatic grant')
+    expect(
+      request.grant.admitProgrammaticInvocation?.({
+        route: 'tool.call',
+        params: { ...expectedParams, arguments: { query: 'changed' } }
+      })
+    ).toBe(false)
+    request.grant.release()
+
+    expect(request.grant.signal.aborted).toBe(true)
+    expect(authority.beginRequest(agentToken)).toEqual({ status: 'invalid' })
+  })
+
+  it('serializes exact admission and keeps an admitted request live when replayed', () => {
+    const agentToken = token('1')
+    const params = { target: 'remote_search', arguments: {} }
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => agentToken,
+      createTokenId: () => 'programmatic-token-serialized'
+    })
+    const prepared = authority.prepareProgrammaticOperation({
+      binding: programmaticBinding({
+        canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
+          command: { domain: 'tool', verb: 'call' },
+          route: 'tool.call',
+          params
+        })
+      }),
+      assertAuthorityActive: () => undefined
+    })
+    prepared.arm(outerDispatchReceipt(prepared.tokenId))
+
+    const first = authority.beginRequest(agentToken)
+    if (first.status !== 'granted') throw new Error('Expected exact admission grant')
+    expect(authority.beginRequest(agentToken)).toEqual({ status: 'invalid' })
+    expect(first.grant.signal.aborted).toBe(false)
+    expect(first.grant.admitProgrammaticInvocation?.({ route: 'tool.call', params })).toBe(true)
+    expect(authority.beginRequest(agentToken)).toEqual({ status: 'invalid' })
+    expect(first.grant.signal.aborted).toBe(false)
+    first.grant.release()
+    expect(authority.beginRequest(agentToken)).toEqual({ status: 'invalid' })
   })
 
   it('binds exact call and batch commands to canonical owned stdin', () => {
@@ -319,7 +391,12 @@ describe('AgentCliTokenAuthority', () => {
     { command: 'deepchat tool call --target remote', stdin: '{}' },
     { command: 'deepchat tool call', stdin: '' },
     { command: 'deepchat tool call', stdin: '[]' },
-    { command: 'deepchat tool batch', stdin: '{' }
+    { command: 'deepchat tool batch', stdin: '{' },
+    { command: 'deepchat tool call', stdin: '{"target":"remote","arguments":{},"forEach":[]}' },
+    {
+      command: 'deepchat tool call',
+      stdin: `${'{"nested":'.repeat(66)}null${'}'.repeat(66)}`
+    }
   ])('rejects non-exact Programmatic exec invocation %#', (input) => {
     expect(() => parseAgentCliProgrammaticExecInvocation(input)).toThrow()
   })

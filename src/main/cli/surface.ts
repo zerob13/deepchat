@@ -48,6 +48,12 @@ import {
   skillsListPublicRoute,
   skillsSetPublicStatusRoute,
   skillsUninstallPublicRoute,
+  toolBatchRoute,
+  toolCallRoute,
+  toolDescribeRoute,
+  toolSearchRoute,
+  PROGRAMMATIC_TOOL_RPC_MAX_BODY_BYTES,
+  PROGRAMMATIC_TOOL_RPC_TIMEOUT_MS,
   videosGenerateRoute,
   eventsSubscribeRoute,
   runsCancelRoute,
@@ -95,6 +101,8 @@ export type CliSurfaceEntry = Readonly<{
     caller: Readonly<{ principal: LocalControlPrincipal }>
   ) => JsonValue
   agentInputAllowed?: (input: unknown) => boolean
+  /** Exact V2 operation grants are the sole authority for these Agent-only entries. */
+  programmaticOnly?: true
   limits: CliRouteLimits
 }>
 
@@ -972,6 +980,54 @@ const CLI_SURFACE_V1_ENTRIES = [
   diagnosticEntry(cliDoctorRoute)
 ] as const
 
+const PROGRAMMATIC_TOOL_LIMITS = Object.freeze({
+  maxBodyBytes: PROGRAMMATIC_TOOL_RPC_MAX_BODY_BYTES,
+  timeoutMs: PROGRAMMATIC_TOOL_RPC_TIMEOUT_MS
+})
+
+const CLI_SURFACE_V2_PROGRAMMATIC_ENTRIES = [
+  {
+    contract: toolSearchRoute,
+    effect: 'read',
+    callers: ['agent'],
+    scopes: [],
+    transport: 'rpc',
+    approval: 'never',
+    programmaticOnly: true,
+    limits: PROGRAMMATIC_TOOL_LIMITS
+  },
+  {
+    contract: toolDescribeRoute,
+    effect: 'read',
+    callers: ['agent'],
+    scopes: [],
+    transport: 'rpc',
+    approval: 'never',
+    programmaticOnly: true,
+    limits: PROGRAMMATIC_TOOL_LIMITS
+  },
+  {
+    contract: toolCallRoute,
+    effect: 'compute',
+    callers: ['agent'],
+    scopes: [],
+    transport: 'rpc',
+    approval: 'never',
+    programmaticOnly: true,
+    limits: PROGRAMMATIC_TOOL_LIMITS
+  },
+  {
+    contract: toolBatchRoute,
+    effect: 'compute',
+    callers: ['agent'],
+    scopes: [],
+    transport: 'rpc',
+    approval: 'never',
+    programmaticOnly: true,
+    limits: PROGRAMMATIC_TOOL_LIMITS
+  }
+] as const satisfies readonly CliSurfaceEntry[]
+
 function createSurfaceRegistry(
   entries: readonly CliSurfaceEntry[]
 ): ReadonlyMap<string, CliSurfaceEntry> {
@@ -982,6 +1038,17 @@ function createSurfaceRegistry(
     }
     if (entry.agentPolicy && !entry.callers.includes('agent')) {
       throw new Error(`Invalid Agent policy surface: ${entry.contract.name}`)
+    }
+    if (
+      entry.programmaticOnly &&
+      (entry.callers.length !== 1 ||
+        entry.callers[0] !== 'agent' ||
+        entry.scopes.length !== 0 ||
+        entry.transport !== 'rpc' ||
+        entry.approval !== 'never' ||
+        entry.agentPolicy !== undefined)
+    ) {
+      throw new Error(`Invalid Programmatic Tool surface: ${entry.contract.name}`)
     }
     const effects = listCliSurfaceEffects(entry)
     if (entry.agentPolicy === 'allow' && effects.some((effect) => effect !== 'local-maintenance')) {
@@ -1006,9 +1073,10 @@ function createSurfaceRegistry(
 }
 
 export const CLI_SURFACE_V1 = createSurfaceRegistry(CLI_SURFACE_V1_ENTRIES)
-// V2 route negotiation is live before its Agent-only tool entries. Keeping a distinct immutable
-// registry makes route admission fail closed until those entries and their runtime fences land.
-export const CLI_SURFACE_V2 = createSurfaceRegistry(CLI_SURFACE_V1_ENTRIES)
+export const CLI_SURFACE_V2 = createSurfaceRegistry([
+  ...CLI_SURFACE_V1_ENTRIES,
+  ...CLI_SURFACE_V2_PROGRAMMATIC_ENTRIES
+])
 
 export function getCliSurfaceRegistry(
   surfaceVersion: LocalControlRouteSurfaceVersion

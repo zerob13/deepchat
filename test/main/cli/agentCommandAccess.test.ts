@@ -86,6 +86,8 @@ describe('AgentCliCommandAccess', () => {
       commandPermission: new CommandPermissionService(),
       resolveCliDirectory: () => directory
     })
+    const params = { target: 'remote_search', arguments: {} }
+    const stdin = JSON.stringify(params)
     const armed = {
       token: 'p'.repeat(43),
       conversationId: 'conversation-1',
@@ -95,7 +97,7 @@ describe('AgentCliCommandAccess', () => {
         canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
           command: { domain: 'tool', verb: 'call' },
           route: 'tool.call',
-          params: {}
+          params
         }),
         operation: { sessionId: 'conversation-1' }
       }
@@ -106,7 +108,7 @@ describe('AgentCliCommandAccess', () => {
         armed,
         ' conversation-1 ',
         'deepchat tool call',
-        '{}',
+        stdin,
         POSIX_COMMAND_SHELL
       )
     ).toEqual({
@@ -122,7 +124,7 @@ describe('AgentCliCommandAccess', () => {
         armed,
         'conversation-2',
         'deepchat tool call',
-        '{}',
+        stdin,
         POSIX_COMMAND_SHELL
       )
     ).toThrow(/does not match its exact invocation/)
@@ -131,7 +133,7 @@ describe('AgentCliCommandAccess', () => {
         armed,
         'conversation-1',
         'deepchat tool call --target remote',
-        '{}',
+        stdin,
         POSIX_COMMAND_SHELL
       )
     ).toThrow(/does not match its exact invocation/)
@@ -140,7 +142,7 @@ describe('AgentCliCommandAccess', () => {
         armed,
         'conversation-1',
         'deepchat tool call',
-        '{"target":"changed"}',
+        '{"target":"changed","arguments":{}}',
         POSIX_COMMAND_SHELL
       )
     ).toThrow(/does not match its exact invocation/)
@@ -152,6 +154,8 @@ describe('AgentCliCommandAccess', () => {
       commandPermission: new CommandPermissionService(),
       resolveCliDirectory: () => null
     })
+    const params = { steps: [{ target: 'remote_search', arguments: {} }] }
+    const stdin = JSON.stringify(params)
     const armed = {
       token: 'p'.repeat(43),
       conversationId: 'conversation-1',
@@ -161,7 +165,7 @@ describe('AgentCliCommandAccess', () => {
         canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
           command: { domain: 'tool', verb: 'batch' },
           route: 'tool.batch',
-          params: {}
+          params
         }),
         operation: { sessionId: 'conversation-1' }
       }
@@ -172,7 +176,7 @@ describe('AgentCliCommandAccess', () => {
         armed,
         'conversation-1',
         'deepchat tool batch',
-        '{}',
+        stdin,
         POSIX_COMMAND_SHELL
       )
     ).toThrow(/Bundled DeepChat CLI is unavailable/)
@@ -183,6 +187,10 @@ describe('AgentCliCommandAccess', () => {
     'deepchat model',
     'deepchat run watch --run conversation-1',
     'deepchat provider remove --provider provider-1',
+    'deepchat tool search --query calendar',
+    'deepchat tool describe --target calendar_search',
+    'deepchat tool call',
+    'deepchat tool batch',
     'deepchat unknown command',
     'deepchat model invoke > output.txt',
     'deepchat model invoke | tee output.txt',

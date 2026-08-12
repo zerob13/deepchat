@@ -84,17 +84,31 @@ describe('CLI surface V1', () => {
     expect(getCliSurfaceEntry('approvals.resolve')).toBeUndefined()
   })
 
-  it('keeps V2 route negotiation isolated without opening tool invocation early', () => {
+  it('keeps Programmatic routes in the exact-grant V2 surface only', () => {
     expect(getCliSurfaceRegistry(LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION)).toBe(CLI_SURFACE_V1)
     expect(getCliSurfaceRegistry(LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION)).toBe(
       CLI_SURFACE_V2
     )
     expect(CLI_SURFACE_V2).not.toBe(CLI_SURFACE_V1)
-    expect([...CLI_SURFACE_V2.keys()]).toEqual([...CLI_SURFACE_V1.keys()])
+    expect([...CLI_SURFACE_V2.keys()].slice(0, CLI_SURFACE_V1.size)).toEqual([
+      ...CLI_SURFACE_V1.keys()
+    ])
+    expect([...CLI_SURFACE_V2.keys()].slice(CLI_SURFACE_V1.size)).toEqual([
+      'tool.search',
+      'tool.describe',
+      'tool.call',
+      'tool.batch'
+    ])
     for (const method of ['tool.search', 'tool.describe', 'tool.call', 'tool.batch']) {
+      expect(getCliSurfaceEntry(method)).toBeUndefined()
       expect(
         getCliSurfaceEntry(method, LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION)
-      ).toBeUndefined()
+      ).toMatchObject({
+        callers: ['agent'],
+        scopes: [],
+        transport: 'rpc',
+        programmaticOnly: true
+      })
     }
   })
 

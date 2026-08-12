@@ -110,6 +110,13 @@ export type CliServerDependencies = Readonly<{
     caller: CliRouteCaller,
     signal: AbortSignal
   ): Promise<unknown>
+  dispatchProgrammaticTool?(
+    method: string,
+    input: unknown,
+    caller: CliRouteCaller,
+    operation: AgentCliProgrammaticOperationGrant,
+    signal: AbortSignal
+  ): Promise<unknown>
   dispatchStream?(
     method: string,
     input: unknown,
@@ -739,7 +746,7 @@ export class CliServer {
           tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
           requireContentLength: true,
           ...(agentGrant
-            ? { consumeBytes: (bytes: number) => this.consumeAgentBytes(agentGrant, bytes) }
+            ? { consumeBytes: (bytes: number) => this.consumeAgentInputBytes(agentGrant, bytes) }
             : {})
         })
         rawRequest = await parseBoundedJsonBody(body)
@@ -791,6 +798,32 @@ export class CliServer {
       if (!entry || entry.transport !== requestTransport) {
         throw new CliRequestError('not_found', unavailableMethodMessage, { httpStatus: 404 })
       }
+      if (entry.programmaticOnly) {
+        const params = rpcRequest.params
+        const invocationAdmitted =
+          programmaticOperation !== undefined &&
+          agentGrant?.admitProgrammaticInvocation !== undefined &&
+          params !== null &&
+          typeof params === 'object' &&
+          !Array.isArray(params) &&
+          agentGrant.admitProgrammaticInvocation({
+            route: rpcRequest.method,
+            params
+          })
+        if (!invocationAdmitted) {
+          throw new CliRequestError(
+            'authentication_failed',
+            'Programmatic CLI invocation does not match its grant',
+            { httpStatus: 401 }
+          )
+        }
+      } else if (programmaticOperation) {
+        throw new CliRequestError(
+          'authentication_failed',
+          'Programmatic CLI grant does not authorize this method',
+          { httpStatus: 401 }
+        )
+      }
       if (transportBinding && transportBinding.size > entry.limits.maxBodyBytes) {
         throw new CliRequestError('body_too_large', 'Upload body exceeds method limit', {
           httpStatus: 413
@@ -810,6 +843,12 @@ export class CliServer {
         throw new CliRequestError('invalid_request', 'Request does not match the route contract')
       }
       const input = parsedInput.data
+      if (entry.programmaticOnly && !this.dependencies.dispatchProgrammaticTool) {
+        throw new CliRequestError('unavailable', 'Programmatic Tool service is unavailable', {
+          httpStatus: 503,
+          retriable: true
+        })
+      }
       const timeout = setTimeout(() => {
         abortRequest(
           controller,
@@ -860,7 +899,7 @@ export class CliServer {
             tempDirectory: this.layout?.tempDirectory ?? this.dependencies.userDataPath,
             requireContentLength: false,
             ...(agentGrant
-              ? { consumeBytes: (bytes: number) => this.consumeAgentBytes(agentGrant, bytes) }
+              ? { consumeBytes: (bytes: number) => this.consumeAgentInputBytes(agentGrant, bytes) }
               : {})
           })
           try {
@@ -889,9 +928,30 @@ export class CliServer {
             await uploadBody.cleanup()
           }
         } else {
-          rawOutput = await runAbortable(controller.signal, async () =>
-            this.dependencies.dispatch(entry.contract.name, input, caller, controller.signal)
-          )
+          rawOutput = await runAbortable(controller.signal, async () => {
+            if (entry.programmaticOnly) {
+              if (!programmaticOperation || !this.dependencies.dispatchProgrammaticTool) {
+                throw new CliRequestError(
+                  'unavailable',
+                  'Programmatic Tool service is unavailable',
+                  { httpStatus: 503, retriable: true }
+                )
+              }
+              return await this.dependencies.dispatchProgrammaticTool(
+                entry.contract.name,
+                input,
+                caller,
+                programmaticOperation,
+                controller.signal
+              )
+            }
+            return await this.dependencies.dispatch(
+              entry.contract.name,
+              input,
+              caller,
+              controller.signal
+            )
+          })
         }
       } finally {
         admission?.release()
@@ -1055,7 +1115,7 @@ export class CliServer {
         httpStatus: 500
       })
     }
-    if (agentGrant) this.consumeAgentBytes(agentGrant, serialized.length)
+    if (agentGrant) this.consumeAgentOutputBytes(agentGrant, serialized.length)
     if (response.destroyed || response.writableEnded) {
       throw new CliRequestError('cancelled', 'Stream connection is closed')
     }
@@ -1257,7 +1317,7 @@ export class CliServer {
         'utf8'
       )
     }
-    if (responseStatus < 400 && agentGrant && !agentGrant.consumeBytes(serialized.length)) {
+    if (responseStatus < 400 && agentGrant && !agentGrant.consumeOutputBytes(serialized.length)) {
       responseStatus = 429
       serialized = Buffer.from(
         JSON.stringify(
@@ -1283,8 +1343,15 @@ export class CliServer {
     response.end(serialized)
   }
 
-  private consumeAgentBytes(grant: AgentCliRequestGrant, bytes: number): void {
-    if (grant.consumeBytes(bytes)) return
+  private consumeAgentInputBytes(grant: AgentCliRequestGrant, bytes: number): void {
+    if (grant.consumeInputBytes(bytes)) return
+    throw new CliRequestError('rate_limited', 'Agent CLI token byte quota is exhausted', {
+      httpStatus: 429
+    })
+  }
+
+  private consumeAgentOutputBytes(grant: AgentCliRequestGrant, bytes: number): void {
+    if (grant.consumeOutputBytes(bytes)) return
     throw new CliRequestError('rate_limited', 'Agent CLI token byte quota is exhausted', {
       httpStatus: 429
     })

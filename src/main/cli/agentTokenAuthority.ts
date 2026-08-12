@@ -1,11 +1,16 @@
 import { createHash, randomBytes } from 'node:crypto'
 import {
-  LocalControlMethodSchema,
+  LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES,
   LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
   LocalControlScopesSchema,
   LocalControlTokenSchema,
   type LocalControlScope
 } from '@shared/contracts/localControl'
+import {
+  PROGRAMMATIC_TOOL_RPC_MAX_BODY_BYTES,
+  toolBatchRoute,
+  toolCallRoute
+} from '@shared/contracts/routes/tools.routes'
 import { z } from 'zod'
 import {
   MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS,
@@ -14,7 +19,8 @@ import {
   MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES,
   MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES
 } from '@/tape/domain/toolSurfaceFacts'
-import { hashJsonData } from '@/tape/domain/canonicalJson'
+import { canonicalJsonStringifyData, hashJsonData } from '@/tape/domain/canonicalJson'
+import { parseBoundedJsonBytes } from './body'
 
 export const DEFAULT_AGENT_CLI_TOKEN_TTL_MS = 35 * 60_000
 export const DEFAULT_AGENT_CLI_TOKEN_MAX_CALLS = 64
@@ -27,6 +33,12 @@ const DEFAULT_MAX_TOKENS = 256
 const DEFAULT_MAX_TOKENS_PER_CONVERSATION = 8
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/
 const MAX_OPERATION_IDENTITY_CHARACTERS = 1_024
+const AgentCliProgrammaticRouteSchema = z.enum([
+  'tool.search',
+  'tool.describe',
+  'tool.call',
+  'tool.batch'
+])
 
 export const AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION = 1 as const
 
@@ -65,7 +77,7 @@ export type AgentCliProgrammaticOperationBinding = Readonly<{
     domain: 'tool'
     verb: AgentCliProgrammaticToolVerb
   }>
-  route: string
+  route: AgentCliProgrammaticInvocation['route']
   canonicalInvocationHash: string
   adapterMode: 'cli-programmatic'
   capabilityHash: string
@@ -107,7 +119,12 @@ export type IssuedAgentCliToken = AgentCliTokenClaims &
 export type AgentCliRequestGrant = Readonly<{
   claims: AgentCliTokenClaims
   signal: AbortSignal
-  consumeBytes(bytes: number): boolean
+  consumeInputBytes(bytes: number): boolean
+  consumeOutputBytes(bytes: number): boolean
+  admitProgrammaticInvocation?(input: {
+    route: string
+    params: Readonly<Record<string, unknown>>
+  }): boolean
   release(): void
 }>
 
@@ -179,7 +196,7 @@ const AgentCliProgrammaticOperationGrantSchema = z
         verb: z.enum(['search', 'describe', 'call', 'batch'])
       })
       .strict(),
-    route: LocalControlMethodSchema,
+    route: AgentCliProgrammaticRouteSchema,
     canonicalInvocationHash: z.string().regex(SHA_256_PATTERN),
     adapterMode: z.literal('cli-programmatic'),
     capabilityHash: z.string().regex(SHA_256_PATTERN),
@@ -254,12 +271,12 @@ export function parseAgentCliProgrammaticExecInvocation(input: {
   if (!verb) {
     throw new Error('Programmatic Tool exec requires an exact call or batch command')
   }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(input.stdin)
-  } catch {
-    throw new Error('Programmatic Tool stdin must contain valid JSON')
+  const stdinBytes = Buffer.from(input.stdin, 'utf8')
+  if (stdinBytes.length > MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES) {
+    throw new Error('Programmatic Tool stdin exceeds its supported byte limit')
   }
+  const parsedBody = parseBoundedJsonBytes(stdinBytes)
+  const parsed = (verb === 'call' ? toolCallRoute : toolBatchRoute).input.parse(parsedBody)
   const invocationCommand = Object.freeze({ domain: 'tool' as const, verb })
   const route = `tool.${verb}` as const
   return Object.freeze({
@@ -268,7 +285,7 @@ export function parseAgentCliProgrammaticExecInvocation(input: {
     canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
       command: invocationCommand,
       route,
-      params: requireCanonicalInvocationParams(parsed)
+      params: parsed
     })
   })
 }
@@ -288,8 +305,12 @@ type TokenRecord = {
   assertAuthorityActive?: () => void
   maxCalls: number
   maxBytes: number
+  maxInputBytes: number
+  maxOutputBytes: number
   usedCalls: number
   usedBytes: number
+  usedInputBytes: number
+  usedOutputBytes: number
   activeRequests: number
   issuedAt: number
   controller: AbortController
@@ -361,7 +382,7 @@ function normalizeProgrammaticOperationBinding(
       'providerToolCallId'
     )
   })
-  const route = LocalControlMethodSchema.parse(input.route)
+  const route = AgentCliProgrammaticRouteSchema.parse(input.route)
   if (route !== `tool.${input.command.verb}`) {
     throw new Error('Programmatic grant route does not match its command')
   }
@@ -504,8 +525,12 @@ export class AgentCliTokenAuthority {
       state: 'armed',
       maxCalls,
       maxBytes,
+      maxInputBytes: maxBytes,
+      maxOutputBytes: maxBytes,
       usedCalls: 0,
       usedBytes: 0,
+      usedInputBytes: 0,
+      usedOutputBytes: 0,
       activeRequests: 0,
       issuedAt: allocation.issuedAt,
       controller: allocation.controller,
@@ -534,7 +559,12 @@ export class AgentCliTokenAuthority {
       Math.min(binding.quotas.maxDurationMs, MAX_AGENT_CLI_TOKEN_TTL_MS),
       'ttlMs'
     )
-    const maxBytes = binding.quotas.maxInputBytes + binding.quotas.maxOutputBytes
+    // Transport framing is not part of the capability's canonical input/output quotas. Keep the
+    // bearer transport hard-bounded independently so a changed but route-bounded request reaches
+    // exact-hash admission and receives the same fail-closed shape instead of a quota oracle.
+    const maxInputBytes = PROGRAMMATIC_TOOL_RPC_MAX_BODY_BYTES
+    const maxOutputBytes = LOCAL_CONTROL_MAX_JSON_RESPONSE_BYTES
+    const maxBytes = maxInputBytes + maxOutputBytes
     const allocation = this.allocateToken(conversationId, ttlMs)
     const claims: AgentCliTokenClaims = Object.freeze({
       tokenId: allocation.tokenId,
@@ -550,8 +580,12 @@ export class AgentCliTokenAuthority {
       assertAuthorityActive: input.assertAuthorityActive,
       maxCalls: 1,
       maxBytes,
+      maxInputBytes,
+      maxOutputBytes,
       usedCalls: 0,
       usedBytes: 0,
+      usedInputBytes: 0,
+      usedOutputBytes: 0,
       activeRequests: 0,
       issuedAt: allocation.issuedAt,
       controller: allocation.controller,
@@ -590,8 +624,24 @@ export class AgentCliTokenAuthority {
       this.removeRecord(digest, 'expired')
       return { status: 'expired' }
     }
+    const programmaticOperation = record.claims.programmaticOperation
+    if (
+      record.usedCalls >= record.maxCalls ||
+      record.usedBytes >= record.maxBytes ||
+      record.usedInputBytes >= record.maxInputBytes ||
+      record.usedOutputBytes >= record.maxOutputBytes
+    ) {
+      // Exact one-use grants deliberately collapse replay into the same authentication shape as
+      // changed route/body, expiry, and revocation. Ordinary reusable Agent tokens retain their
+      // explicit quota response.
+      return { status: programmaticOperation ? 'invalid' : 'quota-exhausted' }
+    }
     const validatesProgrammaticAuthority = Boolean(record.assertAuthorityActive)
-    if (validatesProgrammaticAuthority) record.state = 'admitting'
+    if (Boolean(programmaticOperation) !== validatesProgrammaticAuthority) {
+      this.removeRecord(digest, 'revoked')
+      return { status: 'invalid' }
+    }
+    if (programmaticOperation) record.state = 'admitting'
     try {
       record.assertAuthorityActive?.()
     } catch {
@@ -600,7 +650,7 @@ export class AgentCliTokenAuthority {
     }
     if (
       this.recordsByDigest.get(digest) !== record ||
-      record.state !== (validatesProgrammaticAuthority ? 'admitting' : 'armed') ||
+      record.state !== (programmaticOperation ? 'admitting' : 'armed') ||
       record.controller.signal.aborted
     ) {
       return { status: 'invalid' }
@@ -609,12 +659,7 @@ export class AgentCliTokenAuthority {
       this.removeRecord(digest, 'expired')
       return { status: 'expired' }
     }
-    record.state = 'armed'
-    if (record.usedCalls >= record.maxCalls || record.usedBytes >= record.maxBytes) {
-      return { status: 'quota-exhausted' }
-    }
-
-    record.usedCalls += 1
+    if (!programmaticOperation) record.usedCalls += 1
     record.activeRequests += 1
     let released = false
     return {
@@ -622,11 +667,27 @@ export class AgentCliTokenAuthority {
       grant: {
         claims: record.claims,
         signal: record.controller.signal,
-        consumeBytes: (bytes) => this.consumeRecordBytes(record, bytes),
+        consumeInputBytes: (bytes) => this.consumeRecordBytes(record, bytes, 'input'),
+        consumeOutputBytes: (bytes) => this.consumeRecordBytes(record, bytes, 'output'),
+        ...(programmaticOperation
+          ? {
+              admitProgrammaticInvocation: (input: {
+                route: string
+                params: Readonly<Record<string, unknown>>
+              }) => this.admitProgrammaticInvocation(record, input)
+            }
+          : {}),
         release: () => {
           if (released) return
           released = true
           record.activeRequests = Math.max(0, record.activeRequests - 1)
+          if (
+            programmaticOperation &&
+            this.recordsByDigest.get(record.digest) === record &&
+            record.state === 'admitting'
+          ) {
+            this.removeRecord(record.digest, 'revoked')
+          }
         }
       }
     }
@@ -635,7 +696,7 @@ export class AgentCliTokenAuthority {
   consumeBytes(tokenId: string, bytes: number): boolean {
     const record = this.recordsById.get(tokenId)
     return record?.state === 'armed' && record.activeRequests > 0
-      ? this.consumeRecordBytes(record, bytes)
+      ? this.consumeRecordBytes(record, bytes, 'output')
       : false
   }
 
@@ -794,7 +855,11 @@ export class AgentCliTokenAuthority {
     throw new Error('Failed to allocate a unique Agent CLI token ID')
   }
 
-  private consumeRecordBytes(record: TokenRecord, bytes: number): boolean {
+  private consumeRecordBytes(
+    record: TokenRecord,
+    bytes: number,
+    direction: 'input' | 'output'
+  ): boolean {
     if (!Number.isSafeInteger(bytes) || bytes < 0) {
       throw new Error('Agent CLI byte usage must be a non-negative safe integer')
     }
@@ -803,12 +868,69 @@ export class AgentCliTokenAuthority {
       this.removeRecord(record.digest, 'expired')
       return false
     }
-    if (bytes > record.maxBytes - record.usedBytes) {
+    const maximum = direction === 'input' ? record.maxInputBytes : record.maxOutputBytes
+    const used = direction === 'input' ? record.usedInputBytes : record.usedOutputBytes
+    if (bytes > maximum - used || bytes > record.maxBytes - record.usedBytes) {
       record.usedBytes = record.maxBytes
+      if (direction === 'input') record.usedInputBytes = maximum
+      else record.usedOutputBytes = maximum
       return false
     }
     record.usedBytes += bytes
+    if (direction === 'input') record.usedInputBytes += bytes
+    else record.usedOutputBytes += bytes
     return true
+  }
+
+  private admitProgrammaticInvocation(
+    record: TokenRecord,
+    input: {
+      route: string
+      params: Readonly<Record<string, unknown>>
+    }
+  ): boolean {
+    const operation = record.claims.programmaticOperation
+    if (
+      !operation ||
+      !record.assertAuthorityActive ||
+      this.recordsByDigest.get(record.digest) !== record ||
+      record.state !== 'admitting' ||
+      record.activeRequests !== 1 ||
+      record.controller.signal.aborted
+    ) {
+      return false
+    }
+    try {
+      record.assertAuthorityActive()
+      if (
+        this.recordsByDigest.get(record.digest) !== record ||
+        record.state !== 'admitting' ||
+        record.controller.signal.aborted ||
+        record.claims.expiresAt <= this.now()
+      ) {
+        throw new Error('Programmatic grant is no longer active')
+      }
+      const params = requireCanonicalInvocationParams(input.params)
+      const canonicalParamsBytes = Buffer.byteLength(canonicalJsonStringifyData(params), 'utf8')
+      const invocationHash = buildAgentCliProgrammaticInvocationHash({
+        command: operation.command,
+        route: operation.route,
+        params
+      })
+      if (
+        input.route !== operation.route ||
+        canonicalParamsBytes > operation.quotas.maxInputBytes ||
+        invocationHash !== operation.canonicalInvocationHash
+      ) {
+        throw new Error('Programmatic invocation does not match its grant')
+      }
+      record.usedCalls += 1
+      record.state = 'armed'
+      return true
+    } catch {
+      this.removeRecord(record.digest, 'revoked')
+      return false
+    }
   }
 
   private enforceConversationCapacity(conversationId: string): void {
@@ -832,7 +954,10 @@ export class AgentCliTokenAuthority {
       }
       if (
         record.activeRequests === 0 &&
-        (record.usedCalls >= record.maxCalls || record.usedBytes >= record.maxBytes)
+        (record.usedCalls >= record.maxCalls ||
+          record.usedBytes >= record.maxBytes ||
+          record.usedInputBytes >= record.maxInputBytes ||
+          record.usedOutputBytes >= record.maxOutputBytes)
       ) {
         this.removeRecord(record.digest, 'exhausted')
       }
