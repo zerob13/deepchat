@@ -117,7 +117,7 @@ function exactKeys(value: Record<string, unknown>, keys: string[], field: string
   }
 }
 
-function canonicalRelativePath(value: unknown): string {
+export function canonicalSkillExecutionPackagePath(value: unknown): string {
   if (
     typeof value !== 'string' ||
     !value ||
@@ -196,7 +196,7 @@ function validateExecutionPackage(
       throw new TypeError('Execution package file must be an object.')
     const file = value as Record<string, unknown>
     exactKeys(file, ['relativePath', 'base64', 'byteCount', 'sha256'], 'Execution package file')
-    const relativePath = canonicalRelativePath(file.relativePath)
+    const relativePath = canonicalSkillExecutionPackagePath(file.relativePath)
     if (!allowSupportPaths && !relativePath.startsWith('scripts/')) {
       throw new TypeError('Schema 2 execution package files must be under scripts/.')
     }
@@ -267,7 +267,7 @@ function validateExecutionPackage(
       throw new TypeError('Execution package executable must be an object.')
     const executable = value as Record<string, unknown>
     exactKeys(executable, ['relativePath', 'runtime', 'enabled'], 'Execution package executable')
-    const relativePath = canonicalRelativePath(executable.relativePath)
+    const relativePath = canonicalSkillExecutionPackagePath(executable.relativePath)
     if (
       previousExecutable !== null &&
       Buffer.compare(Buffer.from(previousExecutable), Buffer.from(relativePath)) >= 0
@@ -337,6 +337,12 @@ function validateExecutionPackage(
     packageHash,
     byteCount
   } as TapeSkillMaterializationPayload['executionPackage']
+}
+
+export function validateSkillExecutionPackage(
+  value: unknown
+): TapeSkillMaterializationPayload['executionPackage'] {
+  return validateExecutionPackage(value, true)
 }
 
 function createExecutionPackage(

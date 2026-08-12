@@ -3,10 +3,9 @@ import path from 'path'
 import { spawn } from 'child_process'
 import logger from '@shared/logger'
 import type {
-  SkillServicePort,
-  SkillExtensionConfig,
   SkillRuntimePreference,
-  SkillScriptDescriptor
+  SkillRuntimePolicy,
+  SkillScriptRuntime
 } from '@shared/types/skill'
 import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
 import {
@@ -21,15 +20,21 @@ import {
 } from '@/agent/shared/process/shellOutputEncoding'
 import { resolveSessionDir } from '@/agent/shared/storage/sessionPaths'
 import { resolveUsableSpawnCwd } from '@/agent/shared/process/spawnGuard'
+import { terminateProcessTree } from '@/agent/shared/process/processTree'
 import { RuntimeHelper } from '@/lib/runtimeHelper'
 import type { SettingsStore } from '@/config/settingsStore'
 import type { CommandShellDialect, ResolvedCommandShell } from '@shared/commandShell'
+import type { ResolvedSkillExecutionAuthority } from './skillExecutionAuthority'
+import {
+  materializeSkillExecutionPackageTree,
+  type MaterializedSkillExecutionPackageTree
+} from './skillExecutionPackageTree'
+import { canonicalSkillExecutionPackagePath } from '@/tape/domain/skillMaterialization'
 
 const DEFAULT_TIMEOUT_MS = 120000
 const FOREGROUND_OFFLOAD_THRESHOLD = 10000
 const FOREGROUND_PREVIEW_CHARS = 12000
 const FOREGROUND_KILL_GRACE_MS = 2000
-const FOREGROUND_FORCE_SETTLE_MS = 500
 
 export interface SkillRunRequest {
   skill: string
@@ -43,8 +48,8 @@ export interface SkillRunRequest {
 export interface SkillRunOptions {
   conversationId: string
   commandShell: ResolvedCommandShell
-  activeSkillNames?: string[]
   outputPreviewChars?: number
+  assertAuthorityCurrent: () => Promise<void>
   beforeExecute?: (normalizedArguments: Record<string, unknown>) => void
 }
 
@@ -66,6 +71,13 @@ interface RuntimeCommand {
   mode: 'uv' | 'python' | 'node' | 'shell'
 }
 
+interface MaterializedSkillScript {
+  relativePath: string
+  absolutePath: string
+  runtime: SkillScriptRuntime
+  enabled: boolean
+}
+
 interface SpawnPlan {
   command: string
   args: string[]
@@ -81,150 +93,179 @@ export class SkillExecutionService {
   private readonly settings: Pick<SettingsStore, 'get'>
   private readonly resolveConversationWorkdir?: (conversationId: string) => Promise<string | null>
 
-  constructor(
-    private readonly skillService: SkillServicePort,
-    settings: Pick<SettingsStore, 'get'>,
-    options: SkillExecutionServiceOptions = {}
-  ) {
+  constructor(settings: Pick<SettingsStore, 'get'>, options: SkillExecutionServiceOptions = {}) {
     this.settings = settings
     this.resolveConversationWorkdir = options.resolveConversationWorkdir
     this.runtimeHelper.initializeRuntimes()
   }
 
-  async execute(input: SkillRunRequest, options: SkillRunOptions): Promise<SkillExecutionResult> {
-    const preparedPlan = await this.preparePlanForExecution(
-      await this.buildSpawnPlan(
-        input,
+  async execute(
+    input: SkillRunRequest,
+    authority: ResolvedSkillExecutionAuthority,
+    options: SkillRunOptions
+  ): Promise<SkillExecutionResult> {
+    await options.assertAuthorityCurrent()
+    const tree = await materializeSkillExecutionPackageTree(authority.executionPackage)
+    let ownershipTransferred = false
+    try {
+      await options.assertAuthorityCurrent()
+      const preparedPlan = await this.preparePlanForExecution(
+        await this.buildSpawnPlan(
+          input,
+          authority,
+          tree,
+          options.conversationId,
+          options.commandShell
+        ),
+        options.commandShell
+      )
+      const plan = { ...preparedPlan, cwd: resolveUsableSpawnCwd(preparedPlan.cwd) }
+      const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
+      const dispatchArguments = {
+        skill: input.skill,
+        script: input.script,
+        args: input.args ?? [],
+        ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+        background: input.background === true,
+        timeoutMs,
+        resolvedCommand: plan.command,
+        resolvedArgs: plan.args,
+        resolvedCwd: plan.cwd,
+        ...(plan.shellCommand === undefined ? {} : { shellCommand: plan.shellCommand }),
+        spawnMode: plan.spawnMode,
+        packageHash: authority.executionPackage.packageHash
+      }
+      const assertReadyForDispatch = async (): Promise<void> => {
+        await tree.assertIntact()
+        await options.assertAuthorityCurrent()
+        options.beforeExecute?.(dispatchArguments)
+      }
+
+      if (input.background) {
+        const displayCommand =
+          plan.shellCommand ?? this.formatDirectInvocation(plan.command, plan.args)
+        ownershipTransferred = true
+        const result = await backgroundExecSessionManager.start(
+          options.conversationId,
+          displayCommand,
+          plan.cwd,
+          {
+            commandShell: options.commandShell,
+            ...(plan.spawnMode === 'direct'
+              ? {
+                  directInvocation: {
+                    executable: plan.command,
+                    args: plan.args
+                  }
+                }
+              : {}),
+            timeout: timeoutMs,
+            env: plan.env,
+            previewChars: options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS,
+            offloadThresholdChars: Math.min(
+              FOREGROUND_OFFLOAD_THRESHOLD,
+              options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS
+            ),
+            ownedSkillExecutionPackageTree: tree.descriptor
+          },
+          assertReadyForDispatch
+        )
+
+        if (input.stdin !== undefined) {
+          try {
+            await backgroundExecSessionManager.write(
+              options.conversationId,
+              result.sessionId,
+              input.stdin,
+              true
+            )
+          } catch (error) {
+            await backgroundExecSessionManager
+              .remove(options.conversationId, result.sessionId)
+              .catch((cleanupError) => {
+                logger.warn('[SkillExecutionService] Failed to remove background session', {
+                  sessionId: result.sessionId,
+                  cleanupError
+                })
+              })
+            throw error
+          }
+        }
+
+        return {
+          output: { status: 'running', sessionId: result.sessionId },
+          rtkApplied: plan.spawnMode === 'shell',
+          rtkMode: plan.spawnMode === 'shell' ? 'rewrite' : 'bypass'
+        }
+      }
+
+      await assertReadyForDispatch()
+      const foregroundResult = await this.runForeground(
+        plan,
+        timeoutMs,
         options.conversationId,
         options.commandShell,
-        options.activeSkillNames
-      ),
-      options.commandShell
-    )
-    const plan = { ...preparedPlan, cwd: resolveUsableSpawnCwd(preparedPlan.cwd) }
-    const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    options.beforeExecute?.({
-      skill: input.skill,
-      script: input.script,
-      args: input.args ?? [],
-      ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
-      background: input.background === true,
-      timeoutMs,
-      resolvedCommand: plan.command,
-      resolvedArgs: plan.args,
-      resolvedCwd: plan.cwd,
-      ...(plan.shellCommand === undefined ? {} : { shellCommand: plan.shellCommand }),
-      spawnMode: plan.spawnMode
-    })
-
-    if (input.background) {
-      const displayCommand =
-        plan.shellCommand ?? this.formatDirectInvocation(plan.command, plan.args)
-      const result = await backgroundExecSessionManager.start(
-        options.conversationId,
-        displayCommand,
-        plan.cwd,
-        {
-          commandShell: options.commandShell,
-          ...(plan.spawnMode === 'direct'
-            ? {
-                directInvocation: {
-                  executable: plan.command,
-                  args: plan.args
-                }
-              }
-            : {}),
-          timeout: timeoutMs,
-          env: plan.env,
-          previewChars: options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS,
-          offloadThresholdChars: Math.min(
-            FOREGROUND_OFFLOAD_THRESHOLD,
-            options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS
-          )
-        }
+        input.stdin,
+        options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS
       )
-
-      if (input.stdin) {
-        await backgroundExecSessionManager.write(
-          options.conversationId,
-          result.sessionId,
-          input.stdin,
-          true
-        )
+      if (foregroundResult.releasePackageTree === false) {
+        ownershipTransferred = true
+        logger.warn('[SkillExecutionService] Retaining package tree for an unclosed process tree', {
+          rootPath: tree.rootPath
+        })
       }
-
       return {
-        output: { status: 'running', sessionId: result.sessionId },
+        output: foregroundResult.output,
         rtkApplied: plan.spawnMode === 'shell',
-        rtkMode: plan.spawnMode === 'shell' ? 'rewrite' : 'bypass'
+        rtkMode: plan.spawnMode === 'shell' ? 'rewrite' : 'bypass',
+        outputOffloadPath: foregroundResult.outputOffloadPath
       }
-    }
-
-    const foregroundResult = await this.runForeground(
-      plan,
-      timeoutMs,
-      options.conversationId,
-      options.commandShell,
-      input.stdin,
-      options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS
-    )
-    return {
-      output: foregroundResult.output,
-      rtkApplied: plan.spawnMode === 'shell',
-      rtkMode: plan.spawnMode === 'shell' ? 'rewrite' : 'bypass',
-      outputOffloadPath: foregroundResult.outputOffloadPath
+    } finally {
+      if (!ownershipTransferred) {
+        await tree.cleanup().catch((error) => {
+          logger.warn('[SkillExecutionService] Failed to clean foreground package tree', {
+            rootPath: tree.rootPath,
+            error
+          })
+        })
+      }
     }
   }
 
   private async buildSpawnPlan(
     input: SkillRunRequest,
+    authority: ResolvedSkillExecutionAuthority,
+    tree: MaterializedSkillExecutionPackageTree,
     conversationId: string,
-    commandShell: ResolvedCommandShell,
-    activeSkillNames?: string[]
+    commandShell: ResolvedCommandShell
   ): Promise<SpawnPlan> {
-    const activeSkills =
-      activeSkillNames ?? (await this.skillService.getActiveSkills(conversationId))
-    if (!activeSkills.includes(input.skill)) {
-      throw new Error(`Skill "${input.skill}" is not active in the current message/tool loop`)
+    if (input.skill !== authority.identity.skillName) {
+      throw new Error('Skill execution request does not match its request-bound package authority.')
     }
 
-    const agentId = await this.skillService.resolveSessionAgentId(conversationId)
-    if (!agentId) {
-      throw new Error('No DeepChat Agent context available for skill execution')
-    }
-    const metadata = (await this.skillService.getMetadataList(agentId)).find(
-      (item) => item.name === input.skill
-    )
-    if (!metadata) {
-      throw new Error(`Skill "${input.skill}" not found`)
-    }
-
-    const scripts = await this.skillService.listSkillScriptsForAgent(agentId, input.skill)
-    const script = this.resolveRequestedScript(input.script, scripts)
+    const script = this.resolveRequestedScript(input.script, authority, tree)
     if (!script.enabled) {
       throw new Error(`Skill script "${script.relativePath}" is disabled`)
     }
 
-    const extension = await this.skillService.getSkillExtensionForAgent(agentId, input.skill)
     const shellEnv = await getShellEnvironment()
-    const executionCwd = await this.resolveExecutionCwd(conversationId, metadata.skillRoot)
+    const executionCwd = await this.resolveExecutionCwd(conversationId, tree.packageRoot)
     const mergedEnv = mergeCommandEnvironment({
       shellEnv,
       overrides: {
-        ...extension.env,
-        SKILL_ROOT: metadata.skillRoot,
-        DEEPCHAT_SKILL_ROOT: metadata.skillRoot
+        ...authority.environment,
+        SKILL_ROOT: tree.packageRoot,
+        DEEPCHAT_SKILL_ROOT: tree.packageRoot
       }
     })
 
     const runtime = await this.resolveRuntimeCommand(
       script,
-      extension,
-      metadata.skillRoot,
+      authority.executionPackage.runtimePolicy,
       mergedEnv,
       commandShell
     )
-    const args = this.buildRuntimeArgs(runtime, script, metadata.skillRoot, input.args ?? [])
+    const args = this.buildRuntimeArgs(runtime, script, tree.packageRoot, input.args ?? [])
 
     return {
       command: runtime.command,
@@ -239,10 +280,10 @@ export class SkillExecutionService {
     }
   }
 
-  private async resolveExecutionCwd(conversationId: string, skillRoot: string): Promise<string> {
-    const normalizedSkillRoot = path.resolve(skillRoot)
+  private async resolveExecutionCwd(conversationId: string, packageRoot: string): Promise<string> {
+    const normalizedPackageRoot = path.resolve(packageRoot)
     if (!this.resolveConversationWorkdir) {
-      return this.resolveFallbackExecutionCwd(conversationId, normalizedSkillRoot)
+      return this.resolveFallbackExecutionCwd(conversationId, normalizedPackageRoot)
     }
 
     try {
@@ -276,15 +317,15 @@ export class SkillExecutionService {
 
     logger.warn('[SkillExecutionService] Missing conversation workdir, using session directory', {
       conversationId,
-      skillRoot: normalizedSkillRoot
+      packageRoot: normalizedPackageRoot
     })
-    return this.resolveFallbackExecutionCwd(conversationId, normalizedSkillRoot)
+    return this.resolveFallbackExecutionCwd(conversationId, normalizedPackageRoot)
   }
 
-  private resolveFallbackExecutionCwd(conversationId: string, skillRoot: string): string {
+  private resolveFallbackExecutionCwd(conversationId: string, packageRoot: string): string {
     const sessionDir = resolveSessionDir(conversationId)
     if (!sessionDir) {
-      return skillRoot
+      return packageRoot
     }
 
     try {
@@ -292,55 +333,44 @@ export class SkillExecutionService {
       return sessionDir
     } catch (error) {
       logger.warn(
-        '[SkillExecutionService] Failed to create session directory, falling back to skill root',
+        '[SkillExecutionService] Failed to create session directory, using package root',
         {
           conversationId,
           sessionDir,
-          skillRoot,
+          packageRoot,
           error
         }
       )
     }
 
-    return skillRoot
+    return packageRoot
   }
 
   private resolveRequestedScript(
     requestedScript: string,
-    scripts: SkillScriptDescriptor[]
-  ): SkillScriptDescriptor {
-    const normalized = requestedScript.trim().replace(/\\/g, '/')
-    if (!normalized) {
-      throw new Error('script is required')
+    authority: ResolvedSkillExecutionAuthority,
+    tree: MaterializedSkillExecutionPackageTree
+  ): MaterializedSkillScript {
+    let canonicalPath: string
+    try {
+      canonicalPath = canonicalSkillExecutionPackagePath(requestedScript)
+    } catch {
+      throw new Error(`Skill script "${requestedScript}" is not a canonical package path`)
     }
-
-    const exact = scripts.find((script) => script.relativePath.replace(/\\/g, '/') === normalized)
-    if (exact) {
-      return exact
-    }
-
-    const prefixed = scripts.find(
-      (script) => script.relativePath.replace(/\\/g, '/') === `scripts/${normalized}`
+    const executable = authority.executionPackage.executables.find(
+      (candidate) => candidate.relativePath === canonicalPath
     )
-    if (prefixed) {
-      return prefixed
-    }
+    if (!executable) throw new Error(`Skill script "${requestedScript}" not found in package`)
 
-    const byName = scripts.filter((script) => script.name === path.basename(normalized))
-    if (byName.length === 1) {
-      return byName[0]
+    return {
+      ...executable,
+      absolutePath: tree.resolveFile(executable.relativePath)
     }
-    if (byName.length > 1) {
-      throw new Error(`Multiple scripts match "${requestedScript}". Use the full relative path.`)
-    }
-
-    throw new Error(`Skill script "${requestedScript}" not found`)
   }
 
   private async resolveRuntimeCommand(
-    script: SkillScriptDescriptor,
-    extension: SkillExtensionConfig,
-    skillRoot: string,
+    script: MaterializedSkillScript,
+    runtimePolicy: SkillRuntimePolicy,
     env: Record<string, string>,
     commandShell: ResolvedCommandShell
   ): Promise<RuntimeCommand> {
@@ -352,16 +382,15 @@ export class SkillExecutionService {
     }
 
     if (script.runtime === 'node') {
-      return await this.resolveNodeRuntime(extension.runtimePolicy.node, env)
+      return await this.resolveNodeRuntime(runtimePolicy.node, env)
     }
 
-    return await this.resolvePythonRuntime(extension.runtimePolicy.python, env, skillRoot)
+    return await this.resolvePythonRuntime(runtimePolicy.python, env)
   }
 
   private async resolvePythonRuntime(
     preference: SkillRuntimePreference,
-    env: Record<string, string>,
-    _skillRoot: string
+    env: Record<string, string>
   ): Promise<RuntimeCommand> {
     if (preference === 'builtin') {
       const bundledUv = this.getBundledRuntimeCommand('uv')
@@ -454,14 +483,14 @@ export class SkillExecutionService {
 
   private buildRuntimeArgs(
     runtime: RuntimeCommand,
-    script: SkillScriptDescriptor,
-    skillRoot: string,
+    script: MaterializedSkillScript,
+    packageRoot: string,
     args: string[]
   ): string[] {
     if (runtime.mode === 'uv') {
       const commandArgs = ['run']
-      if (fs.existsSync(path.join(skillRoot, 'pyproject.toml'))) {
-        commandArgs.push('--project', skillRoot)
+      if (fs.existsSync(path.join(packageRoot, 'pyproject.toml'))) {
+        commandArgs.push('--project', packageRoot)
       }
       commandArgs.push(script.absolutePath, ...args)
       return commandArgs
@@ -485,7 +514,7 @@ export class SkillExecutionService {
     commandShell: ResolvedCommandShell,
     stdin?: string,
     outputPreviewChars = FOREGROUND_PREVIEW_CHARS
-  ): Promise<{ output: string; outputOffloadPath?: string }> {
+  ): Promise<{ output: string; outputOffloadPath?: string; releasePackageTree: boolean }> {
     const outputFilePath = this.createForegroundOutputPath(conversationId, plan.outputPrefix)
     const offloadThresholdChars = Math.min(FOREGROUND_OFFLOAD_THRESHOLD, outputPreviewChars)
 
@@ -517,9 +546,8 @@ export class SkillExecutionService {
       let timedOut = false
       let outputWriteQueue = Promise.resolve()
       let timeoutId: NodeJS.Timeout | null = null
-      let killTimeoutId: NodeJS.Timeout | null = null
-      let forceSettleTimeoutId: NodeJS.Timeout | null = null
       let settled = false
+      let releasePackageTree = true
 
       const outputDecoders = createUtf8OutputDecoderPair((data) => appendOutput(data))
 
@@ -528,14 +556,18 @@ export class SkillExecutionService {
           clearTimeout(timeoutId)
           timeoutId = null
         }
-        if (killTimeoutId) {
-          clearTimeout(killTimeoutId)
-          killTimeoutId = null
+      }
+
+      const settleUnclosedProcessTree = () => {
+        if (settled) return
+        releasePackageTree = false
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        child.stdin?.destroy()
+        if (typeof child.unref === 'function') {
+          child.unref()
         }
-        if (forceSettleTimeoutId) {
-          clearTimeout(forceSettleTimeoutId)
-          forceSettleTimeoutId = null
-        }
+        void settleProcess(null)
       }
 
       const settleProcess = async (code: number | null, error?: Error) => {
@@ -577,7 +609,8 @@ export class SkillExecutionService {
         }
         resolve({
           output: lines.join('\n'),
-          outputOffloadPath: offloaded ? (activeOutputFilePath ?? undefined) : undefined
+          outputOffloadPath: offloaded ? (activeOutputFilePath ?? undefined) : undefined,
+          releasePackageTree
         })
       }
 
@@ -664,29 +697,17 @@ export class SkillExecutionService {
 
       timeoutId = setTimeout(() => {
         timedOut = true
-        try {
-          child.kill('SIGTERM')
-        } catch {
-          // ignore kill errors
-        }
-
-        killTimeoutId = setTimeout(() => {
-          try {
-            child.kill('SIGKILL')
-          } catch {
-            // ignore kill errors
-          }
-
-          forceSettleTimeoutId = setTimeout(() => {
-            child.stdout?.destroy()
-            child.stderr?.destroy()
-            child.stdin?.destroy()
-            if (typeof child.unref === 'function') {
-              child.unref()
-            }
-            void settleProcess(null)
-          }, FOREGROUND_FORCE_SETTLE_MS)
-        }, FOREGROUND_KILL_GRACE_MS)
+        void terminateProcessTree(child, { graceMs: FOREGROUND_KILL_GRACE_MS })
+          .then((closed) => {
+            if (closed || settled) return
+            settleUnclosedProcessTree()
+          })
+          .catch((error) => {
+            logger.warn('[SkillExecutionService] Failed to terminate timed-out process tree', {
+              error
+            })
+            settleUnclosedProcessTree()
+          })
       }, timeoutMs)
 
       child.on('error', (error) => {

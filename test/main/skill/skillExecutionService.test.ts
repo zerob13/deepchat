@@ -2,9 +2,12 @@ import { EventEmitter } from 'events'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
+import { createHash } from 'crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SkillServicePort } from '../../../src/shared/types/skill'
 import { SkillExecutionService } from '../../../src/main/skill/skillExecutionService'
+import type { ResolvedSkillExecutionAuthority } from '../../../src/main/skill/skillExecutionAuthority'
+import type { MaterializedSkillExecutionPackageTree } from '../../../src/main/skill/skillExecutionPackageTree'
+import { createTapeSkillMaterializationPayload } from '../../../src/main/tape/domain/skillMaterialization'
 import {
   CMD_COMMAND_SHELL,
   GIT_BASH_COMMAND_SHELL,
@@ -50,20 +53,38 @@ vi.mock('@/agent/shared/process/rtkRuntimeService', () => ({
   }
 }))
 
+vi.mock('@/agent/shared/process/processTree', () => ({
+  terminateProcessTree: vi.fn()
+}))
+
+vi.mock('@/skill/skillExecutionPackageTree', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/skill/skillExecutionPackageTree')>()
+  return {
+    ...actual,
+    materializeSkillExecutionPackageTree: vi.fn()
+  }
+})
+
 import { spawn } from 'child_process'
 import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
 import { getShellEnvironment } from '@/agent/shared/process/shellEnvHelper'
 import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
+import { terminateProcessTree } from '@/agent/shared/process/processTree'
+import { materializeSkillExecutionPackageTree } from '@/skill/skillExecutionPackageTree'
 
 describe('SkillExecutionService', () => {
-  let skillService: SkillServicePort
   let service: SkillExecutionService
   let resolveConversationWorkdir: ReturnType<typeof vi.fn>
+  let authority: ResolvedSkillExecutionAuthority
+  let packageTree: MaterializedSkillExecutionPackageTree
+  let assertAuthorityCurrent: ReturnType<typeof vi.fn>
   const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(spawn).mockReset()
+    vi.mocked(terminateProcessTree).mockReset()
+    vi.mocked(terminateProcessTree).mockResolvedValue(true)
     vi.mocked(getShellEnvironment).mockResolvedValue({ PATH: '/shell/bin' })
     vi.spyOn(fs, 'existsSync').mockReturnValue(false)
     vi.spyOn(fs, 'mkdirSync').mockReturnValue(undefined)
@@ -71,39 +92,83 @@ describe('SkillExecutionService', () => {
       isDirectory: () => true
     } as never)
 
-    skillService = {
-      resolveSessionAgentId: vi.fn().mockResolvedValue('deepchat'),
-      getActiveSkills: vi.fn().mockResolvedValue(['ocr']),
-      getMetadataList: vi.fn().mockResolvedValue([
-        {
-          name: 'ocr',
-          description: 'OCR helper',
-          path: '/skills/ocr/SKILL.md',
-          skillRoot: '/skills/ocr'
-        }
-      ]),
-      readSkillFile: vi.fn().mockResolvedValue('---\nname: ocr\ndescription: OCR helper\n---\n'),
-      getSkillExtensionForAgent: vi.fn().mockResolvedValue({
-        version: 1,
-        env: { API_KEY: 'secret' },
+    const script = Buffer.from('print("from package")')
+    const payload = createTapeSkillMaterializationPayload({
+      sessionId: 'conv-1',
+      expectedTapeIncarnationId: 'incarnation-1',
+      agentId: 'deepchat',
+      sourceType: 'builtin',
+      sourceId: 'source-1',
+      skillName: 'ocr',
+      effectiveContent: 'OCR instructions',
+      builderVersion: 'builder-1',
+      renderedManifestHash: createHash('sha256').update('manifest').digest('hex'),
+      scriptInventoryHash: createHash('sha256').update('inventory').digest('hex'),
+      executionPackage: {
+        files: [
+          {
+            relativePath: 'scripts/run.py',
+            base64: script.toString('base64'),
+            byteCount: script.byteLength,
+            sha256: createHash('sha256').update(script).digest('hex')
+          }
+        ],
+        executables: [{ relativePath: 'scripts/run.py', runtime: 'python', enabled: true }],
         runtimePolicy: { python: 'auto', node: 'auto' },
-        scriptOverrides: {}
-      }),
-      saveSkillWithExtension: vi.fn().mockResolvedValue({ success: true, skillName: 'ocr' }),
-      listSkillScriptsForAgent: vi.fn().mockResolvedValue([
-        {
-          name: 'run.py',
-          relativePath: 'scripts/run.py',
-          absolutePath: '/skills/ocr/scripts/run.py',
-          runtime: 'python',
-          enabled: true
-        }
-      ])
-    } as unknown as SkillServicePort
+        environmentBindingId: null
+      }
+    })
+    authority = {
+      request: {
+        sessionId: 'conv-1',
+        runId: 'run-1',
+        requestSeq: 1,
+        manifestHash: createHash('sha256').update('view').digest('hex'),
+        tapeIncarnationId: 'incarnation-1',
+        skillName: 'ocr'
+      },
+      identity: {
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'source-1',
+        skillName: 'ocr'
+      },
+      materializationRef: {
+        kind: 'materialization',
+        entryId: 1,
+        tapeIncarnationId: 'incarnation-1',
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'source-1',
+        skillName: 'ocr',
+        effectiveContentHash: payload.effectiveContentHash
+      },
+      executionPackage: payload.executionPackage,
+      environment: { API_KEY: 'secret' }
+    }
+    packageTree = {
+      rootPath: '/package-owner',
+      packageRoot: '/package',
+      descriptor: {
+        schemaVersion: 1,
+        rootPath: '/package-owner',
+        ownershipToken: '12345678-1234-4234-9234-123456789abc',
+        packageHash: payload.executionPackage.packageHash,
+        files: payload.executionPackage.files.map(({ relativePath, byteCount, sha256 }) => ({
+          relativePath,
+          byteCount,
+          sha256
+        }))
+      },
+      resolveFile: (relativePath) => path.join('/package', ...relativePath.split('/')),
+      assertIntact: vi.fn().mockResolvedValue(undefined),
+      cleanup: vi.fn().mockResolvedValue(undefined)
+    }
+    assertAuthorityCurrent = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(materializeSkillExecutionPackageTree).mockResolvedValue(packageTree)
 
     resolveConversationWorkdir = vi.fn().mockResolvedValue('/workspace/session')
     service = new SkillExecutionService(
-      skillService,
       {
         get: vi.fn().mockReturnValue(true)
       } as never,
@@ -121,6 +186,16 @@ describe('SkillExecutionService', () => {
   })
 
   const resolvePath = (targetPath: string) => path.resolve(targetPath)
+  const buildPlan = async (
+    input: { skill: string; script: string; args?: string[] },
+    commandShell = POSIX_COMMAND_SHELL
+  ) => await (service as any).buildSpawnPlan(input, authority, packageTree, 'conv-1', commandShell)
+  const executionOptions = (overrides: Record<string, unknown> = {}) => ({
+    conversationId: 'conv-1',
+    commandShell: POSIX_COMMAND_SHELL,
+    assertAuthorityCurrent,
+    ...overrides
+  })
 
   it('hides the Windows console for runtime availability probes', async () => {
     const child = new EventEmitter()
@@ -140,28 +215,24 @@ describe('SkillExecutionService', () => {
     })
   })
 
-  it('builds spawn plan with session workdir cwd and skill root env', async () => {
+  it('builds spawn plan with session workdir cwd and package root env', async () => {
     vi.spyOn(service as never, 'resolveRuntimeCommand' as never).mockResolvedValue({
       command: 'uv',
       mode: 'uv'
     })
 
-    const plan = await (service as never).buildSpawnPlan(
-      {
-        skill: 'ocr',
-        script: 'scripts/run.py',
-        args: ['--lang', 'en']
-      },
-      'conv-1',
-      POSIX_COMMAND_SHELL
-    )
+    const plan = await buildPlan({
+      skill: 'ocr',
+      script: 'scripts/run.py',
+      args: ['--lang', 'en']
+    })
 
     expect(plan.cwd).toBe(resolvePath('/workspace/session'))
     expect(plan.env.PATH).toContain('/shell/bin')
     expect(plan.env.API_KEY).toBe('secret')
-    expect(plan.env.SKILL_ROOT).toBe('/skills/ocr')
-    expect(plan.env.DEEPCHAT_SKILL_ROOT).toBe('/skills/ocr')
-    expect(plan.args).toEqual(['run', '/skills/ocr/scripts/run.py', '--lang', 'en'])
+    expect(plan.env.SKILL_ROOT).toBe('/package')
+    expect(plan.env.DEEPCHAT_SKILL_ROOT).toBe('/package')
+    expect(plan.args).toEqual(['run', '/package/scripts/run.py', '--lang', 'en'])
   })
 
   it('uses a session cwd when the conversation workdir is unavailable', async () => {
@@ -171,14 +242,7 @@ describe('SkillExecutionService', () => {
       mode: 'uv'
     })
 
-    const plan = await (service as never).buildSpawnPlan(
-      {
-        skill: 'ocr',
-        script: 'scripts/run.py'
-      },
-      'conv-1',
-      POSIX_COMMAND_SHELL
-    )
+    const plan = await buildPlan({ skill: 'ocr', script: 'scripts/run.py' })
 
     const sessionDir = path.resolve(os.homedir(), '.deepchat', 'sessions', 'conv-1')
     expect(plan.cwd).toBe(sessionDir)
@@ -194,19 +258,12 @@ describe('SkillExecutionService', () => {
       mode: 'uv'
     })
 
-    const plan = await (service as never).buildSpawnPlan(
-      {
-        skill: 'ocr',
-        script: 'scripts/run.py'
-      },
-      'conv-1',
-      POSIX_COMMAND_SHELL
-    )
+    const plan = await buildPlan({ skill: 'ocr', script: 'scripts/run.py' })
 
     expect(plan.cwd).toBe(path.resolve(os.homedir(), '.deepchat', 'sessions', 'conv-1'))
   })
 
-  it('falls back to skill root cwd when a session cwd cannot be created', async () => {
+  it('uses the package root when a session cwd cannot be created', async () => {
     resolveConversationWorkdir.mockResolvedValueOnce(null)
     vi.mocked(fs.mkdirSync).mockImplementationOnce(() => {
       throw new Error('mkdir failed')
@@ -216,16 +273,9 @@ describe('SkillExecutionService', () => {
       mode: 'uv'
     })
 
-    const plan = await (service as never).buildSpawnPlan(
-      {
-        skill: 'ocr',
-        script: 'scripts/run.py'
-      },
-      'conv-1',
-      POSIX_COMMAND_SHELL
-    )
+    const plan = await buildPlan({ skill: 'ocr', script: 'scripts/run.py' })
 
-    expect(plan.cwd).toBe(resolvePath('/skills/ocr'))
+    expect(plan.cwd).toBe(resolvePath('/package'))
   })
 
   it('falls back to bundled uv for python auto runtime', async () => {
@@ -234,11 +284,7 @@ describe('SkillExecutionService', () => {
       (command: 'uv' | 'node') => (command === 'uv' ? '/runtime/uv' : null)
     )
 
-    const runtime = await (service as never).resolvePythonRuntime(
-      'auto',
-      { PATH: '/bin' },
-      '/skill'
-    )
+    const runtime = await (service as never).resolvePythonRuntime('auto', { PATH: '/bin' })
 
     expect(runtime).toEqual({
       command: '/runtime/uv',
@@ -251,9 +297,9 @@ describe('SkillExecutionService', () => {
     vi.spyOn(service as never, 'getBundledRuntimeCommand' as never).mockReturnValue(null)
     vi.spyOn(service as never, 'findSystemPythonRuntime' as never).mockResolvedValue(null)
 
-    await expect(
-      (service as never).resolvePythonRuntime('auto', { PATH: '/bin' }, '/skill')
-    ).rejects.toThrow('No compatible Python runtime found for this skill')
+    await expect((service as never).resolvePythonRuntime('auto', { PATH: '/bin' })).rejects.toThrow(
+      'No compatible Python runtime found for this skill'
+    )
   })
 
   it.each([WINDOWS_POWERSHELL_COMMAND_SHELL, CMD_COMMAND_SHELL])(
@@ -264,8 +310,7 @@ describe('SkillExecutionService', () => {
       await expect(
         (service as never).resolveRuntimeCommand(
           { runtime: 'shell' },
-          { runtimePolicy: {} },
-          '/skills/ocr',
+          { python: 'auto', node: 'auto' },
           {},
           commandShell
         )
@@ -279,8 +324,7 @@ describe('SkillExecutionService', () => {
     await expect(
       (service as never).resolveRuntimeCommand(
         { runtime: 'shell' },
-        { runtimePolicy: {} },
-        '/skills/ocr',
+        { python: 'auto', node: 'auto' },
         {},
         GIT_BASH_COMMAND_SHELL
       )
@@ -323,48 +367,102 @@ describe('SkillExecutionService', () => {
           skill: 'ocr',
           script: '../hack.py'
         },
-        { conversationId: 'conv-1', commandShell: POSIX_COMMAND_SHELL }
+        authority,
+        executionOptions()
       )
-    ).rejects.toThrow(/not found/)
+    ).rejects.toThrow(/canonical package path/)
+    expect(packageTree.cleanup).toHaveBeenCalledOnce()
   })
 
-  it('preserves the Agent preview limit for background skill sessions', async () => {
+  it('requires the exact canonical script inventory path', async () => {
+    await expect(
+      service.execute({ skill: 'ocr', script: 'run.py' }, authority, executionOptions())
+    ).rejects.toThrow(/not found in package/)
+    expect(packageTree.cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('rejects a disabled executable from the request-bound package', async () => {
+    const disabledAuthority = {
+      ...authority,
+      executionPackage: {
+        ...authority.executionPackage,
+        executables: authority.executionPackage.executables.map((executable) => ({
+          ...executable,
+          enabled: false
+        }))
+      }
+    } as ResolvedSkillExecutionAuthority
+
+    await expect(
+      service.execute(
+        { skill: 'ocr', script: 'scripts/run.py' },
+        disabledAuthority,
+        executionOptions()
+      )
+    ).rejects.toThrow(/disabled/)
+    expect(packageTree.cleanup).toHaveBeenCalledOnce()
+  })
+
+  it('transfers the verified package tree to a background session', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.statSync).mockReturnValue({ isDirectory: () => true } as fs.Stats)
-    const plan = {
+    vi.spyOn(service as never, 'resolveRuntimeCommand' as never).mockResolvedValue({
       command: 'python',
-      args: ['script.py'],
-      cwd: '/skills/ocr',
-      env: { PATH: '/bin' },
-      shellCommand: 'python script.py',
-      outputPrefix: 'skill_ocr',
-      spawnMode: 'direct'
-    }
-    vi.spyOn(service as never, 'buildSpawnPlan' as never).mockResolvedValue(plan)
-    vi.spyOn(service as never, 'preparePlanForExecution' as never).mockResolvedValue(plan)
+      mode: 'python'
+    })
+    vi.mocked(rtkRuntimeService.prepareShellCommand).mockResolvedValueOnce({
+      originalCommand: "'python' '/package/scripts/run.py'",
+      command: "'python' '/package/scripts/run.py'",
+      env: { PATH: '/shell/bin', API_KEY: 'secret' },
+      rewritten: false,
+      usedRtk: false,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    })
     const start = vi
       .spyOn(backgroundExecSessionManager, 'start')
-      .mockResolvedValue({ sessionId: 'bg_skill', status: 'running' })
+      .mockImplementation(async (_conversationId, _command, _cwd, _options, beforeStart) => {
+        await beforeStart?.()
+        return {
+          sessionId: 'bg_skill',
+          status: 'running'
+        }
+      })
 
-    await service.execute(
-      { skill: 'ocr', script: 'scripts/run.py', background: true },
-      {
-        conversationId: 'conv-1',
-        commandShell: POSIX_COMMAND_SHELL,
-        outputPreviewChars: 7_000
-      }
-    )
+    await expect(
+      service.execute(
+        { skill: 'ocr', script: 'scripts/run.py', background: true },
+        authority,
+        executionOptions({ outputPreviewChars: 7_000 })
+      )
+    ).resolves.toMatchObject({ output: { status: 'running', sessionId: 'bg_skill' } })
 
     expect(start).toHaveBeenCalledWith(
       'conv-1',
-      'python script.py',
-      resolvePath('/skills/ocr'),
+      expect.stringContaining('/package/scripts/run.py'),
+      resolvePath('/workspace/session'),
       expect.objectContaining({
         commandShell: POSIX_COMMAND_SHELL,
         previewChars: 7_000,
-        offloadThresholdChars: 7_000
-      })
+        offloadThresholdChars: 7_000,
+        ownedSkillExecutionPackageTree: packageTree.descriptor
+      }),
+      expect.any(Function)
     )
+    expect(packageTree.assertIntact).toHaveBeenCalledOnce()
+    expect(assertAuthorityCurrent).toHaveBeenCalledTimes(3)
+    expect(packageTree.cleanup).not.toHaveBeenCalled()
+  })
+
+  it('does not extract a package when its request authority is already stale', async () => {
+    assertAuthorityCurrent.mockRejectedValueOnce(new Error('authority drifted'))
+
+    await expect(
+      service.execute({ skill: 'ocr', script: 'scripts/run.py' }, authority, executionOptions())
+    ).rejects.toThrow('authority drifted')
+
+    expect(materializeSkillExecutionPackageTree).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
   })
 
   it('does not commit dispatch when the resolved spawn cwd is unusable', async () => {
@@ -386,7 +484,8 @@ describe('SkillExecutionService', () => {
     await expect(
       service.execute(
         { skill: 'ocr', script: 'scripts/run.py' },
-        { conversationId: 'conv-1', commandShell: POSIX_COMMAND_SHELL, beforeExecute }
+        authority,
+        executionOptions({ beforeExecute })
       )
     ).rejects.toThrow('Working directory does not exist or is not accessible')
 
@@ -423,7 +522,8 @@ describe('SkillExecutionService', () => {
         stdin: 'input',
         timeoutMs: 5000
       },
-      { conversationId: 'conv-1', commandShell: POSIX_COMMAND_SHELL, beforeExecute }
+      authority,
+      executionOptions({ beforeExecute })
     )
 
     expect(order).toEqual(['commit', 'spawn'])
@@ -438,8 +538,11 @@ describe('SkillExecutionService', () => {
       resolvedArgs: ['/skills/ocr/scripts/run.py', '--lang', 'en'],
       resolvedCwd: path.resolve('/workspace/session'),
       shellCommand: "'python' '/skills/ocr/scripts/run.py' '--lang' 'en'",
-      spawnMode: 'direct'
+      spawnMode: 'direct',
+      packageHash: authority.executionPackage.packageHash
     })
+    expect(assertAuthorityCurrent).toHaveBeenCalledTimes(3)
+    expect(packageTree.cleanup).toHaveBeenCalledOnce()
   })
 
   it('keeps Command Prompt skill plans direct and bypasses shell rewriting', async () => {
@@ -448,13 +551,12 @@ describe('SkillExecutionService', () => {
       mode: 'node'
     })
 
-    const plan = await (service as never).buildSpawnPlan(
+    const plan = await buildPlan(
       {
         skill: 'ocr',
         script: 'scripts/run.py',
         args: ['value%PATH%', '"quoted"', '& whoami', '!delayed!', 'line one\r\nline two']
       },
-      'conv-1',
       CMD_COMMAND_SHELL
     )
     const prepared = await (service as never).preparePlanForExecution(plan, CMD_COMMAND_SHELL)
@@ -471,13 +573,12 @@ describe('SkillExecutionService', () => {
       mode: 'node'
     })
 
-    const plan = await (service as never).buildSpawnPlan(
+    const plan = await buildPlan(
       {
         skill: 'ocr',
         script: 'scripts/run.py',
         args: ['value;still-an-argument']
       },
-      'conv-1',
       WINDOWS_POWERSHELL_COMMAND_SHELL
     )
     const prepared = await (service as never).preparePlanForExecution(
@@ -489,60 +590,6 @@ describe('SkillExecutionService', () => {
     expect(prepared.shellCommand).toBeUndefined()
     expect(rtkRuntimeService.prepareExecutionEnv).toHaveBeenCalledWith(plan.env)
     expect(rtkRuntimeService.prepareShellCommand).not.toHaveBeenCalled()
-  })
-
-  it('passes background skill arguments as a direct invocation', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(true)
-    vi.mocked(fs.statSync).mockReturnValue({ isDirectory: () => true } as fs.Stats)
-    const args = [
-      '/skills/ocr/scripts/run.js',
-      'value%PATH%',
-      '"quoted"',
-      '& whoami',
-      '!delayed!',
-      'line one\r\nline two',
-      'trailing\\'
-    ]
-    const plan = {
-      command: 'node.exe',
-      args,
-      cwd: '/workspace/session',
-      env: { PATH: 'C:\\runtime' },
-      outputPrefix: 'skill_ocr',
-      spawnMode: 'direct' as const
-    }
-    vi.spyOn(service as never, 'buildSpawnPlan' as never).mockResolvedValue(plan)
-    vi.spyOn(service as never, 'preparePlanForExecution' as never).mockResolvedValue(plan)
-    const start = vi.spyOn(backgroundExecSessionManager, 'start').mockResolvedValue({
-      sessionId: 'bg_skill',
-      status: 'running'
-    })
-
-    await expect(
-      service.execute(
-        { skill: 'ocr', script: 'scripts/run.py', background: true },
-        { conversationId: 'conv-1', commandShell: CMD_COMMAND_SHELL }
-      )
-    ).resolves.toMatchObject({
-      output: { status: 'running', sessionId: 'bg_skill' }
-    })
-
-    expect(start).toHaveBeenCalledWith(
-      'conv-1',
-      expect.any(String),
-      path.resolve('/workspace/session'),
-      {
-        commandShell: CMD_COMMAND_SHELL,
-        directInvocation: {
-          executable: 'node.exe',
-          args
-        },
-        timeout: 120000,
-        env: { PATH: 'C:\\runtime' },
-        previewChars: 12000,
-        offloadThresholdChars: 10000
-      }
-    )
   })
 
   it('uses the PowerShell call operator for quoted executables', () => {
@@ -675,7 +722,7 @@ describe('SkillExecutionService', () => {
     expect(result.output).toContain('Exit Code: 0')
   })
 
-  it('escalates to SIGKILL when foreground timeout grace expires', async () => {
+  it('terminates the complete foreground process tree on timeout', async () => {
     vi.useFakeTimers()
 
     class MockStream extends EventEmitter {
@@ -692,15 +739,14 @@ describe('SkillExecutionService', () => {
         destroy: vi.fn()
       }
       unref = vi.fn()
-      kill = vi.fn((signal?: NodeJS.Signals) => {
-        if (signal === 'SIGKILL') {
-          this.emit('close', null)
-        }
-        return true
-      })
+      kill = vi.fn()
     }
 
     const child = new MockChild()
+    vi.mocked(terminateProcessTree).mockImplementationOnce(async () => {
+      child.emit('close', null)
+      return true
+    })
     vi.mocked(spawn).mockReturnValue(child as never)
     vi.spyOn(service as never, 'createForegroundOutputPath' as never).mockReturnValue(null)
 
@@ -719,14 +765,60 @@ describe('SkillExecutionService', () => {
     )
 
     await vi.advanceTimersByTimeAsync(10)
-    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
-
-    await vi.advanceTimersByTimeAsync(2000)
-    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    expect(terminateProcessTree).toHaveBeenCalledWith(child, { graceMs: 2000 })
 
     const result = await resultPromise
     expect(result.output).toContain('Timed out')
     expect(result.output).toContain('Exit Code: null')
+    expect(result.releasePackageTree).toBe(true)
+  })
+
+  it('retains the package and releases handles when process-tree termination fails', async () => {
+    vi.useFakeTimers()
+
+    class MockStream extends EventEmitter {
+      destroy = vi.fn()
+    }
+
+    class MockChild extends EventEmitter {
+      stdout = new MockStream()
+      stderr = new MockStream()
+      stdin = {
+        write: vi.fn(),
+        end: vi.fn(),
+        destroy: vi.fn()
+      }
+      unref = vi.fn()
+    }
+
+    const child = new MockChild()
+    vi.mocked(terminateProcessTree).mockRejectedValueOnce(new Error('termination unavailable'))
+    vi.mocked(spawn).mockReturnValue(child as never)
+    vi.spyOn(service as never, 'createForegroundOutputPath' as never).mockReturnValue(null)
+
+    const resultPromise = (service as never).runForeground(
+      {
+        command: 'python',
+        args: ['script.py'],
+        cwd: '/skills/ocr',
+        env: { PATH: '/bin' },
+        shellCommand: 'python script.py',
+        outputPrefix: 'skill_ocr',
+        spawnMode: 'direct'
+      },
+      10,
+      'conv-1',
+      POSIX_COMMAND_SHELL
+    )
+
+    await vi.advanceTimersByTimeAsync(10)
+    const result = await resultPromise
+
+    expect(result.releasePackageTree).toBe(false)
+    expect(child.stdout.destroy).toHaveBeenCalledOnce()
+    expect(child.stderr.destroy).toHaveBeenCalledOnce()
+    expect(child.stdin.destroy).toHaveBeenCalledOnce()
+    expect(child.unref).toHaveBeenCalledOnce()
   })
 
   it('falls back to capped in-memory buffering when foreground offload fails', async () => {

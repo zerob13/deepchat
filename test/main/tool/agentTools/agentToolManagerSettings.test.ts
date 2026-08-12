@@ -11,10 +11,13 @@ import {
   resolveDeepChatSubagentCapability
 } from '@shared/lib/deepchatSubagents'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
+import { SkillExecutionService } from '@/skill/skillExecutionService'
+import { POSIX_COMMAND_SHELL } from '../../../helpers/commandShell'
 
 vi.mock('electron', () => ({
   app: {
-    getPath: () => '/tmp'
+    getPath: () => '/tmp',
+    getAppPath: () => '/mock/app'
   }
 }))
 
@@ -41,6 +44,8 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
   const resolveConversationWorkdir = vi.fn()
   const resolveConversationSessionInfo = vi.fn()
   const getToolDefinitions = vi.fn().mockReturnValue([])
+  const resolveSkillExecutionAuthority = vi.fn()
+  const assertSkillExecutionAuthorityCurrent = vi.fn()
 
   const buildManager = () =>
     new AgentToolManager({
@@ -58,6 +63,10 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
         resolveConversationWorkdir,
         resolveConversationSessionInfo,
         skillService: skillService,
+        skillExecutionAuthority: {
+          resolve: resolveSkillExecutionAuthority,
+          assertCurrent: assertSkillExecutionAuthorityCurrent
+        } as any,
         browser: {
           getToolDefinitions,
           callTool: vi.fn()
@@ -110,6 +119,7 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     skillService.viewSkill.mockResolvedValue(viewResult)
     skillService.viewSkillForAgent.mockResolvedValue(viewResult)
     skillService.manageDraftSkill.mockResolvedValue({ success: true, action: 'create' })
+    assertSkillExecutionAuthorityCurrent.mockResolvedValue(undefined)
     getToolDefinitions.mockReturnValue([])
   })
 
@@ -216,6 +226,65 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     expect(defs.map((def) => def.function.name)).toContain('skill_run')
     expect(skillService.listSkillScriptsForAgent).toHaveBeenCalledWith('agent-a', 'ocr')
     expect(skillService.listSkillScripts).not.toHaveBeenCalled()
+  })
+
+  it('executes skill_run only through its exact provider-request authority', async () => {
+    const authority = { identity: { skillName: 'ocr' }, executionPackage: {} }
+    resolveSkillExecutionAuthority.mockResolvedValue(authority)
+    const execute = vi
+      .spyOn(SkillExecutionService.prototype, 'execute')
+      .mockResolvedValue({ output: 'ok', rtkApplied: false, rtkMode: 'bypass' } as any)
+    const manager = buildManager()
+    const commitDispatch = vi.fn()
+
+    const result = await manager.callTool(
+      'skill_run',
+      { skill: 'ocr', script: 'scripts/run.py' },
+      'conv-1',
+      {
+        runId: 'run-1',
+        requestSeq: 3,
+        manifestHash: 'a'.repeat(64),
+        tapeIncarnationId: 'incarnation-1',
+        commandShell: POSIX_COMMAND_SHELL,
+        commitDispatch
+      }
+    )
+
+    expect(resolveSkillExecutionAuthority).toHaveBeenCalledWith({
+      sessionId: 'conv-1',
+      runId: 'run-1',
+      requestSeq: 3,
+      manifestHash: 'a'.repeat(64),
+      tapeIncarnationId: 'incarnation-1',
+      skillName: 'ocr'
+    })
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ skill: 'ocr', script: 'scripts/run.py' }),
+      authority,
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        assertAuthorityCurrent: expect.any(Function)
+      })
+    )
+    const executeOptions = execute.mock.calls[0]?.[2]
+    await executeOptions?.assertAuthorityCurrent()
+    expect(assertSkillExecutionAuthorityCurrent).toHaveBeenCalledWith(authority)
+    expect(result.content).toBe('ok')
+  })
+
+  it('rejects skill_run without a physical provider-request binding', async () => {
+    const execute = vi.spyOn(SkillExecutionService.prototype, 'execute')
+    const manager = buildManager()
+
+    await expect(
+      manager.callTool('skill_run', { skill: 'ocr', script: 'scripts/run.py' }, 'conv-1', {
+        commandShell: POSIX_COMMAND_SHELL
+      })
+    ).rejects.toThrow(/exact request-bound/)
+
+    expect(resolveSkillExecutionAuthority).not.toHaveBeenCalled()
+    expect(execute).not.toHaveBeenCalled()
   })
 
   it('resolves file-tool skill roots from the conversation agent catalog only', async () => {

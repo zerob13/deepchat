@@ -350,7 +350,9 @@ export class AgentToolManager {
       script: z
         .string()
         .min(1)
-        .describe('Script path under the skill root, usually scripts/<name>.<ext>'),
+        .describe(
+          'Exact canonical script path from the active skill inventory (scripts/<name>.<ext>)'
+        ),
       args: z.array(z.string()).optional().default([]).describe('Arguments passed to the script'),
       stdin: z.string().optional().describe('Optional stdin payload sent to the script'),
       background: z
@@ -2188,14 +2190,10 @@ export class AgentToolManager {
 
   private getSkillExecutionService(): SkillExecutionService {
     if (!this.skillExecutionService) {
-      this.skillExecutionService = new SkillExecutionService(
-        this.getSkillService(),
-        this.settings,
-        {
-          resolveConversationWorkdir: (conversationId) =>
-            this.getWorkdirForConversation(conversationId)
-        }
-      )
+      this.skillExecutionService = new SkillExecutionService(this.settings, {
+        resolveConversationWorkdir: (conversationId) =>
+          this.getWorkdirForConversation(conversationId)
+      })
     }
     return this.skillExecutionService
   }
@@ -2764,12 +2762,35 @@ export class AgentToolManager {
       throw new Error(`Invalid arguments for skill_run: ${validationResult.error.message}`)
     }
 
-    const result = await this.getSkillExecutionService().execute(validationResult.data, {
+    if (
+      !options?.runId ||
+      !Number.isSafeInteger(options.requestSeq) ||
+      (options.requestSeq ?? 0) <= 0 ||
+      !options.manifestHash ||
+      !options.tapeIncarnationId
+    ) {
+      throw new Error('skill_run requires exact request-bound Skill execution authority')
+    }
+    throwIfAbortRequested(options.signal)
+    const authority = await this.dependencies.skillExecutionAuthority.resolve({
+      sessionId: conversationId,
+      runId: options.runId,
+      requestSeq: options.requestSeq as number,
+      manifestHash: options.manifestHash,
+      tapeIncarnationId: options.tapeIncarnationId,
+      skillName: validationResult.data.skill
+    })
+    throwIfAbortRequested(options.signal)
+    const result = await this.getSkillExecutionService().execute(validationResult.data, authority, {
       conversationId,
-      commandShell: this.requireCommandShell(options?.commandShell),
-      activeSkillNames: options?.activeSkillNames,
+      commandShell: this.requireCommandShell(options.commandShell),
       outputPreviewChars: (await this.resolveOutputLimitsForConversation(conversationId))
         .commandOutputInlineChars,
+      assertAuthorityCurrent: async () => {
+        throwIfAbortRequested(options.signal)
+        await this.dependencies.skillExecutionAuthority.assertCurrent(authority)
+        throwIfAbortRequested(options.signal)
+      },
       beforeExecute: this.createAgentDispatchCommit(
         toolName,
         'agent-skills',
