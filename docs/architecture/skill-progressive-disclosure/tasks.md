@@ -77,10 +77,11 @@
 
 ## P0b: Session Compatibility UI
 
-- [ ] Display existing Session active Skills separately from next-message selections.
-- [ ] Allow removal through the existing typed route without adding a Pin action.
-- [ ] Add i18n strings and renderer tests for visibility, removal, and errors.
-- [ ] Review and commit the compatibility UI slice.
+- [x] Display existing Session active Skills separately from next-message selections.
+- [x] Allow removal through the existing typed route without adding a Pin action.
+- [x] Use existing i18n contracts and add renderer tests for visibility, removal, errors, and
+      Session-switch races.
+- [x] Review and commit the compatibility UI slice.
 
 ## P1: Context Ledger
 
