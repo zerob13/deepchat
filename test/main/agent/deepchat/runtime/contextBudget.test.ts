@@ -62,6 +62,36 @@ describe('agent request context budget', () => {
     expect(result.totalRequestTokens).toBe(result.inputTokens + result.toolReserveTokens)
   })
 
+  it('counts tool calls and reasoning alongside string message content', () => {
+    const result = preflightRequestContext({
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          reasoning_content: 'reasoning',
+          tool_calls: [
+            {
+              id: 'call-1',
+              type: 'function',
+              function: { name: 'inspect', arguments: 'x'.repeat(200) }
+            }
+          ]
+        }
+      ],
+      tools: [],
+      contextLength: 0,
+      requestedMaxTokens: 100
+    })
+
+    expect(result.inputTokens).toBe('reasoning'.length + 'inspect'.length + 200)
+    const ledger = buildRequestContextLedger({ preflight: result })
+    expect(ledger.items).toContainEqual({
+      category: 'History and tool protocol',
+      estimatedTokens: result.inputTokens
+    })
+    expect(ledger.unattributedInputTokens).toBe(0)
+  })
+
   it('respects user configured maxTokens below 4000 without forcing recovery', () => {
     const result = preflightRequestContext({
       messages: [{ role: 'user', content: 'x'.repeat(7200) }],
