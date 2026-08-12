@@ -261,6 +261,40 @@ describe('ProgrammaticToolParentController', () => {
     ).toHaveLength(1)
   })
 
+  it('settles every successful batch child before issuing the outer receipt', () => {
+    const { controller, entries } = setup(
+      binding({
+        command: { domain: 'tool', verb: 'batch' },
+        route: 'tool.batch'
+      })
+    )
+    controller.reserveChildren([child(0), child(1)])
+    for (const childOrdinal of [0, 1]) {
+      materializeChild(controller, childOrdinal)
+      controller.commitChildDispatch(childOrdinal, childDispatch(childOrdinal))
+      controller.commitChildOutcome({
+        childOrdinal,
+        responseText: `result-${childOrdinal}`,
+        isError: false
+      })
+    }
+    const responseText = '{"steps":["result-0","result-1"]}\nExit Code: 0'
+    controller.completeToolInvocation({ responseText, isError: false })
+    expect(controller.takeCompletedInvocationResult()).toEqual({ responseText, isError: false })
+
+    const settlement = controller.issueSettlementReceipt({ responseText, isError: false })
+    expect(settlement).toMatchObject({ startedChildren: 2, settledChildren: 2, isError: false })
+    controller.commitOuterOutcome(settlement, { responseText, isError: false })
+
+    const nestedEntries = entries.filter(
+      (entry) => JSON.parse(entry.meta_json).protocolVersion === 2
+    )
+    expect(
+      nestedEntries.filter((entry) => entry.name === 'execution/dispatch_committed')
+    ).toHaveLength(2)
+    expect(nestedEntries.filter((entry) => entry.name === 'execution/tool_outcome')).toHaveLength(2)
+  })
+
   it('records no child fact for a deterministic pre-T1 refusal', () => {
     const batchBinding = binding({
       command: { domain: 'tool', verb: 'batch' },

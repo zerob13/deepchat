@@ -89,6 +89,7 @@ function mcpTool(input: {
 function buildCapability(input: {
   definitions: readonly MCPToolDefinition[]
   providerActiveDefinitions?: readonly MCPToolDefinition[]
+  maxInputBytes?: number
   maxOutputBytes?: number
 }): Readonly<{ capability: ProgrammaticToolCapabilityV1; snapshot: ToolSurfaceSnapshot }> {
   const exec = input.definitions.find((definition) => definition.function.name === 'exec')
@@ -118,7 +119,7 @@ function buildCapability(input: {
     quotas: {
       maxChildren: 8,
       maxBatchSteps: 8,
-      maxInputBytes: 1024 * 1024,
+      maxInputBytes: input.maxInputBytes ?? 1024 * 1024,
       maxOutputBytes: input.maxOutputBytes ?? 1024 * 1024,
       maxDurationMs: 30_000
     }
@@ -465,6 +466,391 @@ describe('ProgrammaticToolDispatcher', () => {
       grant,
       expect.objectContaining({ isError: false })
     )
+  })
+
+  it('executes a frozen batch sequentially with bounded prior-result bindings', async () => {
+    const context = buildCapability({
+      definitions: [
+        agentExec(),
+        mcpTool({ name: 'messages_list' }),
+        mcpTool({
+          name: 'messages_read',
+          properties: { id: { type: 'string' }, options: { type: 'object' } }
+        })
+      ]
+    })
+    const fixture = createDispatcher(context)
+    const projections = [vi.fn(), vi.fn()]
+    fixture.executeChild.mockImplementation(async (input) => {
+      const childOrdinal = fixture.executeChild.mock.calls.length - 1
+      const argumentsValue = JSON.parse(input.request.function.arguments) as Record<string, unknown>
+      input.registerOutcomeProjection(projections[childOrdinal])
+      input.commitDispatch({
+        toolName: input.request.function.name,
+        toolSource: 'mcp',
+        normalizedArguments: argumentsValue,
+        target: { serverName: 'remote', originalName: input.request.function.name }
+      })
+      if (input.request.function.name === 'messages_list') {
+        return {
+          content: 'one message',
+          rawData: {
+            toolCallId: input.request.id,
+            content: 'one message',
+            structuredContent: { items: [{ id: 'message-1' }] }
+          }
+        }
+      }
+      return {
+        content: `read ${String(argumentsValue.id)}`,
+        rawData: { toolCallId: input.request.id, content: `read ${String(argumentsValue.id)}` }
+      }
+    })
+    const grant = operationGrant(context.capability, 'batch')
+    const request = {
+      steps: [
+        { target: 'messages_list', arguments: { query: 'unread' } },
+        {
+          target: 'messages_read',
+          arguments: { id: null, options: { source: 'inbox' } },
+          bindings: [{ to: '/id', from: '$steps/0/result/items/0/id' }]
+        }
+      ]
+    }
+
+    const output = toolBatchRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolBatchRoute.name,
+        request,
+        agentCaller(),
+        grant,
+        new AbortController().signal
+      )
+    )
+
+    expect(output).toEqual({
+      steps: [
+        {
+          childOrdinal: 0,
+          status: 'success',
+          result: { items: [{ id: 'message-1' }] }
+        },
+        { childOrdinal: 1, status: 'success', result: 'read message-1' }
+      ]
+    })
+    expect(fixture.reserveChildren).toHaveBeenCalledWith(grant, [
+      expect.objectContaining({ childOrdinal: 0, toolName: 'messages_list' }),
+      expect.objectContaining({
+        childOrdinal: 1,
+        toolName: 'messages_read',
+        argumentTemplate: {
+          arguments: request.steps[1].arguments,
+          bindings: request.steps[1].bindings
+        }
+      })
+    ])
+    expect(fixture.executeChild).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(fixture.executeChild.mock.calls[1][0].request.function.arguments)).toEqual({
+      id: 'message-1',
+      options: { source: 'inbox' }
+    })
+    expect(fixture.materializeChild).toHaveBeenNthCalledWith(
+      2,
+      grant,
+      expect.objectContaining({
+        childOrdinal: 1,
+        normalizedArguments: { id: 'message-1', options: { source: 'inbox' } }
+      })
+    )
+    expect(fixture.commitChildOutcome).toHaveBeenNthCalledWith(1, grant, {
+      childOrdinal: 0,
+      responseText: 'one message',
+      isError: false
+    })
+    expect(fixture.commitChildOutcome).toHaveBeenNthCalledWith(2, grant, {
+      childOrdinal: 1,
+      responseText: 'read message-1',
+      isError: false
+    })
+    expect(projections.every((projection) => projection.mock.calls.length === 1)).toBe(true)
+    expect(fixture.recordToolInvocationResult).toHaveBeenCalledWith(
+      grant,
+      expect.objectContaining({ isError: false })
+    )
+  })
+
+  it('stops a batch before T1 when a static prior-result path is missing', async () => {
+    const context = buildCapability({
+      definitions: [
+        agentExec(),
+        mcpTool({ name: 'messages_list' }),
+        mcpTool({ name: 'messages_read' }),
+        mcpTool({ name: 'messages_archive' })
+      ]
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: input.request.function.name,
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: input.request.function.name }
+      })
+      return {
+        content: 'no messages',
+        rawData: {
+          toolCallId: input.request.id,
+          content: 'no messages',
+          structuredContent: { items: [] }
+        }
+      }
+    })
+
+    const output = toolBatchRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolBatchRoute.name,
+        {
+          steps: [
+            { target: 'messages_list', arguments: {} },
+            {
+              target: 'messages_read',
+              arguments: { id: null },
+              bindings: [{ to: '/id', from: '$steps/0/result/items/0/id' }]
+            },
+            { target: 'messages_archive', arguments: { id: 'message-1' } }
+          ]
+        },
+        agentCaller(),
+        operationGrant(context.capability, 'batch'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.steps).toEqual([
+      { childOrdinal: 0, status: 'success', result: { items: [] } },
+      {
+        childOrdinal: 1,
+        status: 'error',
+        error: {
+          code: 'invalid_request',
+          message: 'Programmatic Tool binding source is unavailable',
+          retriable: false
+        }
+      },
+      { childOrdinal: 2, status: 'not_started' }
+    ])
+    expect(fixture.executeChild).toHaveBeenCalledOnce()
+    expect(fixture.commitChildDispatch).toHaveBeenCalledOnce()
+    expect(fixture.commitChildOutcome).toHaveBeenCalledOnce()
+    expect(fixture.stopBeforeChild).toHaveBeenCalledWith(expect.anything(), 1)
+    expect(fixture.recordToolInvocationResult).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ isError: true })
+    )
+  })
+
+  it('rejects materialized binding amplification before the next child T1', async () => {
+    const context = buildCapability({
+      definitions: [
+        agentExec(),
+        mcpTool({ name: 'remote_source' }),
+        mcpTool({ name: 'remote_sink' })
+      ],
+      maxInputBytes: 512
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: input.request.function.name,
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: input.request.function.name }
+      })
+      return {
+        content: 'large structured result',
+        rawData: {
+          toolCallId: input.request.id,
+          content: 'large structured result',
+          structuredContent: { payload: 'x'.repeat(1_024) }
+        }
+      }
+    })
+
+    const output = toolBatchRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolBatchRoute.name,
+        {
+          steps: [
+            { target: 'remote_source', arguments: {} },
+            {
+              target: 'remote_sink',
+              arguments: { payload: null },
+              bindings: [{ to: '/payload', from: '$steps/0/result/payload' }]
+            }
+          ]
+        },
+        agentCaller(),
+        operationGrant(context.capability, 'batch'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.steps[1]).toMatchObject({
+      childOrdinal: 1,
+      status: 'error',
+      error: { code: 'quota_exceeded' }
+    })
+    expect(fixture.executeChild).toHaveBeenCalledOnce()
+    expect(fixture.commitChildDispatch).toHaveBeenCalledOnce()
+    expect(fixture.stopBeforeChild).toHaveBeenCalledWith(expect.anything(), 1)
+  })
+
+  it('uses one pre-plan anti-oracle batch result when any target is unavailable', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_known' })]
+    })
+    const fixture = createDispatcher(context)
+
+    const output = toolBatchRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolBatchRoute.name,
+        {
+          steps: [
+            { target: 'remote_known', arguments: {} },
+            { target: 'remote_unknown', arguments: {} }
+          ]
+        },
+        agentCaller(),
+        operationGrant(context.capability, 'batch'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.steps).toEqual([
+      {
+        childOrdinal: 0,
+        status: 'error',
+        error: {
+          code: 'not_found',
+          message: 'Tool is not available in the current session',
+          retriable: false
+        }
+      },
+      { childOrdinal: 1, status: 'not_started' }
+    ])
+    expect(fixture.failToolInvocationBeforePlan).toHaveBeenCalledOnce()
+    expect(fixture.reserveChildren).not.toHaveBeenCalled()
+    expect(fixture.executeChild).not.toHaveBeenCalled()
+  })
+
+  it('settles a known target error and leaves later batch children unstarted', async () => {
+    const context = buildCapability({
+      definitions: [
+        agentExec(),
+        mcpTool({ name: 'remote_failing' }),
+        mcpTool({ name: 'remote_later' })
+      ]
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: input.request.function.name,
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: input.request.function.name }
+      })
+      return {
+        content: 'remote target failed',
+        rawData: {
+          toolCallId: input.request.id,
+          content: 'remote target failed',
+          isError: true
+        }
+      }
+    })
+
+    const output = toolBatchRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolBatchRoute.name,
+        {
+          steps: [
+            { target: 'remote_failing', arguments: {} },
+            { target: 'remote_later', arguments: {} }
+          ]
+        },
+        agentCaller(),
+        operationGrant(context.capability, 'batch'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.steps).toEqual([
+      {
+        childOrdinal: 0,
+        status: 'error',
+        error: {
+          code: 'tool_error',
+          message: 'remote target failed',
+          retriable: false
+        }
+      },
+      { childOrdinal: 1, status: 'not_started' }
+    ])
+    expect(fixture.executeChild).toHaveBeenCalledOnce()
+    expect(fixture.commitChildOutcome).toHaveBeenCalledWith(expect.anything(), {
+      childOrdinal: 0,
+      responseText: 'remote target failed',
+      isError: true
+    })
+    expect(fixture.stopBeforeChild).not.toHaveBeenCalled()
+  })
+
+  it('keeps a completed child settled when the next nested T2 fails', async () => {
+    const context = buildCapability({
+      definitions: [
+        agentExec(),
+        mcpTool({ name: 'remote_first' }),
+        mcpTool({ name: 'remote_second' })
+      ]
+    })
+    const fixture = createDispatcher(context)
+    const projections = [vi.fn(), vi.fn()]
+    fixture.executeChild.mockImplementation(async (input) => {
+      const childOrdinal = fixture.executeChild.mock.calls.length - 1
+      input.registerOutcomeProjection(projections[childOrdinal])
+      input.commitDispatch({
+        toolName: input.request.function.name,
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: input.request.function.name }
+      })
+      return {
+        content: `result-${childOrdinal}`,
+        rawData: { toolCallId: input.request.id, content: `result-${childOrdinal}` }
+      }
+    })
+    fixture.commitChildOutcome.mockImplementation((_grant, input) => {
+      if (input.childOrdinal === 1) throw new Error('nested T2 disk full')
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolBatchRoute.name,
+        {
+          steps: [
+            { target: 'remote_first', arguments: {} },
+            { target: 'remote_second', arguments: {} }
+          ]
+        },
+        agentCaller(),
+        operationGrant(context.capability, 'batch'),
+        new AbortController().signal
+      )
+    ).rejects.toThrow('nested T2 disk full')
+
+    expect(projections[0]).toHaveBeenCalledOnce()
+    expect(projections[1]).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
   })
 
   it('parks one child approval before T1 and consumes it through the exact second dispatch', async () => {
@@ -889,7 +1275,7 @@ describe('ProgrammaticToolDispatcher', () => {
     })
   })
 
-  it('fails closed for mismatched callers, grants, missing live authority, and batch execution', async () => {
+  it('fails closed for mismatched callers, grants, and missing live authority', async () => {
     const context = buildCapability({
       definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
     })
@@ -929,17 +1315,6 @@ describe('ProgrammaticToolDispatcher', () => {
         new AbortController().signal
       ),
       'authentication_failed'
-    )
-
-    await expectCliError(
-      dispatcher.dispatch(
-        toolBatchRoute.name,
-        { steps: [{ target: 'remote_search', arguments: {} }] },
-        agentCaller(),
-        operationGrant(context.capability, 'batch'),
-        new AbortController().signal
-      ),
-      'unavailable'
     )
   })
 

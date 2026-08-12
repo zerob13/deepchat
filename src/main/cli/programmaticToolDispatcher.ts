@@ -2,6 +2,7 @@ import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/prog
 import type { CliRouteCaller } from '@/routes/routeRegistry'
 import { canonicalJsonStringifyData, hashJsonData } from '@/tape/domain/canonicalJson'
 import type { AgentCliProgrammaticOperationGrant } from './agentTokenAuthority'
+import { parseBoundedJsonBytes } from './body'
 import { CliRequestError } from './errors'
 import { ProgrammaticParentOperationError } from './programmaticToolParentController'
 import type { ProgrammaticToolParentRegistry } from './programmaticToolParentRegistry'
@@ -10,6 +11,10 @@ import {
   PROGRAMMATIC_TOOL_EXAMPLE_MAX_CHARACTERS,
   PROGRAMMATIC_TOOL_NAME_MAX_CHARACTERS,
   PROGRAMMATIC_TOOL_SIGNATURE_MAX_CHARACTERS,
+  ProgrammaticToolStepResultSchema,
+  decodeProgrammaticToolJsonPointer,
+  parseProgrammaticToolBindingSource,
+  toolBatchRoute,
   toolCallRoute,
   toolDescribeRoute,
   toolSearchRoute
@@ -33,8 +38,19 @@ const MAX_SEARCH_TOKENS = 32
 const MAX_SIGNATURE_PROPERTIES = 64
 const SEARCH_ABORT_CHECK_INTERVAL = 32
 const MAX_CHILD_ERROR_CHARACTERS = 4_096
+const CHILD_OUTPUT_QUOTA_TEXT = 'Programmatic Tool result exceeds its output quota'
+const CHILD_OUTPUT_QUOTA_TEXT_BYTES = Buffer.byteLength(CHILD_OUTPUT_QUOTA_TEXT, 'utf8')
 
 type ProgrammaticToolEntry = ProgrammaticToolCapabilityV1['entries'][number]
+type ProgrammaticToolStepResult = ReturnType<typeof ProgrammaticToolStepResultSchema.parse>
+type ProgrammaticToolBatchInput = ReturnType<typeof toolBatchRoute.input.parse>
+type ProgrammaticToolBatchStep = ProgrammaticToolBatchInput['steps'][number]
+type ProgrammaticToolInvocation = ReturnType<ProgrammaticToolParentRegistry['resolveInvocation']>
+
+type ProgrammaticExecutedChild = Readonly<{
+  step: ProgrammaticToolStepResult
+  journalResponseText: string | null
+}>
 
 type ProgrammaticToolSummary = Readonly<{
   name: string
@@ -236,9 +252,9 @@ function unavailableTarget(): never {
   })
 }
 
-function unavailableStep() {
+function unavailableStep(childOrdinal = 0): ProgrammaticToolStepResult {
   return Object.freeze({
-    childOrdinal: 0,
+    childOrdinal,
     status: 'error' as const,
     error: Object.freeze({
       code: 'not_found',
@@ -248,9 +264,14 @@ function unavailableStep() {
   })
 }
 
-function errorStep(code: string, message: string, retriable: boolean) {
+function errorStep(
+  code: string,
+  message: string,
+  retriable: boolean,
+  childOrdinal = 0
+): ProgrammaticToolStepResult {
   return Object.freeze({
-    childOrdinal: 0,
+    childOrdinal,
     status: 'error' as const,
     error: Object.freeze({
       code,
@@ -259,6 +280,18 @@ function errorStep(code: string, message: string, retriable: boolean) {
       retriable
     })
   })
+}
+
+function abortStep(signal: AbortSignal, childOrdinal: number): ProgrammaticToolStepResult {
+  const timedOut = signal.reason instanceof Error && signal.reason.name === 'TimeoutError'
+  return errorStep(
+    timedOut ? 'timeout' : 'cancelled',
+    timedOut
+      ? 'Programmatic Tool execution timed out'
+      : 'Programmatic Tool execution was cancelled',
+    false,
+    childOrdinal
+  )
 }
 
 function formatSuccessfulOuterResponse(output: unknown): string {
@@ -296,6 +329,175 @@ function isProgrammaticProtocolFailure(error: unknown): boolean {
   )
 }
 
+function notStartedStep(childOrdinal: number): ProgrammaticToolStepResult {
+  return Object.freeze({ childOrdinal, status: 'not_started' as const })
+}
+
+function stoppedBatchSteps(
+  stepCount: number,
+  failedStep: ProgrammaticToolStepResult
+): readonly ProgrammaticToolStepResult[] {
+  return Object.freeze([
+    failedStep,
+    ...Array.from({ length: stepCount - failedStep.childOrdinal - 1 }, (_, offset) =>
+      notStartedStep(failedStep.childOrdinal + offset + 1)
+    )
+  ])
+}
+
+function canonicalJsonClone<T extends JsonValue>(value: T): T {
+  const bytes = Buffer.from(canonicalJsonStringifyData(value), 'utf8')
+  return parseBoundedJsonBytes(bytes) as T
+}
+
+function canonicalJsonBytes(value: JsonValue): number {
+  return Buffer.byteLength(canonicalJsonStringifyData(value), 'utf8')
+}
+
+function readJsonPointer(
+  value: JsonValue,
+  pointer: string
+): Readonly<{ found: true; value: JsonValue }> | Readonly<{ found: false }> {
+  if (pointer === '') return { found: true, value }
+  let current: JsonValue = value
+  for (const segment of decodeProgrammaticToolJsonPointer(pointer)) {
+    if (Array.isArray(current)) {
+      if (!/^(0|[1-9][0-9]*)$/.test(segment)) return { found: false }
+      const index = Number(segment)
+      if (!Number.isSafeInteger(index) || index >= current.length) return { found: false }
+      current = current[index]
+      continue
+    }
+    if (!current || typeof current !== 'object' || !Object.hasOwn(current, segment)) {
+      return { found: false }
+    }
+    current = current[segment]
+  }
+  return { found: true, value: current }
+}
+
+function replaceJsonPointer(
+  value: Record<string, JsonValue>,
+  pointer: string,
+  replacement: JsonValue
+): void {
+  const segments = decodeProgrammaticToolJsonPointer(pointer)
+  const property = segments.pop()
+  if (property === undefined) {
+    throw new CliRequestError(
+      'invalid_request',
+      'Programmatic Tool binding destination is invalid',
+      { httpStatus: 400 }
+    )
+  }
+  let current: JsonValue = value
+  for (const segment of segments) {
+    if (Array.isArray(current)) {
+      const index = Number(segment)
+      if (!Number.isSafeInteger(index) || index < 0 || index >= current.length) {
+        throw new CliRequestError(
+          'invalid_request',
+          'Programmatic Tool binding destination is unavailable',
+          { httpStatus: 400 }
+        )
+      }
+      current = current[index]
+      continue
+    }
+    if (!current || typeof current !== 'object' || !Object.hasOwn(current, segment)) {
+      throw new CliRequestError(
+        'invalid_request',
+        'Programmatic Tool binding destination is unavailable',
+        { httpStatus: 400 }
+      )
+    }
+    current = current[segment]
+  }
+  if (Array.isArray(current)) {
+    const index = Number(property)
+    if (!Number.isSafeInteger(index) || index < 0 || index >= current.length) {
+      throw new CliRequestError(
+        'invalid_request',
+        'Programmatic Tool binding destination is unavailable',
+        { httpStatus: 400 }
+      )
+    }
+    current[index] = replacement
+  } else if (current && typeof current === 'object' && Object.hasOwn(current, property)) {
+    Object.defineProperty(current, property, {
+      configurable: true,
+      enumerable: true,
+      value: replacement,
+      writable: true
+    })
+  } else {
+    throw new CliRequestError(
+      'invalid_request',
+      'Programmatic Tool binding destination is unavailable',
+      { httpStatus: 400 }
+    )
+  }
+}
+
+function materializeBatchArguments(
+  step: ProgrammaticToolBatchStep,
+  completedSteps: readonly ProgrammaticToolStepResult[],
+  maximumBytes: number,
+  signal: AbortSignal
+): Readonly<Record<string, JsonValue>> {
+  const argumentsValue = canonicalJsonClone(step.arguments)
+  let materializedBytes = canonicalJsonBytes(argumentsValue)
+  for (const binding of step.bindings ?? []) {
+    signal.throwIfAborted()
+    const source = parseProgrammaticToolBindingSource(binding.from)
+    const sourceStep = source ? completedSteps[source.stepIndex] : undefined
+    if (!source || !sourceStep || sourceStep.status !== 'success') {
+      throw new CliRequestError(
+        'invalid_request',
+        'Programmatic Tool binding source is unavailable',
+        { httpStatus: 400 }
+      )
+    }
+    const selected = readJsonPointer(sourceStep.result, source.resultPointer)
+    if (!selected.found) {
+      throw new CliRequestError(
+        'invalid_request',
+        'Programmatic Tool binding source is unavailable',
+        { httpStatus: 400 }
+      )
+    }
+    const destination = readJsonPointer(argumentsValue, binding.to)
+    if (!destination.found) {
+      throw new CliRequestError(
+        'invalid_request',
+        'Programmatic Tool binding destination is unavailable',
+        { httpStatus: 400 }
+      )
+    }
+    materializedBytes += canonicalJsonBytes(selected.value) - canonicalJsonBytes(destination.value)
+    if (materializedBytes > maximumBytes) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic materialized arguments exceed the aggregate input quota',
+        'quota_exceeded'
+      )
+    }
+    replaceJsonPointer(argumentsValue, binding.to, selected.value)
+  }
+  return Object.freeze(canonicalJsonClone(argumentsValue))
+}
+
+function childResultValue(result: { content: unknown; rawData: MCPToolResponse }): JsonValue {
+  if (result.rawData.structuredContent !== undefined) {
+    try {
+      return canonicalJsonClone(result.rawData.structuredContent as JsonValue)
+    } catch {
+      // Invalid or unsafe structured content is not a binding-capable result. The provider-visible
+      // bounded text remains the canonical fallback.
+    }
+  }
+  return childResponseText(result)
+}
+
 function childResponseText(result: { content: unknown; rawData: MCPToolResponse }): string {
   if (typeof result.content === 'string') return result.content
   if (typeof result.rawData.content === 'string') return result.rawData.content
@@ -309,37 +511,262 @@ function childResponseText(result: { content: unknown; rawData: MCPToolResponse 
 }
 
 function boundedChildOutcome(input: {
+  childOrdinal: number
   result: { content: unknown; rawData: MCPToolResponse }
-  capability: ProgrammaticToolCapabilityV1
+  maximumResponseBytes: number
+  acceptsStep: (step: ProgrammaticToolStepResult) => boolean
 }): Readonly<{
   responseText: string
   isError: boolean
-  output: ReturnType<typeof toolCallRoute.output.parse>
+  step: ProgrammaticToolStepResult
 }> {
   const responseText = childResponseText(input.result)
   const isError = input.result.rawData.isError === true
-  const output = toolCallRoute.output.parse({
-    step: isError
-      ? errorStep('tool_error', responseText, false)
-      : { childOrdinal: 0, status: 'success', result: responseText }
-  })
+  const step = ProgrammaticToolStepResultSchema.parse(
+    isError
+      ? errorStep('tool_error', responseText, false, input.childOrdinal)
+      : {
+          childOrdinal: input.childOrdinal,
+          status: 'success',
+          result: childResultValue(input.result)
+        }
+  )
   if (
-    Buffer.byteLength(responseText, 'utf8') <= input.capability.quotas.maxOutputBytes &&
-    measureOuterResponseBytes(output) <= input.capability.quotas.maxOutputBytes
+    Buffer.byteLength(responseText, 'utf8') <= input.maximumResponseBytes &&
+    input.acceptsStep(step)
   ) {
-    return Object.freeze({ responseText, isError, output })
+    return Object.freeze({ responseText, isError, step })
   }
 
-  const quotaText = 'Programmatic Tool result exceeds its output quota'
-  const quotaOutput = toolCallRoute.output.parse({
-    step: errorStep('result_too_large', quotaText, false)
+  const quotaStep = ProgrammaticToolStepResultSchema.parse(
+    errorStep('result_too_large', CHILD_OUTPUT_QUOTA_TEXT, false, input.childOrdinal)
+  )
+  if (CHILD_OUTPUT_QUOTA_TEXT_BYTES > input.maximumResponseBytes || !input.acceptsStep(quotaStep)) {
+    throw new ExecutionJournalError(
+      'Programmatic child output quota cannot represent its bounded nested outcome.',
+      'invalid_fact'
+    )
+  }
+  return Object.freeze({
+    responseText: CHILD_OUTPUT_QUOTA_TEXT,
+    isError: true,
+    step: quotaStep
   })
-  assertOutputWithinCapabilityQuota(quotaOutput, input.capability)
-  return Object.freeze({ responseText: quotaText, isError: true, output: quotaOutput })
 }
 
 export class ProgrammaticToolDispatcher {
   constructor(private readonly options: ProgrammaticToolDispatcherOptions) {}
+
+  private async executeReservedChild(input: {
+    caller: CliRouteCaller
+    grant: AgentCliProgrammaticOperationGrant
+    invocation: ProgrammaticToolInvocation
+    capability: ProgrammaticToolCapabilityV1
+    entry: ProgrammaticToolEntry
+    childOrdinal: number
+    arguments: Readonly<Record<string, JsonValue>>
+    argumentTemplate: Readonly<Record<string, unknown>>
+    signal: AbortSignal
+    maximumResponseBytes: number
+    acceptsStep: (step: ProgrammaticToolStepResult) => boolean
+  }): Promise<ProgrammaticExecutedChild> {
+    const pendingOutcomeProjections: Array<() => void> = []
+    let dispatchCommitted = false
+    let dispatchBoundaryFailed = false
+    const nestedOperation = Object.freeze({
+      kind: 'nested' as const,
+      runId: input.grant.operation.runId,
+      requestSeq: input.grant.operation.requestSeq,
+      providerToolCallId: input.grant.operation.providerToolCallId,
+      childOrdinal: input.childOrdinal
+    })
+    const releaseOutcomeProjections = (): void => {
+      try {
+        for (const project of pendingOutcomeProjections.splice(0)) project()
+      } catch (cause) {
+        throw new CommittedToolOutcomeProjectionError(nestedOperation, { cause })
+      }
+    }
+    const execute = async () =>
+      await this.options.executeChild({
+        request: {
+          id: `programmatic-${hashJsonData({
+            operation: input.grant.operation,
+            childOrdinal: input.childOrdinal
+          }).slice(0, 32)}`,
+          type: 'function',
+          function: {
+            name: input.entry.target.providerVisibleName,
+            arguments: canonicalJsonStringifyData(input.arguments)
+          },
+          conversationId: input.capability.request.sessionId
+        },
+        capability: input.capability,
+        snapshot: input.invocation.snapshot,
+        entry: input.entry,
+        permissionMode: input.invocation.permissionMode,
+        signal: input.signal,
+        commitDispatch: (dispatch) => {
+          if (dispatchCommitted) {
+            dispatchBoundaryFailed = true
+            throw new ExecutionJournalError(
+              'Programmatic child attempted more than one durable dispatch commit.',
+              'duplicate_dispatch'
+            )
+          }
+          this.options.parents.materializeChild(input.grant, {
+            childOrdinal: input.childOrdinal,
+            argumentTemplate: input.argumentTemplate,
+            normalizedArguments: dispatch.normalizedArguments
+          })
+          dispatchBoundaryFailed = true
+          try {
+            this.options.parents.commitChildDispatch(input.grant, input.childOrdinal, dispatch)
+            dispatchCommitted = true
+          } finally {
+            if (dispatchCommitted) dispatchBoundaryFailed = false
+          }
+        },
+        registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection)
+      })
+
+    let executed: Awaited<ReturnType<typeof execute>>
+    try {
+      executed = await execute()
+      if (executed.rawData.requiresPermission) {
+        const permission = executed.rawData.permissionRequest
+        const requestId = permission?.requestId?.trim()
+        if (dispatchCommitted) {
+          if (requestId) {
+            this.options.cancelChildPermission(requestId, input.capability.request.sessionId)
+          }
+          throw new ExecutionJournalError(
+            'Programmatic child requested permission after its durable dispatch commit.',
+            'invalid_fact'
+          )
+        }
+        if (!permission || !requestId) {
+          throw new CliRequestError(
+            'unavailable',
+            'Programmatic Tool permission authority is unavailable',
+            { httpStatus: 503 }
+          )
+        }
+        try {
+          await this.options.authorizeChild({
+            caller: input.caller,
+            grant: input.grant,
+            childOrdinal: input.childOrdinal,
+            entry: input.entry,
+            arguments: input.arguments,
+            permission: permission as ToolPermissionPreCheckResult,
+            signal: input.signal
+          })
+          executed = await execute()
+        } finally {
+          this.options.cancelChildPermission(requestId, input.capability.request.sessionId)
+        }
+        if (executed.rawData.requiresPermission) {
+          const repeatedRequestId = executed.rawData.permissionRequest?.requestId?.trim()
+          if (repeatedRequestId) {
+            this.options.cancelChildPermission(
+              repeatedRequestId,
+              input.capability.request.sessionId
+            )
+          }
+          throw new CliRequestError(
+            'approval_denied',
+            'Programmatic Tool permission was not consumed',
+            { httpStatus: 403 }
+          )
+        }
+      }
+    } catch (error) {
+      if (dispatchBoundaryFailed) throw error
+      if (isProgrammaticProtocolFailure(error)) throw error
+      if (dispatchCommitted) {
+        if (input.signal.aborted) throw error
+        const errorText = `Error: ${
+          error instanceof Error ? error.message : 'Programmatic Tool execution failed'
+        }`
+        const childOutcome = boundedChildOutcome({
+          childOrdinal: input.childOrdinal,
+          result: {
+            content: errorText,
+            rawData: {
+              toolCallId: nestedOperation.providerToolCallId,
+              content: errorText,
+              isError: true
+            }
+          },
+          maximumResponseBytes: input.maximumResponseBytes,
+          acceptsStep: input.acceptsStep
+        })
+        this.options.parents.commitChildOutcome(input.grant, {
+          childOrdinal: input.childOrdinal,
+          responseText: childOutcome.responseText,
+          isError: true
+        })
+        releaseOutcomeProjections()
+        return Object.freeze({
+          step: childOutcome.step,
+          journalResponseText: childOutcome.responseText
+        })
+      }
+
+      if (pendingOutcomeProjections.length > 0) {
+        throw new ExecutionJournalError(
+          'Programmatic child registered an outcome projection without a durable dispatch.',
+          'invalid_fact'
+        )
+      }
+      this.options.parents.stopBeforeChild(input.grant, input.childOrdinal)
+      const step = input.signal.aborted
+        ? abortStep(input.signal, input.childOrdinal)
+        : error instanceof CliRequestError
+          ? errorStep(error.code, error.message, error.retriable, input.childOrdinal)
+          : error instanceof ProgrammaticParentOperationError
+            ? errorStep(
+                error.code === 'quota_exceeded' ? 'quota_exceeded' : 'invalid_request',
+                error.message,
+                false,
+                input.childOrdinal
+              )
+            : unavailableStep(input.childOrdinal)
+      return Object.freeze({ step, journalResponseText: null })
+    }
+
+    if (!dispatchCommitted) {
+      if (pendingOutcomeProjections.length > 0) {
+        throw new ExecutionJournalError(
+          'Programmatic child registered an outcome projection without a durable dispatch.',
+          'invalid_fact'
+        )
+      }
+      this.options.parents.stopBeforeChild(input.grant, input.childOrdinal)
+      return Object.freeze({
+        step: unavailableStep(input.childOrdinal),
+        journalResponseText: null
+      })
+    }
+
+    const childOutcome = boundedChildOutcome({
+      childOrdinal: input.childOrdinal,
+      result: executed,
+      maximumResponseBytes: input.maximumResponseBytes,
+      acceptsStep: input.acceptsStep
+    })
+    this.options.parents.commitChildOutcome(input.grant, {
+      childOrdinal: input.childOrdinal,
+      responseText: childOutcome.responseText,
+      isError: childOutcome.isError
+    })
+    releaseOutcomeProjections()
+    return Object.freeze({
+      step: childOutcome.step,
+      journalResponseText: childOutcome.responseText
+    })
+  }
 
   async dispatch(
     method: string,
@@ -520,202 +947,212 @@ export class ProgrammaticToolDispatcher {
         signal,
         AbortSignal.timeout(capability.quotas.maxDurationMs)
       ])
-      const pendingOutcomeProjections: Array<() => void> = []
-      let dispatchCommitted = false
-      let dispatchBoundaryFailed = false
-      const nestedOperation = Object.freeze({
-        kind: 'nested' as const,
-        runId: grant.operation.runId,
-        requestSeq: grant.operation.requestSeq,
-        providerToolCallId: grant.operation.providerToolCallId,
-        childOrdinal: 0
-      })
-      const releaseOutcomeProjections = (): void => {
-        try {
-          for (const project of pendingOutcomeProjections.splice(0)) project()
-        } catch (cause) {
-          throw new CommittedToolOutcomeProjectionError(nestedOperation, { cause })
-        }
+      if (capability.quotas.maxOutputBytes < CHILD_OUTPUT_QUOTA_TEXT_BYTES) {
+        this.options.parents.stopBeforeChild(grant, 0)
+        const output = toolCallRoute.output.parse({
+          step: errorStep(
+            'quota_exceeded',
+            'Programmatic Tool output quota is too small to execute a child',
+            false
+          )
+        })
+        assertOutputWithinCapabilityQuota(output, capability)
+        this.options.parents.recordToolInvocationResult(grant, {
+          responseText: formatSuccessfulOuterResponse(output),
+          isError: true
+        })
+        return output
       }
-      const execute = async () =>
-        await this.options.executeChild({
-          request: {
-            id: `programmatic-${hashJsonData({
-              operation: grant.operation,
-              childOrdinal: 0
-            }).slice(0, 32)}`,
-            type: 'function',
-            function: {
-              name: entry.target.providerVisibleName,
-              arguments: canonicalJsonStringifyData(request.arguments)
-            },
-            conversationId: capability.request.sessionId
-          },
+
+      const child = await this.executeReservedChild({
+        caller,
+        grant,
+        invocation,
+        capability,
+        entry,
+        childOrdinal: 0,
+        arguments: request.arguments,
+        argumentTemplate,
+        signal: operationSignal,
+        maximumResponseBytes: capability.quotas.maxOutputBytes,
+        acceptsStep: (step) =>
+          measureOuterResponseBytes({ step }) <= capability.quotas.maxOutputBytes
+      })
+      const output = toolCallRoute.output.parse({ step: child.step })
+      assertOutputWithinCapabilityQuota(output, capability)
+      this.options.parents.recordToolInvocationResult(grant, {
+        responseText: formatSuccessfulOuterResponse(output),
+        isError: child.step.status !== 'success'
+      })
+      return output
+    }
+
+    if (method === toolBatchRoute.name) {
+      const request = toolBatchRoute.input.parse(input)
+      const entries = request.steps.map((step) =>
+        capability.entries.find((candidate) => candidate.target.providerVisibleName === step.target)
+      )
+      if (entries.some((entry) => !entry)) {
+        const output = toolBatchRoute.output.parse({
+          steps: stoppedBatchSteps(request.steps.length, unavailableStep())
+        })
+        assertOutputWithinCapabilityQuota(output, capability)
+        this.options.parents.failToolInvocationBeforePlan(grant, {
+          responseText: formatSuccessfulOuterResponse(output),
+          isError: true
+        })
+        return output
+      }
+
+      const argumentTemplates = request.steps.map((step) =>
+        Object.freeze({
+          arguments: step.arguments,
+          bindings: Object.freeze([...(step.bindings ?? [])])
+        })
+      )
+      try {
+        this.options.parents.reserveChildren(
+          grant,
+          entries.map((candidate, childOrdinal) => {
+            const entry = candidate!
+            return {
+              childOrdinal,
+              toolName: entry.target.providerVisibleName,
+              toolSource: 'mcp' as const,
+              target: {
+                serverName: entry.target.serverName,
+                originalName: entry.target.originalName
+              },
+              definitionHash: entry.canonicalToolDefinitionHash,
+              argumentTemplate: argumentTemplates[childOrdinal]
+            }
+          })
+        )
+      } catch (error) {
+        if (
+          !(error instanceof ProgrammaticParentOperationError) ||
+          (error.code !== 'invalid_plan' && error.code !== 'quota_exceeded')
+        ) {
+          throw error
+        }
+        const failedStep = errorStep(
+          error.code === 'quota_exceeded' ? 'quota_exceeded' : 'invalid_request',
+          error.message,
+          false
+        )
+        const output = toolBatchRoute.output.parse({
+          steps: stoppedBatchSteps(request.steps.length, failedStep)
+        })
+        assertOutputWithinCapabilityQuota(output, capability)
+        this.options.parents.recordToolInvocationResult(grant, {
+          responseText: formatSuccessfulOuterResponse(output),
+          isError: true
+        })
+        return output
+      }
+
+      const operationSignal = AbortSignal.any([
+        signal,
+        AbortSignal.timeout(capability.quotas.maxDurationMs)
+      ])
+      const completedSteps: ProgrammaticToolStepResult[] = []
+      let journalOutputBytes = 0
+
+      for (let childOrdinal = 0; childOrdinal < request.steps.length; childOrdinal += 1) {
+        const step = request.steps[childOrdinal]
+        const entry = entries[childOrdinal]!
+        const remainingResponseBytes = capability.quotas.maxOutputBytes - journalOutputBytes
+        if (remainingResponseBytes < CHILD_OUTPUT_QUOTA_TEXT_BYTES) {
+          this.options.parents.stopBeforeChild(grant, childOrdinal)
+          completedSteps.push(
+            errorStep(
+              'quota_exceeded',
+              'Programmatic Tool aggregate output quota is exhausted',
+              false,
+              childOrdinal
+            )
+          )
+          break
+        }
+
+        let materializedArguments: Readonly<Record<string, JsonValue>>
+        try {
+          operationSignal.throwIfAborted()
+          materializedArguments = materializeBatchArguments(
+            step,
+            completedSteps,
+            capability.quotas.maxInputBytes,
+            operationSignal
+          )
+        } catch (error) {
+          if (isProgrammaticProtocolFailure(error)) throw error
+          this.options.parents.stopBeforeChild(grant, childOrdinal)
+          completedSteps.push(
+            operationSignal.aborted
+              ? abortStep(operationSignal, childOrdinal)
+              : error instanceof CliRequestError
+                ? errorStep(error.code, error.message, error.retriable, childOrdinal)
+                : error instanceof ProgrammaticParentOperationError
+                  ? errorStep(
+                      error.code === 'quota_exceeded' ? 'quota_exceeded' : 'invalid_request',
+                      error.message,
+                      false,
+                      childOrdinal
+                    )
+                  : errorStep(
+                      'invalid_request',
+                      'Programmatic Tool arguments could not be materialized',
+                      false,
+                      childOrdinal
+                    )
+          )
+          break
+        }
+
+        const child = await this.executeReservedChild({
+          caller,
+          grant,
+          invocation,
           capability,
-          snapshot: invocation.snapshot,
           entry,
-          permissionMode: invocation.permissionMode,
+          childOrdinal,
+          arguments: materializedArguments,
+          argumentTemplate: argumentTemplates[childOrdinal],
           signal: operationSignal,
-          commitDispatch: (dispatch) => {
-            if (dispatchCommitted) {
-              dispatchBoundaryFailed = true
-              throw new ExecutionJournalError(
-                'Programmatic child attempted more than one durable dispatch commit.',
-                'duplicate_dispatch'
+          maximumResponseBytes: remainingResponseBytes,
+          acceptsStep: (candidateStep) => {
+            const previewSteps = [...completedSteps, candidateStep]
+            if (candidateStep.status === 'success' && childOrdinal + 1 < request.steps.length) {
+              previewSteps.push(
+                errorStep('result_too_large', CHILD_OUTPUT_QUOTA_TEXT, false, childOrdinal + 1)
               )
             }
-            this.options.parents.materializeChild(grant, {
-              childOrdinal: 0,
-              argumentTemplate,
-              normalizedArguments: dispatch.normalizedArguments
-            })
-            dispatchBoundaryFailed = true
-            try {
-              this.options.parents.commitChildDispatch(grant, 0, dispatch)
-              dispatchCommitted = true
-            } finally {
-              if (dispatchCommitted) dispatchBoundaryFailed = false
+            while (previewSteps.length < request.steps.length) {
+              previewSteps.push(notStartedStep(previewSteps.length))
             }
-          },
-          registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection)
+            return (
+              measureOuterResponseBytes({ steps: previewSteps }) <= capability.quotas.maxOutputBytes
+            )
+          }
         })
-
-      let executed: Awaited<ReturnType<typeof execute>>
-      try {
-        executed = await execute()
-        if (executed.rawData.requiresPermission) {
-          const permission = executed.rawData.permissionRequest
-          const requestId = permission?.requestId?.trim()
-          if (dispatchCommitted) {
-            if (requestId) {
-              this.options.cancelChildPermission(requestId, capability.request.sessionId)
-            }
-            throw new ExecutionJournalError(
-              'Programmatic child requested permission after its durable dispatch commit.',
-              'invalid_fact'
-            )
-          }
-          if (!permission || !requestId) {
-            throw new CliRequestError(
-              'unavailable',
-              'Programmatic Tool permission authority is unavailable',
-              { httpStatus: 503 }
-            )
-          }
-          try {
-            await this.options.authorizeChild({
-              caller,
-              grant,
-              childOrdinal: 0,
-              entry,
-              arguments: request.arguments,
-              permission: permission as ToolPermissionPreCheckResult,
-              signal: operationSignal
-            })
-            executed = await execute()
-          } finally {
-            this.options.cancelChildPermission(requestId, capability.request.sessionId)
-          }
-          if (executed.rawData.requiresPermission) {
-            const repeatedRequestId = executed.rawData.permissionRequest?.requestId?.trim()
-            if (repeatedRequestId) {
-              this.options.cancelChildPermission(repeatedRequestId, capability.request.sessionId)
-            }
-            throw new CliRequestError(
-              'approval_denied',
-              'Programmatic Tool permission was not consumed',
-              { httpStatus: 403 }
-            )
-          }
+        completedSteps.push(child.step)
+        if (child.journalResponseText !== null) {
+          journalOutputBytes += Buffer.byteLength(child.journalResponseText, 'utf8')
         }
-      } catch (error) {
-        if (dispatchBoundaryFailed) throw error
-        if (isProgrammaticProtocolFailure(error)) throw error
-        if (dispatchCommitted) {
-          if (operationSignal.aborted) throw error
-          const childOutcome = boundedChildOutcome({
-            result: {
-              content: `Error: ${
-                error instanceof Error ? error.message : 'Programmatic Tool execution failed'
-              }`,
-              rawData: {
-                toolCallId: nestedOperation.providerToolCallId,
-                content: `Error: ${
-                  error instanceof Error ? error.message : 'Programmatic Tool execution failed'
-                }`,
-                isError: true
-              }
-            },
-            capability
-          })
-          this.options.parents.commitChildOutcome(grant, {
-            childOrdinal: 0,
-            responseText: childOutcome.responseText,
-            isError: true
-          })
-          releaseOutcomeProjections()
-          this.options.parents.recordToolInvocationResult(grant, {
-            responseText: formatSuccessfulOuterResponse(childOutcome.output),
-            isError: true
-          })
-          return childOutcome.output
-        }
-
-        if (pendingOutcomeProjections.length > 0) {
-          throw new ExecutionJournalError(
-            'Programmatic child registered an outcome projection without a durable dispatch.',
-            'invalid_fact'
-          )
-        }
-        this.options.parents.stopBeforeChild(grant, 0)
-        const step =
-          error instanceof CliRequestError
-            ? errorStep(error.code, error.message, error.retriable)
-            : error instanceof ProgrammaticParentOperationError
-              ? errorStep(
-                  error.code === 'quota_exceeded' ? 'quota_exceeded' : 'invalid_request',
-                  error.message,
-                  false
-                )
-              : unavailableStep()
-        const output = toolCallRoute.output.parse({ step })
-        assertOutputWithinCapabilityQuota(output, capability)
-        this.options.parents.recordToolInvocationResult(grant, {
-          responseText: formatSuccessfulOuterResponse(output),
-          isError: true
-        })
-        return output
+        if (child.step.status !== 'success') break
       }
 
-      if (!dispatchCommitted) {
-        if (pendingOutcomeProjections.length > 0) {
-          throw new ExecutionJournalError(
-            'Programmatic child registered an outcome projection without a durable dispatch.',
-            'invalid_fact'
-          )
-        }
-        this.options.parents.stopBeforeChild(grant, 0)
-        const output = toolCallRoute.output.parse({ step: unavailableStep() })
-        assertOutputWithinCapabilityQuota(output, capability)
-        this.options.parents.recordToolInvocationResult(grant, {
-          responseText: formatSuccessfulOuterResponse(output),
-          isError: true
-        })
-        return output
+      while (completedSteps.length < request.steps.length) {
+        completedSteps.push(notStartedStep(completedSteps.length))
       }
-
-      const childOutcome = boundedChildOutcome({ result: executed, capability })
-      this.options.parents.commitChildOutcome(grant, {
-        childOrdinal: 0,
-        responseText: childOutcome.responseText,
-        isError: childOutcome.isError
-      })
-      releaseOutcomeProjections()
+      const output = toolBatchRoute.output.parse({ steps: completedSteps })
+      assertOutputWithinCapabilityQuota(output, capability)
+      const isError = completedSteps.some((step) => step.status !== 'success')
       this.options.parents.recordToolInvocationResult(grant, {
-        responseText: formatSuccessfulOuterResponse(childOutcome.output),
-        isError: childOutcome.isError
+        responseText: formatSuccessfulOuterResponse(output),
+        isError
       })
-      return childOutcome.output
+      return output
     }
 
     throw new CliRequestError('unavailable', 'Programmatic Tool execution is not available', {

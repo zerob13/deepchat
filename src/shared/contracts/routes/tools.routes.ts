@@ -38,16 +38,26 @@ function isBoundedJsonPointer(value: string): boolean {
   )
 }
 
-function decodeJsonPointer(value: string): string[] {
+export function decodeProgrammaticToolJsonPointer(value: string): string[] {
   return value
     .slice(1)
     .split('/')
     .map((segment) => segment.replaceAll('~1', '/').replaceAll('~0', '~'))
 }
 
+export function parseProgrammaticToolBindingSource(
+  value: string
+): Readonly<{ stepIndex: number; resultPointer: string }> | null {
+  const match = PROGRAMMATIC_TOOL_FROM_PATTERN.exec(value)
+  if (!match) return null
+  const stepIndex = Number(match[1])
+  if (!Number.isSafeInteger(stepIndex)) return null
+  return Object.freeze({ stepIndex, resultPointer: match[2] })
+}
+
 function jsonPointerTargetsExistingValue(value: unknown, pointer: string): boolean {
   let current = value
-  for (const segment of decodeJsonPointer(pointer)) {
+  for (const segment of decodeProgrammaticToolJsonPointer(pointer)) {
     if (Array.isArray(current)) {
       if (!/^(0|[1-9][0-9]*)$/.test(segment)) return false
       const index = Number(segment)
@@ -62,8 +72,8 @@ function jsonPointerTargetsExistingValue(value: unknown, pointer: string): boole
 }
 
 function jsonPointerPathsOverlap(left: string, right: string): boolean {
-  const leftSegments = decodeJsonPointer(left)
-  const rightSegments = decodeJsonPointer(right)
+  const leftSegments = decodeProgrammaticToolJsonPointer(left)
+  const rightSegments = decodeProgrammaticToolJsonPointer(right)
   const sharedLength = Math.min(leftSegments.length, rightSegments.length)
   return leftSegments.slice(0, sharedLength).every((segment, index) => {
     return segment === rightSegments[index]
@@ -162,8 +172,10 @@ const ProgrammaticToolBindingSchema = z
           if (UTF8_ENCODER.encode(value).byteLength > PROGRAMMATIC_TOOL_POINTER_MAX_BYTES) {
             return false
           }
-          const match = PROGRAMMATIC_TOOL_FROM_PATTERN.exec(value)
-          return Boolean(match && (match[2] === '' || isBoundedJsonPointer(match[2])))
+          const source = parseProgrammaticToolBindingSource(value)
+          return Boolean(
+            source && (source.resultPointer === '' || isBoundedJsonPointer(source.resultPointer))
+          )
         },
         { message: 'Programmatic Tool binding source must be a bounded prior-result pointer' }
       )
@@ -289,9 +301,8 @@ export const toolBatchRoute = defineRouteContract({
               path: ['steps', stepIndex, 'bindings', bindingIndex, 'to']
             })
           }
-          const sourceIndexText = PROGRAMMATIC_TOOL_FROM_PATTERN.exec(binding.from)?.[1]
-          const sourceIndex = sourceIndexText === undefined ? Number.NaN : Number(sourceIndexText)
-          if (!Number.isSafeInteger(sourceIndex) || sourceIndex >= stepIndex) {
+          const source = parseProgrammaticToolBindingSource(binding.from)
+          if (!source || source.stepIndex >= stepIndex) {
             context.addIssue({
               code: 'custom',
               message: 'Programmatic Tool bindings may reference only prior completed steps',
