@@ -27,17 +27,17 @@
 
 ## P0-B: Native Activation (Retained HEAD Work)
 
-- [ ] Freeze the Run Tool Ceiling and virtualization mode.
-- [ ] Build one immutable ToolSurfaceSnapshot per requestSeq and reuse it for physical retries.
-- [ ] Preserve active order, append accepted candidates, and shrink on current revocation.
-- [ ] Keep V4 without ExecutionContract and bind V5 ceilings to active tools only.
-- [ ] Reserve/register native `tool_search` and search only its originating frozen catalog.
-- [ ] Return bounded metadata without schema or internal identifiers.
-- [ ] Release after durable outcome; ordinal-merge and deduplicate after complete batch settlement.
+- [x] Freeze the Run Tool Ceiling and virtualization mode.
+- [x] Build one immutable ToolSurfaceSnapshot per requestSeq and reuse it for physical retries.
+- [x] Preserve active order, append accepted candidates, and shrink on current revocation.
+- [x] Keep V4 without ExecutionContract and bind V5 ceilings to active tools only.
+- [x] Reserve/register native `tool_search` and search only its originating frozen catalog.
+- [x] Return bounded metadata without schema or internal identifiers.
+- [x] Release after durable outcome; ordinal-merge and deduplicate after complete batch settlement.
 - [ ] Discard pre-admission candidates across restart and activate only in the next View.
-- [ ] Enforce reserve, batch, Run, provider, and V5 budgets without eviction/full fallback.
+- [x] Enforce reserve, batch, Run, provider, and V5 budgets without eviction/full fallback.
 - [x] Return bounded Skill activation failure and stage serialized no-I/O resource bundles.
-- [ ] Reject guessed inactive calls before target resolution and compare canonical definition hash
+- [x] Reject guessed inactive calls before target resolution and compare canonical definition hash
       before target T1.
 - [ ] Add bounded hash-valid catalog/provider surface facts and exclude them from View/Memory/search.
 - [ ] Atomically write strict V5 facts, keep honest V4 fail-open diagnostics, and recover strict

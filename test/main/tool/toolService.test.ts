@@ -803,6 +803,47 @@ describe('ToolService', () => {
     expect(mcpService.callTool).not.toHaveBeenCalled()
   })
 
+  it('rejects guessed inactive tools before source or target resolution', async () => {
+    const active = buildToolSurfaceExecutionContext()
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: { getAllToolDefinitions: vi.fn(), callTool: vi.fn() } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+    const sourceLookup = vi.spyOn(toolService as any, 'getToolSource')
+    const mcpTargetLookup = vi.spyOn(toolService as any, 'getMcpDefinition')
+    const agentTargetLookup = vi.spyOn(toolService as any, 'getAgentDefinition')
+
+    for (const toolName of ['hidden', 'does_not_exist']) {
+      const toolCall = {
+        id: `guessed-${toolName}`,
+        type: 'function' as const,
+        function: { name: toolName, arguments: '{}' },
+        conversationId: active.request.sessionId
+      }
+      const authority = {
+        messageId: active.request.messageId,
+        runId: active.request.runId,
+        requestSeq: active.request.requestSeq,
+        toolSurfaceSnapshot: active.context.snapshot
+      }
+      await expect(toolService.preCheckToolPermission(toolCall, authority)).rejects.toThrow(
+        `Tool is not available in the current session: ${toolName}`
+      )
+      await expect(toolService.callTool(toolCall, authority)).rejects.toThrow(
+        `Tool is not available in the current session: ${toolName}`
+      )
+    }
+
+    expect(sourceLookup).not.toHaveBeenCalled()
+    expect(mcpTargetLookup).not.toHaveBeenCalled()
+    expect(agentTargetLookup).not.toHaveBeenCalled()
+  })
+
   it('rechecks Tool Surface authority at the dispatch commit boundary', async () => {
     const definition = buildContractMcpDefinition()
     const controller = createFullToolSurfaceRunController({

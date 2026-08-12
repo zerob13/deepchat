@@ -632,6 +632,18 @@ export class ToolService implements ToolServicePort {
           }
         : commitDispatch
     assertToolSurfaceContextActive()
+    if (toolSurfaceSnapshot) {
+      assertToolSurfaceAllowsDispatchMembership(
+        toolSurfaceSnapshot,
+        {
+          sessionId: request.conversationId?.trim() ?? '',
+          messageId: options?.messageId?.trim() ?? '',
+          runId: options?.runId?.trim() ?? '',
+          requestSeq: options?.requestSeq ?? 0
+        },
+        toolName
+      )
+    }
     const source = this.getToolSource(toolName, request.conversationId)
     dispatchSource = source
     assertToolSurfaceDispatchAllowed()
@@ -1208,6 +1220,18 @@ export class ToolService implements ToolServicePort {
     options?.signal?.throwIfAborted()
     const sessionId = request.conversationId?.trim() ?? ''
     const toolName = request.function.name
+    if (authority.snapshot) {
+      assertToolSurfaceAllowsDispatchMembership(
+        authority.snapshot,
+        {
+          sessionId,
+          messageId: options?.messageId?.trim() ?? '',
+          runId: options?.runId?.trim() ?? '',
+          requestSeq: options?.requestSeq ?? 0
+        },
+        toolName
+      )
+    }
     const currentSource = this.getToolSource(toolName, sessionId)
     const currentDefinition =
       currentSource === 'mcp'
