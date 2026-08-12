@@ -491,6 +491,11 @@ const setup = async (options: SetupOptions = {}) => {
     template: '<div><slot /></div>'
   })
 
+  // Mirrors reka-ui renderless roots / as-child triggers, which add no DOM wrapper.
+  const slotOnlyStub = defineComponent({
+    template: '<slot />'
+  })
+
   const dialogStub = defineComponent({
     props: {
       open: {
@@ -577,9 +582,9 @@ const setup = async (options: SetupOptions = {}) => {
         plugins: [createPinia()],
         stubs: {
           TooltipProvider: passthrough,
-          Tooltip: passthrough,
+          Tooltip: slotOnlyStub,
           TooltipContent: passthrough,
-          TooltipTrigger: passthrough,
+          TooltipTrigger: slotOnlyStub,
           ContextMenu: passthrough,
           ContextMenuTrigger: passthrough,
           ContextMenuContent: passthrough,
@@ -970,6 +975,67 @@ describe('WindowSideBar agent switch', () => {
     expect(wrapper.findAll('[data-group-id="/work/new"]')).toHaveLength(1)
   })
 
+  it('disambiguates duplicate workspace labels with minimal parent context', async () => {
+    const { wrapper, projectStore } = await setup({
+      groupMode: 'project',
+      groups: [
+        {
+          id: '/work/team-a/app',
+          label: 'app',
+          sessions: [
+            {
+              id: 'session-a',
+              title: 'Session A',
+              status: 'none',
+              projectDir: '/work/team-a/app',
+              updatedAt: 100
+            }
+          ]
+        },
+        {
+          id: '/work/design',
+          label: 'design',
+          sessions: [
+            {
+              id: 'session-d',
+              title: 'Session D',
+              status: 'none',
+              projectDir: '/work/design',
+              updatedAt: 90
+            }
+          ]
+        }
+      ],
+      projectEnvironments: [
+        { path: '/work/team-a/app', sessionCount: 1 },
+        { path: '/work/archive/app', sessionCount: 0 },
+        { path: '/work/design', sessionCount: 1 }
+      ]
+    })
+
+    const teamGroup = wrapper.get('[data-group-id="/work/team-a/app"]')
+    const archiveGroup = wrapper.get('[data-group-id="/work/archive/app"]')
+    const designGroup = wrapper.get('[data-group-id="/work/design"]')
+    expect(teamGroup.text()).toContain('app · team-a')
+    expect(archiveGroup.text()).toContain('app · archive')
+    expect(designGroup.text()).not.toContain('design ·')
+
+    // The full path lives in the focus/hover tooltip, not in title or the accessible name.
+    expect(teamGroup.attributes('title')).toBeUndefined()
+    expect(teamGroup.text()).not.toContain('/work/team-a/app')
+    const pathTooltips = wrapper
+      .findAll('[data-testid="workspace-path-tooltip"]')
+      .map((tooltip) => tooltip.text())
+    expect(pathTooltips).toContain('/work/team-a/app')
+    expect(pathTooltips).toContain('/work/archive/app')
+
+    projectStore.environments.splice(1, 1)
+    await flushPromises()
+
+    expect(wrapper.find('[data-group-id="/work/archive/app"]').exists()).toBe(false)
+    expect(wrapper.get('[data-group-id="/work/team-a/app"]').text()).not.toContain('app · team-a')
+  })
+
   it('merges a project snapshot into an earlier session-derived row without duplication', async () => {
     const { wrapper, projectStore } = await setup({
       groupMode: 'project',
@@ -1242,6 +1308,48 @@ describe('WindowSideBar agent switch', () => {
   )
 
   it(
+    'serializes overlapping pin toggles across two sessions',
+    async () => {
+      const sessionA = { id: 'pin-a', title: 'Pin A', status: 'none', isPinned: false }
+      const sessionB = { id: 'pin-b', title: 'Pin B', status: 'none', isPinned: false }
+      const { wrapper, sessionStore } = await setup({
+        groups: [
+          {
+            id: 'common.time.today',
+            label: 'common.time.today',
+            labelKey: 'common.time.today',
+            sessions: [sessionA, sessionB]
+          }
+        ]
+      })
+
+      let resolveFirstToggle: (() => void) | undefined
+      sessionStore.toggleSessionPinned.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirstToggle = () => resolve()
+          })
+      )
+
+      const items = wrapper.findAllComponents({ name: 'WindowSideBarSessionItem' })
+      items[0].vm.$emit('toggle-pin', sessionA)
+      items[1].vm.$emit('toggle-pin', sessionB)
+      await flushPromises()
+
+      // The second toggle must wait until the first flight fully settles.
+      expect(sessionStore.toggleSessionPinned).toHaveBeenCalledTimes(1)
+      expect(sessionStore.toggleSessionPinned).toHaveBeenCalledWith('pin-a', true)
+
+      resolveFirstToggle?.()
+      await flushPromises()
+
+      expect(sessionStore.toggleSessionPinned).toHaveBeenCalledTimes(2)
+      expect(sessionStore.toggleSessionPinned).toHaveBeenLastCalledWith('pin-b', true)
+    },
+    TEST_TIMEOUT_MS
+  )
+
+  it(
     'toggles spotlight from the expanded sidebar search command',
     async () => {
       const { wrapper, spotlightStore } = await setup()
@@ -1494,20 +1602,22 @@ describe('WindowSideBar agent switch', () => {
           }
         ]
       })
-      const event = new KeyboardEvent('keydown', {
-        key: '1',
-        metaKey: true,
-        bubbles: true,
-        cancelable: true
-      })
 
       const input = document.createElement('input')
-      Object.defineProperty(event, 'target', { value: input })
-
-      ;(wrapper.vm as any).handleWindowShortcutKeydown(event)
+      document.body.appendChild(input)
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: '1',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true
+        })
+      )
       await flushPromises()
+      input.remove()
 
       expect(sessionStore.selectSession).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="sidebar-session-shortcut-badge"]').exists()).toBe(false)
     },
     TEST_TIMEOUT_MS
   )
@@ -2545,7 +2655,11 @@ describe('WindowSideBar agent switch', () => {
     ])
     remoteControlClient.getChannelStatus.mockRejectedValueOnce(new Error('IPC unavailable'))
 
-    await expect((wrapper.vm as any).refreshRemoteControlStatus()).resolves.toBe(false)
+    // Advance to the next active poll tick so the failing refresh runs through the
+    // real scheduling path instead of a direct internal call.
+    vi.advanceTimersByTime(2_000)
+    await flushPromises()
+
     await wrapper.find('[data-testid="remote-control-button"]').trigger('click')
 
     expect(router.push).toHaveBeenLastCalledWith({
@@ -2558,6 +2672,66 @@ describe('WindowSideBar agent switch', () => {
     )
 
     warn.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('drops a stale overlapping refresh so it cannot overwrite newer status', async () => {
+    const { wrapper, remoteControlClient } = await setup({
+      remoteStatus: {
+        enabled: true,
+        state: 'running'
+      }
+    })
+
+    let resolveStaleTelegramStatus: (() => void) | undefined
+    remoteControlClient.getChannelStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStaleTelegramStatus = () =>
+            resolve({
+              channel: 'telegram' as const,
+              enabled: true,
+              state: 'stopped' as const,
+              pollOffset: 0,
+              bindingCount: 0,
+              allowedUserCount: 0,
+              lastError: null,
+              botUser: null
+            })
+        })
+    )
+
+    // Poll tick starts a refresh whose telegram status request hangs.
+    vi.advanceTimersByTime(2_000)
+    await flushPromises()
+
+    const setDocumentVisibility = (state: DocumentVisibilityState) => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: state })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+
+    try {
+      // Hiding and showing the document starts a second refresh while the first is pending.
+      setDocumentVisibility('hidden')
+      await flushPromises()
+      setDocumentVisibility('visible')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="remote-control-button"]').attributes('title')).toContain(
+        'chat.sidebar.remoteControlStatus.running'
+      )
+
+      // The first refresh resolves last with stale data; its snapshot must be discarded.
+      resolveStaleTelegramStatus?.()
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="remote-control-button"]').attributes('title')).toContain(
+        'chat.sidebar.remoteControlStatus.running'
+      )
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState')
+    }
+
     wrapper.unmount()
   })
 
