@@ -18,7 +18,6 @@ import { PluginSettingsWindow } from '../desktop/pluginSettingsWindow'
 import { ShortcutPresenter } from '../desktop/shortcut'
 import type { FileServicePort } from '@shared/types/file'
 import type { WorkspaceServicePort } from '@shared/types/workspace'
-import type { ToolServicePort } from '@shared/types/tool'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import { projectFinalAssistantAnswer } from '@shared/lib/assistantDeliverySegments'
 import type { SkillMetadataSnapshotPort, SkillServicePort } from '@shared/types/skill'
@@ -242,6 +241,7 @@ import {
   createCliRoutes,
   resolveBundledCliDirectory
 } from '@/cli'
+import { CliRequestError } from '@/cli/errors'
 import { AcpRegistryMigrationService } from '@/agent/acp/catalog/acpRegistryMigrationService'
 import { killTerminal } from '@/agent/acp/launch/acpInitHelper'
 import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
@@ -331,7 +331,7 @@ export async function createMainProcessControl(dependencies: {
   let floatingButtonPresenter: FloatingButtonPresenter
   let knowledgeService: KnowledgeServicePort
   let workspaceService: WorkspaceServicePort
-  let toolService: ToolServicePort
+  let toolService: ToolService
   let deepChatAgentHarness: DeepChatAgentHarness
   let yoBrowserPresenter: IYoBrowserPresenter
   let computerUsePreviewPresenter: ComputerUsePreviewPresenter
@@ -577,7 +577,55 @@ export async function createMainProcessControl(dependencies: {
     executionJournal: sessionData.tapeStore
   })
   programmaticToolDispatcher = new ProgrammaticToolDispatcher({
-    parents: programmaticToolParents
+    parents: programmaticToolParents,
+    executeChild: async (input) => await toolService.callProgrammaticToolChild(input),
+    authorizeChild: async ({
+      caller,
+      grant,
+      childOrdinal,
+      entry,
+      arguments: childArguments,
+      permission,
+      signal
+    }) => {
+      const requestId = permission.requestId?.trim()
+      if (!requestId) {
+        throw new CliRequestError(
+          'unavailable',
+          'Programmatic Tool permission request is unavailable',
+          { httpStatus: 503 }
+        )
+      }
+      await cliMutationGuard.authorize({
+        operation: 'tool.call',
+        effect: permission.permissionType === 'read' ? 'read' : 'destructive',
+        principal: caller.principal,
+        connectionId: caller.connectionId,
+        clientRequestId: `${grant.operation.providerToolCallId}:${childOrdinal}`,
+        arguments: {
+          target: entry.target.providerVisibleName,
+          arguments: childArguments
+        },
+        displayData: {
+          target: entry.target.providerVisibleName,
+          ...(typeof permission.argumentsPreview === 'string'
+            ? { argumentsPreview: permission.argumentsPreview }
+            : {})
+        },
+        signal,
+        timeoutMs: grant.quotas.maxDurationMs
+      })
+      if (!toolPermissionBroker.approve(requestId, grant.operation.sessionId)) {
+        throw new CliRequestError(
+          'unavailable',
+          'Programmatic Tool permission request is no longer active',
+          { httpStatus: 503 }
+        )
+      }
+    },
+    cancelChildPermission: (requestId, sessionId) => {
+      toolPermissionBroker.cancel(requestId, sessionId)
+    }
   })
   const taskContractService = new TaskContractService(
     () => sessionData.database.deepchatContractStore

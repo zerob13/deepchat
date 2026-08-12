@@ -24,6 +24,8 @@ import {
 import { CliRequestError } from '@/cli/errors'
 import { ProgrammaticToolDispatcher } from '@/cli/programmaticToolDispatcher'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
+import { ProgrammaticParentOperationError } from '@/cli/programmaticToolParentController'
+import { ExecutionJournalError } from '@/tape/domain/executionJournal'
 
 const SERVER_ID = '22222222-2222-4222-8222-222222222222'
 const BINDING_HASH = 'a'.repeat(64)
@@ -163,14 +165,47 @@ function agentCaller(conversationId = 'session-1'): CliRouteCaller {
 }
 
 function createDispatcher(input: ReturnType<typeof buildCapability>) {
-  const resolveInvocation = vi.fn(() => input)
+  const resolveInvocation = vi.fn(() => ({ ...input, permissionMode: 'default' as const }))
   const recordDiscoveryResult = vi.fn()
+  const commitChildDispatch = vi.fn()
+  const commitChildOutcome = vi.fn()
+  const failToolInvocationBeforePlan = vi.fn()
+  const materializeChild = vi.fn()
+  const recordToolInvocationResult = vi.fn()
+  const reserveChildren = vi.fn()
+  const stopBeforeChild = vi.fn()
+  const executeChild = vi.fn()
+  const authorizeChild = vi.fn()
+  const cancelChildPermission = vi.fn()
   return {
     dispatcher: new ProgrammaticToolDispatcher({
-      parents: { resolveInvocation, recordDiscoveryResult }
+      parents: {
+        commitChildDispatch,
+        commitChildOutcome,
+        failToolInvocationBeforePlan,
+        materializeChild,
+        recordDiscoveryResult,
+        recordToolInvocationResult,
+        reserveChildren,
+        resolveInvocation,
+        stopBeforeChild
+      },
+      executeChild,
+      authorizeChild,
+      cancelChildPermission
     }),
+    authorizeChild,
+    cancelChildPermission,
+    commitChildDispatch,
+    commitChildOutcome,
+    executeChild,
+    failToolInvocationBeforePlan,
+    materializeChild,
     resolveInvocation,
-    recordDiscoveryResult
+    recordDiscoveryResult,
+    recordToolInvocationResult,
+    reserveChildren,
+    stopBeforeChild
   }
 }
 
@@ -364,7 +399,497 @@ describe('ProgrammaticToolDispatcher', () => {
     )
   })
 
-  it('fails closed for mismatched callers, grants, missing live authority, and execution routes', async () => {
+  it('executes one frozen child between nested T1 and T2 before publishing its result', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+    const projection = vi.fn()
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.registerOutcomeProjection(projection)
+      input.commitDispatch({
+        toolName: 'remote_search',
+        toolSource: 'mcp',
+        normalizedArguments: { query: 'calendar' },
+        target: { serverName: 'remote', originalName: 'remote_search' }
+      })
+      return {
+        content: 'calendar result',
+        rawData: { toolCallId: input.request.id, content: 'calendar result' }
+      }
+    })
+    const grant = operationGrant(context.capability, 'call')
+
+    const output = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: { query: 'calendar' } },
+        agentCaller(),
+        grant,
+        new AbortController().signal
+      )
+    )
+
+    expect(output).toEqual({
+      step: { childOrdinal: 0, status: 'success', result: 'calendar result' }
+    })
+    expect(fixture.reserveChildren).toHaveBeenCalledWith(
+      grant,
+      expect.arrayContaining([
+        expect.objectContaining({
+          childOrdinal: 0,
+          toolName: 'remote_search',
+          toolSource: 'mcp',
+          definitionHash: expect.stringMatching(/^[0-9a-f]{64}$/)
+        })
+      ])
+    )
+    expect(fixture.materializeChild).toHaveBeenCalledWith(
+      grant,
+      expect.objectContaining({
+        childOrdinal: 0,
+        normalizedArguments: { query: 'calendar' }
+      })
+    )
+    expect(fixture.commitChildDispatch).toHaveBeenCalledOnce()
+    expect(fixture.commitChildOutcome).toHaveBeenCalledWith(grant, {
+      childOrdinal: 0,
+      responseText: 'calendar result',
+      isError: false
+    })
+    expect(projection).toHaveBeenCalledOnce()
+    expect(projection.mock.invocationCallOrder[0]).toBeGreaterThan(
+      fixture.commitChildOutcome.mock.invocationCallOrder[0]
+    )
+    expect(fixture.recordToolInvocationResult).toHaveBeenCalledWith(
+      grant,
+      expect.objectContaining({ isError: false })
+    )
+  })
+
+  it('parks one child approval before T1 and consumes it through the exact second dispatch', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_write', effect: 'write' })]
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild
+      .mockResolvedValueOnce({
+        content: 'Permission required',
+        rawData: {
+          toolCallId: 'child-1',
+          content: 'Permission required',
+          requiresPermission: true,
+          permissionRequest: {
+            needsPermission: true,
+            requestId: 'permission-1',
+            toolName: 'remote_write',
+            serverName: 'remote',
+            permissionType: 'write',
+            description: 'Permission required'
+          } as never
+        }
+      })
+      .mockImplementationOnce(async (input) => {
+        input.commitDispatch({
+          toolName: 'remote_write',
+          toolSource: 'mcp',
+          normalizedArguments: { value: 'approved' },
+          target: { serverName: 'remote', originalName: 'remote_write' }
+        })
+        return {
+          content: 'written',
+          rawData: { toolCallId: input.request.id, content: 'written' }
+        }
+      })
+    const grant = operationGrant(context.capability, 'call')
+
+    const output = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_write', arguments: { value: 'approved' } },
+        agentCaller(),
+        grant,
+        new AbortController().signal
+      )
+    )
+
+    expect(output.step.status).toBe('success')
+    expect(fixture.authorizeChild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        grant,
+        childOrdinal: 0,
+        permission: expect.objectContaining({ requestId: 'permission-1' })
+      })
+    )
+    expect(fixture.cancelChildPermission).toHaveBeenCalledWith('permission-1', 'session-1')
+    expect(fixture.executeChild).toHaveBeenCalledTimes(2)
+    expect(fixture.commitChildDispatch).toHaveBeenCalledOnce()
+  })
+
+  it('fails the Run boundary when a child asks for permission after nested T1', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_write', effect: 'write' })]
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: 'remote_write',
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: 'remote_write' }
+      })
+      return {
+        content: 'Permission required',
+        rawData: {
+          toolCallId: input.request.id,
+          content: 'Permission required',
+          requiresPermission: true,
+          permissionRequest: {
+            needsPermission: true,
+            requestId: 'late-permission',
+            toolName: 'remote_write',
+            serverName: 'remote',
+            permissionType: 'write',
+            description: 'Permission required'
+          } as never
+        }
+      }
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_write', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    ).rejects.toMatchObject({ name: 'ExecutionJournalError', code: 'invalid_fact' })
+    expect(fixture.authorizeChild).not.toHaveBeenCalled()
+    expect(fixture.cancelChildPermission).toHaveBeenCalledWith('late-permission', 'session-1')
+    expect(fixture.commitChildOutcome).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
+  it('uses one pre-plan anti-oracle result for unknown and provider-active call targets', async () => {
+    const exec = agentExec()
+    const nativePinned = mcpTool({ name: 'calendar_native' })
+    const context = buildCapability({
+      definitions: [exec, nativePinned, mcpTool({ name: 'remote_search' })],
+      providerActiveDefinitions: [exec, nativePinned]
+    })
+    const fixture = createDispatcher(context)
+    const grant = operationGrant(context.capability, 'call')
+
+    const unknown = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'does_not_exist', arguments: {} },
+        agentCaller(),
+        grant,
+        new AbortController().signal
+      )
+    )
+    const providerActive = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'calendar_native', arguments: {} },
+        agentCaller(),
+        grant,
+        new AbortController().signal
+      )
+    )
+
+    expect(providerActive).toEqual(unknown)
+    expect(fixture.failToolInvocationBeforePlan).toHaveBeenCalledTimes(2)
+    expect(fixture.reserveChildren).not.toHaveBeenCalled()
+    expect(fixture.executeChild).not.toHaveBeenCalled()
+  })
+
+  it('propagates nested outcome persistence failure before result projection', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+    const projection = vi.fn()
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.registerOutcomeProjection(projection)
+      input.commitDispatch({
+        toolName: 'remote_search',
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: 'remote_search' }
+      })
+      return {
+        content: 'known result',
+        rawData: { toolCallId: input.request.id, content: 'known result' }
+      }
+    })
+    fixture.commitChildOutcome.mockImplementation(() => {
+      throw new Error('disk full')
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    ).rejects.toThrow('disk full')
+    expect(projection).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
+  it('settles a bounded pre-T1 plan quota error without inventing a child dispatch', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+    fixture.reserveChildren.mockImplementationOnce(() => {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic child plan exceeds its aggregate input quota',
+        'quota_exceeded'
+      )
+    })
+
+    const output = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.step).toMatchObject({
+      childOrdinal: 0,
+      status: 'error',
+      error: { code: 'quota_exceeded' }
+    })
+    expect(fixture.executeChild).not.toHaveBeenCalled()
+    expect(fixture.commitChildDispatch).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ isError: true })
+    )
+  })
+
+  it('propagates nested dispatch persistence failure instead of reducing it to CLI output', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+    fixture.commitChildDispatch.mockImplementationOnce(() => {
+      throw new Error('nested T1 disk full')
+    })
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: 'remote_search',
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: 'remote_search' }
+      })
+      return {
+        content: 'unreachable',
+        rawData: { toolCallId: input.request.id, content: 'unreachable' }
+      }
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    ).rejects.toThrow('nested T1 disk full')
+    expect(fixture.stopBeforeChild).not.toHaveBeenCalled()
+    expect(fixture.commitChildOutcome).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
+  it('propagates Journal failure after nested T1 instead of inventing a child T2', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: 'remote_search',
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: 'remote_search' }
+      })
+      throw new ExecutionJournalError('nested projection boundary failed', 'projection_failed')
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    ).rejects.toMatchObject({
+      name: 'ExecutionJournalError',
+      code: 'projection_failed'
+    })
+    expect(fixture.commitChildOutcome).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
+  it('propagates parent identity corruption before nested T1', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+    fixture.materializeChild.mockImplementationOnce(() => {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic child argument template changed after plan reservation',
+        'identity_mismatch'
+      )
+    })
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: 'remote_search',
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: 'remote_search' }
+      })
+      throw new Error('unreachable')
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    ).rejects.toMatchObject({
+      name: 'ProgrammaticParentOperationError',
+      code: 'identity_mismatch'
+    })
+    expect(fixture.stopBeforeChild).not.toHaveBeenCalled()
+    expect(fixture.commitChildOutcome).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
+  it('rejects an outcome projection registered without nested T1', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.registerOutcomeProjection(vi.fn())
+      return {
+        content: 'uncommitted',
+        rawData: { toolCallId: input.request.id, content: 'uncommitted' }
+      }
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    ).rejects.toMatchObject({ name: 'ExecutionJournalError', code: 'invalid_fact' })
+    expect(fixture.stopBeforeChild).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
+  it('cancels a repeated permission request and stops before child T1', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_write', effect: 'write' })]
+    })
+    const fixture = createDispatcher(context)
+    const permissionResponse = (requestId: string) => ({
+      content: 'Permission required',
+      rawData: {
+        toolCallId: 'child-1',
+        content: 'Permission required',
+        requiresPermission: true,
+        permissionRequest: {
+          needsPermission: true,
+          requestId,
+          toolName: 'remote_write',
+          serverName: 'remote',
+          permissionType: 'write',
+          description: 'Permission required'
+        } as never
+      }
+    })
+    fixture.executeChild
+      .mockResolvedValueOnce(permissionResponse('permission-1'))
+      .mockResolvedValueOnce(permissionResponse('permission-2'))
+
+    const output = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_write', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.step).toMatchObject({
+      status: 'error',
+      error: { code: 'approval_denied' }
+    })
+    expect(fixture.cancelChildPermission).toHaveBeenCalledWith('permission-1', 'session-1')
+    expect(fixture.cancelChildPermission).toHaveBeenCalledWith('permission-2', 'session-1')
+    expect(fixture.stopBeforeChild).toHaveBeenCalledWith(expect.anything(), 0)
+    expect(fixture.commitChildDispatch).not.toHaveBeenCalled()
+  })
+
+  it('bounds a known post-T1 execution failure before nested T2', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })],
+      maxOutputBytes: 512
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.commitDispatch({
+        toolName: 'remote_search',
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: 'remote_search' }
+      })
+      throw new Error('x'.repeat(2_048))
+    })
+
+    const output = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.step).toMatchObject({
+      status: 'error',
+      error: { code: 'result_too_large' }
+    })
+    expect(fixture.commitChildOutcome).toHaveBeenCalledWith(expect.anything(), {
+      childOrdinal: 0,
+      responseText: 'Programmatic Tool result exceeds its output quota',
+      isError: true
+    })
+  })
+
+  it('fails closed for mismatched callers, grants, missing live authority, and batch execution', async () => {
     const context = buildCapability({
       definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
     })
@@ -406,16 +931,6 @@ describe('ProgrammaticToolDispatcher', () => {
       'authentication_failed'
     )
 
-    await expectCliError(
-      dispatcher.dispatch(
-        toolCallRoute.name,
-        { target: 'remote_search', arguments: {} },
-        agentCaller(),
-        operationGrant(context.capability, 'call'),
-        new AbortController().signal
-      ),
-      'unavailable'
-    )
     await expectCliError(
       dispatcher.dispatch(
         toolBatchRoute.name,

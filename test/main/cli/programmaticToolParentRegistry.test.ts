@@ -84,7 +84,10 @@ describe('ProgrammaticToolParentRegistry', () => {
       programmaticSurfaceHash: operationBinding.programmaticSurfaceHash
     } as ProgrammaticToolCapabilityV1
     const snapshot = {} as ToolSurfaceSnapshot
-    const assertAuthorityActive = vi.fn()
+    let active = true
+    const assertAuthorityActive = vi.fn(() => {
+      if (!active) throw new Error('View revoked')
+    })
     journal.commitRunStarted({
       sessionId: operationBinding.operation.sessionId,
       runId: operationBinding.operation.runId,
@@ -93,7 +96,7 @@ describe('ProgrammaticToolParentRegistry', () => {
     })
     const registration = registry.prepare({
       binding: operationBinding,
-      invocationAuthority: { capability, snapshot },
+      invocationAuthority: { capability, snapshot, permissionMode: 'default' },
       assertAuthorityActive
     })
     const outerDispatch = journal.commitDispatch({
@@ -112,13 +115,22 @@ describe('ProgrammaticToolParentRegistry', () => {
     registration.armOuterDispatch({ ...outerDispatch, operation: operationBinding.operation })
     const grant = registration.takeArmedToken().programmaticOperation
 
-    expect(registry.resolveInvocation(grant)).toEqual({ capability, snapshot })
+    expect(registry.resolveInvocation(grant)).toEqual({
+      capability,
+      snapshot,
+      permissionMode: 'default'
+    })
     expect(assertAuthorityActive).toHaveBeenCalledTimes(3)
     expect(() => registry.resolveInvocation({ ...grant, capabilityHash: '9'.repeat(64) })).toThrow(
       /does not match its registered parent authority/
     )
 
-    registration.settleLaunchFailure({ responseText: 'launcher unavailable' })
+    active = false
+    expect(() => registry.resolveInvocation(grant)).toThrow('View revoked')
+    const responseText = 'Tool is not available in the current session'
+    registry.failToolInvocationBeforePlan(grant, { responseText, isError: true })
+    expect(registration.takeCompletedInvocationResult()).toEqual({ responseText, isError: true })
+    registration.settleOuterOutcome({ responseText, isError: true })
     expect(() => registry.resolveInvocation(grant)).toThrow(/authority is unavailable/)
   })
 
@@ -204,7 +216,11 @@ describe('ProgrammaticToolParentRegistry', () => {
     })
     const registration = registry.prepare({
       binding: searchBinding,
-      invocationAuthority: { capability, snapshot: {} as ToolSurfaceSnapshot },
+      invocationAuthority: {
+        capability,
+        snapshot: {} as ToolSurfaceSnapshot,
+        permissionMode: 'default'
+      },
       assertAuthorityActive: () => undefined
     })
     const outerDispatch = journal.commitDispatch({

@@ -17,6 +17,7 @@ import type {
   ExecutionJournalWriter,
   NestedExecutionJournalWriter
 } from '@/tape/ports/capabilities'
+import type { ToolDispatchCommitInput } from '@shared/types/core/mcp'
 
 export const PROGRAMMATIC_PARENT_SETTLEMENT_SCHEMA_VERSION = 1 as const
 
@@ -328,29 +329,46 @@ export class ProgrammaticToolParentController {
         'invalid_state'
       )
     }
-    if (this.completedInvocationResult) {
+    this.completeInvocation(input, 'Programmatic discovery')
+  }
+
+  completeToolInvocation(input: ProgrammaticCompletedInvocationResult): void {
+    this.requireState('armed')
+    const verb = this.preparedGrant.binding.command.verb
+    if (verb !== 'call' && verb !== 'batch') {
+      throw new ProgrammaticParentOperationError(
+        'Only Programmatic tool execution can complete a child plan',
+        'invalid_state'
+      )
+    }
+    if (!this.children) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic tool execution has no reserved child plan',
+        'invalid_state'
+      )
+    }
+    const childStates = [...this.children.values()]
+    const startedChildren = childStates.filter(
+      (child) => child.state === 'dispatched' || child.state === 'settled'
+    ).length
+    const settledChildren = childStates.filter((child) => child.state === 'settled').length
+    if (
+      startedChildren !== settledChildren ||
+      (!this.childFailed && this.nextChildOrdinal !== childStates.length)
+    ) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic tool execution cannot complete with unsettled children',
+        'unsettled_child'
+      )
+    }
+    if (this.childFailed !== input.isError) {
       this.markFatal()
       throw new ProgrammaticParentOperationError(
-        'Programmatic discovery produced more than one authoritative result',
+        'Programmatic tool result does not match the child plan outcome',
         'identity_mismatch'
       )
     }
-    if (typeof input.isError !== 'boolean') {
-      this.markFatal()
-      throw new ProgrammaticParentOperationError(
-        'Programmatic discovery result error state is invalid',
-        'identity_mismatch'
-      )
-    }
-    this.requireOutputWithinQuota(
-      input.responseText,
-      0,
-      'Programmatic discovery result exceeds the output quota'
-    )
-    this.completedInvocationResult = Object.freeze({
-      responseText: input.responseText,
-      isError: input.isError
-    })
+    this.completeInvocation(input, 'Programmatic tool')
   }
 
   takeCompletedInvocationResult(): ProgrammaticCompletedInvocationResult {
@@ -463,7 +481,10 @@ export class ProgrammaticToolParentController {
     this.materializedInputBytes = aggregateInputBytes
   }
 
-  commitChildDispatch(childOrdinal: number): ExecutionJournalCommitReceipt {
+  commitChildDispatch(
+    childOrdinal: number,
+    input: ToolDispatchCommitInput
+  ): ExecutionJournalCommitReceipt {
     this.requireState('armed')
     if (childOrdinal !== this.nextChildOrdinal || this.childFailed) {
       throw new ProgrammaticParentOperationError(
@@ -479,6 +500,51 @@ export class ProgrammaticToolParentController {
         'invalid_state'
       )
     }
+    let dispatchedArguments: ReturnType<typeof cloneCanonicalRecord>
+    let dispatchedTarget: ExecutionResolvedTarget
+    try {
+      dispatchedArguments = cloneCanonicalRecord(
+        input.normalizedArguments,
+        'dispatched normalized arguments'
+      )
+      dispatchedTarget = Object.freeze({
+        serverName: normalizeIdentityString(input.target?.serverName, 'dispatch.target.serverName'),
+        ...(input.target?.originalName === undefined
+          ? {}
+          : {
+              originalName: normalizeIdentityString(
+                input.target.originalName,
+                'dispatch.target.originalName'
+              )
+            }),
+        ...(input.target?.ownerPluginId === undefined
+          ? {}
+          : {
+              ownerPluginId: normalizeIdentityString(
+                input.target.ownerPluginId,
+                'dispatch.target.ownerPluginId'
+              )
+            })
+      })
+    } catch (error) {
+      this.markFatal()
+      throw error
+    }
+    if (
+      input.toolName !== child.reservation.toolName ||
+      input.toolSource !== child.reservation.toolSource ||
+      dispatchedTarget.serverName !== child.reservation.target.serverName ||
+      dispatchedTarget.originalName !== child.reservation.target.originalName ||
+      (child.reservation.target.ownerPluginId !== undefined &&
+        dispatchedTarget.ownerPluginId !== child.reservation.target.ownerPluginId) ||
+      dispatchedArguments.hash !== hashJsonData(normalizedArguments)
+    ) {
+      this.markFatal()
+      throw new ProgrammaticParentOperationError(
+        'Programmatic child dispatch does not match its reserved real target and arguments',
+        'identity_mismatch'
+      )
+    }
     const operation = this.buildNestedOperation(childOrdinal)
     return this.runJournalMutation(() => {
       const receipt = this.executionJournal.commitNestedDispatch({
@@ -488,7 +554,9 @@ export class ProgrammaticToolParentController {
         toolName: child.reservation.toolName,
         toolSource: child.reservation.toolSource,
         normalizedArguments,
-        target: child.reservation.target,
+        // Plugin ownership is resolved by the live MCP dispatch boundary. Preserve that actual
+        // target identity in Tape even when it was not representable in the frozen catalog entry.
+        target: dispatchedTarget,
         definitionHash: child.reservation.definitionHash,
         capabilityHash: this.preparedGrant.binding.capabilityHash
       })
@@ -538,7 +606,7 @@ export class ProgrammaticToolParentController {
 
   stopBeforeChild(childOrdinal: number): void {
     this.requireState('armed')
-    if (childOrdinal !== this.nextChildOrdinal || this.childFailed) {
+    if (childOrdinal !== this.nextChildOrdinal) {
       throw new ProgrammaticParentOperationError(
         'Programmatic preflight refusal does not match the next child',
         'invalid_state'
@@ -551,6 +619,7 @@ export class ProgrammaticToolParentController {
         'invalid_state'
       )
     }
+    if (this.childFailed) return
     this.childFailed = true
   }
 
@@ -565,25 +634,23 @@ export class ProgrammaticToolParentController {
       'Programmatic outer result exceeds the output quota'
     )
     const verb = this.preparedGrant.binding.command.verb
-    if (verb === 'search' || verb === 'describe') {
-      if (this.completedInvocationResult) {
-        if (
-          !this.completedInvocationResultClaimed ||
-          this.completedInvocationResult.responseText !== input.responseText ||
-          this.completedInvocationResult.isError !== input.isError
-        ) {
-          this.markFatal()
-          throw new ProgrammaticParentOperationError(
-            'Programmatic outer result does not match its authoritative discovery result',
-            'identity_mismatch'
-          )
-        }
-      } else if (!this.childFailed) {
+    if (this.completedInvocationResult) {
+      if (
+        !this.completedInvocationResultClaimed ||
+        this.completedInvocationResult.responseText !== input.responseText ||
+        this.completedInvocationResult.isError !== input.isError
+      ) {
+        this.markFatal()
         throw new ProgrammaticParentOperationError(
-          'Programmatic discovery cannot settle before an authoritative result',
-          'invalid_state'
+          'Programmatic outer result does not match its authoritative invocation result',
+          'identity_mismatch'
         )
       }
+    } else if (!this.childFailed) {
+      throw new ProgrammaticParentOperationError(
+        `Programmatic ${verb} cannot settle before an authoritative result`,
+        'invalid_state'
+      )
     }
     if ((verb === 'call' || verb === 'batch') && !this.children) {
       throw new ProgrammaticParentOperationError(
@@ -724,6 +791,28 @@ export class ProgrammaticToolParentController {
       )
     }
     return this.outerDispatchEntryId
+  }
+
+  private completeInvocation(input: ProgrammaticCompletedInvocationResult, label: string): void {
+    if (this.completedInvocationResult) {
+      this.markFatal()
+      throw new ProgrammaticParentOperationError(
+        `${label} produced more than one authoritative result`,
+        'identity_mismatch'
+      )
+    }
+    if (typeof input.isError !== 'boolean') {
+      this.markFatal()
+      throw new ProgrammaticParentOperationError(
+        `${label} result error state is invalid`,
+        'identity_mismatch'
+      )
+    }
+    this.requireOutputWithinQuota(input.responseText, 0, `${label} result exceeds the output quota`)
+    this.completedInvocationResult = Object.freeze({
+      responseText: input.responseText,
+      isError: input.isError
+    })
   }
 
   private requireOutputWithinQuota(value: unknown, accumulated: number, message: string): number {

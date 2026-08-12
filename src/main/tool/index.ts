@@ -8,7 +8,8 @@ import {
   type MCPToolDefinitionBase,
   type MCPToolResponse,
   type ToolDispatchCommit,
-  type ToolExecutionContract
+  type ToolExecutionContract,
+  type ToolOutcomeProjectionRegistrar
 } from '@shared/types/mcp'
 import type {
   ToolCallOptions,
@@ -69,8 +70,11 @@ import {
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
 import {
+  assertProgrammaticToolChildDefinitionAllowsDispatch,
+  assertProgrammaticToolChildRuntimeAllowsDispatch,
   assertProgrammaticToolCapabilityViewActive,
-  type ProgrammaticToolCapabilityV1
+  type ProgrammaticToolCapabilityV1,
+  type ProgrammaticToolSurfaceEntryV1
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import type { ProgrammaticToolParentRegistration } from '@/cli/programmaticToolParentRegistry'
 import { buildToolSearchDefinition } from './agentTools/toolSearchTool'
@@ -81,6 +85,11 @@ type MainProcessToolCallOptions = ToolCallOptions & {
   readonly toolSurfaceSnapshot?: ToolSurfaceSnapshot
   readonly programmaticToolCapability?: ProgrammaticToolCapabilityV1
   readonly programmaticToolParent?: ProgrammaticToolParentRegistration
+  readonly programmaticToolChild?: Readonly<{
+    capability: ProgrammaticToolCapabilityV1
+    snapshot: ToolSurfaceSnapshot
+    entry: ProgrammaticToolSurfaceEntryV1
+  }>
 }
 type MainProcessToolPreCheckOptions = Pick<
   MainProcessToolCallOptions,
@@ -476,6 +485,7 @@ export class ToolService implements ToolServicePort {
     const toolSurfaceDeferredDispatch = options?.toolSurfaceDeferredDispatch
     const programmaticToolCapability = options?.programmaticToolCapability
     const programmaticToolParent = options?.programmaticToolParent
+    const programmaticToolChild = options?.programmaticToolChild
     const commitDispatch = options?.commitDispatch
     if (toolSurfaceDeferredDispatch && toolSurfaceSnapshot) {
       throw new Error('Tool Surface dispatch cannot use active and deferred authority together.')
@@ -492,6 +502,7 @@ export class ToolService implements ToolServicePort {
     if (programmaticToolCapability) {
       if (
         toolName !== 'exec' ||
+        programmaticToolChild ||
         !toolSurfaceSnapshot ||
         toolSurfaceDeferredDispatch ||
         !commitDispatch ||
@@ -505,6 +516,24 @@ export class ToolService implements ToolServicePort {
     } else if (programmaticToolParent) {
       throw new Error('Programmatic Tool parent authority requires its exact View capability.')
     }
+    if (programmaticToolChild) {
+      if (
+        toolSurfaceSnapshot ||
+        toolSurfaceDeferredDispatch ||
+        toolSurfaceContext ||
+        !commitDispatch ||
+        programmaticToolCapability ||
+        programmaticToolParent
+      ) {
+        throw new Error(
+          'Programmatic child requires one exact frozen capability and durable child dispatch.'
+        )
+      }
+      assertProgrammaticToolCapabilityViewActive(
+        programmaticToolChild.capability,
+        programmaticToolChild.snapshot
+      )
+    }
     const assertToolSurfaceContextActive = (): void => {
       if (!toolSurfaceContext) return
       assertActiveToolSurfaceExecutionContext(toolSurfaceContext, {
@@ -515,6 +544,23 @@ export class ToolService implements ToolServicePort {
       })
     }
     const assertToolSurfaceDispatchAllowed = (): void => {
+      if (programmaticToolChild) {
+        const currentDefinition = this.getMcpDefinition(toolName, request.conversationId)
+        if (!currentDefinition) {
+          throw new Error(`Tool '${toolName}' is not enabled by current runtime authority.`)
+        }
+        assertProgrammaticToolChildDefinitionAllowsDispatch({
+          ...programmaticToolChild,
+          request: {
+            sessionId: request.conversationId?.trim() ?? '',
+            messageId: options?.messageId?.trim() ?? '',
+            runId: options?.runId?.trim() ?? '',
+            requestSeq: options?.requestSeq ?? 0
+          },
+          currentDefinition
+        })
+        return
+      }
       if (!toolSurfaceSnapshot && !toolSurfaceDeferredDispatch) return
       if (toolSurfaceContext && toolSurfaceContext.snapshot !== toolSurfaceSnapshot) {
         throw new Error('Tool Surface execution and dispatch contexts do not match.')
@@ -528,6 +574,19 @@ export class ToolService implements ToolServicePort {
     const assertExactToolSurfaceDefinitionAllowed = (
       currentDefinition: MCPToolDefinition
     ): void => {
+      if (programmaticToolChild) {
+        assertProgrammaticToolChildDefinitionAllowsDispatch({
+          ...programmaticToolChild,
+          request: {
+            sessionId: request.conversationId?.trim() ?? '',
+            messageId: options?.messageId?.trim() ?? '',
+            runId: options?.runId?.trim() ?? '',
+            requestSeq: options?.requestSeq ?? 0
+          },
+          currentDefinition
+        })
+        return
+      }
       if (!toolSurfaceSnapshot && !toolSurfaceDeferredDispatch) return
       this.assertExactToolSurfaceDefinitionAllowsDispatch(
         request,
@@ -538,7 +597,10 @@ export class ToolService implements ToolServicePort {
     }
     let dispatchSource: ToolSource | undefined
     const requiresCurrentAuthority = Boolean(
-      toolSurfaceSnapshot || toolSurfaceDeferredDispatch || options?.executionContract
+      toolSurfaceSnapshot ||
+      toolSurfaceDeferredDispatch ||
+      options?.executionContract ||
+      programmaticToolChild
     )
     const guardedCommitDispatch: ToolDispatchCommit | undefined =
       requiresCurrentAuthority && commitDispatch
@@ -578,6 +640,9 @@ export class ToolService implements ToolServicePort {
     }
     if (programmaticToolCapability && source !== 'agent') {
       throw new Error('Programmatic Tool capability requires the native Agent exec target.')
+    }
+    if (programmaticToolChild && source !== 'mcp') {
+      throw new Error('Programmatic child requires its exact frozen MCP target.')
     }
     await this.assertExecutionContractDispatchAllowed(request, source, options)
     assertToolSurfaceDispatchAllowed()
@@ -727,7 +792,12 @@ export class ToolService implements ToolServicePort {
     assertToolSurfaceDispatchAllowed()
     this.resolveAllowedMcpServerIds(preflightPolicy, configuredServerIds, definition, toolName)
 
-    const permissionContext = this.createMcpPermissionContext(request, definition, permissionMode)
+    const permissionContext = this.createMcpPermissionContext(
+      request,
+      definition,
+      permissionMode,
+      programmaticToolChild ? request.id : undefined
+    )
     if (permissionContext && this.shouldBrokerMcpTool(definition)) {
       const authorization = this.permissionBroker.authorizeExecution(
         permissionContext,
@@ -758,11 +828,37 @@ export class ToolService implements ToolServicePort {
       runId: options?.runId,
       signal: options?.signal,
       expectedTarget,
-      ...(toolSurfaceSnapshot || toolSurfaceDeferredDispatch
+      ...(toolSurfaceSnapshot || toolSurfaceDeferredDispatch || programmaticToolChild
         ? { assertCurrentToolDefinition: assertExactToolSurfaceDefinitionAllowed }
         : {}),
       commitDispatch: guardedCommitDispatch,
       registerOutcomeProjection: options?.registerOutcomeProjection
+    })
+  }
+
+  async callProgrammaticToolChild(input: {
+    request: MCPToolCall
+    capability: ProgrammaticToolCapabilityV1
+    snapshot: ToolSurfaceSnapshot
+    entry: ProgrammaticToolSurfaceEntryV1
+    permissionMode: PermissionMode
+    signal: AbortSignal
+    commitDispatch: ToolDispatchCommit
+    registerOutcomeProjection: ToolOutcomeProjectionRegistrar
+  }): Promise<{ content: unknown; rawData: MCPToolResponse }> {
+    return await this.callTool(input.request, {
+      messageId: input.capability.request.messageId,
+      runId: input.capability.request.runId,
+      requestSeq: input.capability.request.requestSeq,
+      permissionMode: input.permissionMode,
+      signal: input.signal,
+      commitDispatch: input.commitDispatch,
+      registerOutcomeProjection: input.registerOutcomeProjection,
+      programmaticToolChild: {
+        capability: input.capability,
+        snapshot: input.snapshot,
+        entry: input.entry
+      }
     })
   }
 
@@ -961,7 +1057,7 @@ export class ToolService implements ToolServicePort {
     options?: MainProcessToolCallOptions
   ): Promise<void> {
     const contract = options?.executionContract
-    if (!contract) return
+    if (!contract && !options?.programmaticToolChild) return
 
     const sessionId = request.conversationId?.trim()
     const messageId = options.messageId?.trim()
@@ -975,7 +1071,9 @@ export class ToolService implements ToolServicePort {
       (requestSeq as number) <= 0
     ) {
       throw new ExecutionContractDispatchError(
-        'Contract-bearing tool dispatch requires complete provider View identity.',
+        contract
+          ? 'Contract-bearing tool dispatch requires complete provider View identity.'
+          : 'Programmatic child dispatch requires complete provider View identity.',
         'identity_mismatch'
       )
     }
@@ -1050,6 +1148,25 @@ export class ToolService implements ToolServicePort {
           'tool_not_allowed'
         )
       }
+    }
+
+    const programmaticToolChild = options?.programmaticToolChild
+    if (programmaticToolChild) {
+      assertProgrammaticToolChildRuntimeAllowsDispatch({
+        ...programmaticToolChild,
+        request: {
+          sessionId,
+          messageId: options?.messageId?.trim() ?? '',
+          runId: options?.runId?.trim() ?? '',
+          requestSeq: options?.requestSeq ?? 0
+        },
+        currentDefinition,
+        currentWorkspace: currentAuthority.projectDir
+          ? { kind: 'path', path: currentAuthority.projectDir }
+          : { kind: 'runtime_default' },
+        currentMaxSubagentDepth: currentAuthority.subagentCapability.available ? 1 : 0,
+        requestedSubagentDepth: 0
+      })
     }
 
     const contract = options?.executionContract
@@ -1403,7 +1520,8 @@ export class ToolService implements ToolServicePort {
   private createMcpPermissionContext(
     request: MCPToolCall,
     definition: MCPToolDefinition | undefined,
-    permissionMode: PermissionMode | undefined
+    permissionMode: PermissionMode | undefined,
+    executionId?: string
   ) {
     const conversationId = request.conversationId?.trim()
     if (!conversationId) {
@@ -1435,6 +1553,7 @@ export class ToolService implements ToolServicePort {
       bindingHash: definition?.server.bindingHash,
       serverName: definition?.server.name ?? request.server?.name ?? 'MCP',
       toolName: definition?.raw?.name ?? request.function.name,
+      ...(executionId ? { executionId } : {}),
       arguments: parsedArguments,
       source: 'model' as const,
       // Remote MCP annotations are not trusted to downgrade host permission checks.

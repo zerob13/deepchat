@@ -1735,6 +1735,7 @@ function prepareProgrammaticExecParent(input: {
   execution: ToolExecutionContext
   operation: ExecutionOperationIdentity
   io: Pick<IoParams, 'sessionId' | 'messageId'>
+  permissionMode: PermissionMode
   toolSurfaceSnapshot?: ToolSurfaceSnapshot
   capability?: ProgrammaticToolCapabilityV1
   parents?: Pick<ProgrammaticToolParentRegistry, 'prepare'>
@@ -1780,7 +1781,8 @@ function prepareProgrammaticExecParent(input: {
     },
     invocationAuthority: {
       capability: input.capability,
-      snapshot: input.toolSurfaceSnapshot
+      snapshot: input.toolSurfaceSnapshot,
+      permissionMode: input.permissionMode
     },
     assertAuthorityActive: () =>
       assertProgrammaticToolCapabilityViewActive(input.capability, input.toolSurfaceSnapshot)
@@ -1960,6 +1962,7 @@ async function runToolCall(params: {
       execution,
       operation,
       io,
+      permissionMode: toolPermissionMode,
       toolSurfaceSnapshot,
       capability: programmaticToolCapability,
       parents: programmaticToolParents

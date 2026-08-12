@@ -391,6 +391,205 @@ describe('ToolService', () => {
     expect(callTool).toHaveBeenCalledOnce()
   })
 
+  it('dispatches Programmatic MCP children only through frozen and live authority gates', async () => {
+    let currentDefinition = buildContractMcpDefinition('remote_write')
+    let enabledMcpServerIds: string[] | undefined
+    const projection = vi.fn()
+    const mcpCallTool = vi.fn(async (request, access) => {
+      access.assertCurrentToolDefinition(currentDefinition)
+      access.commitDispatch({
+        toolName: request.function.name,
+        toolSource: 'mcp',
+        normalizedArguments: JSON.parse(request.function.arguments),
+        target: {
+          serverName: currentDefinition.server.name,
+          originalName: currentDefinition.raw?.name
+        }
+      })
+      access.registerOutcomeProjection(projection)
+      return {
+        content: 'written',
+        rawData: { toolCallId: request.id, content: 'written' }
+      }
+    })
+    const getAllToolDefinitions = vi.fn(async () => [currentDefinition])
+    const resolveAuthority = (sessionId: string) => ({
+      sessionId,
+      agentId: 'agent-1',
+      projectDir: null,
+      sessionKind: 'regular' as const,
+      disabledAgentTools: [],
+      enabledMcpServerIds,
+      subagentCapability: {
+        available: false as const,
+        reason: 'policy_disabled' as const,
+        cacheKey: 'unavailable'
+      }
+    })
+    const resolveConversationExecutionAuthority = vi.fn(async (sessionId: string) =>
+      resolveAuthority(sessionId)
+    )
+    const resolveConversationExecutionAuthorityNow = vi.fn((sessionId: string) =>
+      resolveAuthority(sessionId)
+    )
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: {
+        getAllToolDefinitions,
+        callTool: mcpCallTool
+      } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock({
+        resolveConversationExecutionAuthority,
+        resolveConversationExecutionAuthorityNow
+      })
+    })
+    const definitions = await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: 'session-1',
+      sessionKind: 'regular',
+      agentWorkspacePath: null
+    })
+    const exec = definitions.find((definition) => definition.function.name === 'exec')
+    const remote = definitions.find(
+      (definition) => definition.function.name === currentDefinition.function.name
+    )
+    if (!exec || !remote) throw new Error('Expected exec and remote Programmatic fixtures')
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: [exec, remote],
+      providerActiveDefinitions: [exec],
+      policyVersion: 'tool-service-child-v1'
+    })
+    const requestIdentity = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 1
+    }
+    const snapshot = controller.build({
+      request: requestIdentity,
+      eligibleDefinitions: [exec, remote]
+    })
+    controller.admit(snapshot)
+    const capability = buildProgrammaticToolCapabilityV1({
+      snapshot,
+      taskContractContext: null,
+      ceilings: {
+        maxToolEffect: 'write',
+        workspace: { kind: 'runtime_default' },
+        maxSubagentDepth: 1
+      },
+      quotas: {
+        maxChildren: 4,
+        maxBatchSteps: 4,
+        maxInputBytes: 1024,
+        maxOutputBytes: 2048,
+        maxDurationMs: 30_000
+      }
+    })
+    markProgrammaticToolCapabilityProvenanceCommitted(capability, snapshot)
+    const entry = capability.entries[0]
+    if (!entry) throw new Error('Expected one Programmatic child entry')
+    const childRequest = {
+      id: 'programmatic-child-1',
+      type: 'function' as const,
+      function: {
+        name: entry.target.providerVisibleName,
+        arguments: '{"query":"calendar"}'
+      },
+      conversationId: requestIdentity.sessionId
+    }
+    const childAccess = {
+      request: childRequest,
+      capability,
+      snapshot,
+      entry,
+      signal: new AbortController().signal,
+      commitDispatch: vi.fn(),
+      registerOutcomeProjection: vi.fn()
+    }
+
+    const permission = await toolService.callProgrammaticToolChild({
+      ...childAccess,
+      permissionMode: 'default'
+    })
+    expect(permission.rawData).toMatchObject({ requiresPermission: true })
+    expect(mcpCallTool).not.toHaveBeenCalled()
+    expect(childAccess.commitDispatch).not.toHaveBeenCalled()
+
+    const distinctPermission = await toolService.callProgrammaticToolChild({
+      ...childAccess,
+      request: { ...childRequest, id: 'programmatic-child-2' },
+      permissionMode: 'default'
+    })
+    expect(distinctPermission.rawData).toMatchObject({ requiresPermission: true })
+    expect(distinctPermission.rawData.permissionRequest?.requestId).not.toBe(
+      permission.rawData.permissionRequest?.requestId
+    )
+
+    await expect(
+      toolService.callProgrammaticToolChild({
+        ...childAccess,
+        entry: { ...entry },
+        permissionMode: 'full_access'
+      })
+    ).rejects.toThrow(/does not belong to its active frozen View/)
+    expect(mcpCallTool).not.toHaveBeenCalled()
+
+    await expect(
+      toolService.callProgrammaticToolChild({
+        ...childAccess,
+        permissionMode: 'full_access'
+      })
+    ).resolves.toMatchObject({ content: 'written' })
+    expect(resolveConversationExecutionAuthority).toHaveBeenCalledTimes(4)
+    expect(resolveConversationExecutionAuthorityNow).toHaveBeenCalledOnce()
+    expect(childAccess.commitDispatch).toHaveBeenCalledWith({
+      toolName: entry.target.providerVisibleName,
+      toolSource: 'mcp',
+      normalizedArguments: { query: 'calendar' },
+      target: {
+        serverName: currentDefinition.server.name,
+        originalName: currentDefinition.raw?.name
+      }
+    })
+    expect(childAccess.registerOutcomeProjection).toHaveBeenCalledWith(projection)
+
+    enabledMcpServerIds = []
+    await expect(
+      toolService.callProgrammaticToolChild({
+        ...childAccess,
+        permissionMode: 'full_access'
+      })
+    ).rejects.toThrow(/disabled by current runtime authority/)
+    expect(mcpCallTool).toHaveBeenCalledOnce()
+
+    enabledMcpServerIds = undefined
+    currentDefinition = {
+      ...currentDefinition,
+      function: {
+        ...currentDefinition.function,
+        description: 'definition changed after View assembly'
+      }
+    }
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: requestIdentity.sessionId,
+      sessionKind: 'regular',
+      agentWorkspacePath: null
+    })
+    await expect(
+      toolService.callProgrammaticToolChild({
+        ...childAccess,
+        permissionMode: 'full_access'
+      })
+    ).rejects.toThrow(/definition changed after provider View assembly/)
+    expect(mcpCallTool).toHaveBeenCalledOnce()
+  })
+
   it('dispatches an unchanged MCP definition through the exact Tool Surface boundary', async () => {
     const definition = buildContractMcpDefinition()
     const controller = createFullToolSurfaceRunController({

@@ -74,6 +74,19 @@ function materializeChild(
   })
 }
 
+function childDispatch(
+  childOrdinal: number,
+  originalName = `tool-${childOrdinal}`,
+  normalizedArguments: Record<string, unknown> = { query: originalName }
+) {
+  return {
+    toolName: `server__${originalName}`,
+    toolSource: 'mcp' as const,
+    normalizedArguments,
+    target: { serverName: 'server', originalName }
+  }
+}
+
 function setup(operationBinding = binding()) {
   const { table, entries } = createTapeTableMock()
   const journal = new ExecutionJournalService(() => table)
@@ -118,10 +131,10 @@ describe('ProgrammaticToolParentController', () => {
     controller.reserveChildren([child(0)])
 
     materializeChild(controller, 0)
-    expect(controller.commitChildDispatch(0)).toMatchObject({ created: true })
+    expect(controller.commitChildDispatch(0, childDispatch(0))).toMatchObject({ created: true })
     expect(() =>
-      controller.issueSettlementReceipt({ responseText: 'outer', isError: false })
-    ).toThrow(/child outcome is unknown/)
+      controller.completeToolInvocation({ responseText: 'outer', isError: false })
+    ).toThrow(/unsettled children/)
     expect(
       controller.commitChildOutcome({
         childOrdinal: 0,
@@ -130,6 +143,14 @@ describe('ProgrammaticToolParentController', () => {
       })
     ).toMatchObject({ created: true })
 
+    controller.completeToolInvocation({
+      responseText: 'canonical outer result',
+      isError: false
+    })
+    expect(controller.takeCompletedInvocationResult()).toEqual({
+      responseText: 'canonical outer result',
+      isError: false
+    })
     const settlement = controller.issueSettlementReceipt({
       responseText: 'canonical outer result',
       isError: false
@@ -216,12 +237,16 @@ describe('ProgrammaticToolParentController', () => {
 
     const { controller, entries } = setup(batchBinding)
     controller.reserveChildren([child(0), child(1)])
-    expect(() => controller.commitChildDispatch(1)).toThrow(/dispatch sequentially/)
+    expect(() => controller.commitChildDispatch(1, childDispatch(1))).toThrow(
+      /dispatch sequentially/
+    )
 
     materializeChild(controller, 0)
-    controller.commitChildDispatch(0)
+    controller.commitChildDispatch(0, childDispatch(0))
     controller.commitChildOutcome({ childOrdinal: 0, responseText: 'failed', isError: true })
-    expect(() => controller.commitChildDispatch(1)).toThrow(/stop after a child error/)
+    expect(() => controller.commitChildDispatch(1, childDispatch(1))).toThrow(
+      /stop after a child error/
+    )
     expect(() =>
       controller.issueSettlementReceipt({ responseText: 'success', isError: false })
     ).toThrow(/requires an outer error result/)
@@ -285,7 +310,7 @@ describe('ProgrammaticToolParentController', () => {
     expect(() => controller.takeCompletedInvocationResult()).toThrow(/no unclaimed authoritative/)
     expect(() =>
       controller.issueSettlementReceipt({ responseText: 'forged error', isError: true })
-    ).toThrow(/does not match its authoritative discovery result/)
+    ).toThrow(/does not match its authoritative invocation result/)
     expect(controller.state).toBe('fatal')
     expect(entries.some((entry) => entry.name === 'execution/tool_outcome')).toBe(false)
 
@@ -351,7 +376,7 @@ describe('ProgrammaticToolParentController', () => {
     const first = setup()
     first.controller.reserveChildren([child(0)])
     materializeChild(first.controller, 0)
-    first.controller.commitChildDispatch(0)
+    first.controller.commitChildDispatch(0, childDispatch(0))
     expect(() => first.controller.assertRunTerminalAllowed()).toThrow(/has not settled/)
     expect(() =>
       first.journal.commitRunTerminal({
@@ -380,12 +405,9 @@ describe('ProgrammaticToolParentController', () => {
     expect(second.entries.some((entry) => entry.name === 'execution/tool_outcome')).toBe(false)
   })
 
-  it('freezes child arguments and preserves plugin-owned target identity at reservation', () => {
+  it('freezes child arguments and journals plugin ownership resolved at live dispatch', () => {
     const { controller, entries } = setup()
-    const reservation = {
-      ...child(0),
-      target: { serverName: 'server', originalName: 'tool-0', ownerPluginId: 'plugin-1' }
-    }
+    const reservation = child(0)
     controller.reserveChildren([reservation])
     const normalizedArguments = { nested: { value: 'reserved' } }
     controller.materializeChild({
@@ -394,7 +416,10 @@ describe('ProgrammaticToolParentController', () => {
       normalizedArguments
     })
     normalizedArguments.nested.value = 'mutated'
-    controller.commitChildDispatch(0)
+    controller.commitChildDispatch(0, {
+      ...childDispatch(0, 'tool-0', { nested: { value: 'reserved' } }),
+      target: { ...reservation.target, ownerPluginId: 'plugin-1' }
+    })
 
     const nestedDispatch = entries
       .filter((entry) => entry.name?.startsWith('execution/'))
@@ -408,6 +433,37 @@ describe('ProgrammaticToolParentController', () => {
       },
       argumentsHash: hashJsonData({ nested: { value: 'reserved' } })
     })
+  })
+
+  it('makes a child dispatch target or argument mismatch fatal before nested T1', () => {
+    const targetMismatch = setup()
+    targetMismatch.controller.reserveChildren([child(0)])
+    materializeChild(targetMismatch.controller, 0)
+    expect(() =>
+      targetMismatch.controller.commitChildDispatch(0, {
+        ...childDispatch(0),
+        target: { serverName: 'different-server', originalName: 'tool-0' }
+      })
+    ).toThrow(/does not match its reserved real target and arguments/)
+    expect(targetMismatch.controller.state).toBe('fatal')
+    expect(
+      targetMismatch.entries.some(
+        (entry) =>
+          entry.name === 'execution/dispatch_committed' &&
+          JSON.parse(entry.meta_json).protocolVersion === 2
+      )
+    ).toBe(false)
+
+    const argumentMismatch = setup()
+    argumentMismatch.controller.reserveChildren([child(0)])
+    materializeChild(argumentMismatch.controller, 0)
+    expect(() =>
+      argumentMismatch.controller.commitChildDispatch(
+        0,
+        childDispatch(0, 'tool-0', { query: 'changed' })
+      )
+    ).toThrow(/does not match its reserved real target and arguments/)
+    expect(argumentMismatch.controller.state).toBe('fatal')
   })
 
   it('rejects malformed reservation values with a bounded plan error', () => {
@@ -504,12 +560,14 @@ describe('ProgrammaticToolParentController', () => {
     )
     exact.controller.reserveChildren([child(0)])
     materializeChild(exact.controller, 0)
-    exact.controller.commitChildDispatch(0)
+    exact.controller.commitChildDispatch(0, childDispatch(0))
     exact.controller.commitChildOutcome({
       childOrdinal: 0,
       responseText: '12345678',
       isError: false
     })
+    exact.controller.completeToolInvocation({ responseText: 'abcdefgh', isError: false })
+    exact.controller.takeCompletedInvocationResult()
     const exactSettlement = exact.controller.issueSettlementReceipt({
       responseText: 'abcdefgh',
       isError: false
@@ -531,14 +589,14 @@ describe('ProgrammaticToolParentController', () => {
     )
     aggregate.controller.reserveChildren([child(0), child(1)])
     materializeChild(aggregate.controller, 0)
-    aggregate.controller.commitChildDispatch(0)
+    aggregate.controller.commitChildDispatch(0, childDispatch(0))
     aggregate.controller.commitChildOutcome({
       childOrdinal: 0,
       responseText: '12345678',
       isError: false
     })
     materializeChild(aggregate.controller, 1)
-    aggregate.controller.commitChildDispatch(1)
+    aggregate.controller.commitChildDispatch(1, childDispatch(1))
     expect(() =>
       aggregate.controller.commitChildOutcome({
         childOrdinal: 1,
@@ -578,7 +636,7 @@ describe('ProgrammaticToolParentController', () => {
     const { authority, armed, controller, table } = setup()
     controller.reserveChildren([child(0)])
     materializeChild(controller, 0)
-    controller.commitChildDispatch(0)
+    controller.commitChildDispatch(0, childDispatch(0))
     table.appendExecutionJournalEvent.mockImplementationOnce(() => {
       throw new Error('disk full')
     })
@@ -688,7 +746,7 @@ describe('ProgrammaticToolParentController', () => {
       throw new Error('disk full')
     })
 
-    expect(() => controller.commitChildDispatch(0)).toThrow(
+    expect(() => controller.commitChildDispatch(0, childDispatch(0))).toThrow(
       /Failed to persist execution\/dispatch_committed/
     )
     expect(controller.state).toBe('fatal')

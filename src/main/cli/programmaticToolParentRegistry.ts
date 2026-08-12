@@ -7,12 +7,15 @@ import type {
 } from './agentTokenAuthority'
 import {
   ProgrammaticParentOperationError,
+  type ProgrammaticChildReservation,
   type ProgrammaticCompletedInvocationResult,
   type ProgrammaticParentSettlementReceipt,
   ProgrammaticToolParentController
 } from './programmaticToolParentController'
 import { canonicalJsonStringifyData } from '@/tape/domain/canonicalJson'
 import type { ExecutionJournalCommitReceipt } from '@/tape/domain/executionJournal'
+import type { ToolDispatchCommitInput } from '@shared/types/core/mcp'
+import type { PermissionMode } from '@shared/types/agent-interface'
 import type {
   ExecutionJournalWriter,
   NestedExecutionJournalWriter
@@ -46,12 +49,14 @@ export type ProgrammaticToolParentRegistration = Readonly<{
 export type ProgrammaticToolInvocationAuthority = Readonly<{
   capability: ProgrammaticToolCapabilityV1
   snapshot: ToolSurfaceSnapshot
+  permissionMode: PermissionMode
   assertAuthorityActive(): void
 }>
 
 export type ProgrammaticToolInvocationContext = Readonly<{
   capability: ProgrammaticToolCapabilityV1
   snapshot: ToolSurfaceSnapshot
+  permissionMode: PermissionMode
 }>
 
 export type ProgrammaticToolParentRunIdentity = Readonly<{
@@ -197,36 +202,12 @@ export class ProgrammaticToolParentRegistry {
   }
 
   resolveInvocation(grant: AgentCliProgrammaticOperationGrant): ProgrammaticToolInvocationContext {
-    const registered = this.parents.get(operationKey(grant.operation))
+    const registered = this.resolveRegisteredInvocation(grant)
     const authority = registered?.invocationAuthority
-    if (!registered || !authority || registered.controller.state !== 'armed') {
+    if (!authority) {
       throw new ProgrammaticParentOperationError(
         'Programmatic invocation authority is unavailable',
         'invalid_state'
-      )
-    }
-    const binding = registered.controller.binding
-    if (
-      canonicalJsonStringifyData({
-        schemaVersion: grant.schemaVersion,
-        surfaceVersion: grant.surfaceVersion,
-        operation: grant.operation,
-        command: grant.command,
-        route: grant.route,
-        canonicalInvocationHash: grant.canonicalInvocationHash,
-        adapterMode: grant.adapterMode,
-        capabilityHash: grant.capabilityHash,
-        programmaticSurfaceHash: grant.programmaticSurfaceHash,
-        quotas: grant.quotas
-      }) !== canonicalJsonStringifyData(binding) ||
-      grant.outerDispatchReceipt.sessionId !== grant.operation.sessionId ||
-      grant.outerDispatchReceipt.entryId !== registered.controller.outerDispatchReceiptEntryId ||
-      authority.capability.capabilityHash !== grant.capabilityHash ||
-      authority.capability.programmaticSurfaceHash !== grant.programmaticSurfaceHash
-    ) {
-      throw new ProgrammaticParentOperationError(
-        'Programmatic invocation does not match its registered parent authority',
-        'identity_mismatch'
       )
     }
     authority.assertAuthorityActive()
@@ -239,22 +220,74 @@ export class ProgrammaticToolParentRegistry {
         'invalid_state'
       )
     }
-    return Object.freeze({ capability: authority.capability, snapshot: authority.snapshot })
+    return Object.freeze({
+      capability: authority.capability,
+      snapshot: authority.snapshot,
+      permissionMode: authority.permissionMode
+    })
   }
 
   recordDiscoveryResult(
     grant: AgentCliProgrammaticOperationGrant,
     result: ProgrammaticCompletedInvocationResult
   ): void {
-    this.resolveInvocation(grant)
-    const registered = this.parents.get(operationKey(grant.operation))
-    if (!registered) {
-      throw new ProgrammaticParentOperationError(
-        'Programmatic discovery parent authority is unavailable',
-        'invalid_state'
-      )
+    this.resolveRegisteredInvocation(grant).controller.completeDiscoveryInvocation(result)
+  }
+
+  failToolInvocationBeforePlan(
+    grant: AgentCliProgrammaticOperationGrant,
+    result: ProgrammaticCompletedInvocationResult
+  ): void {
+    const registered = this.resolveRegisteredInvocation(grant)
+    registered.controller.failBeforeChildPlan()
+    registered.controller.completeToolInvocation(result)
+  }
+
+  reserveChildren(
+    grant: AgentCliProgrammaticOperationGrant,
+    plan: readonly ProgrammaticChildReservation[]
+  ): void {
+    this.resolveRegisteredInvocation(grant).controller.reserveChildren(plan)
+  }
+
+  materializeChild(
+    grant: AgentCliProgrammaticOperationGrant,
+    input: {
+      childOrdinal: number
+      argumentTemplate: Readonly<Record<string, unknown>>
+      normalizedArguments: Record<string, unknown>
     }
-    registered.controller.completeDiscoveryInvocation(result)
+  ): void {
+    this.resolveRegisteredInvocation(grant).controller.materializeChild(input)
+  }
+
+  commitChildDispatch(
+    grant: AgentCliProgrammaticOperationGrant,
+    childOrdinal: number,
+    input: ToolDispatchCommitInput
+  ): ExecutionJournalCommitReceipt {
+    return this.resolveRegisteredInvocation(grant).controller.commitChildDispatch(
+      childOrdinal,
+      input
+    )
+  }
+
+  commitChildOutcome(
+    grant: AgentCliProgrammaticOperationGrant,
+    input: { childOrdinal: number; responseText: string; isError: boolean }
+  ): ExecutionJournalCommitReceipt {
+    return this.resolveRegisteredInvocation(grant).controller.commitChildOutcome(input)
+  }
+
+  stopBeforeChild(grant: AgentCliProgrammaticOperationGrant, childOrdinal: number): void {
+    this.resolveRegisteredInvocation(grant).controller.stopBeforeChild(childOrdinal)
+  }
+
+  recordToolInvocationResult(
+    grant: AgentCliProgrammaticOperationGrant,
+    result: ProgrammaticCompletedInvocationResult
+  ): void {
+    this.resolveRegisteredInvocation(grant).controller.completeToolInvocation(result)
   }
 
   assertRunTerminalAllowed(run: ProgrammaticToolParentRunIdentity): void {
@@ -290,5 +323,41 @@ export class ProgrammaticToolParentRegistry {
       }
     }
     return result
+  }
+
+  private resolveRegisteredInvocation(grant: AgentCliProgrammaticOperationGrant): RegisteredParent {
+    const registered = this.parents.get(operationKey(grant.operation))
+    const authority = registered?.invocationAuthority
+    if (!registered || !authority || registered.controller.state !== 'armed') {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic parent authority is unavailable',
+        'invalid_state'
+      )
+    }
+    const binding = registered.controller.binding
+    if (
+      canonicalJsonStringifyData({
+        schemaVersion: grant.schemaVersion,
+        surfaceVersion: grant.surfaceVersion,
+        operation: grant.operation,
+        command: grant.command,
+        route: grant.route,
+        canonicalInvocationHash: grant.canonicalInvocationHash,
+        adapterMode: grant.adapterMode,
+        capabilityHash: grant.capabilityHash,
+        programmaticSurfaceHash: grant.programmaticSurfaceHash,
+        quotas: grant.quotas
+      }) !== canonicalJsonStringifyData(binding) ||
+      grant.outerDispatchReceipt.sessionId !== grant.operation.sessionId ||
+      grant.outerDispatchReceipt.entryId !== registered.controller.outerDispatchReceiptEntryId ||
+      authority.capability.capabilityHash !== grant.capabilityHash ||
+      authority.capability.programmaticSurfaceHash !== grant.programmaticSurfaceHash
+    ) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic invocation does not match its registered parent authority',
+        'identity_mismatch'
+      )
+    }
+    return registered
   }
 }

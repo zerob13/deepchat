@@ -700,6 +700,99 @@ export function assertProgrammaticToolCapabilityViewActive(
   assertActiveToolSurfaceSnapshot(expectedSnapshot)
 }
 
+export function assertProgrammaticToolChildDefinitionAllowsDispatch(input: {
+  readonly capability: ProgrammaticToolCapabilityV1
+  readonly snapshot: ToolSurfaceSnapshot
+  readonly entry: ProgrammaticToolSurfaceEntryV1
+  readonly request: ToolSurfaceRequestIdentity
+  readonly currentDefinition: MCPToolDefinition
+}): void {
+  assertProgrammaticToolCapabilityViewActive(input.capability, input.snapshot)
+  if (
+    input.capability.request.sessionId !== input.request.sessionId ||
+    input.capability.request.messageId !== input.request.messageId ||
+    input.capability.request.runId !== input.request.runId ||
+    input.capability.request.requestSeq !== input.request.requestSeq ||
+    !input.capability.entries.includes(input.entry) ||
+    input.entry.target.source !== 'mcp' ||
+    input.entry.target.providerVisibleName !== input.currentDefinition.function.name
+  ) {
+    throw new ToolSurfaceError(
+      'Programmatic child does not belong to its active frozen View.',
+      'ineligible_exposure'
+    )
+  }
+
+  const currentEntry = buildCanonicalToolCatalog([input.currentDefinition]).entries[0]
+  if (
+    !currentEntry ||
+    currentEntry.target.source !== 'mcp' ||
+    currentEntry.stableTargetKey !== input.entry.stableTargetKey ||
+    currentEntry.canonicalToolDefinitionHash !== input.entry.canonicalToolDefinitionHash ||
+    currentEntry.execution.effect !== input.entry.execution.effect ||
+    currentEntry.execution.mode !== input.entry.execution.mode
+  ) {
+    throw new ToolSurfaceError(
+      'Programmatic child definition changed after provider View assembly.',
+      'conflicting_tool'
+    )
+  }
+  if (!isToolEffectWithinCeiling(currentEntry.execution.effect, input.capability.ceilings.maxToolEffect)) {
+    throw new ToolSurfaceError(
+      'Programmatic child exceeds its frozen effect ceiling.',
+      'ineligible_exposure'
+    )
+  }
+}
+
+export function assertProgrammaticToolChildRuntimeAllowsDispatch(input: {
+  readonly capability: ProgrammaticToolCapabilityV1
+  readonly snapshot: ToolSurfaceSnapshot
+  readonly entry: ProgrammaticToolSurfaceEntryV1
+  readonly request: ToolSurfaceRequestIdentity
+  readonly currentDefinition: MCPToolDefinition
+  readonly currentWorkspace: DeepChatExecutionWorkspaceCeiling
+  readonly currentMaxSubagentDepth: number
+  readonly requestedSubagentDepth: number
+}): void {
+  assertProgrammaticToolChildDefinitionAllowsDispatch(input)
+  const expectedWorkspace = input.capability.ceilings.workspace
+  const currentWorkspace = normalizeWorkspace(input.currentWorkspace)
+  if (
+    currentWorkspace.kind !== expectedWorkspace.kind ||
+    (currentWorkspace.kind === 'path' &&
+      expectedWorkspace.kind === 'path' &&
+      currentWorkspace.path !== expectedWorkspace.path)
+  ) {
+    throw new ToolSurfaceError(
+      'Programmatic child workspace no longer matches its frozen ceiling.',
+      'ineligible_exposure'
+    )
+  }
+  if (
+    !Number.isSafeInteger(input.currentMaxSubagentDepth) ||
+    input.currentMaxSubagentDepth < 0 ||
+    !Number.isSafeInteger(input.requestedSubagentDepth) ||
+    input.requestedSubagentDepth < 0
+  ) {
+    throw new ToolSurfaceError(
+      'Programmatic child nesting authority is invalid.',
+      'ineligible_exposure'
+    )
+  }
+  // Programmatic Surface entries are MCP-only, so one child requests no Subagent nesting. A live
+  // reduction from depth 1 to 0 must not revoke unrelated MCP execution authority.
+  if (
+    input.requestedSubagentDepth > input.capability.ceilings.maxSubagentDepth ||
+    input.requestedSubagentDepth > input.currentMaxSubagentDepth
+  ) {
+    throw new ToolSurfaceError(
+      'Programmatic child nesting exceeds its effective runtime ceiling.',
+      'ineligible_exposure'
+    )
+  }
+}
+
 export function assertIssuedProgrammaticToolSurface(
   surface: unknown
 ): asserts surface is ProgrammaticToolSurfaceV1 {
