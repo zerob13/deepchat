@@ -25,11 +25,11 @@ import { CliServer, type CliServerDependencies, type CliUploadedInputFile } from
 import { CliRequestError } from '@/cli/errors'
 import {
   AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-  AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
   AgentCliTokenAuthority,
   type AgentCliRequestBeginResult,
   type AgentCliTokenClaims
 } from '@/cli/agentTokenAuthority'
+import { LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION } from '@shared/contracts/localControl'
 import type { CliRequestAdmission, CliRequestPolicyInput } from '@/cli/policy'
 import type { CliSurfaceEntry } from '@/cli/surface'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
@@ -453,7 +453,10 @@ describe('CLI local transport', () => {
     })
     expect(hidden).toMatchObject({
       status: 404,
-      body: { ok: false, error: { code: 'not_found' } }
+      body: {
+        ok: false,
+        error: { code: 'not_found', message: 'Method is not exposed by CLI surface V1' }
+      }
     })
     expect(dispatch).not.toHaveBeenCalled()
   })
@@ -851,7 +854,7 @@ describe('CLI local transport', () => {
     expect(dispatch).toHaveBeenCalledOnce()
   })
 
-  it('does not admit an armed Programmatic token to the immutable V1 surface', async () => {
+  it('does not let an exact Programmatic token change its bound route', async () => {
     const agentToken = 'p'.repeat(43)
     const tokenId = 'programmatic-v1-deny'
     const operation = {
@@ -869,7 +872,7 @@ describe('CLI local transport', () => {
       .prepareProgrammaticOperation({
         binding: {
           schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-          surfaceVersion: AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
+          surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
           operation,
           command: { domain: 'tool', verb: 'call' },
           route: 'tool.call',
@@ -903,6 +906,114 @@ describe('CLI local transport', () => {
     expect(response).toMatchObject({
       status: 401,
       body: { ok: false, error: { code: 'authentication_failed' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('recognizes an exact Programmatic route grant without opening that route early', async () => {
+    const agentToken = 'v'.repeat(43)
+    const tokenId = 'programmatic-v2-unavailable'
+    const operation = {
+      sessionId: 'conversation-1',
+      messageId: 'message-1',
+      runId: 'run-1',
+      requestSeq: 1,
+      providerToolCallId: 'provider-call-1'
+    }
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => agentToken,
+      createTokenId: () => tokenId
+    })
+    authority
+      .prepareProgrammaticOperation({
+        binding: {
+          schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+          surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+          operation,
+          command: { domain: 'tool', verb: 'call' },
+          route: 'tool.call',
+          canonicalInvocationHash: 'a'.repeat(64),
+          adapterMode: 'cli-programmatic',
+          capabilityHash: 'b'.repeat(64),
+          programmaticSurfaceHash: 'c'.repeat(64),
+          quotas: {
+            maxChildren: 1,
+            maxBatchSteps: 1,
+            maxInputBytes: 4_096,
+            maxOutputBytes: 4_096,
+            maxDurationMs: 30_000
+          }
+        },
+        assertAuthorityActive: () => undefined
+      })
+      .arm({
+        sessionId: operation.sessionId,
+        entryId: 1,
+        created: true,
+        preparedTokenId: tokenId,
+        operation
+      })
+    const { descriptor, dispatch } = await createTestServer({
+      beginAgentRequest: (token) => authority.beginRequest(token)
+    })
+
+    const response = await rpcRequest(descriptor, {
+      token: agentToken,
+      method: 'tool.call',
+      params: { target: 'mcp:server:tool' }
+    })
+
+    expect(response).toMatchObject({
+      status: 404,
+      body: {
+        protocolVersion: LOCAL_CONTROL_PROTOCOL_VERSION,
+        surfaceVersion: LOCAL_CONTROL_SURFACE_VERSION,
+        ok: false,
+        error: { code: 'not_found' }
+      }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed Programmatic claims instead of selecting V2', async () => {
+    const agentToken = 'x'.repeat(43)
+    const malformedClaims = {
+      tokenId: 'malformed-programmatic-claim',
+      conversationId: 'conversation-1',
+      expiresAt: Date.now() + 60_000,
+      scopes: [],
+      programmaticOperation: {
+        surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+        route: 'tool.call'
+      }
+    } as unknown as AgentCliTokenClaims
+    const { descriptor, dispatch } = await createTestServer({
+      beginAgentRequest: (token) =>
+        token === agentToken ? grantAgentRequest(malformedClaims) : { status: 'invalid' }
+    })
+
+    const response = await rpcRequest(descriptor, {
+      token: agentToken,
+      method: 'tool.call'
+    })
+
+    expect(response).toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: 'authentication_failed' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('does not let callers self-select the Programmatic route surface in the wire envelope', async () => {
+    const { descriptor, dispatch } = await createTestServer()
+
+    const response = await rpcRequest(descriptor, {
+      surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION
+    })
+
+    expect(response).toMatchObject({
+      status: 409,
+      body: { ok: false, error: { code: 'unsupported_version' } }
     })
     expect(dispatch).not.toHaveBeenCalled()
   })

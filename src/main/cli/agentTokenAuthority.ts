@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto'
 import {
   LocalControlMethodSchema,
+  LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
   LocalControlScopesSchema,
   LocalControlTokenSchema,
   type LocalControlScope
 } from '@shared/contracts/localControl'
+import { z } from 'zod'
 import {
   MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS,
   MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN,
@@ -26,7 +28,6 @@ const SHA_256_PATTERN = /^[0-9a-f]{64}$/
 const MAX_OPERATION_IDENTITY_CHARACTERS = 1_024
 
 export const AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION = 1 as const
-export const AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION = 2 as const
 
 export type AgentCliProgrammaticToolVerb = 'search' | 'describe' | 'call' | 'batch'
 
@@ -48,7 +49,7 @@ export type AgentCliProgrammaticGrantQuotas = Readonly<{
 
 export type AgentCliProgrammaticOperationBinding = Readonly<{
   schemaVersion: typeof AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION
-  surfaceVersion: typeof AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION
+  surfaceVersion: typeof LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION
   operation: AgentCliProgrammaticOperationIdentity
   command: Readonly<{
     domain: 'tool'
@@ -127,6 +128,92 @@ export type AgentCliTokenAuthorityOptions = Readonly<{
   maxTokensPerConversation?: number
 }>
 
+function canonicalIdentitySchema(maxCharacters: number) {
+  return z
+    .string()
+    .min(1)
+    .max(maxCharacters)
+    .refine((value) => value === value.trim() && !value.includes('\0'), {
+      message: 'Operation identity must be canonical'
+    })
+}
+
+const AgentCliProgrammaticOperationIdentitySchema = z
+  .object({
+    sessionId: canonicalIdentitySchema(128),
+    messageId: canonicalIdentitySchema(MAX_OPERATION_IDENTITY_CHARACTERS),
+    runId: canonicalIdentitySchema(MAX_OPERATION_IDENTITY_CHARACTERS),
+    requestSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    providerToolCallId: canonicalIdentitySchema(MAX_OPERATION_IDENTITY_CHARACTERS)
+  })
+  .strict()
+
+const AgentCliProgrammaticGrantQuotasSchema = z
+  .object({
+    maxChildren: z.number().int().positive().max(MAX_TAPE_PROGRAMMATIC_TOOL_CHILDREN),
+    maxBatchSteps: z.number().int().positive().max(MAX_TAPE_PROGRAMMATIC_TOOL_BATCH_STEPS),
+    maxInputBytes: z.number().int().positive().max(MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES),
+    maxOutputBytes: z.number().int().positive().max(MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES),
+    maxDurationMs: z.number().int().positive().max(MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS)
+  })
+  .strict()
+
+const AgentCliProgrammaticOperationGrantSchema = z
+  .object({
+    schemaVersion: z.literal(AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION),
+    surfaceVersion: z.literal(LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION),
+    operation: AgentCliProgrammaticOperationIdentitySchema,
+    command: z
+      .object({
+        domain: z.literal('tool'),
+        verb: z.enum(['search', 'describe', 'call', 'batch'])
+      })
+      .strict(),
+    route: LocalControlMethodSchema,
+    canonicalInvocationHash: z.string().regex(SHA_256_PATTERN),
+    adapterMode: z.literal('cli-programmatic'),
+    capabilityHash: z.string().regex(SHA_256_PATTERN),
+    programmaticSurfaceHash: z.string().regex(SHA_256_PATTERN),
+    quotas: AgentCliProgrammaticGrantQuotasSchema,
+    outerDispatchReceipt: z
+      .object({
+        sessionId: canonicalIdentitySchema(128),
+        entryId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+      })
+      .strict()
+  })
+  .strict()
+  .superRefine((grant, context) => {
+    if (grant.route !== `tool.${grant.command.verb}`) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Programmatic grant route does not match its command',
+        path: ['route']
+      })
+    }
+    if (grant.quotas.maxBatchSteps > grant.quotas.maxChildren) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Programmatic grant batch quota exceeds its child quota',
+        path: ['quotas', 'maxBatchSteps']
+      })
+    }
+    if (grant.outerDispatchReceipt.sessionId !== grant.operation.sessionId) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Programmatic grant outer dispatch session does not match its operation',
+        path: ['outerDispatchReceipt', 'sessionId']
+      })
+    }
+  })
+
+export function parseAgentCliProgrammaticOperationGrant(
+  input: unknown
+): AgentCliProgrammaticOperationGrant | null {
+  const parsed = AgentCliProgrammaticOperationGrantSchema.safeParse(input)
+  return parsed.success ? parsed.data : null
+}
+
 type TokenRecord = {
   digest: string
   claims: AgentCliTokenClaims
@@ -162,7 +249,7 @@ function tokenDigest(token: string): string {
 
 function normalizeConversationId(value: string): string {
   const normalized = value.trim()
-  if (normalized.length === 0 || normalized.length > 128) {
+  if (normalized.length === 0 || normalized.length > 128 || normalized.includes('\0')) {
     throw new Error('conversationId must contain 1 to 128 characters')
   }
   return normalized
@@ -186,7 +273,7 @@ function normalizeProgrammaticOperationBinding(
   if (input.schemaVersion !== AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION) {
     throw new Error('Programmatic grant schema version is unsupported')
   }
-  if (input.surfaceVersion !== AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION) {
+  if (input.surfaceVersion !== LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION) {
     throw new Error('Programmatic local-control surface version is unsupported')
   }
   if (input.command.domain !== 'tool') {
@@ -258,7 +345,7 @@ function normalizeProgrammaticOperationBinding(
   }
   return Object.freeze({
     schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-    surfaceVersion: AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
+    surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
     operation,
     command: Object.freeze({ domain: 'tool' as const, verb: input.command.verb }),
     route,

@@ -38,6 +38,7 @@ describe('local-control contracts', () => {
 
   it.each([
     ['unsupported protocol version', { protocolVersion: 2 }],
+    ['unsupported descriptor surface version', { surfaceVersion: 2 }],
     [
       'NUL in the endpoint path',
       { endpoint: { kind: 'unix', path: '/tmp/deepchat.sock\0hidden' } }

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-  AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
   AgentCliTokenAuthority,
   type AgentCliProgrammaticOperationBinding
 } from '@/cli/agentTokenAuthority'
+import { LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION } from '@shared/contracts/localControl'
 import {
   ProgrammaticParentOperationError,
   ProgrammaticToolParentController,
@@ -23,7 +23,7 @@ function binding(
 ): AgentCliProgrammaticOperationBinding {
   return {
     schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-    surfaceVersion: AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
+    surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
     operation: {
       sessionId: 'session-1',
       messageId: 'assistant-1',

@@ -57,8 +57,11 @@ import {
 import { SKILL_ARCHIVE_MAX_INPUT_BYTES } from '@shared/types/skill'
 import {
   LOCAL_CONTROL_MAX_REQUEST_TIMEOUT_MS,
+  LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+  LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION,
   type LocalControlEffect,
   type LocalControlPrincipal,
+  type LocalControlRouteSurfaceVersion,
   type LocalControlScope
 } from '@shared/contracts/localControl'
 import { sanitizePublicText, stripC0AndC1Controls } from './publicText'
@@ -1003,13 +1006,29 @@ function createSurfaceRegistry(
 }
 
 export const CLI_SURFACE_V1 = createSurfaceRegistry(CLI_SURFACE_V1_ENTRIES)
+// V2 route negotiation is live before its Agent-only tool entries. Keeping a distinct immutable
+// registry makes route admission fail closed until those entries and their runtime fences land.
+export const CLI_SURFACE_V2 = createSurfaceRegistry(CLI_SURFACE_V1_ENTRIES)
 
-export function getCliSurfaceEntry(method: string): CliSurfaceEntry | undefined {
-  return CLI_SURFACE_V1.get(method)
+export function getCliSurfaceRegistry(
+  surfaceVersion: LocalControlRouteSurfaceVersion
+): ReadonlyMap<string, CliSurfaceEntry> {
+  if (surfaceVersion === LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION) return CLI_SURFACE_V1
+  if (surfaceVersion === LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION) return CLI_SURFACE_V2
+  throw new Error(`Unsupported CLI route surface version: ${String(surfaceVersion)}`)
 }
 
-export function listCliSurfaceCapabilities(): CliCapability[] {
-  return Array.from(CLI_SURFACE_V1.values(), (entry) => ({
+export function getCliSurfaceEntry(
+  method: string,
+  surfaceVersion: LocalControlRouteSurfaceVersion = LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION
+): CliSurfaceEntry | undefined {
+  return getCliSurfaceRegistry(surfaceVersion).get(method)
+}
+
+export function listCliSurfaceCapabilities(
+  surfaceVersion: LocalControlRouteSurfaceVersion = LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION
+): CliCapability[] {
+  return Array.from(getCliSurfaceRegistry(surfaceVersion).values(), (entry) => ({
     method: entry.contract.name,
     possibleEffects: [...listCliSurfaceEffects(entry)],
     callers: [...entry.callers],

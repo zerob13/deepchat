@@ -700,14 +700,17 @@ review rather than implicit widening.
 
 This section defines `CLI_SURFACE_V2` as a strict, version-negotiated superset of immutable
 `CLI_SURFACE_V1`. V1 names, contracts, callers, and semantics do not change, and V1 tokens cannot
-reach V2 routes. The descriptor advertises supported surface versions and the Programmatic-tool
-capability; client and server select the highest common version. An old client may continue on V1
-against a new server. A new client against an old server, or any caller without the advertised V2
-capability, fails with a stable unsupported-surface/capability response before route invocation.
-Agent invocation grants bind surface version 2, so downgrade cannot widen access.
+reach V2 routes. The strict V1 descriptor and wire envelopes remain byte- and shape-compatible at
+surface version 1; adding V2 advertisement fields there would make strict legacy clients reject the
+descriptor. Route-surface negotiation is therefore authenticated rather than caller-declared:
+human and ordinary Agent tokens select V1, while an exact Programmatic-tool grant selects V2. No
+header, request-body version, capability query, or descriptor field can widen that selection. An old
+client continues on V1 against a new server; a server that cannot mint the exact V2 grant cannot
+admit a Programmatic command. Unsupported routes fail before invocation. Agent invocation grants
+bind route-surface version 2, so downgrade cannot widen access.
 
 V2 does not open a generic raw MCP tunnel. For a Run frozen to the CLI Programmatic adapter, it adds
-Agent-only `tools.search|describe|call|batch` methods and
+Agent-only `tool.search|describe|call|batch` methods and
 `deepchat tool search|describe|call|batch` commands. This is the sole exception to the raw MCP
 Non-Goal and is bounded by the originating View's immutable Programmatic Surface.
 

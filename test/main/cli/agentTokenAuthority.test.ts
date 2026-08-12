@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-  AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
   AgentCliTokenAuthority,
   AgentCliTokenCapacityError,
   type AgentCliOuterDispatchReceipt,
   type AgentCliProgrammaticOperationBinding
 } from '@/cli/agentTokenAuthority'
+import { LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION } from '@shared/contracts/localControl'
 
 function token(character: string): string {
   return character.repeat(43)
@@ -22,7 +22,7 @@ function programmaticBinding(
 ): AgentCliProgrammaticOperationBinding {
   return {
     schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-    surfaceVersion: AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
+    surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
     operation: {
       sessionId: 'conversation-1',
       messageId: 'message-1',
@@ -308,6 +308,13 @@ describe('AgentCliTokenAuthority', () => {
     expect(() => prepare(programmaticBinding({ route: 'tool.batch' }))).toThrow(
       'route does not match its command'
     )
+    expect(() =>
+      prepare(
+        programmaticBinding({
+          operation: { ...programmaticBinding().operation, sessionId: 'conversation-1\0hidden' }
+        })
+      )
+    ).toThrow('conversationId must contain 1 to 128 characters')
     expect(() =>
       prepare(
         programmaticBinding({

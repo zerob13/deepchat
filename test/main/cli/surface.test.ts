@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { DEEPCHAT_ROUTE_CATALOG } from '@shared/contracts/routes'
 import {
   CLI_SURFACE_V1,
+  CLI_SURFACE_V2,
   getCliSurfaceEntry,
+  getCliSurfaceRegistry,
   listCliSurfaceCapabilities,
   resolveCliSurfaceEffect
 } from '@/cli/surface'
+import {
+  LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+  LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION
+} from '@shared/contracts/localControl'
 
 const humanApprovalCaller = { principal: 'human' } as const
 const agentApprovalCaller = { principal: 'agent' } as const
@@ -76,6 +82,20 @@ describe('CLI surface V1', () => {
     expect(getCliSurfaceEntry('mcp.credentials.set')).toBeUndefined()
     expect(getCliSurfaceEntry('databaseSecurity.disable')).toBeUndefined()
     expect(getCliSurfaceEntry('approvals.resolve')).toBeUndefined()
+  })
+
+  it('keeps V2 route negotiation isolated without opening tool invocation early', () => {
+    expect(getCliSurfaceRegistry(LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION)).toBe(CLI_SURFACE_V1)
+    expect(getCliSurfaceRegistry(LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION)).toBe(
+      CLI_SURFACE_V2
+    )
+    expect(CLI_SURFACE_V2).not.toBe(CLI_SURFACE_V1)
+    expect([...CLI_SURFACE_V2.keys()]).toEqual([...CLI_SURFACE_V1.keys()])
+    for (const method of ['tool.search', 'tool.describe', 'tool.call', 'tool.batch']) {
+      expect(
+        getCliSurfaceEntry(method, LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION)
+      ).toBeUndefined()
+    }
   })
 
   it('keeps Agent mutation policy as an explicit operation opt-in', () => {

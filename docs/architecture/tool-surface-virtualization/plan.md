@@ -135,7 +135,8 @@ infrastructure as an explicit exception to generic raw MCP invocation. Add `CLI_
 version-negotiated strict superset without changing `CLI_SURFACE_V1`. Mint only exact
 outer-operation tokens with surface/command/route/invocation, adapter, capability/surface hashes,
 expiry, and quotas. Keep `maxCalls: 1` as RPC quota and enforce child quota separately. Do not expose
-a human tunnel.
+a human tunnel. Keep the strict V1 descriptor and wire envelope unchanged: verified exact grants,
+not caller-supplied headers or body fields, select the V2 route surface.
 
 Derive the exact invocation grant only after provider response supplies `providerToolCallId`. A token
 may be prepared for the child environment before outer T1 but remains inert until a newly created T1

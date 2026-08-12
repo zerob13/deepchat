@@ -35,7 +35,13 @@ export {
   createCliProviderModelAdminRoutes,
   type CliProviderModelAdminDependencies
 } from './providerModelAdminRoutes'
-export { CLI_SURFACE_V1, getCliSurfaceEntry, listCliSurfaceCapabilities } from './surface'
+export {
+  CLI_SURFACE_V1,
+  CLI_SURFACE_V2,
+  getCliSurfaceEntry,
+  getCliSurfaceRegistry,
+  listCliSurfaceCapabilities
+} from './surface'
 export {
   CliMutationGuard,
   type CliApprovalPresentationPort,
