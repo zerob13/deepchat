@@ -31,6 +31,7 @@ import {
 import { DeepChatToolResolver } from '@/agent/deepchat/runtime/toolResolver'
 import { ToolOutputGuard } from '@/agent/deepchat/runtime/toolOutputGuard'
 import { ToolSurfaceShadowDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
+import { ToolSurfaceCanaryDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 import { resolveAgentOutputLimits } from '@shared/lib/agentOutputLimits'
 import {
   createToolPermissionReviewer,
@@ -295,6 +296,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
   })
   const interactionParking = new InteractionParkingRegistry()
   const toolSurfaceDiagnostics = new ToolSurfaceShadowDiagnosticsRegistry()
+  const toolSurfaceCanaryDiagnostics = new ToolSurfaceCanaryDiagnosticsRegistry()
   const programmaticToolParents =
     deps.programmaticToolParents ??
     (deps.agentCliTokenAuthority
@@ -370,6 +372,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     inputPreparationCoordinator,
     contextCoordinator,
     toolSurfaceDiagnostics,
+    toolSurfaceCanaryDiagnostics,
     toolSurfaceRunMode: deps.toolSurfaceRunMode,
     programmaticToolParents,
     memoryIngestionObserver: memory,
@@ -547,6 +550,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     transcriptMutation,
     memoryIngestionObserver: memory,
     toolSurfaceDiagnostics,
+    toolSurfaceCanaryDiagnostics,
     acpCompatibility
   }
 }

@@ -89,6 +89,10 @@ import type {
   ToolSurfaceShadowDiagnosticsRegistryPort
 } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import {
+  MAX_TOOL_SURFACE_PROVIDER_ATTEMPTS_PER_RUN,
+  type ToolSurfaceCanaryDiagnosticsRegistry
+} from './toolSurfaceCanaryDiagnostics'
+import {
   collectRecentToolSurfaceNames,
   createAutomaticToolSurfaceSelectionPolicy,
   createExplicitNativeActivationPolicy,
@@ -238,7 +242,6 @@ export interface ToolSurfaceRunModePort {
 
 const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
-const MAX_TOOL_SURFACE_SHADOW_PROVIDER_ATTEMPTS = 64
 const MAX_PROVIDER_VIEW_PROVENANCE_DIAGNOSTICS_PER_RUN = 8
 const MAX_PROVIDER_VIEW_PROVENANCE_FAILURE_REASON_CODE_UNITS = 512
 
@@ -389,6 +392,7 @@ export interface DeepChatLoopRunnerPorts {
     'prepare' | 'commitRunTerminal'
   >
   toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistryPort
+  toolSurfaceCanaryDiagnostics: Pick<ToolSurfaceCanaryDiagnosticsRegistry, 'recordRun'>
   memoryIngestionObserver: MemoryIngestionObserver
   toolExecutionPort: ToolExecutionPort
   toolResultPort: ToolResultPort
@@ -512,6 +516,7 @@ export class DeepChatLoopRunner {
   constructor(private readonly ports: DeepChatLoopRunnerPorts) {}
 
   async run(args: DeepChatLoopRunInput): Promise<{ runId: string; result: ProcessResult }> {
+    const toolSurfaceCanaryStartedAt = Date.now()
     const {
       sessionId,
       messageId,
@@ -932,6 +937,14 @@ export class DeepChatLoopRunner {
       }
     }
     const collectToolSurfaceShadow = observeToolSurfaceShadow && toolSurfaceMode === 'legacy'
+    const toolSurfaceCanaryIdentity = toolSurfaceController
+      ? Object.freeze({
+          policyVersion: toolSurfaceController.policyVersion,
+          catalogHash: toolSurfaceController.ceiling.catalog.fullCatalogHash,
+          catalogToolCount: toolSurfaceController.ceiling.catalog.entries.length,
+          catalogDefinitionTokens: toolSurfaceController.ceiling.catalog.definitionTokens
+        })
+      : null
     const runPromptAssembly =
       toolSurfaceMode === 'cli-programmatic'
         ? appendCliProgrammaticToolAdapterSection(initialPromptAssembly)
@@ -1006,10 +1019,12 @@ export class DeepChatLoopRunner {
       )
     }
 
-    const toolSurfaceShadowProviderAttempts: ToolSurfaceProviderAttemptDiagnostic[] = []
+    const toolSurfaceProviderAttempts: ToolSurfaceProviderAttemptDiagnostic[] = []
+    let toolSurfaceProviderAttemptsTruncated = false
 
     let terminalCommitAttempted = false
     let committedTerminal: ProcessTerminalSelection | null = null
+    const readCommittedTerminal = (): ProcessTerminalSelection | null => committedTerminal
     const commitRunTerminal = (selection: ProcessTerminalSelection): void => {
       if (committedTerminal) {
         if (
@@ -1432,26 +1447,29 @@ export class DeepChatLoopRunner {
                   })
                 } finally {
                   try {
-                    if (
-                      collectToolSurfaceShadow &&
-                      toolSurfaceShadowProviderAttempts.length <
-                        MAX_TOOL_SURFACE_SHADOW_PROVIDER_ATTEMPTS
-                    ) {
-                      toolSurfaceShadowProviderAttempts.push({
-                        requestSeq: outcome.requestSeq,
-                        physicalAttempt: outcome.physicalAttempt,
-                        usage: outcome.usage
-                          ? {
-                              inputTokens: outcome.usage.inputTokens,
-                              ...(outcome.usage.cacheReadTokens === undefined
-                                ? {}
-                                : { cacheReadTokens: outcome.usage.cacheReadTokens }),
-                              ...(outcome.usage.cacheWriteTokens === undefined
-                                ? {}
-                                : { cacheWriteTokens: outcome.usage.cacheWriteTokens })
-                            }
-                          : null
-                      })
+                    if (collectToolSurfaceShadow || toolSurfaceCanaryIdentity !== null) {
+                      if (
+                        toolSurfaceProviderAttempts.length >=
+                        MAX_TOOL_SURFACE_PROVIDER_ATTEMPTS_PER_RUN
+                      ) {
+                        toolSurfaceProviderAttemptsTruncated = true
+                      } else {
+                        toolSurfaceProviderAttempts.push({
+                          requestSeq: outcome.requestSeq,
+                          physicalAttempt: outcome.physicalAttempt,
+                          usage: outcome.usage
+                            ? {
+                                inputTokens: outcome.usage.inputTokens,
+                                ...(outcome.usage.cacheReadTokens === undefined
+                                  ? {}
+                                  : { cacheReadTokens: outcome.usage.cacheReadTokens }),
+                                ...(outcome.usage.cacheWriteTokens === undefined
+                                  ? {}
+                                  : { cacheWriteTokens: outcome.usage.cacheWriteTokens })
+                              }
+                            : null
+                        })
+                      }
                     }
                   } catch {}
                 }
@@ -1698,9 +1716,28 @@ export class DeepChatLoopRunner {
       }
       throw errorToPropagate
     } finally {
+      if (toolSurfaceCanaryIdentity && toolSurfaceMode !== 'legacy') {
+        try {
+          this.ports.toolSurfaceCanaryDiagnostics.recordRun({
+            scope: {
+              sessionId,
+              providerId: state.providerId,
+              modelId: state.modelId,
+              toolProfile
+            },
+            adapterMode: toolSurfaceMode,
+            ...toolSurfaceCanaryIdentity,
+            outcome: readCommittedTerminal()?.outcome ?? 'unsettled',
+            durationMs: Math.max(0, Date.now() - toolSurfaceCanaryStartedAt),
+            providerRounds: loopRun.logicalRound,
+            providerAttempts: toolSurfaceProviderAttempts,
+            providerAttemptsTruncated: toolSurfaceProviderAttemptsTruncated
+          })
+        } catch {}
+      }
       if (
         collectToolSurfaceShadow &&
-        toolSurfaceShadowProviderAttempts.length > 0 &&
+        toolSurfaceProviderAttempts.length > 0 &&
         !abortSignal.aborted &&
         resourceScope.isCurrent()
       ) {
@@ -1734,7 +1771,7 @@ export class DeepChatLoopRunner {
             },
             eligibleDefinitions: tools,
             initialViewRequestSeq: loopRun.initialRequestSeq + 1,
-            providerAttempts: toolSurfaceShadowProviderAttempts,
+            providerAttempts: toolSurfaceProviderAttempts,
             messages
           })
         } catch {}

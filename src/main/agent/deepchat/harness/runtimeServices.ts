@@ -35,6 +35,7 @@ import type {
   DeepChatSessionUpdatePublisher
 } from '@/agent/deepchat/runtime/types'
 import type { ToolSurfaceShadowDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
+import type { ToolSurfaceCanaryDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
 import type { ToolSurfaceRunModePort } from '@/agent/deepchat/runtime/deepChatLoopRunner'
 import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
@@ -106,5 +107,6 @@ export interface DeepChatRuntimeServices {
   transcriptMutation: TranscriptMutationCoordinator
   memoryIngestionObserver: MemoryIngestionObserver
   toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistry
+  toolSurfaceCanaryDiagnostics: ToolSurfaceCanaryDiagnosticsRegistry
   acpCompatibility: AcpAgentInstanceDependencyFactory
 }

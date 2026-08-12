@@ -71,6 +71,7 @@ import {
   TAPE_TOOL_SURFACE_EVENT_NAME
 } from '@/tape/domain/toolSurfaceFacts'
 import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
+import { ToolSurfaceCanaryDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 
 vi.mock('nanoid', () => ({ nanoid: vi.fn(() => 'mock-msg-id') }))
 
@@ -3021,8 +3022,43 @@ describe('DeepChatAgentHarness', () => {
         await agent.processMessage('s1', 'Hello')
 
         expect(toolService.getToolDefinitionUniverse).toHaveBeenCalledOnce()
+        expect(agent.getToolSurfaceCanaryDiagnostics('s1')?.cohorts).toContainEqual(
+          expect.objectContaining({
+            adapterMode: expectedMode,
+            runs: expect.objectContaining({ observed: 1 })
+          })
+        )
       }
     )
+
+    it('does not let canary diagnostics change a committed Run result', async () => {
+      const definitions = createAutomaticAdapterDefinitions(1)
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue(definitions)
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions,
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'full')
+      const terminalCommit = vi.spyOn(programmaticToolParents, 'commitRunTerminal')
+      vi.spyOn(ToolSurfaceCanaryDiagnosticsRegistry.prototype, 'recordRun').mockImplementation(
+        () => {
+          throw new Error('diagnostics unavailable')
+        }
+      )
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).resolves.toMatchObject({
+        messageId: 'mock-msg-id'
+      })
+      expect(terminalCommit).toHaveBeenCalledOnce()
+      expect((await agent.getSessionState('s1'))?.status).toBe('idle')
+    })
 
     it('keeps automatic virtualization sticky through the exit hysteresis band', async () => {
       const definitionsByRun = [

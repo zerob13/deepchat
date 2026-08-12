@@ -16,6 +16,7 @@ import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAge
 import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
 import { resolveDeepChatToolProfileKind } from '@/agent/deepchat/runtime/toolResolver'
 import type { ToolSurfaceShadowDiagnosticsSnapshot } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
+import type { ToolSurfaceCanaryDiagnosticsSnapshot } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 import type { TurnStartContext } from '@/agent/deepchat/runtime/turnCoordinator'
 import type { AgentSessionSendInput } from '@/agent/shared/agentSessionHandle'
 import { toAppSessionId } from '@/agent/shared/agentSessionIds'
@@ -54,6 +55,16 @@ export class DeepChatAgentHarness
         modelId: state.modelId,
         toolProfile: resolveDeepChatToolProfileKind(scope.instance.getProjectDir())
       }
+    })
+  }
+
+  /** Bounded actual-adapter canary metrics; no renderer or public IPC route exposes this. */
+  getToolSurfaceCanaryDiagnostics(sessionId: string): ToolSurfaceCanaryDiagnosticsSnapshot | null {
+    const state = this.services.runtime.getHydratedScope(toAppSessionId(sessionId))?.state()
+    if (!state) return null
+    return this.services.toolSurfaceCanaryDiagnostics.snapshot({
+      providerId: state.providerId,
+      modelId: state.modelId
     })
   }
 

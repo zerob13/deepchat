@@ -122,10 +122,12 @@
 - [x] Add bounded `view/programmatic_tool_surface` with strict canonical conflict checking.
 - [x] Bind strict V5 facts before provider admission; retain honest V4 fail-open provenance.
 - [x] Keep normal dispatch free of Tape reads.
+- [x] Aggregate bounded process-live actual-adapter cohorts for schema churn, provider attempt/cache
+      inputs, rounds, latency, outcomes, and metric availability without reading Tape.
 - [ ] Preserve outer exec only in provider Context and project real nested target truth through
       Journal/UI.
-- [ ] Measure provider-specific billed cost, cache metrics, schema churn, rounds, latency, and
-      quality by cohort.
+- [ ] Add versioned provider pricing plus discovery, repeated-discovery, and quality evidence before
+      evaluating billed cost and success gates.
 - [ ] Evaluate adapter routing without claiming whole-prefix stability or Native Activation
       completion percentages.
 - [ ] Perform a severity review before commit; do not push.
