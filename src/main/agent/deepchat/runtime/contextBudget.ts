@@ -1,5 +1,10 @@
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
+import type {
+  DeepChatPromptAssembly,
+  DeepChatPromptSectionKind
+} from '@shared/types/prompt-assembly'
+import { estimateMessageTokens } from '@shared/utils/messageTokens'
 import {
   estimateMessagesTokens,
   estimateToolDefinitionTokens,
@@ -42,6 +47,45 @@ export type RequestContextBudgetDiagnostics = {
   effectiveMaxTokens: number
   remainingOutputTokens: number
   totalRequestTokens: number
+}
+
+export interface RequestContextLedgerContributor {
+  name: string
+  estimatedTokens: number
+}
+
+export interface RequestContextLedgerItem {
+  category: string
+  estimatedTokens: number
+  contributors?: readonly RequestContextLedgerContributor[]
+}
+
+export interface RequestContextLedger {
+  attribution: 'available' | 'opaque_system_prompt'
+  items: readonly RequestContextLedgerItem[]
+  unattributedInputTokens: number
+}
+
+export interface RequestContextLedgerSkill {
+  scope: 'message' | 'session'
+  name: string
+  effectiveContent: string
+}
+
+const MAX_LEDGER_SKILL_CONTRIBUTORS = 8
+const PROMPT_SECTION_LEDGER_CATEGORIES: Record<DeepChatPromptSectionKind, string> = {
+  configured_prompt: 'Configured prompt',
+  runtime_capabilities: 'Runtime capabilities',
+  system_environment: 'System environment',
+  agents_instructions: 'Project instructions',
+  skills_metadata: 'Skill catalog',
+  pinned_skills: 'Session Skills',
+  tooling: 'Tool instructions',
+  orchestration_policy: 'Orchestration policy',
+  permission_rules: 'Permission rules',
+  verification_policy: 'Verification policy',
+  attachment_safety: 'Attachment safety',
+  effective_system_prompt: 'System prompt (attribution unavailable)'
 }
 
 export function estimateToolReserveTokens(tools: MCPToolDefinition[]): number {
@@ -234,18 +278,204 @@ export function buildRequestContextBudgetDiagnostics(
   }
 }
 
-export function buildRequestContextOverflowErrorMessage(
+function addLedgerCost(costs: Map<string, number>, category: string, estimatedTokens: number): void {
+  if (!Number.isFinite(estimatedTokens) || estimatedTokens <= 0) return
+  costs.set(category, (costs.get(category) ?? 0) + Math.floor(estimatedTokens))
+}
+
+function messageContainsText(message: ChatMessage, content: string): boolean {
+  if (!content) return false
+  if (typeof message.content === 'string') return message.content.includes(content)
+  return (
+    Array.isArray(message.content) &&
+    message.content.some((part) => part.type === 'text' && part.text.includes(content))
+  )
+}
+
+function estimateStandaloneText(content: string): number {
+  return estimateMessageTokens({ role: 'user', content })
+}
+
+function buildSkillContributors(
+  skills: readonly RequestContextLedgerSkill[],
+  scope: RequestContextLedgerSkill['scope']
+): readonly RequestContextLedgerContributor[] | undefined {
+  const contributors = skills
+    .filter((skill) => skill.scope === scope)
+    .map((skill) => ({
+      name: skill.name,
+      estimatedTokens: estimateStandaloneText(skill.effectiveContent)
+    }))
+    .sort(
+      (left, right) =>
+        right.estimatedTokens - left.estimatedTokens || left.name.localeCompare(right.name)
+    )
+    .slice(0, MAX_LEDGER_SKILL_CONTRIBUTORS)
+  return contributors.length > 0 ? contributors : undefined
+}
+
+export function buildRequestContextLedger(input: {
   preflight: RequestContextPreflightResult
+  promptAssembly?: DeepChatPromptAssembly
+  contextContributions?: ContextRuntimeContributions
+  skills?: readonly RequestContextLedgerSkill[]
+}): RequestContextLedger {
+  const costs = new Map<string, number>()
+  const messages = input.preflight.messages
+  const leadingSystem = messages[0]?.role === 'system' ? messages[0] : undefined
+  const leadingSystemContent =
+    leadingSystem && typeof leadingSystem.content === 'string' ? leadingSystem.content : ''
+  let attributedInputTokens = 0
+  let attribution: RequestContextLedger['attribution'] = 'available'
+
+  if (leadingSystem) {
+    const systemTokens = estimateMessageTokens(leadingSystem)
+    attributedInputTokens += systemTokens
+    if (input.promptAssembly?.prompt === leadingSystemContent) {
+      let projectedPrompt = ''
+      let previousTokens = 0
+      for (const section of input.promptAssembly.sections) {
+        if (!section.content.trim()) continue
+        projectedPrompt = projectedPrompt
+          ? `${projectedPrompt}${section.separatorBefore ?? '\n\n'}${section.content}`
+          : section.content
+        const projectedTokens = estimateStandaloneText(projectedPrompt)
+        addLedgerCost(
+          costs,
+          PROMPT_SECTION_LEDGER_CATEGORIES[section.kind],
+          Math.max(0, projectedTokens - previousTokens)
+        )
+        previousTokens = projectedTokens
+      }
+      if (previousTokens < systemTokens) {
+        addLedgerCost(costs, 'Unattributed system prompt', systemTokens - previousTokens)
+      }
+    } else {
+      attribution = 'opaque_system_prompt'
+      addLedgerCost(costs, 'System prompt (attribution unavailable)', systemTokens)
+    }
+  }
+
+  const nonSystemMessages = leadingSystem ? messages.slice(1) : messages
+  const currentUserIndex = messages.findLastIndex((message) => message.role === 'user')
+  const knownContributions = [
+    {
+      category: 'Memory',
+      content:
+        input.contextContributions?.memoryIncluded === true
+          ? input.contextContributions.memory.content
+          : null
+    },
+    {
+      category: 'User directives',
+      content:
+        input.contextContributions?.directivesIncluded === true
+          ? input.contextContributions.directives.content
+          : null
+    },
+    {
+      category: 'Message Skills',
+      content: input.contextContributions?.messageSkillActiveTurnContext ?? null
+    }
+  ] as const
+  const seenContributionContent = new Set<string>()
+  const contributionTargets = knownContributions.flatMap((contribution) => {
+    const content = contribution.content
+    if (!content || seenContributionContent.has(content)) return []
+    seenContributionContent.add(content)
+    const messageIndex = messages.findLastIndex((message) => messageContainsText(message, content))
+    return messageIndex >= 0 ? [{ ...contribution, content, messageIndex }] : []
+  })
+
+  for (const [relativeIndex, message] of nonSystemMessages.entries()) {
+    const absoluteIndex = relativeIndex + (leadingSystem ? 1 : 0)
+    const messageTokens = estimateMessageTokens(message)
+    attributedInputTokens += messageTokens
+    let remainingTokens = messageTokens
+    for (const contribution of contributionTargets) {
+      if (contribution.messageIndex !== absoluteIndex || !contribution.content) continue
+      const contributionTokens = Math.min(
+        remainingTokens,
+        estimateStandaloneText(contribution.content)
+      )
+      addLedgerCost(costs, contribution.category, contributionTokens)
+      remainingTokens -= contributionTokens
+    }
+    addLedgerCost(
+      costs,
+      absoluteIndex === currentUserIndex ? 'Current input' : 'History and tool protocol',
+      remainingTokens
+    )
+  }
+
+  addLedgerCost(costs, 'Tool schemas', input.preflight.toolReserveTokens)
+  addLedgerCost(costs, 'Output reserve', input.preflight.effectiveMaxTokens)
+  const skills = input.skills ?? []
+  const sessionContributors = buildSkillContributors(skills, 'session')
+  const messageContributors = buildSkillContributors(skills, 'message')
+  const items = [...costs.entries()].map(([category, estimatedTokens]) => ({
+    category,
+    estimatedTokens,
+    ...(category === 'Session Skills' && sessionContributors
+      ? { contributors: sessionContributors }
+      : {}),
+    ...(category === 'Message Skills' && messageContributors
+      ? { contributors: messageContributors }
+      : {})
+  }))
+
+  return {
+    attribution,
+    items,
+    unattributedInputTokens: Math.max(0, input.preflight.inputTokens - attributedInputTokens)
+  }
+}
+
+export function formatRequestContextLedger(ledger: RequestContextLedger): string {
+  const lines = [
+    'Approximate context ledger for this request (derived at failure time; not persisted):'
+  ]
+  for (const item of ledger.items) {
+    const contributors = item.contributors?.length
+      ? ` (${item.contributors
+          .map((contributor) => {
+            const safeName = Array.from(
+              contributor.name.replace(/[\p{Cc}\p{Cf}]+/gu, ' ').trim()
+            )
+              .slice(0, 128)
+              .join('')
+            return `${safeName || 'unnamed'} ~${contributor.estimatedTokens}`
+          })
+          .join(', ')})`
+      : ''
+    lines.push(`- ${item.category}: ~${item.estimatedTokens} tokens${contributors}`)
+  }
+  if (ledger.unattributedInputTokens > 0) {
+    lines.push(`- Unattributed input: ~${ledger.unattributedInputTokens} tokens`)
+  }
+  return lines.join('\n')
+}
+
+export function buildRequestContextOverflowErrorMessage(
+  preflight: RequestContextPreflightResult,
+  ledger?: RequestContextLedger
 ): string {
   const diagnostics = buildRequestContextBudgetDiagnostics(preflight)
   const formatTokenCount = (value: number): string =>
     Number.isFinite(value) ? String(Math.floor(value)) : 'unknown'
 
-  return [
+  const guidance = [
     'Request was not sent because it cannot fit within the model context window after applying the safety margin.',
     `Budget: usable context ${formatTokenCount(diagnostics.usableContextLength)} tokens, estimated input ${formatTokenCount(diagnostics.inputTokens)} tokens, tool schemas ${formatTokenCount(diagnostics.toolReserveTokens)} tokens, requested output ${formatTokenCount(diagnostics.requestedMaxTokens)} tokens, effective output ${formatTokenCount(diagnostics.effectiveMaxTokens)} tokens, remaining output room ${formatTokenCount(diagnostics.remainingOutputTokens)} tokens.`,
+    ...(ledger ? [formatRequestContextLedger(ledger)] : []),
     'Try shortening the latest input or attachments, reducing active tools, skills, or system prompt content, lowering max output tokens, or increasing context length.'
-  ].join(' ')
+  ]
+  if (ledger?.items.some((item) => item.category === 'Session Skills')) {
+    guidance.push(
+      'Persistent Session Skills can be removed from the Session Skills control above the composer.'
+    )
+  }
+  return guidance.join('\n')
 }
 
 function resolveProtectedRequestTailCount(messages: ChatMessage[]): number {

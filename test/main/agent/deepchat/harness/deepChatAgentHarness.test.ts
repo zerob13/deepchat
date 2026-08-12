@@ -9898,6 +9898,8 @@ describe('DeepChatAgentHarness', () => {
 
       expect(providerCoreStream).toHaveBeenCalledTimes(2)
       expect(errorMessage).toContain('provider still reported a context overflow after DeepChat')
+      expect(errorMessage).toContain('Approximate context ledger for this request')
+      expect(errorMessage).toContain('System prompt (attribution unavailable)')
       expect(errorMessage).not.toContain('Request was not sent because it cannot fit')
       expect(errorMessage).not.toContain('provider raw red marker')
       expect(llmProvider.generateText).not.toHaveBeenCalled()

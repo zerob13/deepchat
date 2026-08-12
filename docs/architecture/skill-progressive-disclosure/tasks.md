@@ -85,12 +85,12 @@
 
 ## P1: Context Ledger
 
-- [ ] Add ephemeral render reports without changing prompt-section identity.
-- [ ] Derive category costs from the exact final projection and preflight.
-- [ ] Report approximate, unattributed, and opaque costs honestly.
-- [ ] Make overflow diagnostics actionable for Session active Skill removal.
-- [ ] Add attribution and projection-mismatch tests.
-- [ ] Review and commit the context-ledger slice.
+- [x] Add ephemeral render reports without changing prompt-section identity.
+- [x] Derive category costs from the exact final projection and preflight.
+- [x] Report approximate, unattributed, and opaque costs honestly.
+- [x] Make overflow diagnostics actionable for Session active Skill removal.
+- [x] Add attribution and projection-mismatch tests.
+- [x] Review and commit the context-ledger slice.
 
 ## P2: Provider Overflow Facts
 

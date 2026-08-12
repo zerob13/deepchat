@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   AGENT_CONTEXT_PRESSURE_MIN_OUTPUT_TOKENS,
+  buildRequestContextLedger,
   buildRequestContextBudgetDiagnostics,
   buildRequestContextOverflowErrorMessage,
   getUsableContextLength,
   preflightRequestContext
 } from '@/agent/deepchat/runtime/contextBudget'
+import {
+  assemblePromptSections,
+  createPromptAssemblySection
+} from '@/agent/deepchat/resources/promptAssembly'
+import type { ContextRuntimeContributions } from '@/agent/deepchat/runtime/contextContributions'
 
 vi.mock('tokenx', () => ({
   approximateTokenSize: vi.fn((text: string) => text.length)
@@ -151,5 +157,116 @@ describe('agent request context budget', () => {
     expect(buildRequestContextOverflowErrorMessage(result)).toContain('Request was not sent')
     expect(buildRequestContextOverflowErrorMessage(result)).toContain('remaining output room')
     expect(buildRequestContextOverflowErrorMessage(result)).toContain('lowering max output tokens')
+  })
+
+  it('derives an ephemeral category ledger from the exact final projection', () => {
+    const promptAssembly = assemblePromptSections([
+      createPromptAssemblySection({
+        kind: 'configured_prompt',
+        sourceRef: 'settings:prompt',
+        content: 'CONFIGURED'
+      }),
+      createPromptAssemblySection({
+        kind: 'pinned_skills',
+        sourceRef: 'skills:active',
+        content: 'SESSION_SKILL_BODY'
+      })
+    ])
+    const messageSkillContext = 'MESSAGE_SKILL_BODY'
+    const memoryContent = 'MEMORY_CONTENT'
+    const preflight = preflightRequestContext({
+      messages: [
+        { role: 'system', content: promptAssembly.prompt },
+        { role: 'user', content: 'old question' },
+        { role: 'assistant', content: `old answer quoting ${memoryContent}` },
+        {
+          role: 'user',
+          content: `${memoryContent}\n\n${messageSkillContext}\n\ncurrent question`
+        }
+      ],
+      tools: [],
+      contextLength: 0,
+      requestedMaxTokens: 100
+    })
+    const contextContributions = {
+      memory: { content: memoryContent },
+      memoryIncluded: true,
+      directives: { content: null },
+      directivesIncluded: false,
+      messageSkillActiveTurnContext: messageSkillContext
+    } as ContextRuntimeContributions
+
+    const ledger = buildRequestContextLedger({
+      preflight,
+      promptAssembly,
+      contextContributions,
+      skills: [
+        {
+          scope: 'session',
+          name: 'persistent-skill',
+          effectiveContent: 'SESSION_SKILL_BODY'
+        },
+        {
+          scope: 'message',
+          name: 'turn-skill',
+          effectiveContent: messageSkillContext
+        }
+      ]
+    })
+
+    expect(ledger.attribution).toBe('available')
+    expect(ledger.unattributedInputTokens).toBe(0)
+    expect(ledger.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: 'Configured prompt' }),
+        expect.objectContaining({
+          category: 'Session Skills',
+          contributors: [
+            { name: 'persistent-skill', estimatedTokens: 'SESSION_SKILL_BODY'.length }
+          ]
+        }),
+        expect.objectContaining({ category: 'History and tool protocol' }),
+        expect.objectContaining({ category: 'Memory', estimatedTokens: memoryContent.length }),
+        expect.objectContaining({
+          category: 'Message Skills',
+          estimatedTokens: messageSkillContext.length,
+          contributors: [{ name: 'turn-skill', estimatedTokens: messageSkillContext.length }]
+        }),
+        expect.objectContaining({ category: 'Current input' }),
+        expect.objectContaining({ category: 'Output reserve', estimatedTokens: 100 })
+      ])
+    )
+    const message = buildRequestContextOverflowErrorMessage(preflight, ledger)
+    expect(message).toContain('derived at failure time; not persisted')
+    expect(message).toContain('persistent-skill ~18')
+    expect(message).toContain('Session Skills control above the composer')
+  })
+
+  it('reports opaque system attribution instead of reusing stale section costs', () => {
+    const promptAssembly = assemblePromptSections([
+      createPromptAssemblySection({
+        kind: 'configured_prompt',
+        sourceRef: 'settings:prompt',
+        content: 'STALE_PROMPT'
+      })
+    ])
+    const preflight = preflightRequestContext({
+      messages: [
+        { role: 'system', content: 'ACTUAL_PROVIDER_PROMPT' },
+        { role: 'user', content: 'current question' }
+      ],
+      tools: [],
+      contextLength: 0,
+      requestedMaxTokens: 100
+    })
+
+    const ledger = buildRequestContextLedger({ preflight, promptAssembly })
+
+    expect(ledger.attribution).toBe('opaque_system_prompt')
+    expect(ledger.items).toContainEqual({
+      category: 'System prompt (attribution unavailable)',
+      estimatedTokens: 'ACTUAL_PROVIDER_PROMPT'.length
+    })
+    expect(ledger.items.some((item) => item.category === 'Configured prompt')).toBe(false)
   })
 })

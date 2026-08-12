@@ -41,12 +41,14 @@ import {
 import type { SessionPermissionPort } from '@/session/contracts'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import {
+  buildRequestContextLedger,
   buildRequestContextBudgetDiagnostics,
   buildRequestContextOverflowErrorMessage,
   capAgentRequestMaxTokens,
   AGENT_CONTEXT_SAFETY_MARGIN_TOKENS,
   estimateToolReserveTokens,
   fitRequestMessagesToContextWindow,
+  formatRequestContextLedger,
   preflightRequestContext
 } from '@/agent/deepchat/runtime/contextBudget'
 import type { ContextBuildMetadata } from '@/agent/deepchat/runtime/contextBuilder'
@@ -312,7 +314,8 @@ function isFirstProviderContextOverflowEvent(event: LLMCoreStreamEvent): boolean
 }
 
 function buildProviderContextOverflowAfterRecoveryErrorMessage(
-  preflight: ReturnType<typeof preflightRequestContext>
+  preflight: ReturnType<typeof preflightRequestContext>,
+  ledger: ReturnType<typeof buildRequestContextLedger>
 ): string {
   const diagnostics = buildRequestContextBudgetDiagnostics(preflight)
   const formatTokenCount = (value: number): string =>
@@ -321,8 +324,9 @@ function buildProviderContextOverflowAfterRecoveryErrorMessage(
   return [
     'The provider still reported a context overflow after DeepChat compacted or trimmed the request.',
     `DeepChat local estimate: usable context ${formatTokenCount(diagnostics.usableContextLength)} tokens, estimated input ${formatTokenCount(diagnostics.inputTokens)} tokens, tool schemas ${formatTokenCount(diagnostics.toolReserveTokens)} tokens, requested output ${formatTokenCount(diagnostics.requestedMaxTokens)} tokens, effective output ${formatTokenCount(diagnostics.effectiveMaxTokens)} tokens, remaining output room ${formatTokenCount(diagnostics.remainingOutputTokens)} tokens.`,
+    formatRequestContextLedger(ledger),
     'The provider may count tokens, system prompts, or tool schemas differently. Try shortening the latest input or attachments, reducing active tools, skills, or system prompt content, lowering max output tokens, or increasing context length.'
-  ].join(' ')
+  ].join('\n')
 }
 
 function selectProcessTerminal(result: ProcessResult): ProcessTerminalSelection {
@@ -740,6 +744,19 @@ export class DeepChatLoopRunner {
           const effectiveRequestTools: MCPToolDefinition[] = isTtsRequest ? [] : requestTools
           // ACP and non-chat media routes are not safe to replay before their first visible event.
           const allowTransientRetry = !requestBypassesContextBudget && !isTtsRequest
+          const buildCurrentContextLedger = (
+            preflight: ReturnType<typeof preflightRequestContext>
+          ) =>
+            buildRequestContextLedger({
+              preflight,
+              promptAssembly: loopRun.resources.promptAssembly,
+              contextContributions: activeContextContributions,
+              skills: loopRun.resources.materializedSkillContexts.map((binding) => ({
+                scope: binding.context.activationScope === 'session' ? 'session' : 'message',
+                name: binding.context.skillName,
+                effectiveContent: binding.effectiveContent
+              }))
+            })
           let queuedForRateLimit = false
           yield* ports.contextCoordinator.streamProviderAttempts({
             run: loopRun,
@@ -778,9 +795,19 @@ export class DeepChatLoopRunner {
               getStrictRetryExtraReserve: () =>
                 getProviderOverflowRetryExtraReserve(requestModelConfig.contextLength),
               buildOverflowError: (preflight) =>
-                new Error(buildRequestContextOverflowErrorMessage(preflight)),
+                new Error(
+                  buildRequestContextOverflowErrorMessage(
+                    preflight,
+                    buildCurrentContextLedger(preflight)
+                  )
+                ),
               buildOverflowAfterRecoveryError: (preflight) =>
-                new Error(buildProviderContextOverflowAfterRecoveryErrorMessage(preflight))
+                new Error(
+                  buildProviderContextOverflowAfterRecoveryErrorMessage(
+                    preflight,
+                    buildCurrentContextLedger(preflight)
+                  )
+                )
             },
             recovery: {
               recover: async ({ requestMessages, requestedMaxTokens, tools }) =>
