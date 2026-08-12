@@ -459,6 +459,9 @@ and physical catalog references, full catalog hash, policy/order and adapter mod
 decision, ordered active target/hash/ordinal/reason entries, budgets, bounded native-search
 references/rejections, and degradation. Strict V5 retains the complete list. Oversized V4
 projections truncate deterministically and each paused action binds exact surface/target/hash.
+Historical Tool Surface V1 facts retain their original hash recipe without adapter mode; V2 adds the
+explicit adapter field. Recovery may derive Direct Native versus Native Activation from the V1
+virtualization decision, but CLI Programmatic Views require V2 and never reinterpret V1 evidence.
 
 `view/programmatic_tool_surface` has equal detail: complete View, manifest, and physical catalog
 references; adapter mode; capability/surface hashes; policy/canonicalization versions; bounded

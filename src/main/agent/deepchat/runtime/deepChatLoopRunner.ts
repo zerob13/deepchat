@@ -1325,6 +1325,7 @@ export class DeepChatLoopRunner {
     this.ports.tape.commitToolSurfaceView({
       manifest,
       activeToolDefinitions: params.tools,
+      programmaticSurface: null,
       ...projection
     })
   }

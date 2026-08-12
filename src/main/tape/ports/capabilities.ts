@@ -20,6 +20,7 @@ import type {
   ExecutionRecoveryReport
 } from '../domain/executionJournal'
 import type {
+  CreateTapeProgrammaticToolSurfaceFactInput,
   CreateTapeToolCatalogFactInput,
   CreateTapeToolSurfaceFactInput,
   TapeToolCatalogFactReference,
@@ -76,6 +77,11 @@ export interface CommitTapeToolSurfaceViewInput {
   readonly activeToolDefinitions: readonly MCPToolDefinition[]
   readonly catalog: CreateTapeToolCatalogFactInput
   readonly surface: Omit<CreateTapeToolSurfaceFactInput, 'manifestHash' | 'catalog'>
+  /** Explicitly null outside CLI Programmatic Views. */
+  readonly programmaticSurface: Omit<
+    CreateTapeProgrammaticToolSurfaceFactInput,
+    'manifestHash' | 'catalog' | 'contractBearing'
+  > | null
 }
 
 export interface TapeToolSurfaceViewCommitReceipt {
@@ -94,6 +100,15 @@ export interface TapeToolSurfaceViewCommitReceipt {
     readonly surfaceHash: string
     readonly created: boolean
   }
+  readonly programmaticSurface: {
+    readonly sessionId: string
+    readonly tapeIncarnationId: string
+    readonly entryId: number
+    readonly capabilityHash: string
+    readonly programmaticSurfaceHash: string
+    readonly factHash: string
+    readonly created: boolean
+  } | null
 }
 
 export interface TapeToolSurfaceViewWriter {

@@ -4,13 +4,17 @@ import { buildCanonicalToolCatalog } from '@/agent/deepchat/runtime/toolSurface'
 import { buildToolSearchDefinition } from '@/tool/agentTools/toolSearchTool'
 import { buildExecutionContract } from '@/tape/domain/executionContract'
 import {
+  TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
   TAPE_TOOL_CATALOG_EVENT_NAME,
   TAPE_TOOL_SURFACE_EVENT_NAME,
+  buildProgrammaticToolSurfaceHashV1,
   buildTapeToolResultPayloadHash,
+  getTapeToolSurfaceAdapterMode,
   type CreateTapeToolSurfaceFactInput,
   type TapeToolCatalogSourceEntry,
   type TapeToolSurfaceActiveEntry
 } from '@/tape/domain/toolSurfaceFacts'
+import { hashJsonData } from '@/tape/domain/canonicalJson'
 import { createTapeViewManifest } from '@/tape/domain/viewManifest'
 import {
   ToolSurfaceProvenanceCorruptionError,
@@ -55,6 +59,69 @@ const TOOL: MCPToolDefinition = {
   }
 }
 
+const PROGRAMMATIC_TOOL: MCPToolDefinition = {
+  type: 'function',
+  source: 'mcp',
+  execution: TOOL_EXECUTION.read.parallel,
+  function: {
+    name: 'remote_search',
+    description: 'Search a remote index',
+    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }
+  },
+  server: {
+    name: 'remote-index',
+    id: '33333333-3333-4333-8333-333333333333',
+    configGeneration: 1,
+    bindingHash: 'b'.repeat(64),
+    icons: '',
+    description: 'Remote index tools'
+  },
+  raw: {
+    name: 'remote_search',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string' } },
+      required: ['query']
+    }
+  }
+}
+
+const EXEC_TOOL: MCPToolDefinition = {
+  type: 'function',
+  source: 'agent',
+  execution: TOOL_EXECUTION.write,
+  function: {
+    name: 'exec',
+    description: 'Execute a foreground command',
+    parameters: {
+      type: 'object',
+      properties: { command: { type: 'string' } },
+      required: ['command']
+    }
+  },
+  server: {
+    name: 'agent-filesystem',
+    icons: '',
+    description: 'Agent filesystem tools'
+  }
+}
+
+const QUESTION_TOOL: MCPToolDefinition = {
+  type: 'function',
+  source: 'agent',
+  execution: TOOL_EXECUTION.read.sequential,
+  function: {
+    name: 'question',
+    description: 'Ask the user a question',
+    parameters: { type: 'object', properties: { prompt: { type: 'string' } } }
+  },
+  server: {
+    name: 'agent-interaction',
+    icons: '',
+    description: 'Agent interaction tools'
+  }
+}
+
 function toCatalogEntry(
   entry: ReturnType<typeof buildCanonicalToolCatalog>['entries'][number]
 ): TapeToolCatalogSourceEntry {
@@ -67,15 +134,33 @@ function toCatalogEntry(
   }
 }
 
-function createCommitInput(requestSeq = 1, content = 'Read a file') {
+function createCommitInput(
+  requestSeq = 1,
+  content = 'Read a file',
+  options: {
+    eligibleTools?: readonly MCPToolDefinition[]
+    activeTools?: readonly MCPToolDefinition[]
+    policyVersion?: string
+    virtualizationTriggered?: boolean
+  } = {}
+) {
+  const eligibleTools = options.eligibleTools ?? [TOOL]
+  const activeTools = options.activeTools ?? [TOOL]
   const messages = [{ role: 'user' as const, content }]
-  const catalog = buildCanonicalToolCatalog([TOOL])
+  const catalog = buildCanonicalToolCatalog(eligibleTools)
   const catalogEntries = catalog.entries.map(toCatalogEntry)
-  const activeEntries: TapeToolSurfaceActiveEntry[] = catalogEntries.map((entry, index) => ({
-    ...entry,
-    activationOrdinal: index,
-    reason: 'full-catalog'
-  }))
+  const catalogByTarget = new Map(catalogEntries.map((entry) => [entry.stableTargetKey, entry]))
+  const activeEntries: TapeToolSurfaceActiveEntry[] = activeTools.map((definition, index) => {
+    const targetKey = buildCanonicalToolCatalog([definition]).entries[0].stableTargetKey
+    const entry = catalogByTarget.get(targetKey)
+    if (!entry) throw new TypeError('Active test tool is missing from its eligible catalog.')
+    return {
+      ...entry,
+      activationOrdinal: index,
+      reason: options.virtualizationTriggered ? 'policy-required' : 'full-catalog'
+    }
+  })
+  const activeCatalog = buildCanonicalToolCatalog(activeTools)
   const executionContract = buildExecutionContract({
     request: {
       sessionId: SESSION_ID,
@@ -85,7 +170,7 @@ function createCommitInput(requestSeq = 1, content = 'Read a file') {
     },
     promptAssembly: { prompt: '', sections: [] },
     providerMessages: messages,
-    tools: [TOOL],
+    tools: activeTools,
     providerId: 'openai',
     modelId: 'gpt-5',
     modelConfig: {} as any,
@@ -109,7 +194,7 @@ function createCommitInput(requestSeq = 1, content = 'Read a file') {
     policyVersion: 1,
     contextBuilderVersion: 'legacy-v1',
     messages,
-    tools: [TOOL],
+    tools: activeTools,
     latestEntryId: 0,
     anchorEntryIds: [],
     included: [],
@@ -119,7 +204,7 @@ function createCommitInput(requestSeq = 1, content = 'Read a file') {
       requestedMaxTokens: 100,
       effectiveMaxTokens: 100,
       reserveTokens: 100,
-      toolReserveTokens: catalog.definitionTokens
+      toolReserveTokens: activeCatalog.definitionTokens
     },
     providerId: 'openai',
     modelId: 'gpt-5',
@@ -134,20 +219,22 @@ function createCommitInput(requestSeq = 1, content = 'Read a file') {
     request: executionContract.request,
     canonicalizationVersion: catalog.canonicalizationVersion,
     orderingVersion: 'activation-ordinal-v1',
-    policyVersion: 'full-catalog-v1',
-    virtualizationTriggered: false,
+    policyVersion: options.policyVersion ?? 'full-catalog-v1',
+    adapterMode: options.virtualizationTriggered ? 'cli-programmatic' : 'direct-native',
+    virtualizationTriggered: options.virtualizationTriggered ?? false,
     contractBearing: true,
     activeEntries,
     budget: {
       eligibleToolCount: catalog.entries.length,
-      activeToolCount: catalog.entries.length,
+      activeToolCount: activeEntries.length,
       eligibleDefinitionTokens: catalog.definitionTokens,
-      activeDefinitionTokens: catalog.definitionTokens
+      activeDefinitionTokens: activeCatalog.definitionTokens
     }
   } satisfies Omit<CreateTapeToolSurfaceFactInput, 'manifestHash' | 'catalog'>
   return {
     manifest,
-    activeToolDefinitions: [TOOL],
+    activeToolDefinitions: activeTools,
+    programmaticSurface: null,
     catalog: {
       catalogSchemaVersion: catalog.schemaVersion,
       canonicalizationVersion: catalog.canonicalizationVersion,
@@ -155,6 +242,53 @@ function createCommitInput(requestSeq = 1, content = 'Read a file') {
       entries: catalogEntries
     },
     surface
+  }
+}
+
+function createProgrammaticCommitInput(requestSeq = 1) {
+  const input = createCommitInput(requestSeq, 'Search a remote index', {
+    eligibleTools: [EXEC_TOOL, PROGRAMMATIC_TOOL],
+    activeTools: [EXEC_TOOL],
+    policyVersion: 'cli-programmatic-v1',
+    virtualizationTriggered: true
+  })
+  const activeTargets = new Set(input.surface.activeEntries.map((entry) => entry.stableTargetKey))
+  const entries = input.catalog.entries.filter(
+    (entry) => entry.target.source === 'mcp' && !activeTargets.has(entry.stableTargetKey)
+  )
+  return {
+    ...input,
+    programmaticSurface: {
+      capabilitySchemaVersion: 1 as const,
+      capabilityHashVersion: 1 as const,
+      capabilityHash: hashJsonData({ capability: 'programmatic-test-v1', requestSeq }),
+      programmaticSurfaceSchemaVersion: 1 as const,
+      programmaticSurfaceHashVersion: 1 as const,
+      programmaticSurfaceHash: buildProgrammaticToolSurfaceHashV1({
+        schemaVersion: 1,
+        canonicalizationVersion: input.catalog.canonicalizationVersion,
+        catalogHash: input.catalog.fullCatalogHash,
+        entries
+      }),
+      canonicalizationVersion: input.catalog.canonicalizationVersion,
+      policyVersion: input.surface.policyVersion,
+      adapterMode: 'cli-programmatic' as const,
+      request: input.surface.request,
+      entries,
+      taskContractRef: input.manifest.executionContract.provenance.taskContractRef,
+      ceilings: {
+        maxToolEffect: 'read' as const,
+        workspace: { kind: 'runtime_default' as const },
+        maxSubagentDepth: 0 as const
+      },
+      quotas: {
+        maxChildren: 8,
+        maxBatchSteps: 4,
+        maxInputBytes: 1_024,
+        maxOutputBytes: 2_048,
+        maxDurationMs: 30_000
+      }
+    }
   }
 }
 
@@ -234,6 +368,7 @@ function createVirtualizedCommitInput(
   return {
     manifest,
     activeToolDefinitions: tools,
+    programmaticSurface: null,
     catalog: {
       catalogSchemaVersion: catalog.schemaVersion,
       canonicalizationVersion: catalog.canonicalizationVersion,
@@ -245,6 +380,7 @@ function createVirtualizedCommitInput(
       canonicalizationVersion: catalog.canonicalizationVersion,
       orderingVersion: 'activation-ordinal-v1',
       policyVersion: 'virtualized-v1',
+      adapterMode: 'native-activation' as const,
       virtualizationTriggered: true,
       contractBearing: true,
       activeEntries: [
@@ -342,6 +478,183 @@ describe('ToolSurfaceProvenanceService', () => {
     expect(surfacePayload.data.manifestHash).toBe(input.manifest.hashes.manifestHash)
   })
 
+  it('atomically appends Programmatic provenance after the provider surface', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createProgrammaticCommitInput()
+
+    const receipt = service.commitToolSurfaceView(input)
+
+    expect(entries.map((entry) => entry.name)).toEqual([
+      'session/start',
+      'view/assembled',
+      TAPE_TOOL_CATALOG_EVENT_NAME,
+      TAPE_TOOL_SURFACE_EVENT_NAME,
+      TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME
+    ])
+    expect(receipt.programmaticSurface).toMatchObject({
+      entryId: 5,
+      capabilityHash: input.programmaticSurface.capabilityHash,
+      programmaticSurfaceHash: input.programmaticSurface.programmaticSurfaceHash,
+      created: true
+    })
+    const payload = JSON.parse(entries[4].payload_json)
+    expect(payload.data).toMatchObject({
+      manifestHash: input.manifest.hashes.manifestHash,
+      contractBearing: true,
+      catalog: {
+        entryId: receipt.catalog.entryId,
+        tapeIncarnationId: receipt.tapeIncarnationId
+      }
+    })
+    expect(entries[4].entry_id).toBeGreaterThan(receipt.surface.entryId)
+  })
+
+  it('reuses exact Programmatic facts and rejects changed content at the same identity', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createProgrammaticCommitInput()
+
+    const first = service.commitToolSurfaceView(input)
+    const repeated = service.commitToolSurfaceView(input)
+
+    expect(repeated.programmaticSurface).toEqual({
+      ...first.programmaticSurface,
+      created: false
+    })
+    expect(
+      entries.filter((entry) => entry.name === TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME)
+    ).toHaveLength(1)
+    expect(() =>
+      service.commitToolSurfaceView({
+        ...input,
+        programmaticSurface: {
+          ...input.programmaticSurface,
+          capabilityHash: 'f'.repeat(64)
+        }
+      })
+    ).toThrow(ToolSurfaceProvenanceCorruptionError)
+  })
+
+  it('does not repair a Programmatic fact whose provider surface is missing', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createProgrammaticCommitInput()
+    service.commitToolSurfaceView(input)
+    entries.splice(
+      entries.findIndex((entry) => entry.name === TAPE_TOOL_SURFACE_EVENT_NAME),
+      1
+    )
+
+    expect(() => service.commitToolSurfaceView(input)).toThrow(ToolSurfaceProvenanceCorruptionError)
+    expect(entries.filter((entry) => entry.name === TAPE_TOOL_SURFACE_EVENT_NAME)).toEqual([])
+    expect(
+      entries.filter((entry) => entry.name === TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME)
+    ).toHaveLength(1)
+  })
+
+  it('does not repair a provider surface whose Programmatic fact is missing', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createProgrammaticCommitInput()
+    service.commitToolSurfaceView(input)
+    entries.splice(
+      entries.findIndex((entry) => entry.name === TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME),
+      1
+    )
+
+    expect(() => service.commitToolSurfaceView(input)).toThrow(ToolSurfaceProvenanceCorruptionError)
+    expect(entries.filter((entry) => entry.name === TAPE_TOOL_SURFACE_EVENT_NAME)).toHaveLength(1)
+    expect(
+      entries.filter((entry) => entry.name === TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME)
+    ).toEqual([])
+  })
+
+  it('requires Programmatic provenance exactly for the CLI Programmatic adapter', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createProgrammaticCommitInput()
+
+    expect(() => service.commitToolSurfaceView({ ...input, programmaticSurface: null })).toThrow(
+      ToolSurfaceProvenanceError
+    )
+    expect(() =>
+      service.commitToolSurfaceView({
+        ...createCommitInput(),
+        programmaticSurface: input.programmaticSurface
+      })
+    ).toThrow(ToolSurfaceProvenanceError)
+    expect(entries).toEqual([])
+    expect(table.runInTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects incomplete Programmatic authority before opening a transaction', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createProgrammaticCommitInput()
+
+    expect(() =>
+      service.commitToolSurfaceView({
+        ...input,
+        programmaticSurface: { ...input.programmaticSurface, entries: [] }
+      })
+    ).toThrow(ToolSurfaceProvenanceError)
+    expect(entries).toEqual([])
+    expect(table.runInTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rejects a CLI Programmatic View that omits an eligible Agent tool', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createCommitInput(1, 'Search a remote index', {
+      eligibleTools: [EXEC_TOOL, QUESTION_TOOL, PROGRAMMATIC_TOOL],
+      activeTools: [EXEC_TOOL],
+      policyVersion: 'cli-programmatic-v1',
+      virtualizationTriggered: true
+    })
+    const activeTargets = new Set(input.surface.activeEntries.map((entry) => entry.stableTargetKey))
+    const programmaticEntries = input.catalog.entries.filter(
+      (entry) => entry.target.source === 'mcp' && !activeTargets.has(entry.stableTargetKey)
+    )
+    const programmaticSurface = createProgrammaticCommitInput().programmaticSurface
+
+    expect(() =>
+      service.commitToolSurfaceView({
+        ...input,
+        programmaticSurface: {
+          ...programmaticSurface,
+          request: input.surface.request,
+          programmaticSurfaceHash: buildProgrammaticToolSurfaceHashV1({
+            schemaVersion: 1,
+            canonicalizationVersion: input.catalog.canonicalizationVersion,
+            catalogHash: input.catalog.fullCatalogHash,
+            entries: programmaticEntries
+          }),
+          entries: programmaticEntries
+        }
+      })
+    ).toThrow(ToolSurfaceProvenanceError)
+    expect(entries).toEqual([])
+    expect(table.runInTransaction).not.toHaveBeenCalled()
+  })
+
+  it('rolls back every View fact when Programmatic provenance persistence fails', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const append = table.appendToolSurfaceEvent.getMockImplementation()!
+    table.appendToolSurfaceEvent
+      .mockImplementationOnce(append)
+      .mockImplementationOnce(append)
+      .mockImplementationOnce(() => {
+        throw new Error('programmatic surface write failed')
+      })
+
+    expect(() => service.commitToolSurfaceView(createProgrammaticCommitInput())).toThrow(
+      ToolSurfaceProvenanceError
+    )
+    expect(entries).toEqual([])
+  })
+
   it('recovers one hash-verified surface fact by provider request identity', () => {
     const { table } = createTapeTableMock()
     const service = createTapeService(table)
@@ -355,6 +668,72 @@ describe('ToolSurfaceProvenanceService', () => {
       surfaceHash: receipt.surface.surfaceHash,
       request: { sessionId: SESSION_ID, messageId: MESSAGE_ID, runId: RUN_ID, requestSeq: 1 }
     })
+  })
+
+  it('recovers historical Tool Surface V1 rows without reinterpreting their hash recipe', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    const receipt = service.commitToolSurfaceView(createCommitInput())
+    const row = table.getByEntryId(SESSION_ID, receipt.surface.entryId)
+    const payload = JSON.parse(row.payload_json)
+    const { adapterMode: _adapterMode, surfaceHash: _surfaceHash, ...currentBody } = payload.data
+    const historicalBody = {
+      ...currentBody,
+      schemaVersion: 1,
+      surfaceHashVersion: 1
+    }
+    payload.data = {
+      ...historicalBody,
+      surfaceHash: '01b061c42303751a9a5324532f1624d71c72ba1439dcaf93745aabb90a1bcbfc'
+    }
+    const meta = {
+      tapeIncarnationId: '00000000-0000-4000-8000-000000000001',
+      schemaVersion: 1,
+      surfaceHashVersion: 1,
+      runId: RUN_ID,
+      manifestHash: '48bda5c7afaf7ddf9cdd8ce167e562c4044aafca5db21ca09f7e3b9ac9b3c9e0',
+      fullCatalogHash: 'c7f53deaccaa834a4e05194ed183bafbccde596860d6b4865de5756a929e2053',
+      surfaceHash: '01b061c42303751a9a5324532f1624d71c72ba1439dcaf93745aabb90a1bcbfc',
+      contractBearing: true
+    }
+    row.payload_json = JSON.stringify(payload)
+    row.meta_json = JSON.stringify(meta)
+
+    expect(service.listToolSurfaceFactsByMessageRequest(SESSION_ID, MESSAGE_ID, 1)[0].fact).toEqual(
+      payload.data
+    )
+  })
+
+  it('recovers a fixed virtualized V1 fixture only as Native Activation', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    const result = appendToolSearchResult(table)
+    const receipt = service.commitToolSurfaceView(createVirtualizedCommitInput(result))
+    const row = table.getByEntryId(SESSION_ID, receipt.surface.entryId)
+    const payload = JSON.parse(row.payload_json)
+    const { adapterMode: _adapterMode, surfaceHash: _surfaceHash, ...currentBody } = payload.data
+    payload.data = {
+      ...currentBody,
+      schemaVersion: 1,
+      surfaceHashVersion: 1,
+      surfaceHash: 'bc7d9b4eed1b07764689474500bc680e09dbde792065c3bc4d72e7206c0b6fe2'
+    }
+    row.payload_json = JSON.stringify(payload)
+    row.meta_json = JSON.stringify({
+      tapeIncarnationId: '00000000-0000-4000-8000-000000000001',
+      schemaVersion: 1,
+      surfaceHashVersion: 1,
+      runId: RUN_ID,
+      manifestHash: 'dc099f55c0332648bfa8efa4b002eff7f9d22dcbf4599ae25d07727568fa4a5a',
+      fullCatalogHash: '307b4bf026f3cc9f12d31671fa6f67937df0490649efc471a67194a912a93324',
+      surfaceHash: 'bc7d9b4eed1b07764689474500bc680e09dbde792065c3bc4d72e7206c0b6fe2',
+      contractBearing: true
+    })
+
+    const records = service.listToolSurfaceFactsByMessageRequest(SESSION_ID, MESSAGE_ID, 2)
+    expect(records).toHaveLength(1)
+    expect(getTapeToolSurfaceAdapterMode(records[0].fact)).toBe('native-activation')
+    expect('adapterMode' in records[0].fact).toBe(false)
   })
 
   it('keeps sessions without Tool Surface facts on the legacy recovery path', () => {
@@ -630,6 +1009,29 @@ describe('ToolSurfaceProvenanceService', () => {
     db.close()
   })
 
+  itIfSqlite('persists Programmatic View facts idempotently with the SQLite adapter', () => {
+    const db = new DatabaseCtor(':memory:')
+    const table = new DeepChatTapeEntriesTable(db)
+    table.createTable()
+    const service = createTapeService(table)
+    const input = createProgrammaticCommitInput()
+
+    const first = service.commitToolSurfaceView(input)
+    const repeated = service.commitToolSurfaceView(input)
+    const rows = table.getBySession(SESSION_ID)
+
+    expect(repeated.programmaticSurface).toEqual({
+      ...first.programmaticSurface,
+      created: false
+    })
+    expect(rows.filter((row) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)).toHaveLength(1)
+    expect(
+      rows.filter((row) => row.name === TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME)
+    ).toHaveLength(1)
+
+    db.close()
+  })
+
   itIfSqlite('rolls back all View facts when the SQLite surface append fails', () => {
     const db = new DatabaseCtor(':memory:')
     const table = new DeepChatTapeEntriesTable(db)
@@ -645,6 +1047,28 @@ describe('ToolSurfaceProvenanceService', () => {
     const service = createTapeService(table)
 
     expect(() => service.commitToolSurfaceView(createCommitInput())).toThrow(
+      ToolSurfaceProvenanceError
+    )
+    expect(table.getBySession(SESSION_ID)).toEqual([])
+
+    db.close()
+  })
+
+  itIfSqlite('rolls back all View facts when the SQLite Programmatic append fails', () => {
+    const db = new DatabaseCtor(':memory:')
+    const table = new DeepChatTapeEntriesTable(db)
+    table.createTable()
+    db.exec(`
+      CREATE TRIGGER fail_programmatic_tool_surface_insert
+      BEFORE INSERT ON deepchat_tape_entries
+      WHEN NEW.name = '${TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME}'
+      BEGIN
+        SELECT RAISE(ABORT, 'programmatic surface write failed');
+      END;
+    `)
+    const service = createTapeService(table)
+
+    expect(() => service.commitToolSurfaceView(createProgrammaticCommitInput())).toThrow(
       ToolSurfaceProvenanceError
     )
     expect(table.getBySession(SESSION_ID)).toEqual([])

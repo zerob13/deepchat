@@ -31,16 +31,21 @@ const SERVER_ID = '22222222-2222-4222-8222-222222222222'
 const BINDING_HASH = 'a'.repeat(64)
 
 function agentTool(name: string): MCPToolDefinition {
+  const isExec = name === 'exec'
   return {
     source: 'agent',
-    execution: TOOL_EXECUTION.read.parallel,
+    execution: isExec ? TOOL_EXECUTION.write : TOOL_EXECUTION.read.parallel,
     type: 'function',
     function: {
       name,
       description: `${name} description`,
       parameters: { type: 'object', properties: {} }
     },
-    server: { name: 'agent-tools', icons: '', description: 'Agent tools' }
+    server: {
+      name: isExec ? 'agent-filesystem' : 'agent-tools',
+      icons: '',
+      description: 'Agent tools'
+    }
   }
 }
 
@@ -678,6 +683,10 @@ describe('Programmatic Tool Surface', () => {
 
   it('keeps the provider path fixed and rejects unsafe Programmatic Run admission', () => {
     const exec = agentTool('exec')
+    const spoofedExec = {
+      ...agentTool('question'),
+      function: { ...agentTool('question').function, name: 'exec' }
+    }
     const question = agentTool('question')
     const hidden = mcpTool('remote_search')
     const pinned = mcpTool('remote_read')
@@ -687,6 +696,15 @@ describe('Programmatic Tool Surface', () => {
         createProgrammaticToolSurfaceRunControllerV1({
           ceilingDefinitions: [question, hidden],
           providerActiveDefinitions: [question],
+          policyVersion: 'programmatic-test-v1'
+        }),
+      'ineligible_exposure'
+    )
+    expectSurfaceError(
+      () =>
+        createProgrammaticToolSurfaceRunControllerV1({
+          ceilingDefinitions: [spoofedExec, hidden],
+          providerActiveDefinitions: [spoofedExec],
           policyVersion: 'programmatic-test-v1'
         }),
       'ineligible_exposure'

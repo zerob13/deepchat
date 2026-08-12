@@ -9,18 +9,24 @@ import {
   buildProviderVisibleToolDefinitionsHash
 } from '../domain/executionContract'
 import {
+  TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
   TAPE_TOOL_CATALOG_EVENT_NAME,
   TAPE_TOOL_SURFACE_EVENT_NAME,
   buildTapeToolResultPayloadHash,
+  createTapeProgrammaticToolSurfaceFact,
   createTapeToolCatalogFact,
   createTapeToolSurfaceFact,
+  isCanonicalAgentExecToolSurfaceEntry,
+  type CreateTapeProgrammaticToolSurfaceFactInput,
   type CreateTapeToolCatalogFactInput,
   type CreateTapeToolSurfaceFactInput,
+  type TapeProgrammaticToolSurfaceFact,
   type TapeToolCatalogFact,
   type TapeToolCatalogFactReference,
   type TapeToolCatalogSourceEntry,
   type TapeToolSurfaceActiveEntry,
   type TapeToolSurfaceFact,
+  type TapeToolSurfaceFactV2,
   verifyTapeToolCatalogFact,
   verifyTapeToolSurfaceFact
 } from '../domain/toolSurfaceFacts'
@@ -66,10 +72,17 @@ type PreparedCommitInput = {
   readonly manifest: DeepChatTapeViewManifest
   readonly catalog: TapeToolCatalogFact
   readonly surface: Omit<CreateTapeToolSurfaceFactInput, 'manifestHash' | 'catalog'>
+  readonly programmaticSurface: Omit<
+    CreateTapeProgrammaticToolSurfaceFactInput,
+    'manifestHash' | 'catalog' | 'contractBearing'
+  > | null
 }
 
 type CanonicalEventInput = Omit<TapeEventAppendInput, 'name'> & {
-  readonly name: typeof TAPE_TOOL_CATALOG_EVENT_NAME | typeof TAPE_TOOL_SURFACE_EVENT_NAME
+  readonly name:
+    | typeof TAPE_TOOL_CATALOG_EVENT_NAME
+    | typeof TAPE_TOOL_SURFACE_EVENT_NAME
+    | typeof TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME
   readonly source: NonNullable<TapeEventAppendInput['source']>
   readonly provenanceKey: string
 }
@@ -155,6 +168,13 @@ function surfaceProvenanceKey(
   request: CreateTapeToolSurfaceFactInput['request']
 ): string {
   return `view:tool-surface:v1:${tapeIncarnationId}:${request.sessionId}:${request.messageId}:${request.runId}:${request.requestSeq}`
+}
+
+function programmaticSurfaceProvenanceKey(
+  tapeIncarnationId: string,
+  request: CreateTapeProgrammaticToolSurfaceFactInput['request']
+): string {
+  return `view:programmatic-tool-surface:v1:${tapeIncarnationId}:${request.sessionId}:${request.messageId}:${request.runId}:${request.requestSeq}`
 }
 
 function sameCatalogEntry(
@@ -250,6 +270,60 @@ function assertSurfaceMatchesManifest(
       throw new TypeError(
         'Tool surface active target does not match its ExecutionContract ceiling.'
       )
+    }
+  }
+}
+
+function assertProgrammaticSurfaceMatchesView(
+  manifest: DeepChatTapeViewManifest,
+  catalog: CreateTapeToolCatalogFactInput,
+  surface: PreparedCommitInput['surface'],
+  programmaticSurface: NonNullable<PreparedCommitInput['programmaticSurface']>
+): void {
+  if (
+    canonicalJsonStringifyData(programmaticSurface.request) !==
+      canonicalJsonStringifyData(surface.request) ||
+    programmaticSurface.canonicalizationVersion !== catalog.canonicalizationVersion ||
+    programmaticSurface.policyVersion !== surface.policyVersion
+  ) {
+    throw new TypeError('Programmatic Tool Surface does not belong to its provider View.')
+  }
+  const manifestTaskContractRef =
+    manifest.schemaVersion === 5 ? manifest.executionContract.provenance.taskContractRef : null
+  if (
+    canonicalJsonStringifyData(programmaticSurface.taskContractRef) !==
+    canonicalJsonStringifyData(manifestTaskContractRef)
+  ) {
+    throw new TypeError('Programmatic Tool Surface does not match its View TaskContract.')
+  }
+
+  const activeTargets = new Set(surface.activeEntries.map((entry) => entry.stableTargetKey))
+  if (!surface.activeEntries.some(isCanonicalAgentExecToolSurfaceEntry)) {
+    throw new TypeError('CLI Programmatic provider surface does not include Agent exec.')
+  }
+  if (
+    catalog.entries.some(
+      (entry) => entry.target.source === 'agent' && !activeTargets.has(entry.stableTargetKey)
+    )
+  ) {
+    throw new TypeError('CLI Programmatic provider surface does not include every Agent tool.')
+  }
+  const expectedEntries = catalog.entries.filter(
+    (entry) => entry.target.source === 'mcp' && !activeTargets.has(entry.stableTargetKey)
+  )
+  if (programmaticSurface.entries.length !== expectedEntries.length) {
+    throw new TypeError('Programmatic Tool Surface is not the complete out-of-band MCP surface.')
+  }
+  const programmaticByTarget = new Map(
+    programmaticSurface.entries.map((entry) => [entry.stableTargetKey, entry])
+  )
+  if (programmaticByTarget.size !== programmaticSurface.entries.length) {
+    throw new TypeError('Programmatic Tool Surface contains a duplicate target.')
+  }
+  for (const expected of expectedEntries) {
+    const programmatic = programmaticByTarget.get(expected.stableTargetKey)
+    if (!programmatic || !sameCatalogEntry(expected, programmatic)) {
+      throw new TypeError('Programmatic Tool Surface does not match its eligible catalog.')
     }
   }
 }
@@ -375,12 +449,27 @@ function prepareCommitInput(input: CommitTapeToolSurfaceViewInput): PreparedComm
   if (verifyTapeViewManifestHash(input.manifest) !== 'valid') {
     throw new TypeError('Tool surface View manifest is not hash-valid.')
   }
+  if (input.programmaticSurface === undefined) {
+    throw new TypeError('Programmatic Tool Surface applicability must be explicit.')
+  }
+  if ((input.surface.adapterMode === 'cli-programmatic') !== (input.programmaticSurface !== null)) {
+    throw new TypeError('Programmatic Tool Surface applicability does not match its adapter mode.')
+  }
   assertSurfaceMatchesCatalog(input.catalog, input.surface)
   assertSurfaceMatchesManifest(input.manifest, input.surface, input.activeToolDefinitions)
+  if (input.programmaticSurface !== null) {
+    assertProgrammaticSurfaceMatchesView(
+      input.manifest,
+      input.catalog,
+      input.surface,
+      input.programmaticSurface
+    )
+  }
   return {
     manifest: input.manifest,
     catalog: createTapeToolCatalogFact(input.catalog),
-    surface: input.surface
+    surface: input.surface,
+    programmaticSurface: input.programmaticSurface
   }
 }
 
@@ -410,7 +499,7 @@ function catalogEventInput(
 function surfaceEventInput(
   manifest: DeepChatTapeViewManifest,
   tapeIncarnationId: string,
-  fact: TapeToolSurfaceFact
+  fact: TapeToolSurfaceFactV2
 ): CanonicalEventInput {
   return {
     sessionId: manifest.sessionId,
@@ -430,6 +519,40 @@ function surfaceEventInput(
       manifestHash: fact.manifestHash,
       fullCatalogHash: fact.catalog.fullCatalogHash,
       surfaceHash: fact.surfaceHash,
+      adapterMode: fact.adapterMode,
+      contractBearing: fact.contractBearing
+    },
+    createdAt: manifest.assembledAt,
+    idempotent: true
+  }
+}
+
+function programmaticSurfaceEventInput(
+  manifest: DeepChatTapeViewManifest,
+  tapeIncarnationId: string,
+  fact: TapeProgrammaticToolSurfaceFact
+): CanonicalEventInput {
+  return {
+    sessionId: manifest.sessionId,
+    name: TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
+    source: {
+      type: 'runtime_event',
+      id: manifest.messageId,
+      seq: manifest.requestSeq
+    },
+    provenanceKey: programmaticSurfaceProvenanceKey(tapeIncarnationId, fact.request),
+    data: { ...fact },
+    meta: {
+      tapeIncarnationId,
+      schemaVersion: fact.schemaVersion,
+      factHashVersion: fact.factHashVersion,
+      runId: fact.request.runId,
+      manifestHash: fact.manifestHash,
+      fullCatalogHash: fact.catalog.fullCatalogHash,
+      capabilityHash: fact.capabilityHash,
+      programmaticSurfaceHash: fact.programmaticSurfaceHash,
+      projectionHash: fact.projectionHash,
+      factHash: fact.factHash,
       contractBearing: fact.contractBearing
     },
     createdAt: manifest.assembledAt,
@@ -561,20 +684,22 @@ export class ToolSurfaceProvenanceService
     for (let index = 0; index < records.length; index += 1) {
       const row = rows[index]
       const { fact } = records[index]
+      const expectedMeta = {
+        tapeIncarnationId,
+        schemaVersion: fact.schemaVersion,
+        surfaceHashVersion: fact.surfaceHashVersion,
+        runId: fact.request.runId,
+        manifestHash: fact.manifestHash,
+        fullCatalogHash: fact.catalog.fullCatalogHash,
+        surfaceHash: fact.surfaceHash,
+        ...('adapterMode' in fact ? { adapterMode: fact.adapterMode } : {}),
+        contractBearing: fact.contractBearing
+      }
       if (
         fact.catalog.sessionId !== sessionId ||
         fact.catalog.tapeIncarnationId !== tapeIncarnationId ||
         row.provenance_key !== surfaceProvenanceKey(tapeIncarnationId, fact.request) ||
-        !canonicalJsonEquals(row.meta_json, {
-          tapeIncarnationId,
-          schemaVersion: fact.schemaVersion,
-          surfaceHashVersion: fact.surfaceHashVersion,
-          runId: fact.request.runId,
-          manifestHash: fact.manifestHash,
-          fullCatalogHash: fact.catalog.fullCatalogHash,
-          surfaceHash: fact.surfaceHash,
-          contractBearing: fact.contractBearing
-        })
+        !canonicalJsonEquals(row.meta_json, expectedMeta)
       ) {
         throw new ToolSurfaceProvenanceCorruptionError(
           `Tool surface for message ${messageId} failed canonical row validation.`
@@ -809,6 +934,90 @@ export class ToolSurfaceProvenanceService
           )
         }
 
+        const programmaticProvenanceKey = programmaticSurfaceProvenanceKey(
+          tapeIncarnationId,
+          surfaceFact.request
+        )
+        const programmaticRows = table.getEventsBySource(
+          manifest.sessionId,
+          TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
+          'runtime_event',
+          manifest.messageId,
+          manifest.requestSeq
+        )
+        const programmaticByProvenance = table.getByProvenanceKey(
+          manifest.sessionId,
+          programmaticProvenanceKey
+        )
+        let programmaticReceipt: TapeToolSurfaceViewCommitReceipt['programmaticSurface'] = null
+        if (prepared.programmaticSurface === null) {
+          if (programmaticRows.length > 0 || programmaticByProvenance) {
+            throw new ToolSurfaceProvenanceCorruptionError(
+              `View ${manifest.messageId}/${manifest.requestSeq} conflicts with its Programmatic Tool Surface applicability.`
+            )
+          }
+        } else {
+          if (programmaticRows.length > 1) {
+            throw new ToolSurfaceProvenanceCorruptionError(
+              `Programmatic Tool Surface ${manifest.messageId}/${manifest.requestSeq} has duplicate physical facts.`
+            )
+          }
+          const programmaticFact = createTapeProgrammaticToolSurfaceFact({
+            ...prepared.programmaticSurface,
+            manifestHash: manifest.hashes.manifestHash,
+            catalog: catalogReference,
+            contractBearing: manifest.schemaVersion === 5
+          })
+          const programmaticInput = programmaticSurfaceEventInput(
+            manifest,
+            tapeIncarnationId,
+            programmaticFact
+          )
+          const existingProgrammatic = programmaticRows[0] ?? programmaticByProvenance
+          if (
+            (programmaticRows[0] &&
+              programmaticByProvenance &&
+              programmaticRows[0].entry_id !== programmaticByProvenance.entry_id) ||
+            (existingProgrammatic &&
+              !canonicalEventRowMatches(existingProgrammatic, programmaticInput))
+          ) {
+            throw new ToolSurfaceProvenanceCorruptionError(
+              `Programmatic Tool Surface ${manifest.messageId}/${manifest.requestSeq} has conflicting persisted content.`
+            )
+          }
+          if (Boolean(existingSurface) !== Boolean(existingProgrammatic)) {
+            throw new ToolSurfaceProvenanceCorruptionError(
+              `View ${manifest.messageId}/${manifest.requestSeq} has incomplete Programmatic provenance.`
+            )
+          }
+          const programmaticRow =
+            existingProgrammatic ??
+            table.appendToolSurfaceEvent({ ...programmaticInput, idempotent: true })
+          if (!canonicalEventRowMatches(programmaticRow, programmaticInput)) {
+            throw new ToolSurfaceProvenanceCorruptionError(
+              `Programmatic Tool Surface append returned conflicting evidence for ${manifest.messageId}/${manifest.requestSeq}.`
+            )
+          }
+          if (
+            programmaticRow.entry_id <= manifestRow.entry_id ||
+            programmaticRow.entry_id <= catalogRow.entry_id ||
+            programmaticRow.entry_id <= surfaceRow.entry_id
+          ) {
+            throw new ToolSurfaceProvenanceCorruptionError(
+              `Programmatic Tool Surface ${manifest.messageId}/${manifest.requestSeq} has impossible causal ordering.`
+            )
+          }
+          programmaticReceipt = {
+            sessionId: manifest.sessionId,
+            tapeIncarnationId,
+            entryId: programmaticRow.entry_id,
+            capabilityHash: programmaticFact.capabilityHash,
+            programmaticSurfaceHash: programmaticFact.programmaticSurfaceHash,
+            factHash: programmaticFact.factHash,
+            created: !existingProgrammatic
+          }
+        }
+
         return {
           tapeIncarnationId,
           manifest: {
@@ -827,7 +1036,8 @@ export class ToolSurfaceProvenanceService
             entryId: surfaceRow.entry_id,
             surfaceHash: surfaceFact.surfaceHash,
             created: !existingSurface
-          }
+          },
+          programmaticSurface: programmaticReceipt
         }
       })
     } catch (error) {

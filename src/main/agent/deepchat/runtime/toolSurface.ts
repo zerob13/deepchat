@@ -21,6 +21,7 @@ import {
 } from '@/tape/domain/executionContract'
 import {
   TAPE_TOOL_RESULT_PAYLOAD_HASH_VERSION,
+  isCanonicalAgentExecToolSurfaceEntry,
   type CreateTapeToolCatalogFactInput,
   type CreateTapeToolSurfaceFactInput,
   type TapeToolCatalogSourceEntry,
@@ -431,6 +432,7 @@ export function projectToolSurfaceTapeProvenance(
       canonicalizationVersion: snapshot.canonicalizationVersion,
       orderingVersion: snapshot.orderingVersion,
       policyVersion: snapshot.policyVersion,
+      adapterMode: snapshot.adapterMode,
       virtualizationTriggered: snapshot.virtualizationTriggered,
       contractBearing,
       activeEntries,
@@ -3251,9 +3253,7 @@ export function createCliProgrammaticToolSurfaceRunControllerDelegate(input: {
       'ineligible_exposure'
     )
   }
-  const execEntry = providerActiveCatalog.entries.find(
-    (entry) => entry.target.source === 'agent' && entry.target.providerVisibleName === 'exec'
-  )
+  const execEntry = providerActiveCatalog.entries.find(isCanonicalAgentExecToolSurfaceEntry)
   if (!execEntry) {
     throw new ToolSurfaceError(
       'CLI Programmatic Provider Active Surface requires the Agent exec tool.',

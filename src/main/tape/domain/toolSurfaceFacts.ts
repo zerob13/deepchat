@@ -34,8 +34,8 @@ export function isToolSurfaceTapeReservedName(
 export const TAPE_TOOL_CATALOG_FACT_SCHEMA_VERSION = 1
 export const TAPE_TOOL_CATALOG_FACT_HASH_VERSION = 1
 export const TAPE_TOOL_CATALOG_PROJECTION_HASH_VERSION = 1
-export const TAPE_TOOL_SURFACE_FACT_SCHEMA_VERSION = 1
-export const TAPE_TOOL_SURFACE_FACT_HASH_VERSION = 1
+export const TAPE_TOOL_SURFACE_FACT_SCHEMA_VERSION = 2
+export const TAPE_TOOL_SURFACE_FACT_HASH_VERSION = 2
 export const TAPE_PROGRAMMATIC_TOOL_SURFACE_FACT_SCHEMA_VERSION = 1
 export const TAPE_PROGRAMMATIC_TOOL_SURFACE_FACT_HASH_VERSION = 1
 export const TAPE_PROGRAMMATIC_TOOL_SURFACE_PROJECTION_HASH_VERSION = 1
@@ -65,6 +65,11 @@ const MAX_PLAIN_DATA_NODES = 100_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const SHA_256_PATTERN = /^[a-f0-9]{64}$/
 const MODEL_EXPOSURES = new Set<AgentToolExposure>(['user-configurable', 'system-model'])
+const TOOL_SURFACE_ADAPTER_MODES = new Set<TapeToolSurfaceAdapterMode>([
+  'direct-native',
+  'native-activation',
+  'cli-programmatic'
+])
 const SELECTION_REASONS = new Set<TapeToolSurfaceSelectionReason>([
   'full-catalog',
   'policy-required',
@@ -112,6 +117,8 @@ export type TapeToolSurfaceDegradationCode =
 export type TapeProgrammaticToolSurfaceDegradationCode =
   | 'programmatic-projection-count-limited'
   | 'programmatic-projection-byte-limited'
+
+export type TapeToolSurfaceAdapterMode = 'direct-native' | 'native-activation' | 'cli-programmatic'
 
 export type TapeToolSurfaceSelectionReason =
   | 'full-catalog'
@@ -203,9 +210,7 @@ export interface TapeToolSurfaceBudgetObservation {
   readonly activeDefinitionTokens: number
 }
 
-export interface TapeToolSurfaceFact {
-  readonly schemaVersion: typeof TAPE_TOOL_SURFACE_FACT_SCHEMA_VERSION
-  readonly surfaceHashVersion: typeof TAPE_TOOL_SURFACE_FACT_HASH_VERSION
+interface TapeToolSurfaceFactBase {
   readonly canonicalizationVersion: string
   readonly orderingVersion: string
   readonly surfaceHash: string
@@ -226,6 +231,19 @@ export interface TapeToolSurfaceFact {
   readonly degradations: readonly TapeToolSurfaceDegradationCode[]
 }
 
+export interface TapeToolSurfaceFactV1 extends TapeToolSurfaceFactBase {
+  readonly schemaVersion: 1
+  readonly surfaceHashVersion: 1
+}
+
+export interface TapeToolSurfaceFactV2 extends TapeToolSurfaceFactBase {
+  readonly schemaVersion: typeof TAPE_TOOL_SURFACE_FACT_SCHEMA_VERSION
+  readonly surfaceHashVersion: typeof TAPE_TOOL_SURFACE_FACT_HASH_VERSION
+  readonly adapterMode: TapeToolSurfaceAdapterMode
+}
+
+export type TapeToolSurfaceFact = TapeToolSurfaceFactV1 | TapeToolSurfaceFactV2
+
 export interface CreateTapeToolCatalogFactInput {
   readonly catalogSchemaVersion: 1
   readonly canonicalizationVersion: string
@@ -240,6 +258,7 @@ export interface CreateTapeToolSurfaceFactInput {
   readonly canonicalizationVersion: string
   readonly orderingVersion: string
   readonly policyVersion: string
+  readonly adapterMode: TapeToolSurfaceAdapterMode
   readonly virtualizationTriggered: boolean
   readonly contractBearing: boolean
   readonly activeEntries: readonly TapeToolSurfaceActiveEntry[]
@@ -440,6 +459,12 @@ function isHash(value: unknown): value is string {
 
 function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_PATTERN.test(value)
+}
+
+function isToolSurfaceAdapterMode(value: unknown): value is TapeToolSurfaceAdapterMode {
+  return (
+    typeof value === 'string' && TOOL_SURFACE_ADAPTER_MODES.has(value as TapeToolSurfaceAdapterMode)
+  )
 }
 
 function isStableTargetKey(value: unknown): value is string {
@@ -922,7 +947,7 @@ function cloneCandidateRejection(
   return { ...rejection, toolResult: { ...rejection.toolResult } }
 }
 
-function surfaceFactHash(fact: Omit<TapeToolSurfaceFact, 'surfaceHash'>): string {
+function surfaceFactHash(fact: object): string {
   return hashJsonData(fact)
 }
 
@@ -933,6 +958,7 @@ function buildSurfaceFactDraft(input: {
   canonicalizationVersion: string
   orderingVersion: string
   policyVersion: string
+  adapterMode: TapeToolSurfaceAdapterMode
   virtualizationTriggered: boolean
   contractBearing: boolean
   activeEntryCount: number
@@ -943,7 +969,7 @@ function buildSurfaceFactDraft(input: {
   candidateRejectionCount: number
   candidateRejections: readonly TapeToolSurfaceCandidateRejection[]
   degradations: readonly TapeToolSurfaceDegradationCode[]
-}): TapeToolSurfaceFact {
+}): TapeToolSurfaceFactV2 {
   const withoutSurfaceHash = {
     schemaVersion: TAPE_TOOL_SURFACE_FACT_SCHEMA_VERSION,
     surfaceHashVersion: TAPE_TOOL_SURFACE_FACT_HASH_VERSION,
@@ -953,6 +979,7 @@ function buildSurfaceFactDraft(input: {
     manifestHash: input.manifestHash,
     catalog: input.catalog,
     policyVersion: input.policyVersion,
+    adapterMode: input.adapterMode,
     virtualizationTriggered: input.virtualizationTriggered,
     contractBearing: input.contractBearing,
     activeEntryCount: input.activeEntryCount,
@@ -964,7 +991,7 @@ function buildSurfaceFactDraft(input: {
     candidateRejectionCount: input.candidateRejectionCount,
     candidateRejections: input.candidateRejections,
     degradations: input.degradations
-  } satisfies Omit<TapeToolSurfaceFact, 'surfaceHash'>
+  } satisfies Omit<TapeToolSurfaceFactV2, 'surfaceHash'>
   return {
     ...withoutSurfaceHash,
     surfaceHash: surfaceFactHash(withoutSurfaceHash)
@@ -1005,8 +1032,25 @@ function isToolSearchActiveEntry(entry: TapeToolSurfaceActiveEntry): boolean {
   )
 }
 
+export function isCanonicalAgentExecToolSurfaceEntry(
+  entry: TapeToolCatalogSourceEntry | TapeToolSurfaceActiveEntry
+): boolean {
+  return (
+    entry.target.source === 'agent' &&
+    entry.target.providerVisibleName === 'exec' &&
+    entry.target.serverName === 'agent-filesystem' &&
+    entry.target.serverId === null &&
+    entry.target.configGeneration === null &&
+    entry.target.bindingHash === null &&
+    entry.target.originalName === 'exec' &&
+    entry.exposure === 'user-configurable' &&
+    entry.execution.effect === 'write' &&
+    entry.execution.mode === 'sequential'
+  )
+}
+
 function validateToolSearchPresence(
-  virtualizationTriggered: boolean,
+  adapterMode: TapeToolSurfaceAdapterMode,
   activeEntries: readonly TapeToolSurfaceActiveEntry[]
 ): void {
   const reservedNameEntries = activeEntries.filter(
@@ -1015,9 +1059,9 @@ function validateToolSearchPresence(
       entry.reason === 'tool-search'
   )
   if (
-    (virtualizationTriggered &&
+    (adapterMode === 'native-activation' &&
       (reservedNameEntries.length !== 1 || !isToolSearchActiveEntry(reservedNameEntries[0]))) ||
-    (!virtualizationTriggered && reservedNameEntries.length !== 0)
+    (adapterMode !== 'native-activation' && reservedNameEntries.length !== 0)
   ) {
     throw new TypeError('Tool surface ToolSearch identity or selection reason is invalid.')
   }
@@ -1167,22 +1211,25 @@ function requireCompleteAcceptedSearchProvenance(
 function selectActiveProjection(
   activeEntries: readonly TapeToolSurfaceActiveEntry[],
   limit: number,
-  virtualizationTriggered: boolean
+  adapterMode: TapeToolSurfaceAdapterMode
 ): TapeToolSurfaceActiveEntry[] {
   if (limit >= activeEntries.length) return [...activeEntries]
-  if (!virtualizationTriggered) return activeEntries.slice(0, limit)
+  if (adapterMode === 'direct-native') return activeEntries.slice(0, limit)
   if (limit < 1) return []
-  const toolSearch = activeEntries.find((entry) => entry.reason === 'tool-search')
-  if (!toolSearch) return activeEntries.slice(0, limit)
+  const requiredEntry =
+    adapterMode === 'native-activation'
+      ? activeEntries.find((entry) => entry.reason === 'tool-search')
+      : activeEntries.find(isCanonicalAgentExecToolSurfaceEntry)
+  if (!requiredEntry) return activeEntries.slice(0, limit)
   return [
-    ...activeEntries.filter((entry) => entry !== toolSearch).slice(0, limit - 1),
-    toolSearch
+    ...activeEntries.filter((entry) => entry !== requiredEntry).slice(0, limit - 1),
+    requiredEntry
   ].sort((left, right) => left.activationOrdinal - right.activationOrdinal)
 }
 
 export function createTapeToolSurfaceFact(
   input: CreateTapeToolSurfaceFactInput
-): TapeToolSurfaceFact {
+): TapeToolSurfaceFactV2 {
   return createTapeToolSurfaceFactFromData(
     detachBoundedPlainData(input, MAX_TAPE_TOOL_FACT_SOURCE_BYTES)
   )
@@ -1190,7 +1237,7 @@ export function createTapeToolSurfaceFact(
 
 function createTapeToolSurfaceFactFromData(
   input: CreateTapeToolSurfaceFactInput
-): TapeToolSurfaceFact {
+): TapeToolSurfaceFactV2 {
   if (
     !isRequestIdentity(input.request) ||
     !isHash(input.manifestHash) ||
@@ -1199,7 +1246,9 @@ function createTapeToolSurfaceFactFromData(
     !isBoundedString(input.canonicalizationVersion, MAX_VERSION_BYTES) ||
     !isBoundedString(input.orderingVersion, MAX_VERSION_BYTES) ||
     !isBoundedString(input.policyVersion, MAX_VERSION_BYTES) ||
+    !isToolSurfaceAdapterMode(input.adapterMode) ||
     typeof input.virtualizationTriggered !== 'boolean' ||
+    input.virtualizationTriggered !== (input.adapterMode !== 'direct-native') ||
     typeof input.contractBearing !== 'boolean' ||
     (input.contractBearing && !isUuid(input.request.runId)) ||
     !Array.isArray(input.activeEntries) ||
@@ -1220,14 +1269,20 @@ function createTapeToolSurfaceFactFromData(
 
   const allActiveEntries = input.activeEntries.map(cloneActiveEntry)
   validateActiveEntryOrder(allActiveEntries)
-  validateToolSearchPresence(input.virtualizationTriggered, allActiveEntries)
+  validateToolSearchPresence(input.adapterMode, allActiveEntries)
+  if (
+    input.adapterMode === 'cli-programmatic' &&
+    !allActiveEntries.some(isCanonicalAgentExecToolSurfaceEntry)
+  ) {
+    throw new TypeError('A CLI Programmatic provider surface requires the canonical Agent exec.')
+  }
   if (input.contractBearing && allActiveEntries.length > MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES) {
     throw new TypeError('Contract-bearing Tool surface exceeds its complete active-entry limit.')
   }
   const maximumActiveEntries = selectActiveProjection(
     allActiveEntries,
     MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES,
-    input.virtualizationTriggered
+    input.adapterMode
   )
   const allSearchRefs = (input.searchResultRefs ?? []).map(cloneSearchRef)
   allSearchRefs.sort(compareSearchRefs)
@@ -1241,6 +1296,16 @@ function createTapeToolSurfaceFactFromData(
     allCandidateRejections
   )
   requireCompleteAcceptedSearchProvenance(allActiveEntries, allSearchRefs)
+  if (
+    input.adapterMode === 'cli-programmatic' &&
+    (allActiveEntries.some(
+      (entry) => entry.reason === 'tool-search' || entry.reason === 'search-result'
+    ) ||
+      allSearchRefs.length > 0 ||
+      allCandidateRejections.length > 0)
+  ) {
+    throw new TypeError('A CLI Programmatic provider surface cannot contain native search state.')
+  }
   if (
     !input.virtualizationTriggered &&
     (allActiveEntries.some((entry) => entry.reason !== 'full-catalog') ||
@@ -1256,11 +1321,11 @@ function createTapeToolSurfaceFactFromData(
     activeLength: number,
     searchRefLength: number,
     rejectionLength: number
-  ): TapeToolSurfaceFact => {
+  ): TapeToolSurfaceFactV2 => {
     const retainedActiveEntries = selectActiveProjection(
       maximumActiveEntries,
       activeLength,
-      input.virtualizationTriggered
+      input.adapterMode
     )
     const retainedActiveTargets = new Set(
       retainedActiveEntries.map((entry) => entry.stableTargetKey)
@@ -1277,6 +1342,7 @@ function createTapeToolSurfaceFactFromData(
       canonicalizationVersion: input.canonicalizationVersion,
       orderingVersion: input.orderingVersion,
       policyVersion: input.policyVersion,
+      adapterMode: input.adapterMode,
       virtualizationTriggered: input.virtualizationTriggered,
       contractBearing: input.contractBearing,
       activeEntryCount: allActiveEntries.length,
@@ -1330,8 +1396,24 @@ function createTapeToolSurfaceFactFromData(
   return deepFreeze(fact)
 }
 
+export function getTapeToolSurfaceAdapterMode(
+  fact: TapeToolSurfaceFact
+): TapeToolSurfaceAdapterMode {
+  return fact.schemaVersion === 1
+    ? fact.virtualizationTriggered
+      ? 'native-activation'
+      : 'direct-native'
+    : fact.adapterMode
+}
+
 function isSurfaceFactShape(value: unknown): value is TapeToolSurfaceFact {
   if (!isPlainRecord(value)) return false
+  const isV1 = value.schemaVersion === 1 && value.surfaceHashVersion === 1
+  const isV2 =
+    value.schemaVersion === TAPE_TOOL_SURFACE_FACT_SCHEMA_VERSION &&
+    value.surfaceHashVersion === TAPE_TOOL_SURFACE_FACT_HASH_VERSION
+  if (!isV1 && !isV2) return false
+  const versionKeys = isV2 ? ['adapterMode'] : []
   if (
     !hasExactKeys(value, [
       'schemaVersion',
@@ -1353,10 +1435,9 @@ function isSurfaceFactShape(value: unknown): value is TapeToolSurfaceFact {
       'candidateRejectionCount',
       'candidateRejections',
       'degradations',
-      'surfaceHash'
+      'surfaceHash',
+      ...versionKeys
     ]) ||
-    value.schemaVersion !== TAPE_TOOL_SURFACE_FACT_SCHEMA_VERSION ||
-    value.surfaceHashVersion !== TAPE_TOOL_SURFACE_FACT_HASH_VERSION ||
     !isBoundedString(value.canonicalizationVersion, MAX_VERSION_BYTES) ||
     !isBoundedString(value.orderingVersion, MAX_VERSION_BYTES) ||
     !isHash(value.surfaceHash) ||
@@ -1365,7 +1446,9 @@ function isSurfaceFactShape(value: unknown): value is TapeToolSurfaceFact {
     !isCatalogReference(value.catalog) ||
     value.catalog.sessionId !== value.request.sessionId ||
     !isBoundedString(value.policyVersion, MAX_VERSION_BYTES) ||
+    (isV2 && !isToolSurfaceAdapterMode(value.adapterMode)) ||
     typeof value.virtualizationTriggered !== 'boolean' ||
+    (isV2 && value.virtualizationTriggered !== (value.adapterMode !== 'direct-native')) ||
     typeof value.contractBearing !== 'boolean' ||
     (value.contractBearing && !isUuid(value.request.runId)) ||
     !isNonNegativeSafeInteger(value.activeEntryCount) ||
@@ -1401,9 +1484,14 @@ function isSurfaceFactShape(value: unknown): value is TapeToolSurfaceFact {
   ) {
     return false
   }
+  const adapterMode: TapeToolSurfaceAdapterMode = isV1
+    ? value.virtualizationTriggered
+      ? 'native-activation'
+      : 'direct-native'
+    : (value.adapterMode as TapeToolSurfaceAdapterMode)
   try {
     validateActiveEntryOrder(value.activeEntries)
-    validateToolSearchPresence(value.virtualizationTriggered, value.activeEntries)
+    validateToolSearchPresence(adapterMode, value.activeEntries)
     validateSearchProvenance(
       value.request,
       value.catalog,
@@ -1417,6 +1505,17 @@ function isSurfaceFactShape(value: unknown): value is TapeToolSurfaceFact {
     if (value.searchResultRefCount < retainedSearchResultCount) return false
     if (value.contractBearing || value.searchResultRefs.length === value.searchResultRefCount) {
       requireCompleteAcceptedSearchProvenance(value.activeEntries, value.searchResultRefs)
+    }
+    if (
+      adapterMode === 'cli-programmatic' &&
+      (!value.activeEntries.some(isCanonicalAgentExecToolSurfaceEntry) ||
+        value.activeEntries.some(
+          (entry) => entry.reason === 'tool-search' || entry.reason === 'search-result'
+        ) ||
+        value.searchResultRefCount > 0 ||
+        value.candidateRejectionCount > 0)
+    ) {
+      return false
     }
   } catch {
     return false

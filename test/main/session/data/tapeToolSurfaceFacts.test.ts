@@ -23,6 +23,7 @@ import {
   createTapeProgrammaticToolSurfaceFact,
   createTapeToolCatalogFact,
   createTapeToolSurfaceFact,
+  getTapeToolSurfaceAdapterMode,
   verifyTapeToolCatalogFact,
   verifyTapeProgrammaticToolSurfaceFact,
   verifyTapeToolSurfaceFact,
@@ -58,6 +59,25 @@ function catalogEntry(
     canonicalToolDefinitionHash: hashJsonData({ name, definition: 1 }),
     exposure: 'user-configurable',
     execution
+  }
+}
+
+function execCatalogEntry(): TapeToolCatalogSourceEntry {
+  const identity: DeepChatExecutionToolTargetIdentity = {
+    providerVisibleName: 'exec',
+    source: 'agent',
+    serverName: 'agent-filesystem',
+    serverId: null,
+    configGeneration: null,
+    bindingHash: null,
+    originalName: 'exec'
+  }
+  return {
+    target: identity,
+    stableTargetKey: buildExecutionToolTargetKey(identity),
+    canonicalToolDefinitionHash: hashJsonData({ name: 'exec', definition: 1 }),
+    exposure: 'user-configurable',
+    execution: TOOL_EXECUTION.write
   }
 }
 
@@ -223,6 +243,7 @@ function createSurface(
     canonicalizationVersion: 'deepchat-tool-definition-v1',
     orderingVersion: 'activation-ordinal-v1',
     policyVersion: 'full-v1',
+    adapterMode: 'direct-native',
     virtualizationTriggered: false,
     contractBearing,
     activeEntries,
@@ -261,6 +282,7 @@ function createVirtualizedSurface(
     canonicalizationVersion: 'deepchat-tool-definition-v1',
     orderingVersion: 'activation-ordinal-v1',
     policyVersion: 'virtualized-v1',
+    adapterMode: 'native-activation',
     virtualizationTriggered: true,
     contractBearing,
     activeEntries,
@@ -272,6 +294,48 @@ function createVirtualizedSurface(
     },
     searchResultRefs,
     candidateRejections
+  })
+}
+
+function createCliProviderSurface(
+  entries: readonly TapeToolCatalogSourceEntry[],
+  definitionTokens: number
+) {
+  const catalogFact = createCatalog(entries)
+  return createTapeToolSurfaceFact({
+    request: {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: RUN_ID,
+      requestSeq: 1
+    },
+    manifestHash: hashJsonData({ manifest: 'programmatic-projection' }),
+    catalog: {
+      sessionId: 'session-1',
+      tapeIncarnationId: TAPE_INCARNATION_ID,
+      entryId: 7,
+      fullCatalogHash: catalogFact.fullCatalogHash,
+      catalogFactHash: catalogFact.catalogFactHash
+    },
+    canonicalizationVersion: 'deepchat-tool-definition-v1',
+    orderingVersion: 'activation-ordinal-v1',
+    policyVersion: 'cli-programmatic-v1',
+    adapterMode: 'cli-programmatic',
+    virtualizationTriggered: true,
+    contractBearing: false,
+    activeEntries: entries.map((entry, activationOrdinal) =>
+      activeEntry(
+        entry,
+        activationOrdinal,
+        entry.target.providerVisibleName === 'exec' ? 'core' : 'policy-required'
+      )
+    ),
+    budget: {
+      eligibleToolCount: entries.length,
+      activeToolCount: entries.length,
+      eligibleDefinitionTokens: definitionTokens,
+      activeDefinitionTokens: definitionTokens
+    }
   })
 }
 
@@ -551,6 +615,7 @@ describe('Tape Tool Surface facts', () => {
       canonicalizationVersion: 'deepchat-tool-definition-v1',
       orderingVersion: 'activation-ordinal-v1',
       policyVersion: 'virtualized-v1',
+      adapterMode: 'native-activation',
       virtualizationTriggered: true,
       contractBearing: true,
       activeEntries: [
@@ -586,6 +651,166 @@ describe('Tape Tool Surface facts', () => {
         ]
       })
     ).toBe(false)
+  })
+
+  it('distinguishes CLI Programmatic provider surfaces from Native Activation', () => {
+    const exec = execCatalogEntry()
+    const hidden = mcpCatalogEntry('remote_search')
+    const catalogFact = createCatalog([exec, hidden])
+    const input = {
+      request: {
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        runId: RUN_ID,
+        requestSeq: 1
+      },
+      manifestHash: hashJsonData({ manifest: 'programmatic' }),
+      catalog: {
+        sessionId: 'session-1',
+        tapeIncarnationId: TAPE_INCARNATION_ID,
+        entryId: 7,
+        fullCatalogHash: catalogFact.fullCatalogHash,
+        catalogFactHash: catalogFact.catalogFactHash
+      },
+      canonicalizationVersion: 'deepchat-tool-definition-v1',
+      orderingVersion: 'activation-ordinal-v1',
+      policyVersion: 'cli-programmatic-v1',
+      adapterMode: 'cli-programmatic' as const,
+      virtualizationTriggered: true,
+      contractBearing: true,
+      activeEntries: [activeEntry(exec, 0, 'core')],
+      budget: {
+        eligibleToolCount: 2,
+        activeToolCount: 1,
+        eligibleDefinitionTokens: 20,
+        activeDefinitionTokens: 10
+      }
+    }
+
+    const fact = createTapeToolSurfaceFact(input)
+
+    expect(fact.adapterMode).toBe('cli-programmatic')
+    expect(verifyTapeToolSurfaceFact(fact)).toBe(true)
+    expect(() => createTapeToolSurfaceFact({ ...input, adapterMode: 'native-activation' })).toThrow(
+      'ToolSearch identity'
+    )
+    expect(() => createTapeToolSurfaceFact({ ...input, adapterMode: 'direct-native' })).toThrow(
+      'invalid'
+    )
+    expect(verifyTapeToolSurfaceFact({ ...fact, adapterMode: 'native-activation' })).toBe(false)
+  })
+
+  it('retains the historical Tool Surface V1 hash recipe', () => {
+    const entry = catalogEntry('read')
+    const current = createSurface(createCatalog([entry]), [activeEntry(entry, 0)])
+    const { adapterMode: _adapterMode, surfaceHash: _surfaceHash, ...currentBody } = current
+    const historicalBody = {
+      ...currentBody,
+      schemaVersion: 1 as const,
+      surfaceHashVersion: 1 as const
+    }
+    const historical = {
+      ...historicalBody,
+      surfaceHash: hashJsonData(historicalBody)
+    }
+
+    expect(verifyTapeToolSurfaceFact(historical)).toBe(true)
+    expect(getTapeToolSurfaceAdapterMode(historical)).toBe('direct-native')
+  })
+
+  it('rejects spoofed Agent exec identities from CLI Programmatic surfaces', () => {
+    const hidden = mcpCatalogEntry('remote_search')
+    const exec = execCatalogEntry()
+    const withTarget = (
+      targetOverrides: Partial<DeepChatExecutionToolTargetIdentity>
+    ): TapeToolCatalogSourceEntry => {
+      const target = { ...exec.target, ...targetOverrides }
+      return { ...exec, target, stableTargetKey: buildExecutionToolTargetKey(target) }
+    }
+    const spoofedEntries = [
+      withTarget({ serverName: 'agent-test' }),
+      withTarget({ originalName: 'shell' }),
+      withTarget({
+        serverId: '44444444-4444-4444-8444-444444444444',
+        configGeneration: 1,
+        bindingHash: 'b'.repeat(64)
+      }),
+      { ...exec, execution: TOOL_EXECUTION.read.parallel }
+    ]
+
+    for (const spoofedExec of spoofedEntries) {
+      const catalogFact = createCatalog([spoofedExec, hidden])
+      expect(() =>
+        createTapeToolSurfaceFact({
+          request: {
+            sessionId: 'session-1',
+            messageId: 'message-1',
+            runId: RUN_ID,
+            requestSeq: 1
+          },
+          manifestHash: hashJsonData({ manifest: 'spoofed-programmatic' }),
+          catalog: {
+            sessionId: 'session-1',
+            tapeIncarnationId: TAPE_INCARNATION_ID,
+            entryId: 7,
+            fullCatalogHash: catalogFact.fullCatalogHash,
+            catalogFactHash: catalogFact.catalogFactHash
+          },
+          canonicalizationVersion: 'deepchat-tool-definition-v1',
+          orderingVersion: 'activation-ordinal-v1',
+          policyVersion: 'cli-programmatic-v1',
+          adapterMode: 'cli-programmatic',
+          virtualizationTriggered: true,
+          contractBearing: true,
+          activeEntries: [activeEntry(spoofedExec, 0, 'core')],
+          budget: {
+            eligibleToolCount: 2,
+            activeToolCount: 1,
+            eligibleDefinitionTokens: 20,
+            activeDefinitionTokens: 10
+          }
+        })
+      ).toThrow('canonical Agent exec')
+    }
+  })
+
+  it('retains tail-positioned canonical exec when a V4 CLI projection hits the count cap', () => {
+    const entries = [
+      ...Array.from({ length: MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES }, (_, index) =>
+        mcpCatalogEntry(`pinned_${String(index).padStart(3, '0')}`)
+      ),
+      execCatalogEntry()
+    ]
+
+    const fact = createCliProviderSurface(entries, entries.length * 10)
+
+    expect(fact.activeEntryCount).toBe(MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES + 1)
+    expect(fact.retainedActiveEntryCount).toBe(MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES)
+    expect(fact.degradations).toContain('active-projection-count-limited')
+    expect(fact.activeEntries.some((entry) => entry.target.providerVisibleName === 'exec')).toBe(
+      true
+    )
+    expect(verifyTapeToolSurfaceFact(fact)).toBe(true)
+  })
+
+  it('retains tail-positioned canonical exec when a V4 CLI projection hits the byte cap', () => {
+    const entries = [
+      ...Array.from({ length: MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES - 1 }, (_, index) => {
+        const suffix = String(index).padStart(3, '0')
+        return mcpCatalogEntry(`pinned_${suffix}_${'x'.repeat(850)}`)
+      }),
+      execCatalogEntry()
+    ]
+
+    const fact = createCliProviderSurface(entries, entries.length * 1_000)
+
+    expect(fact.activeEntryCount).toBe(MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES)
+    expect(fact.retainedActiveEntryCount).toBeLessThan(MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES)
+    expect(fact.degradations).toContain('active-projection-byte-limited')
+    expect(fact.activeEntries.some((entry) => entry.target.providerVisibleName === 'exec')).toBe(
+      true
+    )
+    expect(verifyTapeToolSurfaceFact(fact)).toBe(true)
   })
 
   it('requires complete accepted ToolSearch provenance for strict surfaces', () => {
@@ -995,6 +1220,7 @@ describe('Tape Tool Surface facts', () => {
         canonicalizationVersion: 'deepchat-tool-definition-v1',
         orderingVersion: 'activation-ordinal-v1',
         policyVersion: 'full-v1',
+        adapterMode: 'direct-native',
         virtualizationTriggered: false,
         contractBearing: false,
         activeEntries: [activeEntry(read, 0)],
@@ -1021,6 +1247,7 @@ describe('Tape Tool Surface facts', () => {
         canonicalizationVersion: 'deepchat-tool-definition-v1',
         orderingVersion: 'activation-ordinal-v1',
         policyVersion: 'virtualized-v1',
+        adapterMode: 'native-activation',
         virtualizationTriggered: true,
         contractBearing: false,
         activeEntries: [activeEntry(read, 0, 'core')],
