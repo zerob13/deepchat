@@ -224,7 +224,7 @@ describe('skill routing catalog', () => {
     ).toThrow('does not match the current query and catalog')
   })
 
-  it('invalidates cached search evidence when a metadata object changes in place', () => {
+  it('invalidates search cursors when a metadata object changes in place', () => {
     const first = metadata('first', 'needle first version')
     const skills = [first, metadata('second', 'needle second')]
     const firstPage = buildSkillListResult(skills, [], [], { query: 'needle', limit: 1 })
