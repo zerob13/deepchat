@@ -32,6 +32,10 @@ import {
   ExecutionJournalError,
   isExecutionJournalError
 } from '@/tape/domain/executionJournal'
+import {
+  recordToolSurfaceCanaryDiscovery,
+  recordToolSurfaceCanarySettledToolResult
+} from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 
 const DEFAULT_SEARCH_LIMIT = 5
 const MAX_SEARCH_TOKENS = 32
@@ -343,6 +347,13 @@ function stoppedBatchSteps(
       notStartedStep(failedStep.childOrdinal + offset + 1)
     )
   ])
+}
+
+function recordProgrammaticSettledToolQuality(
+  invocation: ProgrammaticToolInvocation,
+  success: boolean
+): void {
+  recordToolSurfaceCanarySettledToolResult(invocation.snapshot, success)
 }
 
 function canonicalJsonClone<T extends JsonValue>(value: T): T {
@@ -707,6 +718,7 @@ export class ProgrammaticToolDispatcher {
           responseText: childOutcome.responseText,
           isError: true
         })
+        recordProgrammaticSettledToolQuality(input.invocation, false)
         releaseOutcomeProjections()
         return Object.freeze({
           step: childOutcome.step,
@@ -761,6 +773,7 @@ export class ProgrammaticToolDispatcher {
       responseText: childOutcome.responseText,
       isError: childOutcome.isError
     })
+    recordProgrammaticSettledToolQuality(input.invocation, !childOutcome.isError)
     releaseOutcomeProjections()
     return Object.freeze({
       step: childOutcome.step,
@@ -808,12 +821,18 @@ export class ProgrammaticToolDispatcher {
           'en-US'
         )
         const tokens = tokenize(normalizedQuery)
-        const matches: Array<Readonly<{ summary: ProgrammaticToolSummary; score: number }>> = []
+        const matches: Array<
+          Readonly<{
+            entry: ProgrammaticToolEntry
+            summary: ProgrammaticToolSummary
+            score: number
+          }>
+        > = []
         for (let index = 0; index < capability.entries.length; index += 1) {
           if (index % SEARCH_ABORT_CHECK_INTERVAL === 0) signal.throwIfAborted()
           const summary = summarize(capability.entries[index])
           const score = scoreEntry(normalizedQuery, tokens, summary)
-          if (score > 0) matches.push({ summary, score })
+          if (score > 0) matches.push({ entry: capability.entries[index], summary, score })
         }
         matches.sort(
           (left, right) =>
@@ -825,15 +844,16 @@ export class ProgrammaticToolDispatcher {
                 : 0)
         )
         const limit = query.limit ?? DEFAULT_SEARCH_LIMIT
-        const selected = matches.slice(0, limit).map((match) => match.summary)
+        const selected = matches.slice(0, limit)
         const output = {
-          tools: selected,
+          tools: selected.map((match) => match.summary),
           truncated: matches.length > limit
         }
         while (
           output.tools.length > 0 &&
           measureOuterResponseBytes(output) > capability.quotas.maxOutputBytes
         ) {
+          selected.pop()
           output.tools.pop()
           output.truncated = true
         }
@@ -844,8 +864,17 @@ export class ProgrammaticToolDispatcher {
           responseText: formatSuccessfulOuterResponse(result),
           isError: false
         })
+        recordToolSurfaceCanaryDiscovery(invocation.snapshot, {
+          kind: 'search',
+          stableTargetKeys: selected.map((match) => match.entry.stableTargetKey)
+        })
         return result
       } catch (error) {
+        recordToolSurfaceCanaryDiscovery(invocation.snapshot, {
+          kind: 'search',
+          stableTargetKeys: Object.freeze([]),
+          failed: true
+        })
         if (error instanceof CliRequestError) {
           this.options.parents.recordDiscoveryResult(grant, {
             responseText: formatFailedOuterResponse(error),
@@ -876,8 +905,17 @@ export class ProgrammaticToolDispatcher {
           responseText: formatSuccessfulOuterResponse(result),
           isError: false
         })
+        recordToolSurfaceCanaryDiscovery(invocation.snapshot, {
+          kind: 'describe',
+          stableTargetKeys: [entry.stableTargetKey]
+        })
         return result
       } catch (error) {
+        recordToolSurfaceCanaryDiscovery(invocation.snapshot, {
+          kind: 'describe',
+          stableTargetKeys: Object.freeze([]),
+          failed: true
+        })
         if (error instanceof CliRequestError) {
           this.options.parents.recordDiscoveryResult(grant, {
             responseText: formatFailedOuterResponse(error),

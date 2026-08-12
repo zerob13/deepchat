@@ -42,6 +42,10 @@ import {
   markProgrammaticToolCapabilityProvenanceCommitted
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import { buildToolSearchDefinition } from '@/tool/agentTools/toolSearchTool'
+import {
+  bindToolSurfaceCanaryRunEvidence,
+  createToolSurfaceCanaryRunEvidenceRecorder
+} from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 
 vi.mock('electron', () => ({
   app: {
@@ -1686,6 +1690,8 @@ describe('ToolService', () => {
     missingProjection.batch.discard()
 
     const active = buildToolSurfaceExecutionContext()
+    const evidence = createToolSurfaceCanaryRunEvidenceRecorder()
+    bindToolSurfaceCanaryRunEvidence(active.context.snapshot, evidence)
     const order: string[] = []
     const commitDispatch = vi.fn(() => order.push('dispatch'))
     let projectOutcome: (() => void) | undefined
@@ -1735,6 +1741,14 @@ describe('ToolService', () => {
     expect(active.batch.seal()).toEqual([
       expect.objectContaining({ requestSeq: active.request.requestSeq, resultRank: 0 })
     ])
+    expect(evidence.snapshot().discovery).toEqual({
+      searchCalls: 1,
+      describeCalls: 0,
+      failedCalls: 0,
+      zeroResultCalls: 0,
+      returnedTargetResults: 1,
+      repeatedSearchTargetResults: 0
+    })
     expect(mcpService.callTool).not.toHaveBeenCalled()
   })
 

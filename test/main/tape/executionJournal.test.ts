@@ -13,6 +13,7 @@ import {
 import {
   EXECUTION_JOURNAL_NESTED_PROTOCOL_VERSION,
   EXECUTION_JOURNAL_EVENT_NAMES,
+  CommittedToolOutcomeProjectionError,
   ExecutionJournalCorruptionError,
   buildExecutionOperationKey,
   buildExecutionJournalMeta,
@@ -115,6 +116,32 @@ function commitNestedDispatch(
 }
 
 describe('Execution Journal domain and strict persistence', () => {
+  it('preserves provider projection errors and identifies nested child projections', () => {
+    const providerError = new CommittedToolOutcomeProjectionError(operation(RUN_IDS.completed), {
+      cause: new Error('provider projection failed')
+    })
+    expect(providerError.message).toBe(
+      'Tool outcome was committed for operation {"providerToolCallId":"call_0","requestSeq":1,"runId":"22222222-2222-4222-8222-222222222222"}, but its projection failed.'
+    )
+    expect(providerError).toMatchObject({
+      name: 'CommittedToolOutcomeProjectionError',
+      code: 'projection_failed',
+      cause: expect.objectContaining({ message: 'provider projection failed' })
+    })
+
+    const nestedError = new CommittedToolOutcomeProjectionError(
+      nestedOperation(RUN_IDS.completed, 3),
+      { cause: new Error('nested projection failed') }
+    )
+    expect(nestedError.message).toContain('"kind":"nested"')
+    expect(nestedError.message).toContain('"childOrdinal":3')
+    expect(nestedError).toMatchObject({
+      name: 'CommittedToolOutcomeProjectionError',
+      code: 'projection_failed',
+      cause: expect.objectContaining({ message: 'nested projection failed' })
+    })
+  })
+
   it('preserves the historical provider operation hash and provenance recipe', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)

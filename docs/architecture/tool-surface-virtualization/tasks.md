@@ -126,7 +126,7 @@
       inputs, rounds, latency, outcomes, and metric availability without reading Tape.
 - [x] Preserve outer exec only in provider Context and project real nested target truth through
       Journal/UI.
-- [ ] Add versioned provider pricing plus discovery, repeated-discovery, and quality evidence before
+- [x] Add versioned provider pricing plus discovery, repeated-discovery, and quality evidence before
       evaluating billed cost and success gates.
 - [ ] Evaluate adapter routing without claiming whole-prefix stability or Native Activation
       completion percentages.

@@ -83,6 +83,7 @@ import {
   assertActiveToolSurfaceExecutionContext,
   type ToolSurfaceExecutionContext
 } from '@/agent/deepchat/runtime/toolSurface'
+import { recordToolSurfaceCanaryDiscovery } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 import {
   MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
   type ProgrammaticToolCapabilityV1
@@ -721,11 +722,18 @@ export class AgentToolManager {
     }
 
     if (toolName === TOOL_SEARCH_AGENT_TOOL_NAME) {
+      const context = options?.toolSurfaceContext
       const parsed = parseToolSearchInput(args)
       if (!parsed.success) {
+        if (context) {
+          recordToolSurfaceCanaryDiscovery(context.snapshot, {
+            kind: 'search',
+            stableTargetKeys: Object.freeze([]),
+            failed: true
+          })
+        }
         throw new Error(parsed.error)
       }
-      const context = options?.toolSurfaceContext
       if (!context) {
         throw new Error('ToolSearch requires an active Tool Surface execution context.')
       }
@@ -741,10 +749,33 @@ export class AgentToolManager {
       }
       options.signal?.throwIfAborted()
       commitDispatch(parsed.data)
-      const execution = searchToolSurfaceSnapshot(parsed.data, context)
-      options.registerOutcomeProjection(() =>
-        context.submitActivationCandidates(execution.candidates)
-      )
+      let execution: ReturnType<typeof searchToolSurfaceSnapshot>
+      try {
+        execution = searchToolSurfaceSnapshot(parsed.data, context)
+      } catch (error) {
+        recordToolSurfaceCanaryDiscovery(context.snapshot, {
+          kind: 'search',
+          stableTargetKeys: Object.freeze([]),
+          failed: true
+        })
+        throw error
+      }
+      options.registerOutcomeProjection(() => {
+        try {
+          context.submitActivationCandidates(execution.candidates)
+          recordToolSurfaceCanaryDiscovery(context.snapshot, {
+            kind: 'search',
+            stableTargetKeys: execution.candidates.map((candidate) => candidate.stableTargetKey)
+          })
+        } catch (error) {
+          recordToolSurfaceCanaryDiscovery(context.snapshot, {
+            kind: 'search',
+            stableTargetKeys: Object.freeze([]),
+            failed: true
+          })
+          throw error
+        }
+      })
       const content = JSON.stringify(execution.result, null, 2)
       return {
         content,

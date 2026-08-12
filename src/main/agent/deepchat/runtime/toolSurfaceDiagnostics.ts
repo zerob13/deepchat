@@ -115,6 +115,7 @@ export interface ToolSurfaceProviderAttemptDiagnostic {
   readonly physicalAttempt: number
   readonly usage: {
     readonly inputTokens: number
+    readonly outputTokens?: number
     readonly cacheReadTokens?: number
     readonly cacheWriteTokens?: number
   } | null
@@ -429,6 +430,9 @@ function cloneProviderAttemptDiagnostic(
     usage: attempt.usage
       ? Object.freeze({
           inputTokens: attempt.usage.inputTokens,
+          ...(attempt.usage.outputTokens === undefined
+            ? {}
+            : { outputTokens: attempt.usage.outputTokens }),
           ...(attempt.usage.cacheReadTokens === undefined
             ? {}
             : { cacheReadTokens: attempt.usage.cacheReadTokens }),
@@ -1348,6 +1352,7 @@ function isProviderAttemptUsage(
 ): boolean {
   return (
     isTokenCount(usage.inputTokens) &&
+    (usage.outputTokens === undefined || isTokenCount(usage.outputTokens)) &&
     (usage.cacheReadTokens === undefined || isTokenCount(usage.cacheReadTokens)) &&
     (usage.cacheWriteTokens === undefined || isTokenCount(usage.cacheWriteTokens))
   )

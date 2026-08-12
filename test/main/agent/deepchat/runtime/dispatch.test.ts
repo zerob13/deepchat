@@ -61,6 +61,10 @@ import {
   createProgrammaticToolSurfaceRunControllerV1,
   markProgrammaticToolCapabilityProvenanceCommitted
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
+import {
+  bindToolSurfaceCanaryRunEvidence,
+  createToolSurfaceCanaryRunEvidenceRecorder
+} from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 import type {
   ProgrammaticToolParentRegistration,
   ProgrammaticToolParentRegistry
@@ -938,6 +942,82 @@ describe('dispatch', () => {
       expect(settled).toMatchObject({ type: 'completed', toolSurfaceActivationCandidates: [] })
       expect(state.blocks[0]).toMatchObject({ status: 'error' })
       expect(binding.releaseActivationCandidates).not.toHaveBeenCalled()
+    })
+
+    it('records settled MCP quality before provider output fitting fails', async () => {
+      const definitions = [
+        {
+          ...makeTool('remote_read', TOOL_EXECUTION.read.parallel),
+          source: 'mcp' as const,
+          server: {
+            name: 'test-server',
+            id: '22222222-2222-4222-8222-222222222222',
+            icons: 'icon',
+            description: 'Test server',
+            configGeneration: 1,
+            bindingHash: 'a'.repeat(64)
+          },
+          raw: { name: 'remote_read', inputSchema: { type: 'object', properties: {} } }
+        }
+      ]
+      const { tools, binding } = createDispatchToolSurfaceBinding(definitions)
+      const evidence = createToolSurfaceCanaryRunEvidenceRecorder()
+      bindToolSurfaceCanaryRunEvidence(binding.snapshot, evidence)
+      const toolService = createMockToolService()
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions
+        executionOptions.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'mcp',
+          normalizedArguments: {},
+          target: { serverName: 'test-server', originalName: request.function.name }
+        })
+        return {
+          content: 'remote result',
+          rawData: { toolCallId: request.id, content: 'remote result', isError: false }
+        }
+      })
+      state.blocks.push({
+        type: 'tool_call',
+        content: '',
+        status: 'pending',
+        timestamp: Date.now(),
+        tool_call: {
+          id: 'tc0',
+          name: 'remote_read',
+          params: '{}',
+          response: ''
+        }
+      })
+      state.completedToolCalls.push({ id: 'tc0', name: 'remote_read', arguments: '{}' })
+      const toolOutputGuard = new ToolOutputGuard()
+      vi.spyOn(toolOutputGuard, 'fitToolBatchOutputs').mockRejectedValue(
+        new Error('transcript settlement failed')
+      )
+
+      await expect(
+        settleToolBatch(
+          state,
+          [{ role: 'user', content: 'Read remotely' }],
+          0,
+          tools,
+          toolService,
+          'gpt-4',
+          io,
+          'full_access',
+          toolOutputGuard,
+          32_000,
+          1_024,
+          { toolSurface: binding },
+          'openai'
+        )
+      ).rejects.toThrow('transcript settlement failed')
+
+      expect(evidence.snapshot().quality).toEqual({
+        settledToolResults: 1,
+        successfulSettledToolResults: 1,
+        failedSettledToolResults: 0
+      })
     })
 
     it('rejects a stale Tool Surface batch binding before tool execution', async () => {

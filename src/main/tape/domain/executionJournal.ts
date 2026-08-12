@@ -236,9 +236,9 @@ export class ExecutionJournalDuplicateDispatchError extends ExecutionJournalErro
 }
 
 export class CommittedToolOutcomeProjectionError extends ExecutionJournalError {
-  constructor(operation: ExecutionOperationIdentity, options?: ErrorOptions) {
+  constructor(operation: AnyExecutionOperationIdentity, options?: ErrorOptions) {
     super(
-      `Tool outcome was committed for operation ${formatExecutionOperationIdentity(operation)}, but its projection failed.`,
+      `Tool outcome was committed for operation ${formatAnyExecutionOperationIdentity(operation)}, but its projection failed.`,
       'projection_failed',
       options
     )
@@ -479,6 +479,14 @@ export function formatNestedExecutionOperationIdentity(
   operation: NestedExecutionOperationIdentity
 ): string {
   return stableJsonStringify(normalizeNestedExecutionOperationIdentity(operation))
+}
+
+export function formatAnyExecutionOperationIdentity(
+  operation: AnyExecutionOperationIdentity
+): string {
+  return isNestedExecutionOperationIdentity(operation)
+    ? formatNestedExecutionOperationIdentity(operation)
+    : formatExecutionOperationIdentity(operation)
 }
 
 export function buildExecutionOperationKey(operation: ExecutionOperationIdentity): string {

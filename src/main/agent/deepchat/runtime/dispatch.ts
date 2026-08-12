@@ -110,6 +110,7 @@ import {
   type ToolSurfaceExecutionBatch,
   type ToolSurfaceSnapshot
 } from './toolSurface'
+import { recordToolSurfaceCanarySettledToolResult } from './toolSurfaceCanaryDiagnostics'
 
 type PermissionType = 'read' | 'write' | 'all' | 'command'
 
@@ -248,6 +249,7 @@ interface CommitStagedToolResultsParams {
   contextLength: number
   maxTokens: number
   rendererFlushHandle: RendererFlushHandle
+  toolSurfaceSnapshot?: ToolSurfaceSnapshot
 }
 
 interface CommittedStagedToolResults {
@@ -275,7 +277,8 @@ async function commitStagedToolResults(
     tools,
     contextLength,
     maxTokens,
-    rendererFlushHandle
+    rendererFlushHandle,
+    toolSurfaceSnapshot
   } = params
   let successfulToolCallIds: readonly string[] = Object.freeze([])
 
@@ -285,6 +288,19 @@ async function commitStagedToolResults(
         throw new ExecutionJournalCorruptionError(
           `Dispatched tool result was not committed for ${stagedResult.toolCallId}.`
         )
+      }
+    }
+    if (toolSurfaceSnapshot) {
+      for (const stagedResult of stagedResults) {
+        if (
+          stagedResult.toolSource === 'mcp' &&
+          stagedResult.operation &&
+          stagedResult.outcomeCommitted === true
+        ) {
+          // This records target T2 truth before provider-output fitting. The bounded observer is
+          // isolated and cannot change Journal settlement or transcript projection.
+          recordToolSurfaceCanarySettledToolResult(toolSurfaceSnapshot, !stagedResult.isError)
+        }
       }
     }
     const fittedResults = await toolResults.fitBatch({
@@ -2677,7 +2693,8 @@ export async function settleToolBatch(
         tools,
         contextLength,
         maxTokens,
-        rendererFlushHandle
+        rendererFlushHandle,
+        toolSurfaceSnapshot: toolSurface?.snapshot
       })
     )
   }
@@ -2884,7 +2901,8 @@ export async function settleToolBatch(
       tools,
       contextLength,
       maxTokens,
-      rendererFlushHandle
+      rendererFlushHandle,
+      toolSurfaceSnapshot: toolSurface?.snapshot
     })
     return sealToolBatchOutcome(committed)
   }
@@ -3200,7 +3218,8 @@ export async function settleToolBatch(
     tools,
     contextLength,
     maxTokens,
-    rendererFlushHandle
+    rendererFlushHandle,
+    toolSurfaceSnapshot: toolSurface?.snapshot
   })
   return sealToolBatchOutcome(committed)
   } finally {

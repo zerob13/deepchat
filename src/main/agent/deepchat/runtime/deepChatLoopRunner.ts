@@ -89,6 +89,8 @@ import type {
   ToolSurfaceShadowDiagnosticsRegistryPort
 } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import {
+  bindToolSurfaceCanaryRunEvidence,
+  createToolSurfaceCanaryRunEvidenceRecorder,
   MAX_TOOL_SURFACE_PROVIDER_ATTEMPTS_PER_RUN,
   type ToolSurfaceCanaryDiagnosticsRegistry
 } from './toolSurfaceCanaryDiagnostics'
@@ -945,6 +947,9 @@ export class DeepChatLoopRunner {
           catalogDefinitionTokens: toolSurfaceController.ceiling.catalog.definitionTokens
         })
       : null
+    const toolSurfaceCanaryEvidence = toolSurfaceCanaryIdentity
+      ? createToolSurfaceCanaryRunEvidenceRecorder()
+      : null
     const runPromptAssembly =
       toolSurfaceMode === 'cli-programmatic'
         ? appendCliProgrammaticToolAdapterSection(initialPromptAssembly)
@@ -1153,7 +1158,7 @@ export class DeepChatLoopRunner {
                             )
                           ]
                         : eligibleDefinitions
-                      return toolSurfaceController.build({
+                      const snapshot = toolSurfaceController.build({
                         request: {
                           sessionId: loopRun.sessionId,
                           messageId: loopRun.messageId,
@@ -1165,6 +1170,10 @@ export class DeepChatLoopRunner {
                           ? { toolSearchAvailable: true }
                           : {})
                       })
+                      if (toolSurfaceCanaryEvidence) {
+                        bindToolSurfaceCanaryRunEvidence(snapshot, toolSurfaceCanaryEvidence)
+                      }
+                      return snapshot
                     },
                     ...(toolSurfaceMode === 'cli-programmatic'
                       ? {
@@ -1460,6 +1469,7 @@ export class DeepChatLoopRunner {
                           usage: outcome.usage
                             ? {
                                 inputTokens: outcome.usage.inputTokens,
+                                outputTokens: outcome.usage.outputTokens,
                                 ...(outcome.usage.cacheReadTokens === undefined
                                   ? {}
                                   : { cacheReadTokens: outcome.usage.cacheReadTokens }),
@@ -1731,7 +1741,10 @@ export class DeepChatLoopRunner {
             durationMs: Math.max(0, Date.now() - toolSurfaceCanaryStartedAt),
             providerRounds: loopRun.logicalRound,
             providerAttempts: toolSurfaceProviderAttempts,
-            providerAttemptsTruncated: toolSurfaceProviderAttemptsTruncated
+            providerAttemptsTruncated: toolSurfaceProviderAttemptsTruncated,
+            evidence:
+              toolSurfaceCanaryEvidence?.snapshot() ??
+              createToolSurfaceCanaryRunEvidenceRecorder().snapshot()
           })
         } catch {}
       }

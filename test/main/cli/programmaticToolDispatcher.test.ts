@@ -17,6 +17,10 @@ import {
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import type { ToolSurfaceSnapshot } from '@/agent/deepchat/runtime/toolSurface'
 import {
+  bindToolSurfaceCanaryRunEvidence,
+  createToolSurfaceCanaryRunEvidenceRecorder
+} from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
+import {
   AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
   type AgentCliProgrammaticOperationGrant,
   type AgentCliProgrammaticToolVerb
@@ -28,6 +32,7 @@ import { ProgrammaticParentOperationError } from '@/cli/programmaticToolParentCo
 import { ExecutionJournalError } from '@/tape/domain/executionJournal'
 
 const SERVER_ID = '22222222-2222-4222-8222-222222222222'
+const RUN_ID = '11111111-1111-4111-8111-111111111111'
 const BINDING_HASH = 'a'.repeat(64)
 
 function agentExec(): MCPToolDefinition {
@@ -104,7 +109,7 @@ function buildCapability(input: {
     request: {
       sessionId: 'session-1',
       messageId: 'message-1',
-      runId: 'run-1',
+      runId: RUN_ID,
       requestSeq: 1
     },
     eligibleDefinitions: input.definitions
@@ -243,6 +248,8 @@ describe('ProgrammaticToolDispatcher', () => {
       definitions: [zeta, nativePinned, exec, alpha],
       providerActiveDefinitions: [exec, nativePinned]
     })
+    const evidence = createToolSurfaceCanaryRunEvidenceRecorder()
+    bindToolSurfaceCanaryRunEvidence(context.snapshot, evidence)
     const { dispatcher, recordDiscoveryResult } = createDispatcher(context)
 
     const output = toolSearchRoute.output.parse(
@@ -271,6 +278,28 @@ describe('ProgrammaticToolDispatcher', () => {
         isError: false
       }
     )
+    await dispatcher.dispatch(
+      toolDescribeRoute.name,
+      { target: 'calendar_alpha' },
+      agentCaller(),
+      operationGrant(context.capability, 'describe'),
+      new AbortController().signal
+    )
+    await dispatcher.dispatch(
+      toolSearchRoute.name,
+      { query: 'calendar', limit: 32 },
+      agentCaller(),
+      operationGrant(context.capability, 'search'),
+      new AbortController().signal
+    )
+    expect(evidence.snapshot().discovery).toEqual({
+      searchCalls: 2,
+      describeCalls: 1,
+      failedCalls: 0,
+      zeroResultCalls: 0,
+      returnedTargetResults: 5,
+      repeatedSearchTargetResults: 2
+    })
   })
 
   it('describes canonical input schema without exposing internal target metadata', async () => {
@@ -405,6 +434,8 @@ describe('ProgrammaticToolDispatcher', () => {
     const context = buildCapability({
       definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
     })
+    const evidence = createToolSurfaceCanaryRunEvidenceRecorder()
+    bindToolSurfaceCanaryRunEvidence(context.snapshot, evidence)
     const fixture = createDispatcher(context)
     const projection = vi.fn()
     fixture.executeChild.mockImplementation(async (input) => {
@@ -467,6 +498,11 @@ describe('ProgrammaticToolDispatcher', () => {
       grant,
       expect.objectContaining({ isError: false })
     )
+    expect(evidence.snapshot().quality).toEqual({
+      settledToolResults: 1,
+      successfulSettledToolResults: 1,
+      failedSettledToolResults: 0
+    })
   })
 
   it('executes a frozen batch sequentially with bounded prior-result bindings', async () => {
@@ -854,6 +890,51 @@ describe('ProgrammaticToolDispatcher', () => {
     expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
   })
 
+  it('records settled child quality before a later result projection fails', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const evidence = createToolSurfaceCanaryRunEvidenceRecorder()
+    bindToolSurfaceCanaryRunEvidence(context.snapshot, evidence)
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockImplementation(async (input) => {
+      input.registerOutcomeProjection(() => {
+        throw new Error('projection failed')
+      })
+      input.commitDispatch({
+        toolName: 'remote_search',
+        toolSource: 'mcp',
+        normalizedArguments: {},
+        target: { serverName: 'remote', originalName: 'remote_search' }
+      })
+      return {
+        content: 'remote result',
+        rawData: { toolCallId: input.request.id, content: 'remote result' }
+      }
+    })
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_search', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    ).rejects.toMatchObject({
+      name: 'CommittedToolOutcomeProjectionError',
+      code: 'projection_failed',
+      cause: expect.objectContaining({ message: 'projection failed' })
+    })
+
+    expect(fixture.commitChildOutcome).toHaveBeenCalledOnce()
+    expect(evidence.snapshot().quality).toEqual({
+      settledToolResults: 1,
+      successfulSettledToolResults: 1,
+      failedSettledToolResults: 0
+    })
+  })
+
   it('stops before the next child T1 when cancellation follows a settled batch child', async () => {
     const context = buildCapability({
       definitions: [
@@ -962,6 +1043,8 @@ describe('ProgrammaticToolDispatcher', () => {
       definitions: [agentExec(), mcpTool({ name: 'remote_slow' })],
       maxDurationMs: 5
     })
+    const evidence = createToolSurfaceCanaryRunEvidenceRecorder()
+    bindToolSurfaceCanaryRunEvidence(context.snapshot, evidence)
     const fixture = createDispatcher(context)
     fixture.executeChild.mockImplementation(
       async (input) =>
@@ -998,6 +1081,11 @@ describe('ProgrammaticToolDispatcher', () => {
       expect.anything(),
       expect.objectContaining({ isError: true })
     )
+    expect(evidence.snapshot().quality).toEqual({
+      settledToolResults: 0,
+      successfulSettledToolResults: 0,
+      failedSettledToolResults: 0
+    })
   })
 
   it('stops a batch before T1 when approval for a later child is denied', async () => {
