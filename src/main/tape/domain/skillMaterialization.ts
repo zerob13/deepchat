@@ -175,15 +175,7 @@ export function buildTapeSkillMaterializationProvenanceKey(
   payload: TapeSkillMaterializationPayload
 ): string {
   requireIdentity(sessionId, 'sessionId')
-  return `skill-materialized:${hashJsonData({
-    sessionId,
-    agentId: payload.agentId,
-    sourceType: payload.sourceType,
-    sourceId: payload.sourceId,
-    skillName: payload.skillName,
-    effectiveContentHash: payload.effectiveContentHash,
-    builderVersion: payload.builderVersion
-  })}`
+  return `skill-materialized:${hashJsonData({ sessionId, payload })}`
 }
 
 export function canonicalSkillMaterializationPayload(

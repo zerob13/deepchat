@@ -224,7 +224,7 @@ describe('Tape Skill materialization domain', () => {
 })
 
 describe('Tape Skill materialization capability', () => {
-  it('recovers content from a manifest-shaped ref and strictly reuses one canonical fact', () => {
+  it('recovers content, reuses equal payloads, and versions changed evidence', () => {
     const { rows, store } = createMaterializationStore()
     const service = new TapeSkillMaterializationService({
       getSkillMaterializationStore: () => store
@@ -239,12 +239,17 @@ describe('Tape Skill materialization capability', () => {
         .effectiveContent
     ).toBe('hello 🌍')
 
-    expect(() =>
-      service.materializeSkillContexts([
-        { ...input(), renderedManifestHash: hashSkillEffectiveContent('different manifest') }
-      ])
-    ).toThrow(/canonical payload conflicts/)
-    expect(rows).toHaveLength(1)
+    const changedManifest = service.materializeSkillContexts([
+      { ...input(), renderedManifestHash: hashSkillEffectiveContent('different manifest') }
+    ])[0]
+    const changedScripts = service.materializeSkillContexts([
+      { ...input(), scriptInventoryHash: hashSkillEffectiveContent('different scripts') }
+    ])[0]
+
+    expect(changedManifest.entryId).not.toBe(first.entryId)
+    expect(changedScripts.entryId).not.toBe(first.entryId)
+    expect(changedScripts.entryId).not.toBe(changedManifest.entryId)
+    expect(rows).toHaveLength(3)
   })
 
   it.each([
@@ -279,9 +284,11 @@ describe('Tape Skill materialization capability', () => {
     expect(() =>
       service.readSkillMaterialization(buildTapeSkillMaterializationRef(receipt))
     ).toThrow('incarnation changed')
-    expect(() =>
-      service.materializeSkillContexts([{ ...input(), expectedTapeIncarnationId: 'incarnation-2' }])
-    ).toThrow(/canonical payload conflicts/)
+    const resetReceipt = service.materializeSkillContexts([
+      { ...input(), expectedTapeIncarnationId: 'incarnation-2' }
+    ])[0]
+    expect(resetReceipt.entryId).not.toBe(receipt.entryId)
+    expect(resetReceipt.tapeIncarnationId).toBe('incarnation-2')
 
     rows.splice(0)
     failNextAppend()
