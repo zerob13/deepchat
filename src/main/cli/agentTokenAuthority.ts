@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import {
+  LocalControlMethodSchema,
   LocalControlScopesSchema,
   LocalControlTokenSchema,
   type LocalControlScope
@@ -14,12 +15,68 @@ export const MAX_AGENT_CLI_TOKEN_BYTES = 1024 * 1024 * 1024
 
 const DEFAULT_MAX_TOKENS = 256
 const DEFAULT_MAX_TOKENS_PER_CONVERSATION = 8
+const SHA_256_PATTERN = /^[0-9a-f]{64}$/
+const MAX_OPERATION_IDENTITY_CHARACTERS = 1_024
+
+export const AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION = 1 as const
+export const AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION = 2 as const
+
+export type AgentCliProgrammaticToolVerb = 'search' | 'describe' | 'call' | 'batch'
+
+export type AgentCliProgrammaticOperationIdentity = Readonly<{
+  sessionId: string
+  messageId: string
+  runId: string
+  requestSeq: number
+  providerToolCallId: string
+}>
+
+export type AgentCliProgrammaticGrantQuotas = Readonly<{
+  maxChildren: number
+  maxBatchSteps: number
+  maxInputBytes: number
+  maxOutputBytes: number
+  maxDurationMs: number
+}>
+
+export type AgentCliProgrammaticOperationBinding = Readonly<{
+  schemaVersion: typeof AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION
+  surfaceVersion: typeof AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION
+  operation: AgentCliProgrammaticOperationIdentity
+  command: Readonly<{
+    domain: 'tool'
+    verb: AgentCliProgrammaticToolVerb
+  }>
+  route: string
+  canonicalInvocationHash: string
+  adapterMode: 'cli-programmatic'
+  capabilityHash: string
+  programmaticSurfaceHash: string
+  quotas: AgentCliProgrammaticGrantQuotas
+}>
+
+export type AgentCliOuterDispatchReceipt = Readonly<{
+  sessionId: string
+  entryId: number
+  created: boolean
+  preparedTokenId: string
+  operation: AgentCliProgrammaticOperationIdentity
+}>
+
+export type AgentCliProgrammaticOperationGrant = AgentCliProgrammaticOperationBinding &
+  Readonly<{
+    outerDispatchReceipt: Readonly<{
+      sessionId: string
+      entryId: number
+    }>
+  }>
 
 export type AgentCliTokenClaims = Readonly<{
   tokenId: string
   conversationId: string
   expiresAt: number
   scopes: readonly LocalControlScope[]
+  programmaticOperation?: AgentCliProgrammaticOperationGrant
 }>
 
 export type IssuedAgentCliToken = AgentCliTokenClaims &
@@ -40,6 +97,20 @@ export type AgentCliRequestBeginResult =
   | Readonly<{ status: 'granted'; grant: AgentCliRequestGrant }>
   | Readonly<{ status: 'invalid' | 'expired' | 'quota-exhausted' }>
 
+export type ArmedAgentCliProgrammaticToken = IssuedAgentCliToken &
+  Readonly<{
+    programmaticOperation: AgentCliProgrammaticOperationGrant
+  }>
+
+export type PreparedAgentCliProgrammaticGrant = Readonly<{
+  tokenId: string
+  conversationId: string
+  expiresAt: number
+  operation: AgentCliProgrammaticOperationIdentity
+  arm(receipt: AgentCliOuterDispatchReceipt): ArmedAgentCliProgrammaticToken
+  revoke(): void
+}>
+
 export type AgentCliTokenAuthorityOptions = Readonly<{
   now?: () => number
   createToken?: () => string
@@ -51,6 +122,9 @@ export type AgentCliTokenAuthorityOptions = Readonly<{
 type TokenRecord = {
   digest: string
   claims: AgentCliTokenClaims
+  state: 'prepared' | 'arming' | 'armed' | 'admitting'
+  preparedProgrammaticOperation?: AgentCliProgrammaticOperationBinding
+  assertAuthorityActive?: () => void
   maxCalls: number
   maxBytes: number
   usedCalls: number
@@ -84,6 +158,122 @@ function normalizeConversationId(value: string): string {
     throw new Error('conversationId must contain 1 to 128 characters')
   }
   return normalized
+}
+
+function normalizeOperationIdentityValue(value: string, name: string): string {
+  const normalized = value.trim()
+  if (
+    normalized.length === 0 ||
+    normalized.length > MAX_OPERATION_IDENTITY_CHARACTERS ||
+    normalized.includes('\0')
+  ) {
+    throw new Error(`${name} must contain 1 to ${MAX_OPERATION_IDENTITY_CHARACTERS} characters`)
+  }
+  return normalized
+}
+
+function normalizeProgrammaticOperationBinding(
+  input: AgentCliProgrammaticOperationBinding
+): AgentCliProgrammaticOperationBinding {
+  if (input.schemaVersion !== AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION) {
+    throw new Error('Programmatic grant schema version is unsupported')
+  }
+  if (input.surfaceVersion !== AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION) {
+    throw new Error('Programmatic local-control surface version is unsupported')
+  }
+  if (input.command.domain !== 'tool') {
+    throw new Error('Programmatic grant command domain must be tool')
+  }
+  if (!['search', 'describe', 'call', 'batch'].includes(input.command.verb)) {
+    throw new Error('Programmatic grant command verb is unsupported')
+  }
+  if (input.adapterMode !== 'cli-programmatic') {
+    throw new Error('Programmatic grant adapter mode is unsupported')
+  }
+  const operation = Object.freeze({
+    sessionId: normalizeConversationId(input.operation.sessionId),
+    messageId: normalizeOperationIdentityValue(input.operation.messageId, 'messageId'),
+    runId: normalizeOperationIdentityValue(input.operation.runId, 'runId'),
+    requestSeq: positiveSafeInteger(input.operation.requestSeq, 'requestSeq'),
+    providerToolCallId: normalizeOperationIdentityValue(
+      input.operation.providerToolCallId,
+      'providerToolCallId'
+    )
+  })
+  const route = LocalControlMethodSchema.parse(input.route)
+  if (route !== `tool.${input.command.verb}`) {
+    throw new Error('Programmatic grant route does not match its command')
+  }
+  const canonicalInvocationHash = input.canonicalInvocationHash.trim()
+  const capabilityHash = input.capabilityHash.trim()
+  const programmaticSurfaceHash = input.programmaticSurfaceHash.trim()
+  if (!SHA_256_PATTERN.test(canonicalInvocationHash)) {
+    throw new Error('canonicalInvocationHash must be a SHA-256 hash')
+  }
+  if (!SHA_256_PATTERN.test(capabilityHash)) {
+    throw new Error('capabilityHash must be a SHA-256 hash')
+  }
+  if (!SHA_256_PATTERN.test(programmaticSurfaceHash)) {
+    throw new Error('programmaticSurfaceHash must be a SHA-256 hash')
+  }
+  const maxInputBytes = boundedPositiveSafeInteger(
+    input.quotas.maxInputBytes,
+    MAX_AGENT_CLI_TOKEN_BYTES,
+    'maxInputBytes'
+  )
+  const maxOutputBytes = boundedPositiveSafeInteger(
+    input.quotas.maxOutputBytes,
+    MAX_AGENT_CLI_TOKEN_BYTES,
+    'maxOutputBytes'
+  )
+  const aggregateBytes = maxInputBytes + maxOutputBytes
+  if (!Number.isSafeInteger(aggregateBytes) || aggregateBytes > MAX_AGENT_CLI_TOKEN_BYTES) {
+    throw new Error('Programmatic aggregate byte quota exceeds its supported maximum')
+  }
+  const quotas = Object.freeze({
+    maxChildren: boundedPositiveSafeInteger(
+      input.quotas.maxChildren,
+      MAX_AGENT_CLI_TOKEN_CALLS,
+      'maxChildren'
+    ),
+    maxBatchSteps: boundedPositiveSafeInteger(
+      input.quotas.maxBatchSteps,
+      MAX_AGENT_CLI_TOKEN_CALLS,
+      'maxBatchSteps'
+    ),
+    maxInputBytes,
+    maxOutputBytes,
+    maxDurationMs: boundedPositiveSafeInteger(
+      input.quotas.maxDurationMs,
+      MAX_AGENT_CLI_TOKEN_TTL_MS,
+      'maxDurationMs'
+    )
+  })
+  return Object.freeze({
+    schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+    surfaceVersion: AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
+    operation,
+    command: Object.freeze({ domain: 'tool' as const, verb: input.command.verb }),
+    route,
+    canonicalInvocationHash,
+    adapterMode: 'cli-programmatic' as const,
+    capabilityHash,
+    programmaticSurfaceHash,
+    quotas
+  })
+}
+
+function operationIdentitiesMatch(
+  left: AgentCliProgrammaticOperationIdentity,
+  right: AgentCliProgrammaticOperationIdentity
+): boolean {
+  return (
+    left.sessionId === right.sessionId &&
+    left.messageId === right.messageId &&
+    left.runId === right.runId &&
+    left.requestSeq === right.requestSeq &&
+    left.providerToolCallId === right.providerToolCallId
+  )
 }
 
 export class AgentCliTokenCapacityError extends Error {
@@ -141,52 +331,91 @@ export class AgentCliTokenAuthority {
       MAX_AGENT_CLI_TOKEN_BYTES,
       'maxBytes'
     )
-    const issuedAt = this.now()
-    if (issuedAt > Number.MAX_SAFE_INTEGER - ttlMs) {
-      throw new Error('Agent CLI token expiry is outside the supported range')
-    }
-    this.pruneRetired(issuedAt)
-    const replacesConversationToken =
-      (this.digestsByConversation.get(conversationId)?.size ?? 0) >= this.maxTokensPerConversation
-    if (this.recordsByDigest.size >= this.maxTokens && !replacesConversationToken) {
-      throw new AgentCliTokenCapacityError()
-    }
-    const token = LocalControlTokenSchema.parse(this.createUniqueToken())
-    const tokenId = this.createUniqueTokenId()
-    if (replacesConversationToken) this.enforceConversationCapacity(conversationId)
-    if (this.recordsByDigest.size >= this.maxTokens) {
-      throw new AgentCliTokenCapacityError()
-    }
-    const expiresAt = issuedAt + ttlMs
+    const allocation = this.allocateToken(conversationId, ttlMs)
     const claims: AgentCliTokenClaims = {
-      tokenId,
+      tokenId: allocation.tokenId,
       conversationId,
-      expiresAt,
-      scopes
+      expiresAt: allocation.expiresAt,
+      scopes: Object.freeze(scopes)
     }
-    const digest = tokenDigest(token)
-    const controller = new AbortController()
-    const expiryTimer = setTimeout(() => this.removeRecord(digest, 'expired'), ttlMs)
-    expiryTimer.unref()
     const record: TokenRecord = {
-      digest,
+      digest: allocation.digest,
       claims,
+      state: 'armed',
       maxCalls,
       maxBytes,
       usedCalls: 0,
       usedBytes: 0,
       activeRequests: 0,
-      issuedAt,
-      controller,
-      expiryTimer
+      issuedAt: allocation.issuedAt,
+      controller: allocation.controller,
+      expiryTimer: allocation.expiryTimer
     }
-    this.recordsByDigest.set(digest, record)
-    this.recordsById.set(tokenId, record)
-    const conversationTokens = this.digestsByConversation.get(conversationId) ?? new Set<string>()
-    conversationTokens.add(digest)
-    this.digestsByConversation.set(conversationId, conversationTokens)
+    this.registerRecord(record)
 
-    return { token, ...claims, maxCalls, maxBytes }
+    return { token: allocation.token, ...claims, maxCalls, maxBytes }
+  }
+
+  prepareProgrammaticOperation(
+    input: Readonly<{
+      binding: AgentCliProgrammaticOperationBinding
+      ttlMs?: number
+      assertAuthorityActive: () => void
+    }>
+  ): PreparedAgentCliProgrammaticGrant {
+    const binding = normalizeProgrammaticOperationBinding(input.binding)
+    const conversationId = normalizeConversationId(binding.operation.sessionId)
+    if (typeof input.assertAuthorityActive !== 'function') {
+      throw new Error('Programmatic grant requires a process-live authority assertion')
+    }
+    input.assertAuthorityActive()
+    const ttlMs = boundedPositiveSafeInteger(
+      input.ttlMs ?? Math.min(binding.quotas.maxDurationMs, DEFAULT_AGENT_CLI_TOKEN_TTL_MS),
+      Math.min(binding.quotas.maxDurationMs, MAX_AGENT_CLI_TOKEN_TTL_MS),
+      'ttlMs'
+    )
+    const maxBytes = binding.quotas.maxInputBytes + binding.quotas.maxOutputBytes
+    const allocation = this.allocateToken(conversationId, ttlMs)
+    const claims: AgentCliTokenClaims = Object.freeze({
+      tokenId: allocation.tokenId,
+      conversationId,
+      expiresAt: allocation.expiresAt,
+      scopes: Object.freeze([])
+    })
+    const record: TokenRecord = {
+      digest: allocation.digest,
+      claims,
+      state: 'prepared',
+      preparedProgrammaticOperation: binding,
+      assertAuthorityActive: input.assertAuthorityActive,
+      maxCalls: 1,
+      maxBytes,
+      usedCalls: 0,
+      usedBytes: 0,
+      activeRequests: 0,
+      issuedAt: allocation.issuedAt,
+      controller: allocation.controller,
+      expiryTimer: allocation.expiryTimer
+    }
+    this.registerRecord(record)
+    let armAttempted = false
+    let revoked = false
+    return Object.freeze({
+      tokenId: claims.tokenId,
+      conversationId,
+      expiresAt: claims.expiresAt,
+      operation: binding.operation,
+      arm: (receipt) => {
+        if (armAttempted || revoked) throw new Error('Programmatic grant is no longer pending')
+        armAttempted = true
+        return this.armProgrammaticOperation(record, allocation.token, receipt)
+      },
+      revoke: () => {
+        if (revoked) return
+        revoked = true
+        this.removeRecord(record.digest, 'revoked')
+      }
+    })
   }
 
   beginRequest(token: string): AgentCliRequestBeginResult {
@@ -195,10 +424,31 @@ export class AgentCliTokenAuthority {
     const digest = tokenDigest(parsedToken.data)
     const record = this.recordsByDigest.get(digest)
     if (!record) return { status: 'invalid' }
+    if (record.state !== 'armed') return { status: 'invalid' }
     if (record.claims.expiresAt <= this.now()) {
       this.removeRecord(digest, 'expired')
       return { status: 'expired' }
     }
+    const validatesProgrammaticAuthority = Boolean(record.assertAuthorityActive)
+    if (validatesProgrammaticAuthority) record.state = 'admitting'
+    try {
+      record.assertAuthorityActive?.()
+    } catch {
+      this.removeRecord(digest, 'revoked')
+      return { status: 'invalid' }
+    }
+    if (
+      this.recordsByDigest.get(digest) !== record ||
+      record.state !== (validatesProgrammaticAuthority ? 'admitting' : 'armed') ||
+      record.controller.signal.aborted
+    ) {
+      return { status: 'invalid' }
+    }
+    if (record.claims.expiresAt <= this.now()) {
+      this.removeRecord(digest, 'expired')
+      return { status: 'expired' }
+    }
+    record.state = 'armed'
     if (record.usedCalls >= record.maxCalls || record.usedBytes >= record.maxBytes) {
       return { status: 'quota-exhausted' }
     }
@@ -223,7 +473,9 @@ export class AgentCliTokenAuthority {
 
   consumeBytes(tokenId: string, bytes: number): boolean {
     const record = this.recordsById.get(tokenId)
-    return record ? this.consumeRecordBytes(record, bytes) : false
+    return record?.state === 'armed' && record.activeRequests > 0
+      ? this.consumeRecordBytes(record, bytes)
+      : false
   }
 
   revokeConversation(conversationId: string): void {
@@ -245,6 +497,121 @@ export class AgentCliTokenAuthority {
     return {
       tokens: this.recordsByDigest.size,
       conversations: this.digestsByConversation.size
+    }
+  }
+
+  private allocateToken(
+    conversationId: string,
+    ttlMs: number
+  ): Readonly<{
+    token: string
+    tokenId: string
+    digest: string
+    issuedAt: number
+    expiresAt: number
+    controller: AbortController
+    expiryTimer: NodeJS.Timeout
+  }> {
+    const issuedAt = this.now()
+    if (issuedAt > Number.MAX_SAFE_INTEGER - ttlMs) {
+      throw new Error('Agent CLI token expiry is outside the supported range')
+    }
+    this.pruneRetired(issuedAt)
+    const replacesConversationToken =
+      (this.digestsByConversation.get(conversationId)?.size ?? 0) >= this.maxTokensPerConversation
+    if (this.recordsByDigest.size >= this.maxTokens && !replacesConversationToken) {
+      throw new AgentCliTokenCapacityError()
+    }
+    const token = LocalControlTokenSchema.parse(this.createUniqueToken())
+    const tokenId = this.createUniqueTokenId()
+    if (replacesConversationToken) this.enforceConversationCapacity(conversationId)
+    if (this.recordsByDigest.size >= this.maxTokens) {
+      throw new AgentCliTokenCapacityError()
+    }
+    const digest = tokenDigest(token)
+    const controller = new AbortController()
+    const expiryTimer = setTimeout(() => this.removeRecord(digest, 'expired'), ttlMs)
+    expiryTimer.unref()
+    return {
+      token,
+      tokenId,
+      digest,
+      issuedAt,
+      expiresAt: issuedAt + ttlMs,
+      controller,
+      expiryTimer
+    }
+  }
+
+  private registerRecord(record: TokenRecord): void {
+    this.recordsByDigest.set(record.digest, record)
+    this.recordsById.set(record.claims.tokenId, record)
+    const conversationTokens =
+      this.digestsByConversation.get(record.claims.conversationId) ?? new Set<string>()
+    conversationTokens.add(record.digest)
+    this.digestsByConversation.set(record.claims.conversationId, conversationTokens)
+  }
+
+  private armProgrammaticOperation(
+    record: TokenRecord,
+    token: string,
+    receipt: AgentCliOuterDispatchReceipt
+  ): ArmedAgentCliProgrammaticToken {
+    try {
+      if (this.recordsByDigest.get(record.digest) !== record || record.state !== 'prepared') {
+        throw new Error('Programmatic grant is no longer pending')
+      }
+      if (!record.preparedProgrammaticOperation || !record.assertAuthorityActive) {
+        throw new Error('Programmatic grant lost its prepared authority')
+      }
+      if (record.claims.expiresAt <= this.now()) {
+        throw new Error('Programmatic grant expired before outer dispatch committed')
+      }
+      record.state = 'arming'
+      record.assertAuthorityActive()
+      if (
+        this.recordsByDigest.get(record.digest) !== record ||
+        record.state !== 'arming' ||
+        record.controller.signal.aborted
+      ) {
+        throw new Error('Programmatic grant is no longer pending')
+      }
+      if (record.claims.expiresAt <= this.now()) {
+        throw new Error('Programmatic grant expired before outer dispatch committed')
+      }
+      if (
+        receipt.created !== true ||
+        receipt.sessionId !== record.claims.conversationId ||
+        receipt.preparedTokenId !== record.claims.tokenId ||
+        !Number.isSafeInteger(receipt.entryId) ||
+        receipt.entryId <= 0 ||
+        !operationIdentitiesMatch(receipt.operation, record.preparedProgrammaticOperation.operation)
+      ) {
+        throw new Error('Programmatic grant requires its newly committed outer dispatch receipt')
+      }
+      const programmaticOperation: AgentCliProgrammaticOperationGrant = Object.freeze({
+        ...record.preparedProgrammaticOperation,
+        outerDispatchReceipt: Object.freeze({
+          sessionId: receipt.sessionId,
+          entryId: receipt.entryId
+        })
+      })
+      record.claims = Object.freeze({
+        ...record.claims,
+        programmaticOperation
+      })
+      record.preparedProgrammaticOperation = undefined
+      record.state = 'armed'
+      return {
+        token,
+        ...record.claims,
+        programmaticOperation,
+        maxCalls: record.maxCalls,
+        maxBytes: record.maxBytes
+      }
+    } catch (error) {
+      this.removeRecord(record.digest, 'revoked')
+      throw error
     }
   }
 

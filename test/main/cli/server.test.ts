@@ -24,6 +24,8 @@ import { createCliRoutes } from '@/cli/routes'
 import { CliServer, type CliServerDependencies, type CliUploadedInputFile } from '@/cli/server'
 import { CliRequestError } from '@/cli/errors'
 import {
+  AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+  AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
   AgentCliTokenAuthority,
   type AgentCliRequestBeginResult,
   type AgentCliTokenClaims
@@ -847,6 +849,62 @@ describe('CLI local transport', () => {
       body: { ok: false, error: { code: 'rate_limited' } }
     })
     expect(dispatch).toHaveBeenCalledOnce()
+  })
+
+  it('does not admit an armed Programmatic token to the immutable V1 surface', async () => {
+    const agentToken = 'p'.repeat(43)
+    const tokenId = 'programmatic-v1-deny'
+    const operation = {
+      sessionId: 'conversation-1',
+      messageId: 'message-1',
+      runId: 'run-1',
+      requestSeq: 1,
+      providerToolCallId: 'provider-call-1'
+    }
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => agentToken,
+      createTokenId: () => tokenId
+    })
+    authority
+      .prepareProgrammaticOperation({
+        binding: {
+          schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+          surfaceVersion: AGENT_CLI_PROGRAMMATIC_SURFACE_VERSION,
+          operation,
+          command: { domain: 'tool', verb: 'call' },
+          route: 'tool.call',
+          canonicalInvocationHash: 'a'.repeat(64),
+          adapterMode: 'cli-programmatic',
+          capabilityHash: 'b'.repeat(64),
+          programmaticSurfaceHash: 'c'.repeat(64),
+          quotas: {
+            maxChildren: 1,
+            maxBatchSteps: 1,
+            maxInputBytes: 4_096,
+            maxOutputBytes: 4_096,
+            maxDurationMs: 30_000
+          }
+        },
+        assertAuthorityActive: () => undefined
+      })
+      .arm({
+        sessionId: operation.sessionId,
+        entryId: 1,
+        created: true,
+        preparedTokenId: tokenId,
+        operation
+      })
+    const { descriptor, dispatch } = await createTestServer({
+      beginAgentRequest: (token) => authority.beginRequest(token)
+    })
+
+    const response = await rpcRequest(descriptor, { token: agentToken })
+
+    expect(response).toMatchObject({
+      status: 401,
+      body: { ok: false, error: { code: 'authentication_failed' } }
+    })
+    expect(dispatch).not.toHaveBeenCalled()
   })
 
   it('stops reading when an Agent token byte quota is exhausted', async () => {
