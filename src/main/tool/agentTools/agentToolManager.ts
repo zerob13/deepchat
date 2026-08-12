@@ -2787,6 +2787,7 @@ export class AgentToolManager {
     const result = await this.getSkillExecutionService().execute(validationResult.data, authority, {
       conversationId,
       commandShell: this.requireCommandShell(options.commandShell),
+      signal: options.signal,
       outputPreviewChars: (await this.resolveOutputLimitsForConversation(conversationId))
         .commandOutputInlineChars,
       assertAuthorityCurrent: async () => {

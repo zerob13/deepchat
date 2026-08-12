@@ -49,6 +49,7 @@ export interface SkillRunOptions {
   conversationId: string
   commandShell: ResolvedCommandShell
   outputPreviewChars?: number
+  signal?: AbortSignal
   assertAuthorityCurrent: () => Promise<void>
   beforeExecute?: (normalizedArguments: Record<string, unknown>) => void
 }
@@ -88,6 +89,14 @@ interface SpawnPlan {
   spawnMode: 'direct' | 'shell'
 }
 
+interface ForegroundExecutionResult {
+  output: string
+  outputOffloadPath?: string
+  releasePackageTree: boolean
+  aborted: boolean
+  abortReason?: unknown
+}
+
 export class SkillExecutionService {
   private readonly runtimeHelper = RuntimeHelper.getInstance()
   private readonly settings: Pick<SettingsStore, 'get'>
@@ -104,6 +113,7 @@ export class SkillExecutionService {
     authority: ResolvedSkillExecutionAuthority,
     options: SkillRunOptions
   ): Promise<SkillExecutionResult> {
+    options.signal?.throwIfAborted()
     await options.assertAuthorityCurrent()
     const tree = await materializeSkillExecutionPackageTree(authority.executionPackage)
     let ownershipTransferred = false
@@ -206,13 +216,17 @@ export class SkillExecutionService {
         options.conversationId,
         options.commandShell,
         input.stdin,
-        options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS
+        options.outputPreviewChars ?? FOREGROUND_PREVIEW_CHARS,
+        options.signal
       )
       if (foregroundResult.releasePackageTree === false) {
         ownershipTransferred = true
         logger.warn('[SkillExecutionService] Retaining package tree for an unclosed process tree', {
           rootPath: tree.rootPath
         })
+      }
+      if (foregroundResult.aborted) {
+        throw foregroundResult.abortReason
       }
       return {
         output: foregroundResult.output,
@@ -513,8 +527,10 @@ export class SkillExecutionService {
     conversationId: string,
     commandShell: ResolvedCommandShell,
     stdin?: string,
-    outputPreviewChars = FOREGROUND_PREVIEW_CHARS
-  ): Promise<{ output: string; outputOffloadPath?: string; releasePackageTree: boolean }> {
+    outputPreviewChars = FOREGROUND_PREVIEW_CHARS,
+    signal?: AbortSignal
+  ): Promise<ForegroundExecutionResult> {
+    signal?.throwIfAborted()
     const outputFilePath = this.createForegroundOutputPath(conversationId, plan.outputPrefix)
     const offloadThresholdChars = Math.min(FOREGROUND_OFFLOAD_THRESHOLD, outputPreviewChars)
 
@@ -548,6 +564,9 @@ export class SkillExecutionService {
       let timeoutId: NodeJS.Timeout | null = null
       let settled = false
       let releasePackageTree = true
+      let aborted = false
+      let abortReason: unknown
+      let terminationStarted = false
 
       const outputDecoders = createUtf8OutputDecoderPair((data) => appendOutput(data))
 
@@ -556,6 +575,16 @@ export class SkillExecutionService {
           clearTimeout(timeoutId)
           timeoutId = null
         }
+      }
+
+      const onAbort = () => {
+        aborted = true
+        abortReason = signal?.reason ?? new DOMException('Aborted', 'AbortError')
+        requestTermination('cancelled')
+      }
+
+      const cleanupAbortListener = () => {
+        signal?.removeEventListener('abort', onAbort)
       }
 
       const settleUnclosedProcessTree = () => {
@@ -576,6 +605,7 @@ export class SkillExecutionService {
         }
         settled = true
         cleanupTimers()
+        cleanupAbortListener()
         child.removeAllListeners('error')
         child.removeAllListeners('close')
         outputDecoders.flush()
@@ -586,7 +616,7 @@ export class SkillExecutionService {
           // Already logged when the queue failed.
         }
 
-        if (error) {
+        if (error && !aborted) {
           reject(error)
           return
         }
@@ -610,8 +640,27 @@ export class SkillExecutionService {
         resolve({
           output: lines.join('\n'),
           outputOffloadPath: offloaded ? (activeOutputFilePath ?? undefined) : undefined,
-          releasePackageTree
+          releasePackageTree,
+          aborted,
+          ...(aborted ? { abortReason } : {})
         })
+      }
+
+      const requestTermination = (cause: 'cancelled' | 'timed-out') => {
+        if (settled || terminationStarted) return
+        terminationStarted = true
+        timedOut = cause === 'timed-out'
+        void terminateProcessTree(child, { graceMs: FOREGROUND_KILL_GRACE_MS })
+          .then((closed) => {
+            if (closed || settled) return
+            settleUnclosedProcessTree()
+          })
+          .catch((error) => {
+            logger.warn(`[SkillExecutionService] Failed to terminate ${cause} process tree`, {
+              error
+            })
+            settleUnclosedProcessTree()
+          })
       }
 
       const appendToOutputBuffer = (data: string) => {
@@ -690,25 +739,21 @@ export class SkillExecutionService {
       child.stdout?.on('data', (data: Buffer | string) => outputDecoders.writeStdout(data))
       child.stderr?.on('data', (data: Buffer | string) => outputDecoders.writeStderr(data))
 
-      if (stdin !== undefined) {
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) onAbort()
+      }
+
+      if (!aborted && stdin !== undefined) {
         child.stdin?.write(stdin)
       }
       child.stdin?.end()
 
-      timeoutId = setTimeout(() => {
-        timedOut = true
-        void terminateProcessTree(child, { graceMs: FOREGROUND_KILL_GRACE_MS })
-          .then((closed) => {
-            if (closed || settled) return
-            settleUnclosedProcessTree()
-          })
-          .catch((error) => {
-            logger.warn('[SkillExecutionService] Failed to terminate timed-out process tree', {
-              error
-            })
-            settleUnclosedProcessTree()
-          })
-      }, timeoutMs)
+      if (!settled) {
+        timeoutId = setTimeout(() => {
+          requestTermination('timed-out')
+        }, timeoutMs)
+      }
 
       child.on('error', (error) => {
         void settleProcess(null, error)

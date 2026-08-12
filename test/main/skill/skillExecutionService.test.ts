@@ -773,6 +773,59 @@ describe('SkillExecutionService', () => {
     expect(result.releasePackageTree).toBe(true)
   })
 
+  it('terminates a foreground process tree when its turn is cancelled', async () => {
+    class MockStream extends EventEmitter {
+      destroy = vi.fn()
+    }
+
+    class MockChild extends EventEmitter {
+      stdout = new MockStream()
+      stderr = new MockStream()
+      stdin = {
+        write: vi.fn(),
+        end: vi.fn(),
+        destroy: vi.fn()
+      }
+      unref = vi.fn()
+    }
+
+    const plan = {
+      command: 'python',
+      args: ['script.py'],
+      cwd: '/workspace/session',
+      env: { PATH: '/bin' },
+      shellCommand: 'python script.py',
+      outputPrefix: 'skill_ocr',
+      spawnMode: 'direct' as const
+    }
+    const child = new MockChild()
+    const controller = new AbortController()
+    const abortError = new Error('turn cancelled')
+    abortError.name = 'AbortError'
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.statSync).mockReturnValue({ isDirectory: () => true } as fs.Stats)
+    vi.spyOn(service as never, 'buildSpawnPlan' as never).mockResolvedValue(plan)
+    vi.spyOn(service as never, 'preparePlanForExecution' as never).mockResolvedValue(plan)
+    vi.spyOn(service as never, 'createForegroundOutputPath' as never).mockReturnValue(null)
+    vi.mocked(spawn).mockReturnValue(child as never)
+    vi.mocked(terminateProcessTree).mockImplementationOnce(async () => {
+      child.emit('close', null)
+      return true
+    })
+
+    const result = service.execute(
+      { skill: 'ocr', script: 'scripts/run.py' },
+      authority,
+      executionOptions({ signal: controller.signal })
+    )
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    controller.abort(abortError)
+
+    await expect(result).rejects.toBe(abortError)
+    expect(terminateProcessTree).toHaveBeenCalledExactlyOnceWith(child, { graceMs: 2000 })
+    expect(packageTree.cleanup).toHaveBeenCalledOnce()
+  })
+
   it('retains the package and releases handles when process-tree termination fails', async () => {
     vi.useFakeTimers()
 
