@@ -380,6 +380,7 @@ export class SkillService implements SkillServicePort {
   private discoveryPromise: Promise<SkillMetadata[]> | null = null
   private legacySkillRetirementWarnings: Set<string> = new Set()
   private activeSkillMutationTails = new Map<string, Promise<void>>()
+  private retiredSessionSkillScopes = new Set<string>()
 
   constructor(
     private readonly settings: SkillSettingsPort,
@@ -798,8 +799,10 @@ export class SkillService implements SkillServicePort {
 
     for (const session of await this.agentScopePort.listSessions()) {
       if (!(await this.agentScopePort.isDeepChatAgent(session.agentId))) continue
+      if (this.retiredSessionSkillScopes.has(session.id)) continue
       const persisted = this.getPersistedNewSessionSkills(session.id)
       const valid = await this.validateSkillNames(session.agentId, persisted)
+      if (this.retiredSessionSkillScopes.has(session.id)) continue
       if (!this.areSkillListsEqual(persisted, valid))
         this.setPersistedNewSessionSkills(session.id, valid)
     }
@@ -5096,11 +5099,13 @@ export class SkillService implements SkillServicePort {
    * Get active skills for a conversation
    */
   async getActiveSkills(conversationId: string): Promise<string[]> {
+    if (this.retiredSessionSkillScopes.has(conversationId)) return []
     if (await this.isNewAgentSession(conversationId)) {
       const agentId = await this.resolveSessionAgentId(conversationId)
       if (!agentId) return []
       const skills = await this.loadNewSessionSkills(conversationId)
       const validSkills = await this.validateSkillNames(agentId, skills)
+      if (this.retiredSessionSkillScopes.has(conversationId)) return []
       if (!this.areSkillListsEqual(validSkills, skills)) {
         this.setPersistedNewSessionSkills(conversationId, validSkills)
       }
@@ -5157,10 +5162,12 @@ export class SkillService implements SkillServicePort {
     skills: string[]
   ): Promise<string[]> {
     try {
+      if (this.retiredSessionSkillScopes.has(conversationId)) return []
       const isNewSession = await this.isNewAgentSession(conversationId)
       const agentId = await this.resolveSessionAgentId(conversationId)
       // Validate skill names against the owning Agent's catalog.
       const validSkills = agentId ? await this.validateSkillNames(agentId, skills) : []
+      if (this.retiredSessionSkillScopes.has(conversationId)) return []
       if (!isNewSession || !agentId) {
         this.warnLegacySkillRetired(conversationId)
         return await this.getActiveSkills(conversationId)
@@ -5201,12 +5208,19 @@ export class SkillService implements SkillServicePort {
   }
 
   async clearNewAgentSessionSkills(conversationId: string): Promise<void> {
-    this.setPersistedNewSessionSkills(conversationId, [])
+    // Session deletion is terminal for this service instance. Mark it before joining the mutation
+    // queue so an in-flight or newly queued validation cannot restore stale persistent state.
+    this.retiredSessionSkillScopes.add(conversationId)
+    await this.runActiveSkillMutation(conversationId, async () => {
+      this.setPersistedNewSessionSkills(conversationId, [])
+    })
   }
 
   async revalidateActiveSkillsForAgent(conversationId: string, agentId: string): Promise<string[]> {
+    if (this.retiredSessionSkillScopes.has(conversationId)) return []
     const persisted = this.getPersistedNewSessionSkills(conversationId)
     const valid = await this.validateSkillNames(agentId, persisted)
+    if (this.retiredSessionSkillScopes.has(conversationId)) return []
     if (!this.areSkillListsEqual(persisted, valid)) {
       this.setPersistedNewSessionSkills(conversationId, valid)
     }
@@ -5595,6 +5609,7 @@ export class SkillService implements SkillServicePort {
     this.deletedAgentScopes.clear()
     this.activeAgentScopeOperations.clear()
     this.agentScopeDrainWaiters.clear()
+    this.retiredSessionSkillScopes.clear()
     this.discoveryPromise = null
     this.initializationPromise = null
     this.builtinCatalogDiscovered = false

@@ -3661,6 +3661,55 @@ describe('SkillService', () => {
         []
       )
     })
+
+    it('prevents in-flight Session Skill validation from restoring deleted state', async () => {
+      ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)
+      mockSkillTree(['skill-1'])
+      ;(fs.existsSync as Mock).mockReturnValue(true)
+      ;(fs.readFileSync as Mock).mockReturnValue('test')
+      ;(matter as unknown as Mock).mockReturnValue({
+        data: { name: 'skill-1', description: 'Test' },
+        content: ''
+      })
+      await skillService.discoverSkills()
+      let releaseValidation!: () => void
+      let markValidationStarted!: () => void
+      const validationStarted = new Promise<void>((resolve) => {
+        markValidationStarted = resolve
+      })
+      const originalValidate = skillService.validateSkillNames.bind(skillService)
+      vi.spyOn(skillService, 'validateSkillNames').mockImplementation(async (...args: never[]) => {
+        markValidationStarted()
+        await new Promise<void>((resolve) => {
+          releaseValidation = resolve
+        })
+        return await (originalValidate as (...values: never[]) => Promise<string[]>)(...args)
+      })
+
+      const set = skillService.setActiveSkills('new-session-deleting', ['skill-1'])
+      await validationStarted
+      const clear = skillService.clearNewAgentSessionSkills('new-session-deleting')
+      releaseValidation()
+
+      await expect(set).resolves.toEqual([])
+      await expect(clear).resolves.toBeUndefined()
+      await expect(skillService.getActiveSkills('new-session-deleting')).resolves.toEqual([])
+      expect(newSessionActiveSkillsStore.get('new-session-deleting')).toEqual([])
+      expect(publishDeepchatEventMock).not.toHaveBeenCalledWith(
+        'skills.session.changed',
+        expect.objectContaining({ conversationId: 'new-session-deleting', change: 'activated' })
+      )
+    })
+
+    it('rejects Session Skill writes queued after deletion cleanup begins', async () => {
+      ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)
+
+      const clear = skillService.clearNewAgentSessionSkills('new-session-retired')
+      const set = skillService.setActiveSkills('new-session-retired', ['skill-1'])
+
+      await expect(Promise.all([clear, set])).resolves.toEqual([undefined, []])
+      expect(newSessionActiveSkillsStore.get('new-session-retired')).toEqual([])
+    })
   })
 
   describe('validateSkillNames', () => {
