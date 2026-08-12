@@ -39,8 +39,8 @@
 - [x] Return bounded Skill activation failure and stage serialized no-I/O resource bundles.
 - [x] Reject guessed inactive calls before target resolution and compare canonical definition hash
       before target T1.
-- [ ] Add bounded hash-valid catalog/provider surface facts and exclude them from View/Memory/search.
-- [ ] Atomically write strict V5 facts, keep honest V4 fail-open diagnostics, and recover strict
+- [x] Add bounded hash-valid catalog/provider surface facts and exclude them from View/Memory/search.
+- [x] Atomically write strict V5 facts, keep honest V4 fail-open diagnostics, and recover strict
       deferred dispatch only from unique exact evidence.
 - [ ] Cover small/full, large/virtualized, retry, recovery, revocation, Skill, crash, and ACP cases.
 - [ ] Review and commit each Native Activation slice; do not push.

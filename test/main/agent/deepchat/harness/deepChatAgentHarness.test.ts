@@ -5881,7 +5881,7 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
-    it('continues provider requests when view manifest persistence fails', async () => {
+    it('continues V4 provider requests with bounded provenance failure diagnostics', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       await agent.processMessage('s1', 'Hello')
 
@@ -5889,32 +5889,64 @@ describe('DeepChatAgentHarness', () => {
       const providerCoreStream = llmProvider.providerInstance.coreStream
       const loggerWarnMock = vi.mocked(logger.warn)
       loggerWarnMock.mockClear()
-      sqlitePresenter.deepchatTapeEntriesTable.appendEvent.mockImplementation(() => {
-        throw new Error('manifest write failed')
+      const appendEvent = sqlitePresenter.deepchatTapeEntriesTable.appendEvent
+      const appendImplementation = appendEvent.getMockImplementation()!
+      const failureReason = `manifest write failed \u001b[31m${'x'.repeat(1_024)}`
+      appendEvent.mockImplementation((input: any) => {
+        if (input.name === 'view/assembled') {
+          throw new Error(failureReason)
+        }
+        return appendImplementation(input)
       })
 
-      for await (const _event of callArgs.coreStream(
-        callArgs.run.messages,
-        callArgs.modelId,
-        callArgs.modelConfig,
-        callArgs.temperature,
-        callArgs.maxTokens,
-        callArgs.run.resources.toolDefinitions
-      )) {
+      for (let request = 0; request < 10; request += 1) {
+        for await (const _event of callArgs.coreStream(
+          callArgs.run.messages,
+          callArgs.modelId,
+          callArgs.modelConfig,
+          callArgs.temperature,
+          callArgs.maxTokens,
+          callArgs.run.resources.toolDefinitions
+        )) {
+        }
       }
 
-      expect(providerCoreStream).toHaveBeenCalledTimes(1)
+      expect(providerCoreStream).toHaveBeenCalledTimes(10)
       expect(callArgs.run.activeRequestContract).toEqual({
-        requestSeq: 1,
+        requestSeq: 10,
         executionContract: null
       })
       const viewManifests = sqlitePresenter.deepchatTapeEntriesTable
         .getBySession('s1')
         .filter((row: any) => row.kind === 'event' && row.name === 'view/assembled')
       expect(viewManifests).toEqual([])
-      expect(loggerWarnMock).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to persist provider View provenance: manifest write failed')
+      const failureDiagnostics = loggerWarnMock.mock.calls.filter(
+        ([message]) => message === '[DeepChatAgent] Provider View provenance persistence failed'
       )
+      expect(failureDiagnostics).toHaveLength(8)
+      expect(failureDiagnostics.map(([, diagnostic]: any[]) => diagnostic.requestSeq)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8
+      ])
+      expect(failureDiagnostics[0][1]).toMatchObject({
+        schemaVersion: 1,
+        failurePolicy: 'fail-open',
+        toolSurfaceApplicable: false,
+        verified: false
+      })
+      expect((failureDiagnostics[0][1] as { reason: string }).reason).toHaveLength(512)
+      expect((failureDiagnostics[0][1] as { reason: string }).reason.endsWith('...')).toBe(true)
+      expect((failureDiagnostics[0][1] as { reason: string }).reason).not.toContain('\u001b')
+      expect(
+        loggerWarnMock.mock.calls.filter(
+          ([message]) =>
+            message === '[DeepChatAgent] Additional provider View provenance diagnostics suppressed'
+        )
+      ).toEqual([
+        [
+          '[DeepChatAgent] Additional provider View provenance diagnostics suppressed',
+          { schemaVersion: 1, limit: 8 }
+        ]
+      ])
     })
 
     it('recovers requestSeq from persisted traces when a prior manifest write was lost', async () => {

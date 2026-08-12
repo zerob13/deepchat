@@ -1032,6 +1032,47 @@ describe('ToolSurfaceProvenanceService', () => {
     db.close()
   })
 
+  itIfSqlite('keeps Tool Surface facts out of linked SQL search and context', () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const table = new DeepChatTapeEntriesTable(db)
+      table.createTable()
+      table.ensureBootstrapAnchor(SESSION_ID)
+      const contextBefore = table.appendEvent({
+        sessionId: SESSION_ID,
+        name: 'context/before',
+        data: { marker: 'linked-context-marker' }
+      })
+      createTapeService(table).commitToolSurfaceView(createProgrammaticCommitInput())
+      table.appendEvent({
+        sessionId: SESSION_ID,
+        name: 'context/after',
+        data: { marker: 'linked-context-marker' }
+      })
+      const source = {
+        sessionId: SESSION_ID,
+        maxEntryId: table.getMaxEntryId(SESSION_ID)
+      }
+
+      expect(table.searchEffectiveSourcesAtHeads([source], 'view/tool')).toEqual([])
+      expect(table.searchEffectiveSourcesAtHeads([source], 'programmatic_tool_surface')).toEqual([])
+      const contextNames = table
+        .getEffectiveContextRowsAtHead(source, [contextBefore.entry_id], {
+          before: 0,
+          after: 20,
+          limit: 30
+        })
+        .map((row) => row.name)
+      expect(contextNames).toContain('context/before')
+      expect(contextNames).toContain('context/after')
+      expect(contextNames).not.toContain(TAPE_TOOL_CATALOG_EVENT_NAME)
+      expect(contextNames).not.toContain(TAPE_TOOL_SURFACE_EVENT_NAME)
+      expect(contextNames).not.toContain(TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME)
+    } finally {
+      db.close()
+    }
+  })
+
   itIfSqlite('rolls back all View facts when the SQLite surface append fails', () => {
     const db = new DatabaseCtor(':memory:')
     const table = new DeepChatTapeEntriesTable(db)

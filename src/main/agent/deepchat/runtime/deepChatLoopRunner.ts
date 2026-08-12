@@ -106,7 +106,10 @@ import type {
   ProviderRequestTracePayload
 } from '@/provider/requestTrace'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
-import type { DeepChatContextCoordinator } from '@/agent/deepchat/loop/contextCoordinator'
+import type {
+  DeepChatContextCoordinator,
+  ProviderAttemptManifestFailureContext
+} from '@/agent/deepchat/loop/contextCoordinator'
 import {
   createLoopRun,
   type LoopRunToolSurfaceMode
@@ -228,6 +231,67 @@ export interface ToolSurfaceRunModePort {
 const PROVIDER_OVERFLOW_RETRY_EXTRA_RESERVE_CAP = 8_192
 const RATE_LIMIT_STREAM_MESSAGE_PREFIX = '__rate_limit__:'
 const MAX_TOOL_SURFACE_SHADOW_PROVIDER_ATTEMPTS = 64
+const MAX_PROVIDER_VIEW_PROVENANCE_DIAGNOSTICS_PER_RUN = 8
+const MAX_PROVIDER_VIEW_PROVENANCE_FAILURE_REASON_CODE_UNITS = 512
+
+function boundedProviderViewProvenanceFailureReason(error: unknown): string {
+  let reason = 'Unknown persistence failure.'
+  try {
+    const candidate = error instanceof Error ? error.message : error
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      reason = candidate
+    }
+  } catch {}
+  const truncated = reason.length > MAX_PROVIDER_VIEW_PROVENANCE_FAILURE_REASON_CODE_UNITS
+  const retainedLimit =
+    MAX_PROVIDER_VIEW_PROVENANCE_FAILURE_REASON_CODE_UNITS - (truncated ? 3 : 0)
+  let retained = ''
+  for (let index = 0; index < reason.length && retained.length < retainedLimit; ) {
+    const codePoint = reason.codePointAt(index)
+    if (codePoint === undefined) break
+    const character = String.fromCodePoint(codePoint)
+    index += character.length
+    const controlCharacter =
+      codePoint <= 0x1f ||
+      (codePoint >= 0x7f && codePoint <= 0x9f) ||
+      codePoint === 0x2028 ||
+      codePoint === 0x2029
+    const retainedCharacter = controlCharacter ? ' ' : character
+    if (retained.length + retainedCharacter.length > retainedLimit) break
+    retained += retainedCharacter
+  }
+  const normalized = retained.trim()
+  if (!normalized) return 'Unknown persistence failure.'
+  return truncated ? `${normalized}...` : normalized
+}
+
+function createProviderViewProvenanceDiagnosticReporter(): (
+  error: unknown,
+  context: ProviderAttemptManifestFailureContext
+) => void {
+  let emitted = 0
+  let suppressionReported = false
+  return (error, context): void => {
+    if (emitted < MAX_PROVIDER_VIEW_PROVENANCE_DIAGNOSTICS_PER_RUN) {
+      emitted += 1
+      logger.warn('[DeepChatAgent] Provider View provenance persistence failed', {
+        schemaVersion: 1,
+        requestSeq: context.requestSeq,
+        failurePolicy: context.failurePolicy,
+        toolSurfaceApplicable: context.toolSurfaceApplicable,
+        verified: context.verified,
+        reason: boundedProviderViewProvenanceFailureReason(error)
+      })
+      return
+    }
+    if (suppressionReported) return
+    suppressionReported = true
+    logger.warn('[DeepChatAgent] Additional provider View provenance diagnostics suppressed', {
+      schemaVersion: 1,
+      limit: MAX_PROVIDER_VIEW_PROVENANCE_DIAGNOSTICS_PER_RUN
+    })
+  }
+}
 
 export type PendingTapeViewContext = {
   taskType: DeepChatTapeViewTaskType
@@ -492,6 +556,8 @@ export class DeepChatLoopRunner {
     if (strictViewContract && !taskContractContext) {
       throw new Error('Contract-bearing child run requires a TaskContract context.')
     }
+    const reportProviderViewProvenanceFailure =
+      createProviderViewProvenanceDiagnosticReporter()
 
     const providerModelFacts =
       providedProviderModelFacts ??
@@ -1095,12 +1161,7 @@ export class DeepChatLoopRunner {
                   providerId: state.providerId,
                   modelId: requestModelId
                 }),
-              onAppendError: (error) =>
-                logger.warn(
-                  `[DeepChatAgent] Failed to persist provider View provenance: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`
-                )
+              onAppendError: reportProviderViewProvenanceFailure
             },
             rateGate: {
               beforeWait: crossPreStreamBoundary,

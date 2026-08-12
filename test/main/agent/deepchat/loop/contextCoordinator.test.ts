@@ -276,6 +276,7 @@ function createAttemptInput(options?: {
   const contractToolRefs: any[] = []
   const executionContractErrors: unknown[] = []
   const manifestErrors: unknown[] = []
+  const manifestErrorContexts: unknown[] = []
   const outcomes: any[] = []
   const outcomeErrors: unknown[] = []
   const providerAttempts =
@@ -308,6 +309,7 @@ function createAttemptInput(options?: {
     contractToolRefs,
     executionContractErrors,
     manifestErrors,
+    manifestErrorContexts,
     outcomes,
     outcomeErrors,
     actualRateClears,
@@ -401,7 +403,10 @@ function createAttemptInput(options?: {
           manifests.push(structuredClone(manifest))
           options?.appendManifest?.(manifest)
         },
-        onAppendError: (error: unknown) => manifestErrors.push(error)
+        onAppendError: (error: unknown, context: unknown) => {
+          manifestErrors.push(error)
+          manifestErrorContexts.push(context)
+        }
       },
       rateGate: {
         beforeWait: () => order.push('before-rate'),
@@ -759,6 +764,14 @@ describe('DeepChatContextCoordinator', () => {
     expect(surface.admit).not.toHaveBeenCalled()
     expect(fixture.providerRequests).toHaveLength(0)
     expect(fixture.order).not.toContain('rate')
+    expect(fixture.manifestErrorContexts).toEqual([
+      {
+        requestSeq: 1,
+        failurePolicy: 'fail-closed',
+        toolSurfaceApplicable: true,
+        verified: false
+      }
+    ])
     expect(fixture.run.activeRequestContract).toBeNull()
     expect(fixture.run.activeRequestToolSurface).toBeNull()
     expect(() =>
@@ -896,6 +909,14 @@ describe('DeepChatContextCoordinator', () => {
       expect.objectContaining({
         message: 'surface provenance unavailable'
       })
+    ])
+    expect(fixture.manifestErrorContexts).toEqual([
+      {
+        requestSeq: 1,
+        failurePolicy: 'fail-open',
+        toolSurfaceApplicable: true,
+        verified: false
+      }
     ])
   })
 

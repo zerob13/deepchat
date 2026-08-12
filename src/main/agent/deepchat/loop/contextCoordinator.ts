@@ -172,7 +172,14 @@ export interface ProviderAttemptManifestPort<TSelection> {
     viewPolicyVersion?: number | null
   }): { policy: DeepChatTapeViewPolicy; policyVersion: number | null }
   append(input: ProviderAttemptManifestInput<TSelection>): void
-  onAppendError(error: unknown): void
+  onAppendError(error: unknown, context: ProviderAttemptManifestFailureContext): void
+}
+
+export interface ProviderAttemptManifestFailureContext {
+  readonly requestSeq: number
+  readonly failurePolicy: 'fail-open' | 'fail-closed'
+  readonly toolSurfaceApplicable: boolean
+  readonly verified: false
 }
 
 export interface ProviderAttemptExecutionContractBuildInput {
@@ -723,7 +730,12 @@ export class DeepChatContextCoordinator {
 
       const reportManifestError = (error: unknown): void => {
         try {
-          input.manifest.onAppendError(error)
+          input.manifest.onAppendError(error, {
+            requestSeq,
+            failurePolicy: input.strictViewContract ? 'fail-closed' : 'fail-open',
+            toolSurfaceApplicable: toolSurfaceSnapshot !== null,
+            verified: false
+          })
         } catch {}
       }
       let providerViewProvenanceCommitted = false
