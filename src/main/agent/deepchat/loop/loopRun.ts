@@ -21,6 +21,10 @@ import {
   type TapeRuntimeSkillViewProjection
 } from '@/tape/domain/skillContext'
 import { canonicalJsonStringifyData } from '@/tape/domain/canonicalJson'
+import {
+  bindProviderProjectionIdentity,
+  getProviderProjectionIdentities
+} from './providerProjectionIdentity'
 
 export interface RuntimeSkillContextBinding {
   readonly toolCallId: string
@@ -30,6 +34,7 @@ export interface RuntimeSkillContextBinding {
 export interface MaterializedSkillContextBinding {
   readonly effectiveContent: string
   readonly completeBodyFragment: string
+  readonly projectionKey: string
   readonly tapeIncarnationId: string
   readonly context: DeepChatTapeSkillContext
 }
@@ -152,7 +157,9 @@ function sameSkillIdentity(
 
 export function registerMaterializedSkillContext(
   run: LoopRun<unknown>,
-  input: MaterializedSkillContextBinding
+  input: Omit<MaterializedSkillContextBinding, 'projectionKey'> & {
+    providerMessageIndex: number
+  }
 ): void {
   if (!run.resources.tapeIncarnationId) {
     throw new Error('Loop Run is not bound to a Session Tape incarnation.')
@@ -168,6 +175,18 @@ export function registerMaterializedSkillContext(
   ) {
     throw new Error('Materialized Skill context projection is invalid.')
   }
+  if (
+    !Number.isSafeInteger(input.providerMessageIndex) ||
+    input.providerMessageIndex < 0 ||
+    input.providerMessageIndex >= run.messages.length
+  ) {
+    throw new Error('Materialized Skill context provider message binding is invalid.')
+  }
+  const providerMessage = run.messages[input.providerMessageIndex]
+  if (providerMessage.role !== input.context.providerRole) {
+    throw new Error('Materialized Skill context provider role binding is invalid.')
+  }
+  const projectionKey = canonicalJsonStringifyData(input.context)
   const existing = run.resources.materializedSkillContexts.find((binding) =>
     sameSkillIdentity(binding.context, input.context)
   )
@@ -176,6 +195,7 @@ export function registerMaterializedSkillContext(
       existing.tapeIncarnationId === input.tapeIncarnationId &&
       existing.effectiveContent === input.effectiveContent &&
       existing.completeBodyFragment === input.completeBodyFragment &&
+      existing.projectionKey === projectionKey &&
       JSON.stringify(existing.context) === JSON.stringify(input.context)
     ) {
       return
@@ -188,9 +208,11 @@ export function registerMaterializedSkillContext(
   ) {
     throw new Error('Skill context limit was exceeded for one provider View.')
   }
+  bindProviderProjectionIdentity(providerMessage, projectionKey, input.completeBodyFragment)
   run.resources.materializedSkillContexts.push({
     effectiveContent: input.effectiveContent,
     completeBodyFragment: input.completeBodyFragment,
+    projectionKey,
     tapeIncarnationId: input.tapeIncarnationId,
     context: input.context
   })
@@ -275,29 +297,6 @@ export function registerRuntimeSkillContext(
   run.resources.runtimeSkillContexts.push({ toolCallId: input.toolCallId, context })
 }
 
-function countOccurrences(value: string, fragment: string): number {
-  let count = 0
-  let offset = 0
-  while (offset <= value.length - fragment.length) {
-    const index = value.indexOf(fragment, offset)
-    if (index < 0) break
-    count += 1
-    offset = index + 1
-  }
-  return count
-}
-
-function readMessageTextSegments(message: ChatMessage): string[] {
-  if (typeof message.content === 'string') return [message.content]
-  if (!Array.isArray(message.content)) return []
-  return message.content
-    .filter(
-      (part): part is Extract<(typeof message.content)[number], { type: 'text' }> =>
-        part.type === 'text'
-    )
-    .map((part) => part.text)
-}
-
 export function resolveSkillContextsForRequest(
   run: LoopRun<unknown>,
   messages: readonly ChatMessage[]
@@ -309,22 +308,20 @@ export function resolveSkillContextsForRequest(
     return []
   }
 
-  const providerTextSegments = messages.map((message) => ({
-    role: message.role,
-    segments: readMessageTextSegments(message)
-  }))
-  const materializedContexts = run.resources.materializedSkillContexts.map((binding) => {
-    let projectedCount = 0
-    let expectedRoleCount = 0
-    for (const message of providerTextSegments) {
-      const occurrences = message.segments.reduce(
-        (total, segment) => total + countOccurrences(segment, binding.completeBodyFragment),
-        0
-      )
-      projectedCount += occurrences
-      if (message.role === binding.context.providerRole) expectedRoleCount += occurrences
+  const messagesByProjectionKey = new Map<string, ChatMessage[]>()
+  for (const message of messages) {
+    for (const projectionKey of getProviderProjectionIdentities(message)) {
+      const projections = messagesByProjectionKey.get(projectionKey) ?? []
+      projections.push(message)
+      messagesByProjectionKey.set(projectionKey, projections)
     }
-    if (projectedCount !== 1 || expectedRoleCount !== 1) {
+  }
+  const materializedContexts = run.resources.materializedSkillContexts.map((binding) => {
+    const providerMessages = messagesByProjectionKey.get(binding.projectionKey) ?? []
+    if (
+      providerMessages.length !== 1 ||
+      providerMessages[0].role !== binding.context.providerRole
+    ) {
       throw new Error(
         'Materialized Skill context must have exactly one Tape-backed provider projection.'
       )

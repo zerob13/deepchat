@@ -34,6 +34,7 @@ import {
 } from '@shared/utils/attachmentRepresentation'
 import { isRetiredWorkflowResultMessageMetadata } from '@shared/orchestration/retiredWorkflowData'
 import { segmentAssistantBlocksByProviderReplay } from './providerReplaySegments'
+import { inheritProviderProjectionIdentities } from '@/agent/deepchat/loop/providerProjectionIdentity'
 
 export { estimateMessagesTokens } from '@shared/utils/messageTokens'
 
@@ -1454,7 +1455,13 @@ function stripLeadingUserContext(
   if (typeof message.content === 'string') {
     const stripped = stripText(message.content)
     return stripped.removed
-      ? { message: { ...message, content: stripped.text }, removed: true }
+      ? {
+          message: inheritProviderProjectionIdentities(message, {
+            ...message,
+            content: stripped.text
+          }),
+          removed: true
+        }
       : { message, removed: false }
   }
 
@@ -1479,7 +1486,12 @@ function stripLeadingUserContext(
           : '')
     }
   })
-  return removed ? { message: { ...message, content }, removed: true } : { message, removed: false }
+  return removed
+    ? {
+        message: inheritProviderProjectionIdentities(message, { ...message, content }),
+        removed: true
+      }
+    : { message, removed: false }
 }
 
 function omitMemoryFromActiveTurn(

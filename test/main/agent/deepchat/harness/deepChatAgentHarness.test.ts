@@ -1304,6 +1304,7 @@ describe('DeepChatAgentHarness', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(nanoid).mockReturnValue('mock-msg-id')
     installedMemoryPort = createMemoryRuntimePort()
     ;(processStream as ReturnType<typeof vi.fn>).mockReset()
     ;(processStream as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'completed' })
@@ -5145,6 +5146,8 @@ describe('DeepChatAgentHarness', () => {
     it('keeps one source version across a Run and fresh-resolves the next execution', async () => {
       const skillService = getSkillServiceMock()
       installSessionRows([])
+      let messageSequence = 0
+      vi.mocked(nanoid).mockImplementation(() => `skill-version-message-${++messageSequence}`)
       skillService.getMetadataList.mockResolvedValue([
         { name: 'changing-skill', description: 'Changing skill' }
       ])

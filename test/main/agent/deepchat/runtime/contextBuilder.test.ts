@@ -24,6 +24,10 @@ import {
   type MCPToolDefinitionBase
 } from '@shared/types/core/mcp'
 import { createDeepSeekReplayJson } from '../../../../fixtures/deepseekResponses'
+import {
+  bindProviderProjectionIdentity,
+  getProviderProjectionIdentities
+} from '@/agent/deepchat/loop/providerProjectionIdentity'
 
 vi.mock('tokenx', () => ({
   approximateTokenSize: vi.fn((text: string) => {
@@ -2433,6 +2437,35 @@ describe('cache-aware context assembly', () => {
     expect(result.messages.some((message) => String(message.content).includes('MEMORY_'))).toBe(false)
     expect(result.messages.some((message) => message.content === 'old user context')).toBe(true)
     expect(result.messages.some((message) => message.content === 'old assistant context')).toBe(true)
+  })
+
+  it('preserves provider projection identity when optional active-turn context is omitted', () => {
+    const memory = `MEMORY_${'x'.repeat(80)}`
+    const skillContext = '### selected-skill\nFOLLOW_SELECTED_SKILL'
+    const activeUser = {
+      role: 'user' as const,
+      content: `${memory}\n\n${skillContext}\n\nlatest instruction`
+    }
+    bindProviderProjectionIdentity(activeUser, 'skill-context-1', skillContext)
+    const contributions = setMessageSkillActiveTurnContext(
+      createCacheAwareContributions({ memory }),
+      skillContext
+    )
+    const baseline = [
+      { role: 'system' as const, content: 'System' },
+      { role: 'user' as const, content: `${skillContext}\n\nlatest instruction` }
+    ]
+
+    const fitted = fitCacheAwareMessagesToContextWindow(
+      [{ role: 'system', content: 'System' }, activeUser],
+      estimateMessagesTokens(baseline) + 1,
+      0,
+      contributions
+    )
+
+    expect(contributions.memoryIncluded).toBe(false)
+    expect(fitted).toEqual(baseline)
+    expect(getProviderProjectionIdentities(fitted[1])).toEqual(['skill-context-1'])
   })
 
   it('injects resume memory into the owner user without adding a user after partial assistant', () => {

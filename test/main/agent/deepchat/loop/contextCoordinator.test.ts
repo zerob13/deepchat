@@ -300,6 +300,7 @@ function registerMessageSkill(
     tapeIncarnationId: 'incarnation-1',
     effectiveContent,
     completeBodyFragment,
+    providerMessageIndex: 0,
     context
   })
   return context

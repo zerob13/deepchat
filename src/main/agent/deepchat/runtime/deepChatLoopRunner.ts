@@ -31,9 +31,7 @@ import type { DeepChatAgentInstance } from '@/agent/deepchat/instance/deepChatAg
 import type { ResolvedCommandShell } from '@shared/commandShell'
 import type { MemoryIngestionObserver } from '@/agent/deepchat/memory/memoryIngestionObserver'
 import type { SessionPendingInputs } from '@/session/data/pendingInputs'
-import {
-  resolveEffectiveActiveSkillNames
-} from '@/agent/deepchat/resources/systemPromptBuilder'
+import { resolveEffectiveActiveSkillNames } from '@/agent/deepchat/resources/systemPromptBuilder'
 import {
   createOpaquePromptAssembly,
   reconcilePromptAssembly
@@ -667,10 +665,15 @@ export class DeepChatLoopRunner {
     })
     loopRun.resources.tapeIncarnationId = tapeIncarnationId
     for (const projection of materializedSkillContexts) {
+      const providerMessageIndex =
+        projection.scope === 'session'
+          ? 0
+          : loopRun.messages.findLastIndex((message) => message.role === 'user')
       registerMaterializedSkillContext(loopRun, {
         tapeIncarnationId: projection.ref.tapeIncarnationId,
         effectiveContent: projection.effectiveContent,
         completeBodyFragment: projection.completeBodyFragment,
+        providerMessageIndex,
         context: projection.context
       })
     }
