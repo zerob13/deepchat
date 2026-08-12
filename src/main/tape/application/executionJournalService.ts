@@ -399,6 +399,13 @@ export class ExecutionJournalService
     }
   }
 
+  listMessageIdsWithNestedExecutionAudit(
+    sessionId: string,
+    messageIds: readonly string[]
+  ): readonly string[] {
+    return this.getStore().listMessageIdsWithNestedOperationEvents(sessionId, messageIds)
+  }
+
   hasAnyCommittedDispatchForMessageToolCall(
     sessionId: string,
     messageId: string,

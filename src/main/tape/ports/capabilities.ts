@@ -185,6 +185,10 @@ export interface ExecutionJournalAuditReader {
     sessionId: string,
     messageId: string
   ): DeepChatNestedExecutionAudit
+  listMessageIdsWithNestedExecutionAudit(
+    sessionId: string,
+    messageIds: readonly string[]
+  ): readonly string[]
 }
 
 // The DeepChat provider loop needs the coordinated Tape contract as one collaborator; splitting it

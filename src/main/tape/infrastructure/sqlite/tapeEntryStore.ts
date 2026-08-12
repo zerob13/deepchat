@@ -43,6 +43,8 @@ import type {
 } from '@/tape/ports/storage'
 import { DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT } from '@shared/types/execution-journal-audit'
 
+const DEEPCHAT_NESTED_EXECUTION_AUDIT_MESSAGE_LIMIT = 500
+
 export {
   normalizeDeepChatTapeReadSources,
   serializeDeepChatTapeReadSources,
@@ -1570,6 +1572,43 @@ export class DeepChatExecutionJournalStore
          ORDER BY journal.entry_id ASC`
       )
       .all(sessionId, messageId, operationLimit, sessionId) as DeepChatTapeEntryRow[]
+  }
+
+  listMessageIdsWithNestedOperationEvents(
+    sessionId: string,
+    messageIds: readonly string[]
+  ): string[] {
+    const requestedMessageIds = [...new Set(messageIds)]
+    if (requestedMessageIds.length === 0) return []
+    if (requestedMessageIds.length > DEEPCHAT_NESTED_EXECUTION_AUDIT_MESSAGE_LIMIT) {
+      throw new Error('Nested Execution Journal audit message query exceeds its bounded limit.')
+    }
+    const placeholders = requestedMessageIds.map(() => '?').join(', ')
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT
+           (CASE WHEN json_valid(journal.payload_json)
+             THEN json_extract(journal.payload_json, '$.data.messageId') END) AS message_id
+         FROM deepchat_tape_entries AS journal
+           INDEXED BY idx_deepchat_tape_entries_execution_message_payload
+         WHERE journal.session_id = ?
+           AND journal.kind = 'event'
+           AND journal.name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+           AND (CASE WHEN json_valid(journal.payload_json)
+             THEN json_extract(journal.payload_json, '$.data.messageId') END) IN (${placeholders})
+           AND (
+             (journal.provenance_key >= 'execution:v2:'
+               AND journal.provenance_key < 'execution:v2:~')
+             OR (CASE WHEN json_valid(journal.meta_json)
+               THEN json_extract(journal.meta_json, '$.protocolVersion') END) = 2
+             OR (CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(journal.payload_json, '$.data.protocolVersion') END) = 2
+             OR (CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(journal.payload_json, '$.data.operation.kind') END) = 'nested'
+           )`
+      )
+      .all(sessionId, ...requestedMessageIds) as Array<{ message_id: string }>
+    return rows.map((row) => row.message_id)
   }
 
   listNestedOperationEventsForRun(sessionId: string, runId: string): DeepChatTapeEntryRow[] {

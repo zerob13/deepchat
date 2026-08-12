@@ -204,6 +204,13 @@ export class SessionTape
     return this.executionJournal.listNestedExecutionAuditForMessage(sessionId, messageId)
   }
 
+  listMessageIdsWithNestedExecutionAudit(
+    sessionId: string,
+    messageIds: readonly string[]
+  ): readonly string[] {
+    return this.executionJournal.listMessageIdsWithNestedExecutionAudit(sessionId, messageIds)
+  }
+
   hasAnyCommittedDispatchForMessageToolCall(
     sessionId: string,
     messageId: string,

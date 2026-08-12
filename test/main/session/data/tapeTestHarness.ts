@@ -258,6 +258,29 @@ function createTapeTableMock() {
         })
       }
     ),
+    listMessageIdsWithNestedOperationEvents: vi.fn(
+      (sessionId: string, messageIds: readonly string[]) => {
+        const requested = new Set(messageIds)
+        return [
+          ...new Set(
+            entries.flatMap((entry) => {
+              if (
+                entry.session_id !== sessionId ||
+                entry.kind !== 'event' ||
+                (entry.name !== 'execution/dispatch_committed' &&
+                  entry.name !== 'execution/tool_outcome')
+              ) {
+                return []
+              }
+              const data = parseJsonRecord(entry.payload_json).data ?? {}
+              return data.protocolVersion === 2 && requested.has(data.messageId)
+                ? [data.messageId]
+                : []
+            })
+          )
+        ]
+      }
+    ),
     listNestedOperationEventsForRun: vi.fn((sessionId: string, runId: string) =>
       entries.filter((entry) => {
         if (

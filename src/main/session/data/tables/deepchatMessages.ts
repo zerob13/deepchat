@@ -1,6 +1,5 @@
 import Database from 'better-sqlite3-multiple-ciphers'
 import { BaseTable } from '@/data/baseTable'
-import logger from '@shared/logger'
 
 export interface DeepChatMessageRow {
   id: string
@@ -14,7 +13,6 @@ export interface DeepChatMessageRow {
   created_at: number
   updated_at: number
   trace_count?: number
-  has_nested_execution_audit?: number
 }
 
 export interface DeepChatMessageUsageCandidateRow {
@@ -182,7 +180,7 @@ export class DeepChatMessagesTable extends BaseTable {
     const cursor = options?.cursor ?? null
 
     if (!cursor) {
-      const rows = this.db
+      return this.db
         .prepare(
           `SELECT
              m.*,
@@ -197,10 +195,9 @@ export class DeepChatMessagesTable extends BaseTable {
            LIMIT ?`
         )
         .all(sessionId, limit) as DeepChatMessageRow[]
-      return this.projectNestedExecutionAuditAvailability(sessionId, rows)
     }
 
-    const rows = this.db
+    return this.db
       .prepare(
         `SELECT
            m.*,
@@ -219,55 +216,6 @@ export class DeepChatMessagesTable extends BaseTable {
          LIMIT ?`
       )
       .all(sessionId, cursor.orderSeq, cursor.orderSeq, cursor.id, limit) as DeepChatMessageRow[]
-    return this.projectNestedExecutionAuditAvailability(sessionId, rows)
-  }
-
-  private projectNestedExecutionAuditAvailability(
-    sessionId: string,
-    rows: DeepChatMessageRow[]
-  ): DeepChatMessageRow[] {
-    if (rows.length === 0) return rows
-
-    const messageIds = rows.map((row) => row.id)
-    const placeholders = messageIds.map(() => '?').join(', ')
-    let auditedMessageIds: Set<string>
-    try {
-      const auditRows = this.db
-        .prepare(
-          `SELECT DISTINCT
-             (CASE WHEN json_valid(journal.payload_json)
-               THEN json_extract(journal.payload_json, '$.data.messageId') END) AS message_id
-           FROM deepchat_tape_entries journal
-             INDEXED BY idx_deepchat_tape_entries_execution_message_payload
-           WHERE journal.session_id = ?
-             AND journal.kind = 'event'
-             AND journal.name IN ('execution/dispatch_committed', 'execution/tool_outcome')
-             AND (CASE WHEN json_valid(journal.payload_json)
-               THEN json_extract(journal.payload_json, '$.data.messageId') END) IN (${placeholders})
-             AND (
-               (journal.provenance_key >= 'execution:v2:'
-                 AND journal.provenance_key < 'execution:v2:~')
-               OR (CASE WHEN json_valid(journal.meta_json)
-                 THEN json_extract(journal.meta_json, '$.protocolVersion') END) = 2
-               OR (CASE WHEN json_valid(journal.payload_json)
-                 THEN json_extract(journal.payload_json, '$.data.protocolVersion') END) = 2
-               OR (CASE WHEN json_valid(journal.payload_json)
-                 THEN json_extract(journal.payload_json, '$.data.operation.kind') END) = 'nested'
-             )`
-        )
-        .all(sessionId, ...messageIds) as Array<{ message_id: string }>
-      auditedMessageIds = new Set(auditRows.map((row) => row.message_id))
-    } catch (error) {
-      logger.warn('[DeepChatMessagesTable] Failed to project nested execution audit availability', {
-        sessionId,
-        error
-      })
-      auditedMessageIds = new Set()
-    }
-    return rows.map((row) => ({
-      ...row,
-      has_nested_execution_audit: auditedMessageIds.has(row.id) ? 1 : 0
-    }))
   }
 
   getBySessionUpToOrderSeq(sessionId: string, maxOrderSeq: number): DeepChatMessageRow[] {

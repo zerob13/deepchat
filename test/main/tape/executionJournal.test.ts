@@ -1533,6 +1533,12 @@ itIfSqlite('loads complete nested audit pairs through the message index', () => 
     })
 
     expect(table.listNestedOperationEventsForMessage('session-1', 'assistant-1', 1)).toHaveLength(2)
+    expect(
+      service.listMessageIdsWithNestedExecutionAudit('session-1', [
+        'assistant-1',
+        'assistant-missing'
+      ])
+    ).toEqual(['assistant-1'])
     expect(service.listNestedExecutionAuditForMessage('session-1', 'assistant-1')).toMatchObject({
       state: 'available',
       operations: [{ childOrdinal: 0, status: 'success' }]

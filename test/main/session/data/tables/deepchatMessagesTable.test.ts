@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { DeepChatAssistantBlocksTable } from '@/session/data/tables/deepchatAssistantBlocks'
 import { DeepChatMessagesTable } from '@/session/data/tables/deepchatMessages'
 import { DeepChatMessageTracesTable } from '@/session/data/tables/deepchatMessageTraces'
-import { DeepChatTapeEntriesTable } from '@/tape/infrastructure/sqlite/tapeEntryStore'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import { Database, nativeSqliteDescribeIf } from '../../../nativeSqliteHarness'
 
@@ -25,10 +24,7 @@ function createMessageRow(orderSeq: number) {
   }
 }
 
-function createMockDb(
-  rows: ReturnType<typeof createMessageRow>[],
-  options: { nestedAuditError?: Error } = {}
-) {
+function createMockDb(rows: ReturnType<typeof createMessageRow>[]) {
   return {
     prepare: vi.fn((sql: string) => {
       if (sql.includes('FROM deepchat_messages m') && sql.includes('ORDER BY m.order_seq DESC')) {
@@ -63,16 +59,6 @@ function createMockDb(
           }
         }
       }
-      if (sql.includes('FROM deepchat_tape_entries journal')) {
-        return {
-          all: options.nestedAuditError
-            ? vi.fn(() => {
-                throw options.nestedAuditError
-              })
-            : vi.fn().mockReturnValue([])
-        }
-      }
-
       return {
         all: vi.fn(),
         get: vi.fn()
@@ -94,16 +80,6 @@ describe('DeepChatMessagesTable', () => {
     expect(page[0]?.order_seq).toBe(502)
     expect(page[500]?.order_seq).toBe(2)
   })
-
-  it('keeps message pagination available when the optional audit projection fails', () => {
-    const rows = [createMessageRow(1)]
-    const db = createMockDb(rows, { nestedAuditError: new Error('audit unavailable') })
-    const table = new DeepChatMessagesTable(db)
-
-    const page = table.listPageBySession('s1', { limit: 100 })
-
-    expect(page).toEqual([expect.objectContaining({ id: 'm1', has_nested_execution_audit: 0 })])
-  })
 })
 
 describeIfNativeSqlite('DeepChatMessagesTable runtime projection', () => {
@@ -112,7 +88,6 @@ describeIfNativeSqlite('DeepChatMessagesTable runtime projection', () => {
     const table = new DeepChatMessagesTable(db)
     table.createTable()
     new DeepChatMessageTracesTable(db).createTable()
-    new DeepChatTapeEntriesTable(db).createTable()
     return { db, table }
   }
 
@@ -285,82 +260,6 @@ describeIfNativeSqlite('DeepChatMessagesTable runtime projection', () => {
       }
 
       expect(table.listPageBySession('s1', { limit: 100 })[0]?.trace_count).toBe(2)
-    } finally {
-      db.close()
-    }
-  })
-
-  it('projects nested execution audit availability without loading Journal payloads', () => {
-    const { db, table } = createTable()
-    try {
-      table.insert({
-        id: 'm1',
-        sessionId: 's1',
-        orderSeq: 1,
-        role: 'assistant',
-        content: '[]',
-        status: 'sent'
-      })
-      table.insert({
-        id: 'm2',
-        sessionId: 's1',
-        orderSeq: 2,
-        role: 'assistant',
-        content: '[]',
-        status: 'sent'
-      })
-      table.insert({
-        id: 'm3',
-        sessionId: 's1',
-        orderSeq: 3,
-        role: 'assistant',
-        content: '[]',
-        status: 'sent'
-      })
-      const insertJournal = db.prepare(
-        `INSERT INTO deepchat_tape_entries (
-           session_id, entry_id, kind, name, source_type, source_id, source_seq,
-           provenance_key, payload_json, meta_json, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      insertJournal.run(
-        's1',
-        1,
-        'event',
-        'execution/dispatch_committed',
-        'runtime_event',
-        '22222222-2222-4222-8222-222222222222',
-        1,
-        'execution:v2:audit-test',
-        JSON.stringify({
-          name: 'execution/dispatch_committed',
-          data: { protocolVersion: 2, messageId: 'm1' }
-        }),
-        '{}',
-        1
-      )
-      insertJournal.run(
-        's1',
-        2,
-        'event',
-        'execution/dispatch_committed',
-        'runtime_event',
-        '33333333-3333-4333-8333-333333333333',
-        1,
-        'execution:v1:audit-conflict',
-        JSON.stringify({
-          name: 'execution/dispatch_committed',
-          data: { protocolVersion: 1, messageId: 'm2' }
-        }),
-        JSON.stringify({ factFamily: 'execution_journal', protocolVersion: 2 }),
-        2
-      )
-
-      const rows = table.listPageBySession('s1', { limit: 100 })
-
-      expect(rows.find((row) => row.id === 'm1')?.has_nested_execution_audit).toBe(1)
-      expect(rows.find((row) => row.id === 'm2')?.has_nested_execution_audit).toBe(1)
-      expect(rows.find((row) => row.id === 'm3')?.has_nested_execution_audit).toBe(0)
     } finally {
       db.close()
     }

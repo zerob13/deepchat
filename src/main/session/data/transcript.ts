@@ -23,7 +23,7 @@ import {
   resolveUsageModelId,
   resolveUsageProviderId
 } from '@/session/usageStats'
-import type { TapeMessageFactWriter } from '@/tape/ports/capabilities'
+import type { ExecutionJournalAuditReader, TapeMessageFactWriter } from '@/tape/ports/capabilities'
 import {
   getAttachmentSearchableText,
   normalizeAttachmentRepresentationPreference,
@@ -168,7 +168,14 @@ export class SessionTranscript {
   private database: SessionDatabase
   private readonly tapeFacts: TapeMessageFactWriter
 
-  constructor(database: SessionDatabase, tapeFacts: TapeMessageFactWriter) {
+  constructor(
+    database: SessionDatabase,
+    tapeFacts: TapeMessageFactWriter,
+    private readonly executionAudit?: Pick<
+      ExecutionJournalAuditReader,
+      'listMessageIdsWithNestedExecutionAudit'
+    >
+  ) {
     this.database = database
     this.tapeFacts = tapeFacts
   }
@@ -443,7 +450,23 @@ export class SessionTranscript {
     })
     const hasMore = rows.length > limit
     const pageRows = (hasMore ? rows.slice(0, limit) : rows).reverse()
-    const messages = this.toRecords(pageRows)
+    let auditedMessageIds = new Set<string>()
+    if (this.executionAudit && pageRows.length > 0) {
+      try {
+        auditedMessageIds = new Set(
+          this.executionAudit.listMessageIdsWithNestedExecutionAudit(
+            sessionId,
+            pageRows.map((row) => row.id)
+          )
+        )
+      } catch (error) {
+        logger.warn('Failed to project nested execution audit availability', { sessionId }, error)
+      }
+    }
+    const messages = this.toRecords(pageRows).map((message) => ({
+      ...message,
+      hasNestedExecutionAudit: auditedMessageIds.has(message.id)
+    }))
     const nextCursor =
       hasMore && messages.length > 0
         ? {
@@ -842,9 +865,6 @@ export class SessionTranscript {
       isContextEdge: row.is_context_edge,
       metadata: row.metadata,
       traceCount: row.trace_count ?? 0,
-      ...(row.has_nested_execution_audit === undefined
-        ? {}
-        : { hasNestedExecutionAudit: row.has_nested_execution_audit === 1 }),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }))

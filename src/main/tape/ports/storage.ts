@@ -110,6 +110,10 @@ export interface ExecutionJournalPersistenceStore
     messageId: string,
     maximumOperations: number
   ): DeepChatTapeEntryRow[]
+  listMessageIdsWithNestedOperationEvents(
+    sessionId: string,
+    messageIds: readonly string[]
+  ): string[]
   listNestedOperationEventsForRun(sessionId: string, runId: string): DeepChatTapeEntryRow[]
   listNestedOperationEventsForParent(
     sessionId: string,
