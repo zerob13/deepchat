@@ -5136,6 +5136,97 @@ describe('DeepChatAgentHarness', () => {
       ).toHaveLength(1)
     })
 
+    it('keeps one source version across a Run and fresh-resolves the next execution', async () => {
+      const skillService = getSkillServiceMock()
+      installSessionRows([])
+      skillService.getMetadataList.mockResolvedValue([
+        { name: 'changing-skill', description: 'Changing skill' }
+      ])
+      skillService.loadSkillContent.mockResolvedValue({ content: 'SKILL_VERSION_ONE' })
+      let firstRun: any
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params: any) => {
+        firstRun = params.run
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        skillService.loadSkillContent.mockResolvedValue({ content: 'SKILL_VERSION_TWO' })
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        return { status: 'completed' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', {
+        text: 'First execution',
+        activeSkills: ['changing-skill']
+      })
+      await agent.processMessage('s1', {
+        text: 'Second execution',
+        activeSkills: ['changing-skill']
+      })
+
+      const manifests = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .filter(
+          (entry: { kind: string; name: string }) =>
+            entry.kind === 'event' && entry.name === 'view/assembled'
+        )
+        .map((entry: { payload_json: string }) => JSON.parse(entry.payload_json).data.manifest)
+      const secondRun = (processStream as ReturnType<typeof vi.fn>).mock.calls[1][0].run
+      const firstProviderText = firstRun.messages
+        .map((message: { content?: unknown }) => String(message.content ?? ''))
+        .join('\n')
+      const secondProviderText = secondRun.messages
+        .map((message: { content?: unknown }) => String(message.content ?? ''))
+        .join('\n')
+
+      expect(firstProviderText).toContain('SKILL_VERSION_ONE')
+      expect(firstProviderText).not.toContain('SKILL_VERSION_TWO')
+      expect(secondProviderText).toContain('SKILL_VERSION_TWO')
+      expect(secondProviderText).not.toContain('SKILL_VERSION_ONE')
+      expect(firstRun.runId).not.toBe(secondRun.runId)
+      expect(skillService.resolveFreshEffectiveSkillContents).toHaveBeenCalledTimes(2)
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable
+          .getBySession('s1')
+          .filter(
+            (entry: { kind: string; name: string }) =>
+              entry.kind === 'context' && entry.name === 'skill/materialized'
+          )
+      ).toHaveLength(2)
+      expect(manifests).toHaveLength(2)
+      expect(manifests.map((manifest: { runId: string }) => manifest.runId)).toEqual([
+        firstRun.runId,
+        firstRun.runId
+      ])
+      expect(manifests.map((manifest: { requestSeq: number }) => manifest.requestSeq)).toEqual([
+        1, 2
+      ])
+      expect(manifests[1].skillContexts[0].authoritativeRef).toEqual(
+        manifests[0].skillContexts[0].authoritativeRef
+      )
+      expect(
+        firstRun.resources.materializedSkillContexts[0].context.authoritativeRef
+          .effectiveContentHash
+      ).not.toBe(
+        secondRun.resources.materializedSkillContexts[0].context.authoritativeRef
+          .effectiveContentHash
+      )
+    })
+
     it('keeps system prompt section order: user prompt -> runtime -> env -> skills -> tooling -> permission -> verification', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2026-03-05T08:00:00.000Z'))

@@ -61,8 +61,8 @@
 ## P0b: Message And Session Projection
 
 - [x] Separate message Skill refs from Session active Skills in runtime APIs.
-- [ ] Add count/byte limits, conservative cheap guard, shared dry preflight, and two-phase
-      materialization flow.
+- [x] Add pre-write count/byte guards and a two-phase flow whose sole token-admission decision is
+      the final fact-derived `ContextCoordinator` preflight.
 - [x] Build active-turn and stable-system projections only from verified facts.
 - [x] Carry exact refs through tool rounds, retries, recovery, and in-process pause/resume; preserve
       existing parked restart behavior.
@@ -72,8 +72,8 @@
 - [x] Verify regular first-message selection remains message-scoped while preserving explicit
       detached and subagent Session-active assignment.
 - [x] Remove the dormant persistent mention fallback.
-- [ ] Add continuation/new-execution, source drift, deduplication, recovery, and semantic tests.
-- [ ] Review and commit the projection slice.
+- [x] Add continuation/new-execution, source drift, deduplication, recovery, and semantic tests.
+- [x] Review and commit the projection slice.
 
 ## P0b: Session Compatibility UI
 

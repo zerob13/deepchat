@@ -116,15 +116,16 @@ For each new execution:
 
 1. resolve message and Session Skill names against the scoped enabled catalog;
 2. fresh-read or cache-validate each source and build canonical effective content in memory;
-3. enforce the 64-body/2-MiB aggregate limits and conservative cheap guard;
-4. build the exact in-memory candidate projection and run the shared non-persistent dry preflight;
-5. materialize or strictly reuse each body;
-6. round-trip read and validate each ref;
-7. build message active-turn user context and Session stable-system sections only from validated
+3. enforce the per-body, 64-body, and 2-MiB aggregate physical limits without performing token
+   admission;
+4. materialize or strictly reuse each body;
+5. round-trip read and validate each ref;
+6. build message active-turn user context and Session stable-system sections only from validated
    facts;
-8. deduplicate complete bodies through the Run-local projection registry;
-9. pass refs and projection hashes through loop state and ViewManifest assembly;
-10. run the existing final preflight and strict schema-6 manifest commit before provider dispatch.
+7. deduplicate complete bodies through the Run-local projection registry;
+8. pass refs and projection hashes through loop state and ViewManifest assembly;
+9. run the sole authoritative `contextCoordinator` preflight and strict schema-6 manifest commit
+   before provider dispatch.
 
 Continuation carries exact refs through tool rounds and overflow recovery in one Run. Permission
 pause/resume creates a new Run for the same assistant-message execution; it restores runtime-view

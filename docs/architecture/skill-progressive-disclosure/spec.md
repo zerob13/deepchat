@@ -259,8 +259,8 @@ The ordered path is:
 ```text
 fresh source resolve
   -> canonical in-memory effective content
-  -> count/byte limits and conservative cheap guard
-  -> exact in-memory projection and non-persistent dry preflight
+  -> physical per-body/count/aggregate-byte validation
+  -> non-admitting candidate context assembly
   -> strict materialize or verified reuse
   -> narrow-reader round-trip validation
   -> fact-derived provider projection
@@ -270,12 +270,13 @@ fresh source resolve
   -> provider dispatch
 ```
 
-The cheap guard may reject only a request that cannot fit even after all optional context is
-removed. The dry preflight reuses the exact `preflightRequestContext` implementation and request
-budget inputs that `contextCoordinator` invokes; it may reject but never admit or dispatch. Any
-candidate that passes is materialized and rebuilt from facts before `contextCoordinator` performs
-the final authoritative preflight. Races after materialization may leave bounded, content-addressed
-facts that a later execution can strictly reuse; the design does not claim zero orphan facts.
+Physical validation rejects only complete Skill bodies that violate the per-body, count, or
+aggregate byte limits. It never estimates request-token admission, constructs a Provider
+projection, mutates runtime contributions, or admits a request. Candidates that successfully pass
+the remaining fail-closed assembly and Tape steps are rebuilt from facts before
+`contextCoordinator` performs the sole authoritative preflight. Races after materialization may
+leave bounded, content-addressed facts that a later execution can strictly reuse; the design does
+not claim zero orphan facts.
 
 If materialization, verified reuse, round-trip validation, or strict Skill-bearing ViewManifest
 commit fails, no provider call occurs. The design does not claim provider exactly-once after the
@@ -396,8 +397,8 @@ single rejected request never overwrite provider configuration.
 14. Existing ViewManifest versions and hashes remain readable without semantic reinterpretation.
 15. Materialization facts cannot enter transcript, search, Memory, ordinary rendering, or fork
     merge paths.
-16. `contextCoordinator` remains the sole final admission and dispatch authority; the cheap guard
-    is strictly weaker and the non-persistent dry check uses the exact same preflight algorithm.
+16. Pre-persistence validation enforces only physical Skill-body limits; token admission
+    remains exclusively owned by the final fact-derived `contextCoordinator` preflight.
 17. Diagnostics derive from the exact current projection and do not promote estimates to durable
     facts.
 18. Existing Agent scoping, Plugin-contributed Skills, supporting-file access, permission checks,
