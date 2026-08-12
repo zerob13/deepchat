@@ -1,4 +1,5 @@
 import type {
+  AgentCliProgrammaticOperationGrant,
   AgentCliProgrammaticOperationBinding,
   AgentCliProgrammaticOperationIdentity,
   AgentCliTokenAuthority,
@@ -15,6 +16,8 @@ import type {
   ExecutionJournalWriter,
   NestedExecutionJournalWriter
 } from '@/tape/ports/capabilities'
+import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
+import type { ToolSurfaceSnapshot } from '@/agent/deepchat/runtime/toolSurface'
 
 type ProgrammaticParentExecutionJournal = Pick<ExecutionJournalWriter, 'commitToolOutcome'> &
   NestedExecutionJournalWriter
@@ -38,6 +41,17 @@ export type ProgrammaticToolParentRegistration = Readonly<{
   }): ExecutionJournalCommitReceipt
 }>
 
+export type ProgrammaticToolInvocationAuthority = Readonly<{
+  capability: ProgrammaticToolCapabilityV1
+  snapshot: ToolSurfaceSnapshot
+  assertAuthorityActive(): void
+}>
+
+export type ProgrammaticToolInvocationContext = Readonly<{
+  capability: ProgrammaticToolCapabilityV1
+  snapshot: ToolSurfaceSnapshot
+}>
+
 export type ProgrammaticToolParentRunIdentity = Readonly<{
   sessionId: string
   runId: string
@@ -46,6 +60,7 @@ export type ProgrammaticToolParentRunIdentity = Readonly<{
 type RegisteredParent = Readonly<{
   key: string
   controller: ProgrammaticToolParentController
+  invocationAuthority?: ProgrammaticToolInvocationAuthority
 }>
 
 function operationKey(operation: AgentCliProgrammaticOperationIdentity): string {
@@ -64,6 +79,7 @@ export class ProgrammaticToolParentRegistry {
   prepare(input: {
     binding: AgentCliProgrammaticOperationBinding
     assertAuthorityActive: () => void
+    invocationAuthority?: Omit<ProgrammaticToolInvocationAuthority, 'assertAuthorityActive'>
   }): ProgrammaticToolParentRegistration {
     if (!this.options) {
       throw new ProgrammaticParentOperationError(
@@ -73,11 +89,20 @@ export class ProgrammaticToolParentRegistry {
     }
     const preparedGrant = this.options.tokenAuthority.prepareProgrammaticOperation(input)
     return this.register(
-      new ProgrammaticToolParentController(preparedGrant, this.options.executionJournal)
+      new ProgrammaticToolParentController(preparedGrant, this.options.executionJournal),
+      input.invocationAuthority
+        ? {
+            ...input.invocationAuthority,
+            assertAuthorityActive: input.assertAuthorityActive
+          }
+        : undefined
     )
   }
 
-  register(controller: ProgrammaticToolParentController): ProgrammaticToolParentRegistration {
+  register(
+    controller: ProgrammaticToolParentController,
+    invocationAuthority?: ProgrammaticToolInvocationAuthority
+  ): ProgrammaticToolParentRegistration {
     if (controller.state !== 'prepared') {
       throw new ProgrammaticParentOperationError(
         'Programmatic parent must be prepared before registration',
@@ -94,7 +119,7 @@ export class ProgrammaticToolParentRegistry {
         'identity_mismatch'
       )
     }
-    const registered = Object.freeze({ key, controller })
+    const registered = Object.freeze({ key, controller, invocationAuthority })
     this.parents.set(key, registered)
     let armedToken: ArmedAgentCliProgrammaticToken | null = null
 
@@ -158,6 +183,52 @@ export class ProgrammaticToolParentRegistry {
         return controller.commitOuterOutcome(settlement, input)
       }
     })
+  }
+
+  resolveInvocation(grant: AgentCliProgrammaticOperationGrant): ProgrammaticToolInvocationContext {
+    const registered = this.parents.get(operationKey(grant.operation))
+    const authority = registered?.invocationAuthority
+    if (!registered || !authority || registered.controller.state !== 'armed') {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic invocation authority is unavailable',
+        'invalid_state'
+      )
+    }
+    const binding = registered.controller.binding
+    if (
+      canonicalJsonStringifyData({
+        schemaVersion: grant.schemaVersion,
+        surfaceVersion: grant.surfaceVersion,
+        operation: grant.operation,
+        command: grant.command,
+        route: grant.route,
+        canonicalInvocationHash: grant.canonicalInvocationHash,
+        adapterMode: grant.adapterMode,
+        capabilityHash: grant.capabilityHash,
+        programmaticSurfaceHash: grant.programmaticSurfaceHash,
+        quotas: grant.quotas
+      }) !== canonicalJsonStringifyData(binding) ||
+      grant.outerDispatchReceipt.sessionId !== grant.operation.sessionId ||
+      grant.outerDispatchReceipt.entryId !== registered.controller.outerDispatchReceiptEntryId ||
+      authority.capability.capabilityHash !== grant.capabilityHash ||
+      authority.capability.programmaticSurfaceHash !== grant.programmaticSurfaceHash
+    ) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic invocation does not match its registered parent authority',
+        'identity_mismatch'
+      )
+    }
+    authority.assertAuthorityActive()
+    if (
+      this.parents.get(registered.key) !== registered ||
+      registered.controller.state !== 'armed'
+    ) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic invocation authority is no longer active',
+        'invalid_state'
+      )
+    }
+    return Object.freeze({ capability: authority.capability, snapshot: authority.snapshot })
   }
 
   assertRunTerminalAllowed(run: ProgrammaticToolParentRunIdentity): void {

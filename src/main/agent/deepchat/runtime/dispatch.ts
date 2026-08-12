@@ -1775,6 +1775,10 @@ function prepareProgrammaticExecParent(input: {
       programmaticSurfaceHash: input.capability.programmaticSurfaceHash,
       quotas: input.capability.quotas
     },
+    invocationAuthority: {
+      capability: input.capability,
+      snapshot: input.toolSurfaceSnapshot
+    },
     assertAuthorityActive: () =>
       assertProgrammaticToolCapabilityViewActive(input.capability, input.toolSurfaceSnapshot)
   })

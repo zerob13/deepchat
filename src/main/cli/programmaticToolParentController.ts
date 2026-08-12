@@ -217,6 +217,14 @@ export class ProgrammaticToolParentController {
     return this.preparedGrant.binding.operation
   }
 
+  get binding(): PreparedAgentCliProgrammaticGrant['binding'] {
+    return this.preparedGrant.binding
+  }
+
+  get outerDispatchReceiptEntryId(): number | null {
+    return this.outerDispatchEntryId
+  }
+
   armOuterDispatch(
     receipt: ExecutionJournalCommitReceipt & {
       operation: AgentCliProgrammaticOperationIdentity

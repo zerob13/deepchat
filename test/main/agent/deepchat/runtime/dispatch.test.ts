@@ -69,6 +69,10 @@ import type { ArmedAgentCliProgrammaticToken } from '@/cli/agentTokenAuthority'
 import { ProgrammaticCommandLaunchError } from '@/tool/agentTools/agentBashHandler'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
+const PROGRAMMATIC_EXEC_ARGUMENTS = JSON.stringify({
+  command: 'deepchat tool call',
+  stdin: JSON.stringify({ target: 'remote_search', arguments: {} })
+})
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void
@@ -1166,7 +1170,7 @@ describe('dispatch', () => {
         tool_call: {
           id: 'tc-exec',
           name: 'exec',
-          params: '{"command":"deepchat tool call","stdin":"{}"}',
+          params: PROGRAMMATIC_EXEC_ARGUMENTS,
           response: ''
         }
       })
@@ -1174,7 +1178,7 @@ describe('dispatch', () => {
         {
           id: 'tc-exec',
           name: 'exec',
-          arguments: '{"command":"deepchat tool call","stdin":"{}"}'
+          arguments: PROGRAMMATIC_EXEC_ARGUMENTS
         }
       ]
 
@@ -1246,7 +1250,7 @@ describe('dispatch', () => {
         tool_call: {
           id: 'tc-exec',
           name: 'exec',
-          params: '{"command":"deepchat tool call","stdin":"{}"}',
+          params: PROGRAMMATIC_EXEC_ARGUMENTS,
           response: ''
         }
       })
@@ -1254,7 +1258,7 @@ describe('dispatch', () => {
         {
           id: 'tc-exec',
           name: 'exec',
-          arguments: '{"command":"deepchat tool call","stdin":"{}"}'
+          arguments: PROGRAMMATIC_EXEC_ARGUMENTS
         }
       ]
 
@@ -1318,7 +1322,7 @@ describe('dispatch', () => {
         tool_call: {
           id: 'tc-exec',
           name: 'exec',
-          params: '{"command":"deepchat tool call","stdin":"{}"}',
+          params: PROGRAMMATIC_EXEC_ARGUMENTS,
           response: ''
         }
       })
@@ -1326,7 +1330,7 @@ describe('dispatch', () => {
         {
           id: 'tc-exec',
           name: 'exec',
-          arguments: '{"command":"deepchat tool call","stdin":"{}"}'
+          arguments: PROGRAMMATIC_EXEC_ARGUMENTS
         }
       ]
 
@@ -1376,7 +1380,7 @@ describe('dispatch', () => {
         tool_call: {
           id: 'tc-exec',
           name: 'exec',
-          params: '{"command":"deepchat tool call","stdin":"{}"}',
+          params: PROGRAMMATIC_EXEC_ARGUMENTS,
           response: ''
         }
       })
@@ -1384,7 +1388,7 @@ describe('dispatch', () => {
         {
           id: 'tc-exec',
           name: 'exec',
-          arguments: '{"command":"deepchat tool call","stdin":"{}"}'
+          arguments: PROGRAMMATIC_EXEC_ARGUMENTS
         }
       ]
 

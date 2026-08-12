@@ -13,6 +13,7 @@ export {
 } from './agentCommandAccess'
 export {
   ProgrammaticToolParentRegistry,
+  type ProgrammaticToolInvocationContext,
   type ProgrammaticToolParentRegistration,
   type ProgrammaticToolParentRunIdentity
 } from './programmaticToolParentRegistry'

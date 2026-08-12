@@ -9,6 +9,8 @@ import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegi
 import { LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION } from '@shared/contracts/localControl'
 import { ExecutionJournalService } from '@/tape/application/executionJournalService'
 import { createTapeTableMock } from '../session/data/tapeTestHarness'
+import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
+import type { ToolSurfaceSnapshot } from '@/agent/deepchat/runtime/toolSurface'
 
 const RUN_ID = '22222222-2222-4222-8222-222222222222'
 const RUN = { sessionId: 'session-1', runId: RUN_ID }
@@ -65,6 +67,61 @@ function setup() {
 }
 
 describe('ProgrammaticToolParentRegistry', () => {
+  it('resolves only the exact armed process-live invocation authority', () => {
+    const operationBinding = binding()
+    const { table } = createTapeTableMock()
+    const journal = new ExecutionJournalService(() => table)
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => 'v'.repeat(43),
+      createTokenId: () => 'resolved-programmatic-token'
+    })
+    const registry = new ProgrammaticToolParentRegistry({
+      tokenAuthority: authority,
+      executionJournal: journal
+    })
+    const capability = {
+      capabilityHash: operationBinding.capabilityHash,
+      programmaticSurfaceHash: operationBinding.programmaticSurfaceHash
+    } as ProgrammaticToolCapabilityV1
+    const snapshot = {} as ToolSurfaceSnapshot
+    const assertAuthorityActive = vi.fn()
+    journal.commitRunStarted({
+      sessionId: operationBinding.operation.sessionId,
+      runId: operationBinding.operation.runId,
+      messageId: operationBinding.operation.messageId,
+      runKind: 'loop'
+    })
+    const registration = registry.prepare({
+      binding: operationBinding,
+      invocationAuthority: { capability, snapshot },
+      assertAuthorityActive
+    })
+    const outerDispatch = journal.commitDispatch({
+      sessionId: operationBinding.operation.sessionId,
+      messageId: operationBinding.operation.messageId,
+      operation: {
+        runId: operationBinding.operation.runId,
+        requestSeq: operationBinding.operation.requestSeq,
+        providerToolCallId: operationBinding.operation.providerToolCallId
+      },
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool call', stdin: '{}' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' }
+    })
+    registration.armOuterDispatch({ ...outerDispatch, operation: operationBinding.operation })
+    const grant = registration.takeArmedToken().programmaticOperation
+
+    expect(registry.resolveInvocation(grant)).toEqual({ capability, snapshot })
+    expect(assertAuthorityActive).toHaveBeenCalledTimes(3)
+    expect(() => registry.resolveInvocation({ ...grant, capabilityHash: '9'.repeat(64) })).toThrow(
+      /does not match its registered parent authority/
+    )
+
+    registration.settleLaunchFailure({ responseText: 'launcher unavailable' })
+    expect(() => registry.resolveInvocation(grant)).toThrow(/authority is unavailable/)
+  })
+
   it('prepares an inert grant and exposes it exactly once after the real outer T1', () => {
     const operationBinding = binding()
     const { table } = createTapeTableMock()
