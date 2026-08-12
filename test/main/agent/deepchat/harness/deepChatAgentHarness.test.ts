@@ -4285,6 +4285,37 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
+    it('counts automatic assignments whose controller setup fails before Run creation', async () => {
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions: [],
+        complete: false,
+        unavailableSourceCount: 1
+      })
+      recreateAgentWithToolSurfaceRunMode(() => ({
+        mode: 'automatic',
+        cliProgrammaticCapability: 'unproven'
+      }))
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      expect(agent.getToolSurfaceCanaryDiagnostics('s1')?.assignments).toEqual([
+        expect.objectContaining({
+          entered: 1,
+          selected: 0,
+          setupFailed: 1,
+          aborted: 0,
+          excluded: 0,
+          inFlight: 0
+        })
+      ])
+      expect(agent.getToolSurfaceCanaryDiagnostics('s1')?.cohorts).toEqual([])
+    })
+
     it('rejects full Tool Surfaces for prompt-emulated tool models', async () => {
       providerSettings.getModelConfig.mockReturnValue({
         ...providerSettings.getModelConfig(),

@@ -10,7 +10,7 @@ import {
   type ToolSurfaceProviderPricingPolicyV1
 } from './toolSurfaceCanaryPricing'
 
-export const TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION = 2
+export const TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION = 3
 export const MAX_TOOL_SURFACE_PROVIDER_ATTEMPTS_PER_RUN = 64
 
 const DEFAULT_SAMPLE_CAPACITY = 256
@@ -125,6 +125,7 @@ export interface ToolSurfaceCanaryCohortSnapshot {
   }
   readonly metrics: {
     readonly durationMs: ToolSurfaceCanaryDistribution
+    readonly ttftMs: ToolSurfaceCanaryDistribution
     readonly providerRounds: ToolSurfaceCanaryDistribution
     readonly extraProviderRounds: ToolSurfaceCanaryDistribution
     readonly requestSequences: ToolSurfaceCanaryDistribution
@@ -141,8 +142,23 @@ export interface ToolSurfaceCanaryCohortSnapshot {
   }
 }
 
+export interface ToolSurfaceCanaryAssignmentSnapshot {
+  readonly toolProfile: DeepChatToolProfileKind
+  readonly cliProgrammaticCapability: 'proven' | 'unproven'
+  readonly entered: number
+  readonly selected: number
+  readonly setupFailed: number
+  readonly aborted: number
+  readonly excluded: number
+  readonly inFlight: number
+  readonly selectedByAdapter: Readonly<
+    Record<Exclude<LoopRunToolSurfaceMode, 'legacy'>, number>
+  >
+}
+
 export interface ToolSurfaceCanaryDiagnosticsSnapshot {
   readonly schemaVersion: typeof TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION
+  readonly assignments: readonly ToolSurfaceCanaryAssignmentSnapshot[]
   readonly cohorts: readonly ToolSurfaceCanaryCohortSnapshot[]
 }
 
@@ -420,6 +436,7 @@ class ToolSurfaceCanaryCohort {
   private pricedRuns = 0
   private readonly costUnavailableReasons = emptyCostUnavailableReasons()
   private readonly durationMs: BoundedNumberRing
+  private readonly ttftMs: BoundedNumberRing
   private readonly providerRounds: BoundedNumberRing
   private readonly extraProviderRounds: BoundedNumberRing
   private readonly requestSequences: BoundedNumberRing
@@ -442,6 +459,7 @@ class ToolSurfaceCanaryCohort {
     sampleCapacity: number
   ) {
     this.durationMs = new BoundedNumberRing(sampleCapacity)
+    this.ttftMs = new BoundedNumberRing(sampleCapacity)
     this.providerRounds = new BoundedNumberRing(sampleCapacity)
     this.extraProviderRounds = new BoundedNumberRing(sampleCapacity)
     this.requestSequences = new BoundedNumberRing(sampleCapacity)
@@ -460,6 +478,7 @@ class ToolSurfaceCanaryCohort {
   record(input: {
     readonly outcome: ToolSurfaceCanaryRunOutcome
     readonly durationMs: number
+    readonly ttftMs: number | null
     readonly providerRounds: number
     readonly catalogDefinitionTokens: number
     readonly catalogRelation: 'first' | 'unchanged' | 'changed'
@@ -471,6 +490,7 @@ class ToolSurfaceCanaryCohort {
     this.observedRuns = increment(this.observedRuns)
     this.outcomes[input.outcome] = increment(this.outcomes[input.outcome])
     this.durationMs.push(input.durationMs)
+    if (input.ttftMs !== null) this.ttftMs.push(input.ttftMs)
     this.providerRounds.push(input.providerRounds)
     this.extraProviderRounds.push(Math.max(0, input.providerRounds - 1))
     this.catalogDefinitionTokens.push(input.catalogDefinitionTokens)
@@ -540,41 +560,49 @@ class ToolSurfaceCanaryCohort {
     let runOutputTokens = 0
     let runCacheReadTokens = 0
     let runCacheWriteTokens = 0
-    let hasInputUsage = false
-    let hasOutputUsage = false
-    let hasCacheReadUsage = false
-    let hasCacheWriteUsage = false
+    let hasCompleteInputUsage = input.providerAttempts.length > 0
+    let hasCompleteOutputUsage = input.providerAttempts.length > 0
+    let hasCompleteCacheReadUsage = input.providerAttempts.length > 0
+    let hasCompleteCacheWriteUsage = input.providerAttempts.length > 0
     const requestSequences = new Set<number>()
     for (const attempt of input.providerAttempts) {
       this.observedAttempts = increment(this.observedAttempts)
       if (Number.isSafeInteger(attempt.requestSeq) && attempt.requestSeq > 0) {
         requestSequences.add(attempt.requestSeq)
       }
-      if (!attempt.usage) continue
+      if (!attempt.usage) {
+        hasCompleteInputUsage = false
+        hasCompleteOutputUsage = false
+        hasCompleteCacheReadUsage = false
+        hasCompleteCacheWriteUsage = false
+        continue
+      }
       this.attemptsWithUsage = increment(this.attemptsWithUsage)
-      hasInputUsage = true
       runInputTokens = addSafe(runInputTokens, attempt.usage.inputTokens)
       if (attempt.usage.outputTokens !== undefined) {
-        hasOutputUsage = true
         runOutputTokens = addSafe(runOutputTokens, attempt.usage.outputTokens)
+      } else {
+        hasCompleteOutputUsage = false
       }
       if (attempt.usage.cacheReadTokens !== undefined) {
         this.attemptsWithCacheReadMetric = increment(this.attemptsWithCacheReadMetric)
-        hasCacheReadUsage = true
         runCacheReadTokens = addSafe(runCacheReadTokens, attempt.usage.cacheReadTokens)
+      } else {
+        hasCompleteCacheReadUsage = false
       }
       if (attempt.usage.cacheWriteTokens !== undefined) {
         this.attemptsWithCacheWriteMetric = increment(this.attemptsWithCacheWriteMetric)
-        hasCacheWriteUsage = true
         runCacheWriteTokens = addSafe(runCacheWriteTokens, attempt.usage.cacheWriteTokens)
+      } else {
+        hasCompleteCacheWriteUsage = false
       }
     }
     this.requestSequences.push(requestSequences.size)
     this.physicalAttempts.push(input.providerAttempts.length)
-    if (hasInputUsage) this.inputTokens.push(runInputTokens)
-    if (hasOutputUsage) this.outputTokens.push(runOutputTokens)
-    if (hasCacheReadUsage) this.cacheReadTokens.push(runCacheReadTokens)
-    if (hasCacheWriteUsage) this.cacheWriteTokens.push(runCacheWriteTokens)
+    if (hasCompleteInputUsage) this.inputTokens.push(runInputTokens)
+    if (hasCompleteOutputUsage) this.outputTokens.push(runOutputTokens)
+    if (hasCompleteCacheReadUsage) this.cacheReadTokens.push(runCacheReadTokens)
+    if (hasCompleteCacheWriteUsage) this.cacheWriteTokens.push(runCacheWriteTokens)
   }
 
   snapshot(): ToolSurfaceCanaryCohortSnapshot {
@@ -614,6 +642,7 @@ class ToolSurfaceCanaryCohort {
       },
       metrics: {
         durationMs: distribution(this.durationMs.snapshot()),
+        ttftMs: distribution(this.ttftMs.snapshot()),
         providerRounds: distribution(this.providerRounds.snapshot()),
         extraProviderRounds: distribution(this.extraProviderRounds.snapshot()),
         requestSequences: distribution(this.requestSequences.snapshot()),
@@ -637,9 +666,22 @@ type CohortEntry = {
   readonly cohort: ToolSurfaceCanaryCohort
 }
 
+type AssignmentEntry = {
+  readonly providerModelKey: string
+  readonly toolProfile: DeepChatToolProfileKind
+  readonly cliProgrammaticCapability: 'proven' | 'unproven'
+  entered: number
+  selected: number
+  setupFailed: number
+  aborted: number
+  excluded: number
+  readonly selectedByAdapter: Record<Exclude<LoopRunToolSurfaceMode, 'legacy'>, number>
+}
+
 /** Bounded process-live canary metrics. This registry never reads Tape or participates in routing. */
 export class ToolSurfaceCanaryDiagnosticsRegistry {
   private readonly cohorts = new Map<string, CohortEntry>()
+  private readonly assignments = new Map<string, AssignmentEntry>()
   private readonly priorCatalogs = new Map<string, string>()
   private readonly sampleCapacity: number
   private readonly cohortCapacity: number
@@ -672,6 +714,68 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
     )
   }
 
+  recordAutomaticAssignment(input: {
+    readonly scope: ToolSurfaceCanaryDiagnosticsScope
+    readonly cliProgrammaticCapability: 'proven' | 'unproven'
+    readonly phase: 'entered' | 'selected' | 'setup-failed' | 'aborted' | 'excluded'
+    readonly adapterMode?: Exclude<LoopRunToolSurfaceMode, 'legacy'>
+  }): void {
+    try {
+      if (
+        !this.validScope(input.scope) ||
+        (input.cliProgrammaticCapability !== 'proven' &&
+          input.cliProgrammaticCapability !== 'unproven') ||
+        !['entered', 'selected', 'setup-failed', 'aborted', 'excluded'].includes(input.phase) ||
+        (input.phase !== 'selected' && input.adapterMode !== undefined) ||
+        (input.phase === 'selected' &&
+          !(ACTUAL_ADAPTER_MODES as readonly string[]).includes(input.adapterMode ?? ''))
+      ) {
+        return
+      }
+      const providerModelKey = hashJsonData({
+        domain: 'tool-surface-canary-provider-model-v1',
+        providerId: input.scope.providerId,
+        modelId: input.scope.modelId
+      })
+      const assignmentKey = hashJsonData({
+        domain: 'tool-surface-canary-assignment-v1',
+        providerModelKey,
+        toolProfile: input.scope.toolProfile,
+        cliProgrammaticCapability: input.cliProgrammaticCapability
+      })
+      let entry = this.assignments.get(assignmentKey)
+      if (!entry) {
+        entry = {
+          providerModelKey,
+          toolProfile: input.scope.toolProfile,
+          cliProgrammaticCapability: input.cliProgrammaticCapability,
+          entered: 0,
+          selected: 0,
+          setupFailed: 0,
+          aborted: 0,
+          excluded: 0,
+          selectedByAdapter: { full: 0, 'native-activation': 0, 'cli-programmatic': 0 }
+        }
+      }
+      if (input.phase === 'entered') {
+        entry.entered = increment(entry.entered)
+      } else if (input.phase === 'selected') {
+        entry.selected = increment(entry.selected)
+        const adapterMode = input.adapterMode!
+        entry.selectedByAdapter[adapterMode] = increment(entry.selectedByAdapter[adapterMode])
+      } else if (input.phase === 'setup-failed') {
+        entry.setupFailed = increment(entry.setupFailed)
+      } else if (input.phase === 'aborted') {
+        entry.aborted = increment(entry.aborted)
+      } else {
+        entry.excluded = increment(entry.excluded)
+      }
+      this.assignments.delete(assignmentKey)
+      this.assignments.set(assignmentKey, entry)
+      this.trimMap(this.assignments, this.cohortCapacity)
+    } catch {}
+  }
+
   recordRun(input: {
     readonly scope: ToolSurfaceCanaryDiagnosticsScope
     readonly adapterMode: Exclude<LoopRunToolSurfaceMode, 'legacy'>
@@ -681,6 +785,7 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
     readonly catalogDefinitionTokens: number
     readonly outcome: ToolSurfaceCanaryRunOutcome
     readonly durationMs: number
+    readonly ttftMs: number | null
     readonly providerRounds: number
     readonly providerAttempts: readonly ToolSurfaceProviderAttemptDiagnostic[]
     readonly providerAttemptsTruncated: boolean
@@ -697,6 +802,8 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
         input.catalogDefinitionTokens < 0 ||
         !Number.isSafeInteger(input.durationMs) ||
         input.durationMs < 0 ||
+        (input.ttftMs !== null &&
+          (!Number.isSafeInteger(input.ttftMs) || input.ttftMs < 0)) ||
         !Number.isSafeInteger(input.providerRounds) ||
         input.providerRounds < 0 ||
         !(ACTUAL_ADAPTER_MODES as readonly string[]).includes(input.adapterMode) ||
@@ -765,6 +872,7 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
       entry.cohort.record({
         outcome: input.outcome,
         durationMs: input.durationMs,
+        ttftMs: input.ttftMs,
         providerRounds: input.providerRounds,
         catalogDefinitionTokens: input.catalogDefinitionTokens,
         catalogRelation,
@@ -791,6 +899,27 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
       providerId: input.providerId,
       modelId: input.modelId
     })
+    const assignments = [...this.assignments.values()]
+      .filter((entry) => entry.providerModelKey === providerModelKey)
+      .map((entry) => ({
+        toolProfile: entry.toolProfile,
+        cliProgrammaticCapability: entry.cliProgrammaticCapability,
+        entered: entry.entered,
+        selected: entry.selected,
+        setupFailed: entry.setupFailed,
+        aborted: entry.aborted,
+        excluded: entry.excluded,
+        inFlight: Math.max(
+          0,
+          entry.entered - entry.selected - entry.setupFailed - entry.aborted - entry.excluded
+        ),
+        selectedByAdapter: { ...entry.selectedByAdapter }
+      }))
+      .sort((left, right) =>
+        `${left.toolProfile}\0${left.cliProgrammaticCapability}`.localeCompare(
+          `${right.toolProfile}\0${right.cliProgrammaticCapability}`
+        )
+      )
     const cohorts = [...this.cohorts.values()]
       .filter((entry) => entry.providerModelKey === providerModelKey)
       .map((entry) => entry.cohort.snapshot())
@@ -799,9 +928,9 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
           `${right.adapterMode}\0${right.policyVersion}\0${right.pricingVersion}\0${right.catalogBand}\0${right.toolProfile}`
         )
       )
-    return cohorts.length === 0
+    return assignments.length === 0 && cohorts.length === 0
       ? null
-      : { schemaVersion: TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION, cohorts }
+      : { schemaVersion: TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION, assignments, cohorts }
   }
 
   private validScope(scope: ToolSurfaceCanaryDiagnosticsScope): boolean {

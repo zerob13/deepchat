@@ -144,32 +144,23 @@ export class ToolSurfaceProviderPricingCatalogV1 {
       const outputTokens = safeTokenCount(attempt.usage?.outputTokens)
       if (inputTokens === null || outputTokens === null) return { status: 'incomplete-usage' }
 
-      const requiresCacheRead =
-        pricing.inputIncludesCacheReadTokens || pricing.nanoUsdPerMillionTokens.cacheRead > 0
-      const requiresCacheWrite =
-        pricing.inputIncludesCacheWriteTokens || pricing.nanoUsdPerMillionTokens.cacheWrite > 0
       const cacheReadTokens = safeTokenCount(attempt.usage?.cacheReadTokens)
       const cacheWriteTokens = safeTokenCount(attempt.usage?.cacheWriteTokens)
-      if (
-        (requiresCacheRead && cacheReadTokens === null) ||
-        (requiresCacheWrite && cacheWriteTokens === null)
-      ) {
+      if (cacheReadTokens === null || cacheWriteTokens === null) {
         return { status: 'missing-cache-metrics' }
       }
 
-      const billedCacheReadTokens = cacheReadTokens ?? 0n
-      const billedCacheWriteTokens = cacheWriteTokens ?? 0n
       const uncachedInputTokens =
         inputTokens -
-        (pricing.inputIncludesCacheReadTokens ? billedCacheReadTokens : 0n) -
-        (pricing.inputIncludesCacheWriteTokens ? billedCacheWriteTokens : 0n)
+        (pricing.inputIncludesCacheReadTokens ? cacheReadTokens : 0n) -
+        (pricing.inputIncludesCacheWriteTokens ? cacheWriteTokens : 0n)
       if (uncachedInputTokens < 0n) return { status: 'invalid-accounting' }
 
       weightedNanoUsd +=
         uncachedInputTokens * BigInt(pricing.nanoUsdPerMillionTokens.uncachedInput) +
         outputTokens * BigInt(pricing.nanoUsdPerMillionTokens.output) +
-        billedCacheReadTokens * BigInt(pricing.nanoUsdPerMillionTokens.cacheRead) +
-        billedCacheWriteTokens * BigInt(pricing.nanoUsdPerMillionTokens.cacheWrite)
+        cacheReadTokens * BigInt(pricing.nanoUsdPerMillionTokens.cacheRead) +
+        cacheWriteTokens * BigInt(pricing.nanoUsdPerMillionTokens.cacheWrite)
     }
 
     const roundedNanoUsd = (weightedNanoUsd + MILLION_TOKENS / 2n) / MILLION_TOKENS

@@ -122,22 +122,24 @@
 - [x] Add bounded `view/programmatic_tool_surface` with strict canonical conflict checking.
 - [x] Bind strict V5 facts before provider admission; retain honest V4 fail-open provenance.
 - [x] Keep normal dispatch free of Tape reads.
-- [x] Aggregate bounded process-live actual-adapter cohorts for schema churn, provider attempt/cache
-      inputs, rounds, latency, outcomes, and metric availability without reading Tape.
+- [x] Aggregate bounded process-live automatic-assignment and actual-adapter cohorts for setup
+      failures, schema churn, complete provider attempt/cache inputs, rounds, TTFT/end-to-end
+      latency, outcomes, and metric availability without reading Tape.
 - [x] Preserve outer exec only in provider Context and project real nested target truth through
       Journal/UI.
 - [x] Add versioned provider pricing plus discovery, repeated-discovery, and quality evidence before
       evaluating billed cost and success gates.
-- [ ] Evaluate adapter routing without claiming whole-prefix stability or Native Activation
-      completion percentages.
-- [ ] Perform a severity review before commit; do not push.
+- [x] Evaluate adapter routing as retain-default-off while reviewed production pricing and real
+      canary/holdout evidence are unavailable; make no whole-prefix stability or Native Activation
+      completion-percentage claim.
+- [x] Perform a severity review before commit; do not push.
 
 ## Final Validation
 
-- [ ] Run `pnpm run format`, `pnpm run i18n`, and `pnpm run lint`.
-- [ ] Run `pnpm run typecheck` and focused ToolService, Agent, CLI, Tape, Journal, provider-cache,
+- [x] Run `pnpm run format`, `pnpm run i18n`, and `pnpm run lint`.
+- [x] Run `pnpm run typecheck` and focused ToolService, Agent, CLI, Tape, Journal, provider-cache,
       retry, and supported crash suites when implementation lands.
-- [ ] Run the broadest relevant main-process suite and record reproduced baseline failures.
-- [ ] Review the complete diff by severity and fix all findings.
-- [ ] Confirm `index.js` and all unrelated worktree changes remain unmodified and uncommitted.
-- [ ] Confirm no push occurred.
+- [x] Run the broadest relevant main-process suite and record reproduced baseline failures.
+- [x] Review the complete diff by severity and fix all findings.
+- [x] Confirm `index.js` and all unrelated worktree changes remain unmodified and uncommitted.
+- [x] Confirm no push occurred.

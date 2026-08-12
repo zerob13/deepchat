@@ -54,6 +54,7 @@ describe('Tool Surface canary diagnostics', () => {
         catalogDefinitionTokens: 12_000,
         outcome,
         durationMs: outcome === 'completed' ? 100 : 200,
+        ttftMs: outcome === 'completed' ? 25 : null,
         providerRounds: outcome === 'completed' ? 1 : 3,
         providerAttemptsTruncated: false,
         evidence: evidence.snapshot(),
@@ -87,7 +88,8 @@ describe('Tool Surface canary diagnostics', () => {
     record('catalog-b', 'error')
 
     expect(registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
+      assignments: [],
       cohorts: [
         expect.objectContaining({
           adapterMode: 'cli-programmatic',
@@ -136,6 +138,7 @@ describe('Tool Surface canary diagnostics', () => {
           },
           metrics: expect.objectContaining({
             durationMs: { samples: 3, p50: 100, p95: 200, max: 200 },
+            ttftMs: { samples: 2, p50: 25, p95: 25, max: 25 },
             providerRounds: { samples: 3, p50: 1, p95: 3, max: 3 },
             extraProviderRounds: { samples: 3, p50: 0, p95: 2, max: 2 },
             requestSequences: { samples: 3, p50: 2, p95: 2, max: 2 },
@@ -176,6 +179,7 @@ describe('Tool Surface canary diagnostics', () => {
       catalogDefinitionTokens: 2_000,
       outcome: 'completed',
       durationMs: 10,
+      ttftMs: null,
       providerRounds: 1,
       providerAttemptsTruncated: false,
       evidence: emptyEvidence(),
@@ -192,6 +196,7 @@ describe('Tool Surface canary diagnostics', () => {
       catalogDefinitionTokens: 5_000,
       outcome: 'completed',
       durationMs: 20,
+      ttftMs: 5,
       providerRounds: 1,
       providerAttemptsTruncated: false,
       evidence: emptyEvidence(),
@@ -216,6 +221,97 @@ describe('Tool Surface canary diagnostics', () => {
     })
   })
 
+  it('counts every automatic assignment before setup can select an adapter', () => {
+    const registry = new ToolSurfaceCanaryDiagnosticsRegistry()
+
+    registry.recordAutomaticAssignment({
+      scope,
+      cliProgrammaticCapability: 'proven',
+      phase: 'entered'
+    })
+    registry.recordAutomaticAssignment({
+      scope,
+      cliProgrammaticCapability: 'proven',
+      phase: 'setup-failed'
+    })
+    registry.recordAutomaticAssignment({
+      scope,
+      cliProgrammaticCapability: 'proven',
+      phase: 'entered'
+    })
+    registry.recordAutomaticAssignment({
+      scope,
+      cliProgrammaticCapability: 'proven',
+      phase: 'selected',
+      adapterMode: 'cli-programmatic'
+    })
+
+    expect(
+      registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })
+    ).toMatchObject({
+      schemaVersion: 3,
+      assignments: [
+        {
+          toolProfile: 'code',
+          cliProgrammaticCapability: 'proven',
+          entered: 2,
+          selected: 1,
+          setupFailed: 1,
+          aborted: 0,
+          excluded: 0,
+          inFlight: 0,
+          selectedByAdapter: {
+            full: 0,
+            'native-activation': 0,
+            'cli-programmatic': 1
+          }
+        }
+      ],
+      cohorts: []
+    })
+  })
+
+  it('does not aggregate partial provider usage as a complete Run token sample', () => {
+    const registry = new ToolSurfaceCanaryDiagnosticsRegistry()
+    registry.recordRun({
+      scope,
+      adapterMode: 'full',
+      policyVersion: 'full-v1',
+      catalogHash: 'catalog-a',
+      catalogToolCount: 4,
+      catalogDefinitionTokens: 100,
+      outcome: 'error',
+      durationMs: 10,
+      ttftMs: null,
+      providerRounds: 1,
+      providerAttemptsTruncated: false,
+      evidence: emptyEvidence(),
+      providerAttempts: [
+        {
+          requestSeq: 1,
+          physicalAttempt: 1,
+          usage: {
+            inputTokens: 10,
+            outputTokens: 2,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0
+          }
+        },
+        { requestSeq: 1, physicalAttempt: 2, usage: null }
+      ]
+    })
+
+    expect(
+      registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })?.cohorts[0].metrics
+    ).toMatchObject({
+      inputTokens: { samples: 0 },
+      outputTokens: { samples: 0 },
+      cacheReadTokens: { samples: 0 },
+      cacheWriteTokens: { samples: 0 },
+      billedCostNanoUsd: { samples: 0 }
+    })
+  })
+
   it('drops malformed or oversized diagnostic input without affecting routing state', () => {
     const registry = new ToolSurfaceCanaryDiagnosticsRegistry()
     registry.recordRun({
@@ -227,6 +323,7 @@ describe('Tool Surface canary diagnostics', () => {
       catalogDefinitionTokens: 1,
       outcome: 'completed',
       durationMs: 1,
+      ttftMs: null,
       providerRounds: 1,
       providerAttemptsTruncated: false,
       evidence: emptyEvidence(),
@@ -244,6 +341,7 @@ describe('Tool Surface canary diagnostics', () => {
       catalogDefinitionTokens: 1,
       outcome: 'completed',
       durationMs: 1,
+      ttftMs: null,
       providerRounds: 1,
       providerAttemptsTruncated: false,
       evidence: emptyEvidence(),
@@ -269,6 +367,7 @@ describe('Tool Surface canary diagnostics', () => {
       catalogDefinitionTokens: 1,
       outcome: 'completed' as const,
       durationMs: 1,
+      ttftMs: null,
       providerRounds: 1,
       providerAttemptsTruncated: true,
       evidence: emptyEvidence()
@@ -322,11 +421,16 @@ describe('Tool Surface canary diagnostics', () => {
       catalogDefinitionTokens: 100,
       outcome: 'completed',
       durationMs: 10,
+      ttftMs: null,
       providerRounds: 1,
       providerAttemptsTruncated: false,
       evidence: emptyEvidence(),
       providerAttempts: [
-        { requestSeq: 1, physicalAttempt: 1, usage: { inputTokens: 10, outputTokens: 2 } }
+        {
+          requestSeq: 1,
+          physicalAttempt: 1,
+          usage: { inputTokens: 10, outputTokens: 2, cacheReadTokens: 0 }
+        }
       ]
     })
 
@@ -350,6 +454,7 @@ describe('Tool Surface canary diagnostics', () => {
       catalogDefinitionTokens: 100,
       outcome: 'completed',
       durationMs: 10,
+      ttftMs: null,
       providerRounds: 1,
       providerAttemptsTruncated: false,
       evidence: emptyEvidence(),
@@ -387,13 +492,19 @@ describe('Tool Surface canary diagnostics', () => {
       inputTokens: number
       outputTokens?: number
       cacheReadTokens?: number
+      cacheWriteTokens?: number
     }) => [{ requestSeq: 1, physicalAttempt: 1, usage }]
 
     expect(
       pricing.calculate({
         providerId: 'provider-1',
         modelId: 'model-1',
-        attempts: attempt({ inputTokens: 5, outputTokens: 0, cacheReadTokens: 6 }),
+        attempts: attempt({
+          inputTokens: 5,
+          outputTokens: 0,
+          cacheReadTokens: 6,
+          cacheWriteTokens: 0
+        }),
         attemptsTruncated: false
       })
     ).toEqual({ status: 'invalid-accounting' })
@@ -409,7 +520,12 @@ describe('Tool Surface canary diagnostics', () => {
       pricing.calculate({
         providerId: 'provider-1',
         modelId: 'model-1',
-        attempts: attempt({ inputTokens: 5, outputTokens: 0, cacheReadTokens: 0 }),
+        attempts: attempt({
+          inputTokens: 5,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0
+        }),
         attemptsTruncated: true
       })
     ).toEqual({ status: 'truncated' })
@@ -420,7 +536,8 @@ describe('Tool Surface canary diagnostics', () => {
         attempts: attempt({
           inputTokens: Number.MAX_SAFE_INTEGER,
           outputTokens: 0,
-          cacheReadTokens: 0
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0
         }),
         attemptsTruncated: false
       })

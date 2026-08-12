@@ -394,7 +394,10 @@ export interface DeepChatLoopRunnerPorts {
     'prepare' | 'commitRunTerminal'
   >
   toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistryPort
-  toolSurfaceCanaryDiagnostics: Pick<ToolSurfaceCanaryDiagnosticsRegistry, 'recordRun'>
+  toolSurfaceCanaryDiagnostics: Pick<
+    ToolSurfaceCanaryDiagnosticsRegistry,
+    'recordAutomaticAssignment' | 'recordRun'
+  >
   memoryIngestionObserver: MemoryIngestionObserver
   toolExecutionPort: ToolExecutionPort
   toolResultPort: ToolResultPort
@@ -702,6 +705,28 @@ export class DeepChatLoopRunner {
     )
       ? toolSurfaceAssignment
       : null
+    const toolSurfaceCanaryScope = Object.freeze({
+      sessionId,
+      providerId: state.providerId,
+      modelId: state.modelId,
+      toolProfile
+    })
+    if (automaticToolSurfaceAssignment) {
+      this.ports.toolSurfaceCanaryDiagnostics.recordAutomaticAssignment({
+        scope: toolSurfaceCanaryScope,
+        cliProgrammaticCapability:
+          automaticToolSurfaceAssignment.cliProgrammaticCapability,
+        phase: 'entered'
+      })
+      if (!nativeToolSurfaceEligible) {
+        this.ports.toolSurfaceCanaryDiagnostics.recordAutomaticAssignment({
+          scope: toolSurfaceCanaryScope,
+          cliProgrammaticCapability:
+            automaticToolSurfaceAssignment.cliProgrammaticCapability,
+          phase: 'excluded'
+        })
+      }
+    }
     const fixedToolSurfaceMode =
       typeof toolSurfaceAssignment === 'string' ? toolSurfaceAssignment : null
     const automaticToolSurfaceHistoryScope = automaticToolSurfaceAssignment
@@ -749,7 +774,8 @@ export class DeepChatLoopRunner {
     let toolSurfaceController: ToolSurfaceRunController | null = null
     let programmaticProviderActiveDefinitions: readonly MCPToolDefinition[] | null = null
     let frozenSkillRequirementByName: ReadonlyMap<string, RunSkillToolRequirements> | null = null
-    if (toolSurfaceMode !== 'legacy') {
+    try {
+      if (toolSurfaceMode !== 'legacy') {
       const universe = await awaitWithAbort(
         this.ports.toolResolver.resolveRunToolDefinitionUniverse(
           sessionId,
@@ -937,6 +963,26 @@ export class DeepChatLoopRunner {
             .map((entry) => entry.definition)
         )
       }
+      }
+    } catch (error) {
+      if (automaticToolSurfaceAssignment) {
+        this.ports.toolSurfaceCanaryDiagnostics.recordAutomaticAssignment({
+          scope: toolSurfaceCanaryScope,
+          cliProgrammaticCapability:
+            automaticToolSurfaceAssignment.cliProgrammaticCapability,
+          phase: abortSignal.aborted ? 'aborted' : 'setup-failed'
+        })
+      }
+      throw error
+    }
+    if (automaticToolSurfaceAssignment && toolSurfaceMode !== 'legacy') {
+      this.ports.toolSurfaceCanaryDiagnostics.recordAutomaticAssignment({
+        scope: toolSurfaceCanaryScope,
+        cliProgrammaticCapability:
+          automaticToolSurfaceAssignment.cliProgrammaticCapability,
+        phase: 'selected',
+        adapterMode: toolSurfaceMode
+      })
     }
     const collectToolSurfaceShadow = observeToolSurfaceShadow && toolSurfaceMode === 'legacy'
     const toolSurfaceCanaryIdentity = toolSurfaceController
@@ -1026,6 +1072,7 @@ export class DeepChatLoopRunner {
 
     const toolSurfaceProviderAttempts: ToolSurfaceProviderAttemptDiagnostic[] = []
     let toolSurfaceProviderAttemptsTruncated = false
+    let toolSurfaceFirstProviderEventAt: number | null = null
 
     let terminalCommitAttempted = false
     let committedTerminal: ProcessTerminalSelection | null = null
@@ -1131,7 +1178,7 @@ export class DeepChatLoopRunner {
           // ACP and non-chat media routes are not safe to replay before their first visible event.
           const allowTransientRetry = !requestBypassesContextBudget && !isTtsRequest
           let queuedForRateLimit = false
-          yield* ports.contextCoordinator.streamProviderAttempts({
+          for await (const event of ports.contextCoordinator.streamProviderAttempts({
             run: loopRun,
             requestMessages,
             modelId: requestModelId,
@@ -1503,7 +1550,10 @@ export class DeepChatLoopRunner {
             isContextOverflowEvent: isFirstProviderContextOverflowEvent,
             isContextOverflowError: isContextWindowErrorLike,
             createAbortError
-          })
+          })) {
+            toolSurfaceFirstProviderEventAt ??= Date.now()
+            yield event
+          }
         },
         providerId: state.providerId,
         modelId: state.modelId,
@@ -1729,16 +1779,15 @@ export class DeepChatLoopRunner {
       if (toolSurfaceCanaryIdentity && toolSurfaceMode !== 'legacy') {
         try {
           this.ports.toolSurfaceCanaryDiagnostics.recordRun({
-            scope: {
-              sessionId,
-              providerId: state.providerId,
-              modelId: state.modelId,
-              toolProfile
-            },
+            scope: toolSurfaceCanaryScope,
             adapterMode: toolSurfaceMode,
             ...toolSurfaceCanaryIdentity,
             outcome: readCommittedTerminal()?.outcome ?? 'unsettled',
             durationMs: Math.max(0, Date.now() - toolSurfaceCanaryStartedAt),
+            ttftMs:
+              toolSurfaceFirstProviderEventAt === null
+                ? null
+                : Math.max(0, toolSurfaceFirstProviderEventAt - loopRun.streamState.startTime),
             providerRounds: loopRun.logicalRound,
             providerAttempts: toolSurfaceProviderAttempts,
             providerAttemptsTruncated: toolSurfaceProviderAttemptsTruncated,
