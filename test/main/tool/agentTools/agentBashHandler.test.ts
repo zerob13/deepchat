@@ -181,7 +181,6 @@ describe('AgentBashHandler', () => {
       timedOut: false,
       offloaded: false
     })
-
     await handler.executeCommand(
       {
         command: 'deepchat model invoke --prompt hello',
@@ -254,6 +253,97 @@ describe('AgentBashHandler', () => {
       rtkApplied: false,
       rtkFallbackReason: 'RTK rewrite bypassed for non-POSIX command shell'
     })
+  })
+
+  it('bypasses RTK rewrites when exact owned stdin must not be replayed', async () => {
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService()
+    )
+    const prepareCommand = vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: 'deepchat tool call',
+      command: 'deepchat tool call',
+      env: {},
+      rewritten: false,
+      rtkApplied: false,
+      rtkMode: 'bypass',
+      rtkFallbackReason: 'RTK rewrite bypassed for exact command execution'
+    })
+    const runShellProcess = vi
+      .spyOn(handler as never, 'runShellProcess' as never)
+      .mockResolvedValue({
+        kind: 'completed',
+        output: 'owned input',
+        exitCode: 0,
+        timedOut: false,
+        offloaded: false
+      })
+    const beforeExecute = vi.fn()
+
+    await handler.executeCommand(
+      { command: 'deepchat tool call', description: 'Call programmatic tool' },
+      {
+        commandShell: POSIX_COMMAND_SHELL,
+        conversationId: 'conv-1',
+        stdin: 'owned input',
+        beforeExecute
+      }
+    )
+
+    expect(prepareCommand).toHaveBeenCalledWith(
+      'deepchat tool call',
+      undefined,
+      POSIX_COMMAND_SHELL,
+      true
+    )
+    expect(beforeExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ stdin: 'owned input', background: false })
+    )
+    expect(runShellProcess).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    {
+      name: 'ordinary shell commands',
+      args: { command: 'python -', description: 'Run standard input' },
+      options: { conversationId: 'conv-1', stdin: 'print("unsafe")' }
+    },
+    {
+      name: 'background execution',
+      args: {
+        command: 'deepchat tool call',
+        description: 'Call programmatic tool',
+        background: true
+      },
+      options: { conversationId: 'conv-1', stdin: '{}' }
+    },
+    {
+      name: 'yielded execution',
+      args: {
+        command: 'deepchat tool batch',
+        description: 'Batch programmatic tools',
+        yieldMs: 100
+      },
+      options: { conversationId: 'conv-1', stdin: '{}' }
+    },
+    {
+      name: 'detached execution',
+      args: { command: 'deepchat tool call', description: 'Call programmatic tool' },
+      options: { stdin: '{}' }
+    }
+  ])('rejects owned stdin for $name before shell execution', async ({ args, options }) => {
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService()
+    )
+    const prepareCommand = vi.spyOn(handler as never, 'prepareCommand' as never)
+
+    await expect(
+      handler.executeCommand(args, { commandShell: POSIX_COMMAND_SHELL, ...options })
+    ).rejects.toThrow(/Owned stdin is limited/)
+    expect(prepareCommand).not.toHaveBeenCalled()
   })
 
   it('does not issue a scoped environment while command approval is pending', async () => {
@@ -580,6 +670,92 @@ describe('AgentBashHandler', () => {
     expect(waitSpy).toHaveBeenCalledWith('conv-1', 'bg_yield', 250, 12_000)
     expect(removeSpy).not.toHaveBeenCalled()
     expect(result.output).toEqual({ status: 'running', sessionId: 'bg_yield' })
+  })
+
+  it('keeps owned stdin execution attached until the Programmatic command settles', async () => {
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService()
+    )
+    vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: 'deepchat tool call',
+      command: 'deepchat tool call',
+      env: { PATH: '/bin' },
+      rewritten: false,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    })
+    vi.spyOn(backgroundExecSessionManager, 'start').mockResolvedValue({
+      sessionId: 'bg_programmatic',
+      status: 'running'
+    })
+    const writeSpy = vi.spyOn(backgroundExecSessionManager, 'write').mockResolvedValue()
+    const waitSpy = vi.spyOn(backgroundExecSessionManager, 'waitForCompletionOrYield')
+    const completionSpy = vi
+      .spyOn(backgroundExecSessionManager, 'getCompletionResult')
+      .mockResolvedValue({
+        status: 'done',
+        output: 'called',
+        exitCode: 0,
+        offloaded: true,
+        outputFilePath: '/tmp/programmatic-output.log',
+        timedOut: false
+      })
+    const removeSpy = vi.spyOn(backgroundExecSessionManager, 'remove').mockResolvedValue()
+
+    const result = await handler.executeCommand(
+      { command: 'deepchat tool call', description: 'Call programmatic tool' },
+      {
+        commandShell: POSIX_COMMAND_SHELL,
+        conversationId: 'conv-1',
+        stdin: '{"target":"remote"}'
+      }
+    )
+
+    expect(writeSpy).toHaveBeenCalledWith('conv-1', 'bg_programmatic', '{"target":"remote"}', true)
+    expect(waitSpy).not.toHaveBeenCalled()
+    expect(completionSpy).toHaveBeenCalledWith('conv-1', 'bg_programmatic', 12_000)
+    expect(removeSpy).toHaveBeenCalledWith('conv-1', 'bg_programmatic')
+    expect(result.output).toContain('called')
+    expect(result.outputOffloadPath).toBeUndefined()
+  })
+
+  it('cleans up a spawned Programmatic command when owned stdin delivery fails', async () => {
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService()
+    )
+    vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: 'deepchat tool call',
+      command: 'deepchat tool call',
+      env: { PATH: '/bin' },
+      rewritten: false,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    })
+    vi.spyOn(backgroundExecSessionManager, 'start').mockResolvedValue({
+      sessionId: 'bg_failed_stdin',
+      status: 'running'
+    })
+    vi.spyOn(backgroundExecSessionManager, 'write').mockRejectedValue(new Error('stdin failed'))
+    const removeSpy = vi.spyOn(backgroundExecSessionManager, 'remove').mockResolvedValue()
+    const completionSpy = vi.spyOn(backgroundExecSessionManager, 'getCompletionResult')
+
+    await expect(
+      handler.executeCommand(
+        { command: 'deepchat tool call', description: 'Call programmatic tool' },
+        {
+          commandShell: POSIX_COMMAND_SHELL,
+          conversationId: 'conv-1',
+          stdin: '{}'
+        }
+      )
+    ).rejects.toThrow('stdin failed')
+
+    expect(removeSpy).toHaveBeenCalledWith('conv-1', 'bg_failed_stdin')
+    expect(completionSpy).not.toHaveBeenCalled()
   })
 
   it('cleans up completed foreground sessions that finish inside the yield window', async () => {

@@ -34,6 +34,7 @@ const COMMAND_DEFAULT_TIMEOUT_MS = 120000
 const COMMAND_KILL_GRACE_MS = 5000
 const COMMAND_OFFLOAD_THRESHOLD = 10000
 const COMMAND_PREVIEW_CHARS = 12000
+const PROGRAMMATIC_TOOL_STDIN_COMMANDS = new Set(['deepchat tool call', 'deepchat tool batch'])
 
 const ExecuteCommandArgsSchema = z.object({
   command: z.string().min(1),
@@ -50,6 +51,7 @@ export interface ExecuteCommandOptions {
   conversationId?: string
   env?: Record<string, string>
   stdin?: string
+  maxTimeoutMs?: number
   outputPrefix?: string
   outputPreviewChars?: number
   allowExternalCwd?: boolean
@@ -138,15 +140,31 @@ export class AgentBashHandler {
     }
 
     const { command, timeout, background, cwd: requestedCwd, yieldMs } = parsed.data
+    if (options.stdin !== undefined) {
+      if (
+        !options.conversationId ||
+        background ||
+        yieldMs !== undefined ||
+        !PROGRAMMATIC_TOOL_STDIN_COMMANDS.has(command)
+      ) {
+        throw new Error(
+          'Owned stdin is limited to foreground DeepChat Programmatic Tool call and batch commands.'
+        )
+      }
+    }
     const cwd = this.resolveWorkingDirectory(
       requestedCwd,
       options.commandShell,
       options.allowExternalCwd
     )
+    const resolvedTimeout = Math.min(
+      timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
+      options.maxTimeoutMs ?? Number.MAX_SAFE_INTEGER
+    )
 
     // Handle background execution
     if (background) {
-      return this.executeCommandBackground(command, timeout, cwd, options)
+      return this.executeCommandBackground(command, resolvedTimeout, cwd, options)
     }
 
     const permissionCheck = this.commandPermissionHandler.checkPermission(
@@ -182,14 +200,15 @@ export class AgentBashHandler {
       command,
       resolvedEnvironment.env,
       options.commandShell,
-      resolvedEnvironment.preserveCommand
+      resolvedEnvironment.preserveCommand || options.stdin !== undefined
     )
 
     options.beforeExecute?.({
       command: prepared.command,
       cwd: spawnCwd,
-      timeoutMs: timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
+      timeoutMs: resolvedTimeout,
       background: false,
+      ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
       ...(prepared.rewritten
         ? {
             fallbackCommand: prepared.originalCommand,
@@ -198,16 +217,11 @@ export class AgentBashHandler {
         : {}),
       ...(yieldMs === undefined ? {} : { yieldMs })
     })
-    result = await this.runShellProcess(
-      prepared.command,
-      spawnCwd,
-      timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
-      {
-        ...options,
-        env: prepared.env,
-        yieldMs
-      }
-    )
+    result = await this.runShellProcess(prepared.command, spawnCwd, resolvedTimeout, {
+      ...options,
+      env: prepared.env,
+      yieldMs
+    })
 
     if (result.kind === 'running') {
       return {
@@ -236,16 +250,11 @@ export class AgentBashHandler {
         }
       )
 
-      result = await this.runShellProcess(
-        prepared.originalCommand,
-        spawnCwd,
-        timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
-        {
-          ...options,
-          env: prepared.env,
-          yieldMs
-        }
-      )
+      result = await this.runShellProcess(prepared.originalCommand, spawnCwd, resolvedTimeout, {
+        ...options,
+        env: prepared.env,
+        yieldMs
+      })
 
       prepared.rtkApplied = false
       prepared.rtkMode = 'bypass'
@@ -356,25 +365,51 @@ export class AgentBashHandler {
       )
     })
 
-    await backgroundExecSessionManager.write(
-      conversationId,
-      session.sessionId,
-      options.stdin ?? '',
-      true
-    )
+    try {
+      await backgroundExecSessionManager.write(
+        conversationId,
+        session.sessionId,
+        options.stdin ?? '',
+        true
+      )
+    } catch (error) {
+      await backgroundExecSessionManager
+        .remove(conversationId, session.sessionId)
+        .catch((cause) => {
+          logger.warn(
+            '[AgentBashHandler] Failed to cleanup a session after stdin delivery failed',
+            {
+              conversationId,
+              sessionId: session.sessionId,
+              cause
+            }
+          )
+        })
+      throw error
+    }
 
-    const yielded = await backgroundExecSessionManager.waitForCompletionOrYield(
-      conversationId,
-      session.sessionId,
-      options.yieldMs ?? getBackgroundExecConfig().backgroundMs,
-      options.outputPreviewChars ?? COMMAND_PREVIEW_CHARS
-    )
+    const yielded =
+      options.stdin === undefined
+        ? await backgroundExecSessionManager.waitForCompletionOrYield(
+            conversationId,
+            session.sessionId,
+            options.yieldMs ?? getBackgroundExecConfig().backgroundMs,
+            options.outputPreviewChars ?? COMMAND_PREVIEW_CHARS
+          )
+        : {
+            kind: 'completed' as const,
+            result: await backgroundExecSessionManager.getCompletionResult(
+              conversationId,
+              session.sessionId,
+              options.outputPreviewChars ?? COMMAND_PREVIEW_CHARS
+            )
+          }
 
     if (yielded.kind === 'running') {
       return yielded
     }
 
-    const shouldCleanupSession = !yielded.result.offloaded
+    const retainOffloadedSession = options.stdin === undefined && yielded.result.offloaded
 
     try {
       return {
@@ -382,11 +417,11 @@ export class AgentBashHandler {
         output: yielded.result.output,
         exitCode: yielded.result.exitCode,
         timedOut: yielded.result.timedOut,
-        offloaded: yielded.result.offloaded,
-        outputFilePath: yielded.result.outputFilePath
+        offloaded: retainOffloadedSession,
+        outputFilePath: retainOffloadedSession ? yielded.result.outputFilePath : undefined
       }
     } finally {
-      if (shouldCleanupSession) {
+      if (!retainOffloadedSession) {
         await backgroundExecSessionManager
           .remove(conversationId, session.sessionId)
           .catch((error) => {
@@ -682,15 +717,6 @@ export class AgentBashHandler {
       }
     )
 
-    if (options.stdin !== undefined) {
-      await backgroundExecSessionManager.write(
-        conversationId,
-        result.sessionId,
-        options.stdin,
-        true
-      )
-    }
-
     return {
       output: { status: 'running', sessionId: result.sessionId },
       rtkApplied: prepared.rtkApplied,
@@ -720,7 +746,7 @@ export class AgentBashHandler {
       rtkApplied: prepared.rtkApplied,
       rtkMode: prepared.rtkMode,
       rtkFallbackReason: preserveCommand
-        ? 'RTK rewrite bypassed for scoped command authority'
+        ? 'RTK rewrite bypassed for exact command execution'
         : commandShell.dialect !== 'posix' && prepared.rtkMode !== 'direct'
           ? 'RTK rewrite bypassed for non-POSIX command shell'
           : prepared.rtkFallbackReason

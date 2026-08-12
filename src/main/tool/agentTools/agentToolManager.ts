@@ -83,7 +83,10 @@ import {
   assertActiveToolSurfaceExecutionContext,
   type ToolSurfaceExecutionContext
 } from '@/agent/deepchat/runtime/toolSurface'
-import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
+import {
+  MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
+  type ProgrammaticToolCapabilityV1
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
 import {
   TOOL_SEARCH_TOOL_SERVER_NAME,
   parseToolSearchInput,
@@ -279,6 +282,16 @@ export class AgentToolManager {
     [GREP_TOOL_NAME]: FffGrepArgsSchema,
     exec: z.object({
       command: z.string().min(1).describe('The shell command to execute'),
+      stdin: z
+        .string()
+        .min(1)
+        .max(MAX_PROGRAMMATIC_TOOL_INPUT_BYTES)
+        .refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
+          `stdin must not exceed ${MAX_PROGRAMMATIC_TOOL_INPUT_BYTES} UTF-8 bytes`
+        )
+        .optional()
+        .describe('Owned request body for DeepChat Programmatic Tool call or batch commands'),
       timeoutMs: z
         .number()
         .min(100)
@@ -1272,11 +1285,29 @@ export class AgentToolManager {
       )
       const execArgs = parsedArgs as {
         command: string
+        stdin?: string
         timeoutMs?: number
         description?: string
         cwd?: string
         background?: boolean
         yieldMs?: number
+      }
+      if (execArgs.stdin !== undefined) {
+        if (!options.programmaticToolCapability) {
+          throw new Error('Owned exec stdin requires an active Programmatic Tool capability.')
+        }
+        if (
+          Buffer.byteLength(execArgs.stdin, 'utf8') >
+          options.programmaticToolCapability.quotas.maxInputBytes
+        ) {
+          throw new Error('Owned exec stdin exceeds the active Programmatic Tool input quota.')
+        }
+        if (
+          execArgs.timeoutMs !== undefined &&
+          execArgs.timeoutMs > options.programmaticToolCapability.quotas.maxDurationMs
+        ) {
+          throw new Error('Owned exec timeout exceeds the active Programmatic Tool duration quota.')
+        }
       }
       if (execArgs.cwd) {
         const skillScopeGuard = new AgentFileSystemHandler(allowedDirectories, {
@@ -1302,6 +1333,11 @@ export class AgentToolManager {
           conversationId,
           commandShell: options.commandShell,
           oneShotCommandGrantId: options.oneShotCommandGrantId,
+          stdin: execArgs.stdin,
+          maxTimeoutMs:
+            execArgs.stdin === undefined
+              ? undefined
+              : options.programmaticToolCapability?.quotas.maxDurationMs,
           allowExternalCwd: allowExternalFileAccess,
           outputPreviewChars: outputLimits.commandOutputInlineChars,
           beforeExecute: this.createAgentDispatchCommit(
