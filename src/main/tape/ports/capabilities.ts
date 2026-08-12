@@ -1,5 +1,6 @@
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import type {
+  DeepChatTapeSkillContext,
   DeepChatTapeViewManifest,
   DeepChatTapeViewManifestRecord
 } from '@shared/types/tape-view-manifest'
@@ -72,6 +73,22 @@ export interface TapeExecutionViewManifestReader {
   }): DeepChatTapeViewManifestRecord | null
 }
 
+export interface TapeSkillRequestAuthorityBinding {
+  readonly sessionId: string
+  readonly messageId: string
+  readonly runId: string
+  readonly requestSeq: number
+  readonly manifestHash: string
+  readonly tapeIncarnationId: string
+  readonly promptHash: string
+  readonly toolDefinitionsHash: string
+  readonly skillContexts: readonly DeepChatTapeSkillContext[]
+}
+
+export interface TapeSkillRequestAuthorityReader {
+  assertSkillRequestAuthority(input: TapeSkillRequestAuthorityBinding): void
+}
+
 export interface TapeRunViewManifestReader {
   getLatestViewManifestByRunBinding(input: {
     sessionId: string
@@ -141,6 +158,7 @@ export interface DeepChatLoopTapePort
   extends
     TapeReconciliationPort,
     TapeViewManifestReader,
+    TapeSkillRequestAuthorityReader,
     TapeViewManifestWriter,
     TapeToolFactWriter,
     TapeIncarnationReader,

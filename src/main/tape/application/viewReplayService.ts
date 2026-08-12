@@ -49,7 +49,8 @@ import { buildExecutionOperationProvenanceKey } from '../domain/executionJournal
 import type {
   TapeMemoryContributionBudgetInspection,
   TapeMemoryContributionTokenInspection,
-  TapeMemoryViewManifestInspection
+  TapeMemoryViewManifestInspection,
+  TapeSkillRequestAuthorityBinding
 } from '../ports/capabilities'
 import { parseJsonObject } from './common'
 import { assertTapeToolFactPhysicalEnvelope, buildToolFactProvenanceKey } from './factPersistence'
@@ -931,6 +932,32 @@ export class TapeViewReplayService {
     }
     this.requireValidStoredSkillManifestOccurrence(row, record.manifest, provenanceKey)
     return record
+  }
+
+  assertSkillRequestAuthority(input: TapeSkillRequestAuthorityBinding): void {
+    const record = this.getViewManifestByExecutionBinding({
+      sessionId: input.sessionId,
+      runId: input.runId,
+      requestSeq: input.requestSeq
+    })
+    const manifest = record?.manifest
+    if (
+      !record ||
+      record.messageId !== input.messageId ||
+      (manifest?.schemaVersion !== 6 && manifest?.schemaVersion !== 7) ||
+      manifest.runId !== input.runId ||
+      manifest.requestSeq !== input.requestSeq ||
+      manifest.tapeIncarnationId !== input.tapeIncarnationId ||
+      manifest.hashes.manifestHash !== input.manifestHash ||
+      manifest.hashes.promptHash !== input.promptHash ||
+      manifest.hashes.toolDefinitionsHash !== input.toolDefinitionsHash ||
+      canonicalJsonStringifyData(manifest.skillContexts) !==
+        canonicalJsonStringifyData(input.skillContexts)
+    ) {
+      throw new Error(
+        'Provider request Skill authority drifted after its ViewManifest was committed.'
+      )
+    }
   }
 
   getLatestViewManifestByRunBinding(input: {

@@ -488,6 +488,32 @@ describe('SessionTape view and replay', () => {
         requestSeq: 2
       })?.entryId
     ).toBe(first.entry_id)
+    const authority = {
+      sessionId: 's1',
+      messageId: 'a1',
+      runId: 'run-1',
+      requestSeq: 2,
+      manifestHash: manifest.hashes.manifestHash,
+      tapeIncarnationId,
+      promptHash: manifest.hashes.promptHash,
+      toolDefinitionsHash: manifest.hashes.toolDefinitionsHash,
+      skillContexts: manifest.skillContexts
+    }
+    expect(() => service.assertSkillRequestAuthority(authority)).not.toThrow()
+    expect(() =>
+      service.assertSkillRequestAuthority({ ...authority, promptHash: 'f'.repeat(64) })
+    ).toThrow(/Skill authority drifted/)
+    expect(() =>
+      service.assertSkillRequestAuthority({
+        ...authority,
+        skillContexts: [
+          {
+            ...manifest.skillContexts[0],
+            projectedContentHash: 'f'.repeat(64)
+          }
+        ]
+      })
+    ).toThrow(/Skill authority drifted/)
     expect(() =>
       service.appendViewManifest(createTapeViewManifest({ ...baseInput, modelId: 'other-model' }))
     ).toThrow(/Conflicting Skill-bearing ViewManifest binding/)
@@ -511,6 +537,9 @@ describe('SessionTape view and replay', () => {
     expect(JSON.stringify(replay)).not.toContain(effectiveContent)
 
     entries.find((entry) => entry.entry_id === receipt.entryId)!.payload_json = '{}'
+    expect(() => service.assertSkillRequestAuthority(authority)).toThrow(
+      /materialization|authority|corrupt/i
+    )
     expect(service.exportReplaySlice('s1', 'a1', { requestSeq: 2 })?.integrity).toBe('invalid')
   })
 

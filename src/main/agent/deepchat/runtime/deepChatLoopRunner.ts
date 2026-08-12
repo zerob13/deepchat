@@ -76,7 +76,11 @@ import {
   type TapeViewContextSelection
 } from '@/tape/domain/viewManifest'
 import type { DeepChatLoopTapePort } from '@/tape/ports/capabilities'
-import { buildExecutionContract } from '@/tape/domain/executionContract'
+import {
+  buildExecutionContract,
+  buildProviderMessagesHash,
+  buildProviderVisibleToolDefinitionsHash
+} from '@/tape/domain/executionContract'
 import {
   ExecutionJournalCorruptionError,
   ExecutionJournalError,
@@ -962,6 +966,15 @@ export class DeepChatLoopRunner {
                     error instanceof Error ? error.message : String(error)
                   }`
                 )
+            },
+            authority: {
+              assertCurrent: ({ authority, messages, tools }) => {
+                ports.tape.assertSkillRequestAuthority({
+                  ...authority,
+                  promptHash: buildProviderMessagesHash(messages),
+                  toolDefinitionsHash: buildProviderVisibleToolDefinitionsHash(tools)
+                })
+              }
             },
             rateGate: {
               beforeWait: crossPreStreamBoundary,

@@ -80,6 +80,7 @@ function createAttemptInput(options?: {
   providerEvents?: LLMCoreStreamEvent[][]
   providerAttempts?: Array<{ events?: LLMCoreStreamEvent[]; error?: unknown }>
   appendManifest?: (manifest: any) => void
+  assertAuthority?: (authority: any, attempt: number) => void
   buildExecutionContract?: (input: any) => any
   viewContext?: false
   strictViewContract?: boolean
@@ -94,6 +95,7 @@ function createAttemptInput(options?: {
   const contractBuildInputs: any[] = []
   const executionContractErrors: unknown[] = []
   const manifestErrors: unknown[] = []
+  const authorityChecks: any[] = []
   const outcomes: any[] = []
   const outcomeErrors: unknown[] = []
   const providerAttempts =
@@ -120,6 +122,7 @@ function createAttemptInput(options?: {
     contractBuildInputs,
     executionContractErrors,
     manifestErrors,
+    authorityChecks,
     outcomes,
     outcomeErrors,
     actualRateClears,
@@ -211,6 +214,13 @@ function createAttemptInput(options?: {
         },
         onAppendError: (error: unknown) => manifestErrors.push(error)
       },
+      authority: {
+        assertCurrent: ({ authority }: any) => {
+          order.push(`authority:${authority.requestSeq}`)
+          authorityChecks.push(structuredClone(authority))
+          options?.assertAuthority?.(authority, authorityChecks.length)
+        }
+      },
       rateGate: {
         beforeWait: () => order.push('before-rate'),
         wait: async () => {
@@ -254,6 +264,45 @@ function createAttemptInput(options?: {
       createAbortError: () => Object.assign(new Error('aborted'), { name: 'AbortError' })
     }
   }
+}
+
+function registerMessageSkill(
+  fixture: ReturnType<typeof createAttemptInput>,
+  skillName = 'skill-1'
+) {
+  const effectiveContent = 'Follow only this turn instruction.'
+  const completeBodyFragment = `### ${skillName}\n${effectiveContent}`
+  const contentHash = hashSkillEffectiveContent(effectiveContent)
+  fixture.run.resources.tapeIncarnationId = 'incarnation-1'
+  fixture.run.messages[0] = {
+    role: 'user',
+    content: `## Skills Selected for This Turn\n\n${completeBodyFragment}\n\nhello`
+  }
+  const context = {
+    activationScope: 'message' as const,
+    agentId: 'agent-1',
+    sourceType: 'created' as const,
+    sourceId: `/skills/${skillName}`,
+    skillName,
+    authoritativeRef: {
+      kind: 'context' as const,
+      entryId: 13,
+      provenanceKey: `skill-materialization:v1:${skillName}`,
+      payloadHash: 'a'.repeat(64)
+    },
+    providerRole: 'user' as const,
+    sourceEntryIds: [7],
+    projectedContentHash: contentHash,
+    projectionVersion: 1 as const,
+    deduplicationSource: 'message' as const
+  }
+  registerMaterializedSkillContext(fixture.run, {
+    tapeIncarnationId: 'incarnation-1',
+    effectiveContent,
+    completeBodyFragment,
+    context
+  })
+  return context
 }
 
 describe('DeepChatContextCoordinator', () => {
@@ -411,6 +460,7 @@ describe('DeepChatContextCoordinator', () => {
     })
     expect(fixture.run.requestSeq).toBe(1)
     expect(fixture.actualRateClears).toEqual(['clear'])
+    expect(fixture.authorityChecks).toEqual([])
   })
 
   it('durably binds a projected runtime Skill result to its provider request occurrence', async () => {
@@ -473,37 +523,7 @@ describe('DeepChatContextCoordinator', () => {
 
   it('durably binds a materialized message Skill to the exact provider projection', async () => {
     const fixture = createAttemptInput()
-    const effectiveContent = 'Follow only this turn instruction.'
-    const completeBodyFragment = `### skill-1\n${effectiveContent}`
-    const contentHash = hashSkillEffectiveContent(effectiveContent)
-    fixture.run.resources.tapeIncarnationId = 'incarnation-1'
-    fixture.run.messages[0] = {
-      role: 'user',
-      content: `## Skills Selected for This Turn\n\n${completeBodyFragment}\n\nhello`
-    }
-    registerMaterializedSkillContext(fixture.run, {
-      tapeIncarnationId: 'incarnation-1',
-      effectiveContent,
-      completeBodyFragment,
-      context: {
-        activationScope: 'message',
-        agentId: 'agent-1',
-        sourceType: 'created',
-        sourceId: '/skills/skill-1',
-        skillName: 'skill-1',
-        authoritativeRef: {
-          kind: 'context',
-          entryId: 13,
-          provenanceKey: 'skill-materialization:v1:test',
-          payloadHash: 'a'.repeat(64)
-        },
-        providerRole: 'user',
-        sourceEntryIds: [7],
-        projectedContentHash: contentHash,
-        projectionVersion: 1,
-        deduplicationSource: 'message'
-      }
-    })
+    const context = registerMessageSkill(fixture)
 
     await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
 
@@ -516,16 +536,112 @@ describe('DeepChatContextCoordinator', () => {
           activationScope: 'message',
           skillName: 'skill-1',
           sourceEntryIds: [7],
-          projectedContentHash: contentHash,
+          projectedContentHash: context.projectedContentHash,
           authoritativeRef: {
             kind: 'context',
             entryId: 13,
-            provenanceKey: 'skill-materialization:v1:test'
+            provenanceKey: 'skill-materialization:v1:skill-1'
           }
         }
       ]
     })
-    expect(fixture.order.indexOf('manifest:1')).toBeLessThan(fixture.order.indexOf('provider'))
+    expect(fixture.authorityChecks).toEqual([
+      {
+        sessionId: 'session-1',
+        messageId: 'message-1',
+        runId: 'run-1',
+        requestSeq: 1,
+        manifestHash: 'a'.repeat(64),
+        tapeIncarnationId: 'incarnation-1',
+        skillContexts: [context]
+      }
+    ])
+    expect(fixture.order).toEqual([
+      'manifest:1',
+      'before-rate',
+      'rate',
+      'rate-clear',
+      'before-provider',
+      'authority:1',
+      'provider',
+      'outcome:1'
+    ])
+  })
+
+  it('fails closed when Skill authority drifts after rate admission', async () => {
+    let rateAdmissionCompleted = false
+    const fixture = createAttemptInput({
+      assertAuthority: () => {
+        expect(rateAdmissionCompleted).toBe(true)
+        throw new Error('Skill authority drifted during rate wait')
+      }
+    })
+    registerMessageSkill(fixture)
+    const wait = fixture.input.rateGate.wait
+    fixture.input.rateGate.wait = async (signal: AbortSignal) => {
+      await wait(signal)
+      rateAdmissionCompleted = true
+    }
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow('Skill authority drifted during rate wait')
+
+    expect(fixture.authorityChecks).toHaveLength(1)
+    expect(fixture.providerRequests).toEqual([])
+    expect(fixture.outcomes).toEqual([])
+    expect(fixture.run.physicalAttempt).toBe(0)
+  })
+
+  it('revalidates the same Skill authority before every transient retry attempt', async () => {
+    const transientError = Object.assign(new Error('fetch failed'), {
+      code: 'ECONNRESET',
+      headers: { 'retry-after-ms': '0' }
+    })
+    const fixture = createAttemptInput({
+      providerAttempts: [
+        { error: transientError },
+        {
+          events: [
+            { type: 'text', content: 'must not be sent' },
+            { type: 'stop', stop_reason: 'complete' }
+          ]
+        }
+      ],
+      assertAuthority: (_authority, attempt) => {
+        if (attempt === 2) throw new Error('Skill authority drifted during retry delay')
+      }
+    })
+    registerMessageSkill(fixture)
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow('Skill authority drifted during retry delay')
+
+    expect(fixture.authorityChecks.map(({ requestSeq }) => requestSeq)).toEqual([1, 1])
+    expect(fixture.providerRequests).toHaveLength(1)
+    expect(fixture.run.physicalAttempt).toBe(1)
+    expect(fixture.outcomes).toHaveLength(1)
+    expect(fixture.outcomes[0]).toMatchObject({ retryDecision: 'retry_scheduled' })
+  })
+
+  it('revalidates the new Skill manifest after context-overflow recovery', async () => {
+    const fixture = createAttemptInput({
+      providerEvents: [
+        [{ type: 'error', error_message: 'context overflow' }],
+        [
+          { type: 'text', content: 'recovered' },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
+      ]
+    })
+    registerMessageSkill(fixture)
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(fixture.manifests.map(({ requestSeq }) => requestSeq)).toEqual([1, 2])
+    expect(fixture.authorityChecks.map(({ requestSeq }) => requestSeq)).toEqual([1, 2])
+    expect(fixture.providerRequests.map(({ identity }) => identity.requestSeq)).toEqual([1, 2])
   })
 
   it('prevents provider admission when a runtime Skill manifest cannot be committed', async () => {

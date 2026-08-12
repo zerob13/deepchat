@@ -111,7 +111,7 @@
       one exact Provider request, including strict replay and continuation recovery.
 - [x] Execute `skill_run` only from an exact execution-bound package ref and fail closed on package,
       environment, extraction, or hash drift.
-- [ ] Revalidate the exact Skill-bearing request authority after rate/retry waits and immediately
+- [x] Revalidate the exact Skill-bearing request authority after rate/retry waits and immediately
       before every physical Provider attempt.
 - [ ] Run format, i18n, lint, Node/web type checks, main/renderer tests, and build.
 - [ ] Review generated provider and ACP registry output.

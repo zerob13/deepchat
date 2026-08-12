@@ -204,6 +204,24 @@ export interface ProviderAttemptExecutionContractPort {
   onBuildError(error: unknown): void
 }
 
+export interface ProviderAttemptSkillAuthority {
+  readonly sessionId: string
+  readonly messageId: string
+  readonly runId: string
+  readonly requestSeq: number
+  readonly manifestHash: string
+  readonly tapeIncarnationId: string
+  readonly skillContexts: readonly DeepChatTapeSkillContext[]
+}
+
+export interface ProviderAttemptAuthorityPort {
+  assertCurrent(input: {
+    authority: ProviderAttemptSkillAuthority
+    messages: readonly ChatMessage[]
+    tools: readonly MCPToolDefinition[]
+  }): void
+}
+
 export interface ProviderRateGatePort {
   beforeWait(): void
   wait(signal: AbortSignal): Promise<void>
@@ -499,6 +517,7 @@ export interface ProviderAttemptInput<TSelection> {
   budget: ProviderAttemptBudgetPort
   recovery: ProviderAttemptRecoveryPort
   manifest: ProviderAttemptManifestPort<TSelection>
+  authority: ProviderAttemptAuthorityPort
   executionContract?: ProviderAttemptExecutionContractPort
   strictViewContract?: boolean
   requireDurableManifest?: boolean
@@ -580,6 +599,7 @@ export class DeepChatContextCoordinator {
       providerMaxTokens: number
       requestSeq: number
       executionContract: DeepChatExecutionContract | null
+      skillAuthority: ProviderAttemptSkillAuthority | null
     }> => {
       let providerMessages = input.requestMessages
       let providerMaxTokens = input.maxTokens
@@ -774,7 +794,25 @@ export class DeepChatContextCoordinator {
         bindActiveRequestView(input.run, { requestSeq, ...requestView })
       }
 
-      return { providerMessages, providerMaxTokens, requestSeq, executionContract }
+      const skillAuthority = requiresDurableSkillManifest
+        ? Object.freeze({
+            sessionId: input.run.sessionId,
+            messageId: input.run.messageId,
+            runId: input.run.runId,
+            requestSeq,
+            manifestHash: requestView!.manifestHash,
+            tapeIncarnationId: requestView!.tapeIncarnationId!,
+            skillContexts: Object.freeze(structuredClone(skillContexts))
+          })
+        : null
+
+      return {
+        providerMessages,
+        providerMaxTokens,
+        requestSeq,
+        executionContract,
+        skillAuthority
+      }
     }
 
     const recoverProviderContextOverflow = async (
@@ -861,11 +899,16 @@ export class DeepChatContextCoordinator {
         const strictProviderOverflowRetry = strictProviderOverflowRetryPending
         strictProviderOverflowRetryPending = false
         const requestOrigin = nextRequestOrigin
-        const { providerMessages, providerMaxTokens, requestSeq, executionContract } =
-          await prepareProviderRequest({
-            requestOrigin,
-            strictProviderOverflowRetry
-          })
+        const {
+          providerMessages,
+          providerMaxTokens,
+          requestSeq,
+          executionContract,
+          skillAuthority
+        } = await prepareProviderRequest({
+          requestOrigin,
+          strictProviderOverflowRetry
+        })
         let pendingRetry: { retryNumber: number; delayMs: number } | null = null
 
         for (;;) {
@@ -884,6 +927,22 @@ export class DeepChatContextCoordinator {
           }
 
           input.provider.beforeStream()
+          if (skillAuthority) {
+            const activeRequestView = input.run.activeRequestView
+            if (
+              !activeRequestView ||
+              activeRequestView.requestSeq !== skillAuthority.requestSeq ||
+              activeRequestView.manifestHash !== skillAuthority.manifestHash ||
+              activeRequestView.tapeIncarnationId !== skillAuthority.tapeIncarnationId
+            ) {
+              throw new Error('Provider request lost its exact Skill authority binding.')
+            }
+            input.authority.assertCurrent({
+              authority: skillAuthority,
+              messages: providerMessages,
+              tools: input.tools
+            })
+          }
           const physicalAttempt = enterPhysicalAttempt(input.run)
           const attemptOrigin: DeepChatProviderAttemptOrigin =
             physicalAttempt === 1 ? 'initial' : 'transient_retry'
