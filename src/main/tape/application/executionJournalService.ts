@@ -38,11 +38,17 @@ import {
 import type { DeepChatTapeEntryRow, TapeEventAppendInput } from '../domain/entry'
 import { canonicalJsonStringifyData } from '../domain/canonicalJson'
 import type {
+  ExecutionJournalAuditReader,
   ExecutionJournalRecoveryReader,
   ExecutionJournalWriter,
   NestedExecutionJournalWriter
 } from '../ports/capabilities'
 import type { ExecutionJournalPersistenceStore } from '../ports/storage'
+import {
+  DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT,
+  type DeepChatNestedExecutionAudit,
+  type DeepChatNestedExecutionAuditOperation
+} from '@shared/types/execution-journal-audit'
 
 export type ExecutionJournalCommitPhase = 'before' | 'after'
 
@@ -86,7 +92,11 @@ function rowMatchesStrictEvent(row: DeepChatTapeEntryRow, input: StrictEventInpu
 }
 
 export class ExecutionJournalService
-  implements ExecutionJournalWriter, NestedExecutionJournalWriter, ExecutionJournalRecoveryReader
+  implements
+    ExecutionJournalWriter,
+    NestedExecutionJournalWriter,
+    ExecutionJournalRecoveryReader,
+    ExecutionJournalAuditReader
 {
   constructor(
     private readonly getStore: () => ExecutionJournalPersistenceStore,
@@ -283,6 +293,110 @@ export class ExecutionJournalService
 
   classifyRecoveryCandidates(): ExecutionRecoveryReport[] {
     return classifyExecutionJournalRows(this.getStore().listUnterminatedRunEvents())
+  }
+
+  listNestedExecutionAuditForMessage(
+    sessionId: string,
+    messageId: string
+  ): DeepChatNestedExecutionAudit {
+    const rows = this.getStore().listNestedOperationEventsForMessage(
+      sessionId,
+      messageId,
+      DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT + 1
+    )
+    const operations = new Map<
+      string,
+      {
+        dispatch?: NestedExecutionDispatchFact
+        outcome?: NestedExecutionToolOutcomeFact
+      }
+    >()
+
+    for (const row of rows) {
+      let fact: ExecutionOperationFact
+      try {
+        const parsed = parseExecutionJournalFact(row)
+        if (
+          parsed.protocolVersion !== EXECUTION_JOURNAL_NESTED_PROTOCOL_VERSION ||
+          (parsed.type !== 'execution/dispatch_committed' &&
+            parsed.type !== 'execution/tool_outcome') ||
+          parsed.messageId !== messageId
+        ) {
+          throw new ExecutionJournalCorruptionError(
+            'Nested Execution Journal audit query returned a conflicting fact.'
+          )
+        }
+        fact = parsed
+      } catch (error) {
+        if (error instanceof ExecutionJournalCorruptionError) throw error
+        throw new ExecutionJournalCorruptionError(
+          'Nested Execution Journal audit query returned a malformed fact.',
+          { cause: error }
+        )
+      }
+      const key = buildAnyExecutionOperationKey(fact.operation)
+      const state = operations.get(key) ?? {}
+      if (fact.type === 'execution/dispatch_committed') {
+        if (state.dispatch) {
+          throw new ExecutionJournalCorruptionError(
+            'Nested Execution Journal audit contains a duplicate dispatch.'
+          )
+        }
+        state.dispatch = fact
+      } else {
+        if (state.outcome) {
+          throw new ExecutionJournalCorruptionError(
+            'Nested Execution Journal audit contains a duplicate outcome.'
+          )
+        }
+        state.outcome = fact
+      }
+      operations.set(key, state)
+    }
+
+    const ordered = [...operations.values()].sort(
+      (left, right) =>
+        (left.dispatch?.entryId ?? left.outcome?.entryId ?? 0) -
+        (right.dispatch?.entryId ?? right.outcome?.entryId ?? 0)
+    )
+    const truncated = ordered.length > DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT
+    const projected: DeepChatNestedExecutionAuditOperation[] = []
+    for (const [index, state] of ordered.entries()) {
+      const dispatch = state.dispatch
+      const outcome = state.outcome
+      if (!dispatch || (outcome && dispatch.entryId >= outcome.entryId)) {
+        throw new ExecutionJournalCorruptionError(
+          'Nested Execution Journal audit contains invalid dispatch/outcome causality.'
+        )
+      }
+      if (index >= DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT) continue
+      projected.push({
+        runId: dispatch.operation.runId,
+        requestSeq: dispatch.operation.requestSeq,
+        providerToolCallId: dispatch.operation.providerToolCallId,
+        childOrdinal: dispatch.operation.childOrdinal,
+        toolName: dispatch.toolName,
+        toolSource: dispatch.toolSource,
+        target: dispatch.target,
+        argumentsHash: dispatch.argumentsHash,
+        definitionHash: dispatch.definitionHash,
+        capabilityHash: dispatch.capabilityHash,
+        status: !outcome ? 'indeterminate' : outcome.isError ? 'error' : 'success',
+        dispatchEntryId: dispatch.entryId,
+        dispatchCreatedAt: dispatch.createdAt,
+        outcomeEntryId: outcome?.entryId ?? null,
+        outcomeCreatedAt: outcome?.createdAt ?? null,
+        responseHash: outcome?.responseHash ?? null,
+        isError: outcome?.isError ?? null
+      })
+    }
+
+    return {
+      schemaVersion: 1,
+      state: 'available',
+      operations: projected,
+      truncated
+    }
   }
 
   hasAnyCommittedDispatchForMessageToolCall(

@@ -124,7 +124,7 @@
 - [x] Keep normal dispatch free of Tape reads.
 - [x] Aggregate bounded process-live actual-adapter cohorts for schema churn, provider attempt/cache
       inputs, rounds, latency, outcomes, and metric availability without reading Tape.
-- [ ] Preserve outer exec only in provider Context and project real nested target truth through
+- [x] Preserve outer exec only in provider Context and project real nested target truth through
       Journal/UI.
 - [ ] Add versioned provider pricing plus discovery, repeated-discovery, and quality evidence before
       evaluating billed cost and success gates.

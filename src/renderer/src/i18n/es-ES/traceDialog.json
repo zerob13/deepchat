@@ -1,5 +1,5 @@
 {
-  "title": "Solicitar vista previa",
+  "title": "Diagnóstico del mensaje",
   "provider": "Proveedor",
   "model": "modelo",
   "endpoint": "API Endpoint",
@@ -18,7 +18,8 @@
     "request": "Solicitud",
     "view": "Vista",
     "entries": "Entradas",
-    "budget": "Presupuesto"
+    "budget": "Presupuesto",
+    "execution": "Execution"
   },
   "empty": "Sin diagnósticos",
   "emptyDesc": "No hay traza de solicitud ni manifiesto de vista disponible para este mensaje",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Este mensaje no tiene una traza de solicitud del proveedor guardada",
   "manifestUnavailable": "Sin manifiesto de vista",
   "manifestUnavailableDesc": "Este mensaje no tiene un manifiesto de vista de Tape guardado",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "ID de vista",
   "policy": "Política",
   "policyVersion": "Versión de política",

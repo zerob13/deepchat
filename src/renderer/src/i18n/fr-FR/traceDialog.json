@@ -13,12 +13,13 @@
   "notImplementedDesc": "Ce fournisseur n'est pas encore disponible en aperçu.",
   "provider": "Fournisseur",
   "model": "Modèle",
-  "title": "Aperçu des paramètres de requête",
+  "title": "Diagnostic du message",
   "tabs": {
     "request": "Requête",
     "view": "Vue",
     "entries": "Entrées",
-    "budget": "Budget de jetons"
+    "budget": "Budget de jetons",
+    "execution": "Execution"
   },
   "empty": "Aucun diagnostic",
   "emptyDesc": "Aucune trace de requête ni aucun manifeste de vue n’est disponible pour ce message",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Ce message ne possède aucune trace de requête fournisseur persistée",
   "manifestUnavailable": "Aucun manifeste de vue",
   "manifestUnavailableDesc": "Ce message ne possède aucun manifeste de vue Tape persisté",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "ID de vue",
   "policy": "Politique",
   "policyVersion": "Version de la politique",

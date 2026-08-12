@@ -1,5 +1,5 @@
 {
-  "title": "Minta pratonton parameter",
+  "title": "Diagnostik mesej",
   "provider": "pembekal",
   "model": "Model",
   "endpoint": "API Endpoint",
@@ -18,7 +18,8 @@
     "request": "Permintaan",
     "view": "Paparan",
     "entries": "Entri",
-    "budget": "Bajet"
+    "budget": "Bajet",
+    "execution": "Execution"
   },
   "empty": "Tiada diagnostik",
   "emptyDesc": "Tiada jejak permintaan atau manifes paparan tersedia untuk mesej ini",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Mesej ini tiada jejak permintaan penyedia yang disimpan",
   "manifestUnavailable": "Tiada manifes paparan",
   "manifestUnavailableDesc": "Mesej ini tiada manifes paparan Tape yang disimpan",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "ID paparan",
   "policy": "Dasar",
   "policyVersion": "Versi dasar",

@@ -13,12 +13,13 @@
   "notImplementedDesc": "این تامین کننده در حال حاضر قابل پیش‌نمایش نیست.",
   "provider": "تامین‌کننده",
   "model": "مدل",
-  "title": "پیش‌نمایش پارامتر درخواست",
+  "title": "عیب‌یابی پیام",
   "tabs": {
     "request": "درخواست",
     "view": "نما",
     "entries": "ورودی‌ها",
-    "budget": "بودجه"
+    "budget": "بودجه",
+    "execution": "Execution"
   },
   "empty": "بدون دادهٔ عیب‌یابی",
   "emptyDesc": "برای این پیام هیچ ردگیری درخواست یا مانیفست نما موجود نیست",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "این پیام ردگیری درخواست ارائه‌دهندهٔ ذخیره‌شده ندارد",
   "manifestUnavailable": "بدون مانیفست نما",
   "manifestUnavailableDesc": "این پیام مانیفست نمای Tape ذخیره‌شده ندارد",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "شناسهٔ نما",
   "policy": "سیاست",
   "policyVersion": "نسخهٔ سیاست",

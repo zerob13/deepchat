@@ -4,6 +4,7 @@ import type {
   DeepChatTapeViewManifest,
   DeepChatTapeViewManifestRecord
 } from '@shared/types/tape-view-manifest'
+import type { DeepChatNestedExecutionAudit } from '@shared/types/execution-journal-audit'
 import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '../domain/entry'
 import type {
   TapeEntryRef,
@@ -176,6 +177,14 @@ export interface ExecutionJournalRecoveryReader {
     messageId: string,
     providerToolCallId: string
   ): boolean
+}
+
+/** Read-only historical projection for renderer audit; never grants or participates in dispatch. */
+export interface ExecutionJournalAuditReader {
+  listNestedExecutionAuditForMessage(
+    sessionId: string,
+    messageId: string
+  ): DeepChatNestedExecutionAudit
 }
 
 // The DeepChat provider loop needs the coordinated Tape contract as one collaborator; splitting it

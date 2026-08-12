@@ -842,6 +842,9 @@ export class SessionTranscript {
       isContextEdge: row.is_context_edge,
       metadata: row.metadata,
       traceCount: row.trace_count ?? 0,
+      ...(row.has_nested_execution_audit === undefined
+        ? {}
+        : { hasNestedExecutionAudit: row.has_nested_execution_audit === 1 }),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }))

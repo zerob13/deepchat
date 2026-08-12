@@ -683,6 +683,80 @@ describe('Execution Journal domain and strict persistence', () => {
     expect(table.listNestedOperationEventsForRun).not.toHaveBeenCalled()
   })
 
+  it('projects bounded nested audit without raw arguments or response text', () => {
+    const { table } = createTapeTableMock()
+    const service = new ExecutionJournalService(() => table)
+    commitStarted(createTapeService(table), RUN_IDS.completed)
+    commitDispatch(createTapeService(table), RUN_IDS.completed)
+    commitNestedDispatch(table, RUN_IDS.completed, 0, { query: 'private query' })
+    service.commitNestedToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: nestedOperation(RUN_IDS.completed, 0),
+      responseText: 'private response',
+      isError: false,
+      createdAt: 120
+    })
+    commitNestedDispatch(table, RUN_IDS.completed, 1, { query: 'uncertain query' })
+
+    const audit = service.listNestedExecutionAuditForMessage('session-1', 'assistant-1')
+
+    expect(audit).toEqual({
+      schemaVersion: 1,
+      state: 'available',
+      truncated: false,
+      operations: [
+        expect.objectContaining({
+          childOrdinal: 0,
+          toolName: 'search',
+          status: 'success',
+          responseHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+          isError: false
+        }),
+        expect.objectContaining({
+          childOrdinal: 1,
+          toolName: 'search',
+          status: 'indeterminate',
+          outcomeEntryId: null,
+          responseHash: null,
+          isError: null
+        })
+      ]
+    })
+    expect(JSON.stringify(audit)).not.toContain('private query')
+    expect(JSON.stringify(audit)).not.toContain('private response')
+    expect(table.listNestedOperationEventsForMessage).toHaveBeenCalledWith(
+      'session-1',
+      'assistant-1',
+      257
+    )
+  })
+
+  it('fails nested audit closed for an outcome without its dispatch', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = new ExecutionJournalService(() => table)
+    commitStarted(createTapeService(table), RUN_IDS.completed)
+    commitDispatch(createTapeService(table), RUN_IDS.completed)
+    commitNestedDispatch(table, RUN_IDS.completed, 0)
+    service.commitNestedToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: nestedOperation(RUN_IDS.completed, 0),
+      responseText: 'done',
+      isError: false
+    })
+    const dispatchIndex = entries.findIndex((entry) => {
+      if (entry.name !== 'execution/dispatch_committed') return false
+      const data = JSON.parse(entry.payload_json).data
+      return data.protocolVersion === 2
+    })
+    entries.splice(dispatchIndex, 1)
+
+    expect(() => service.listNestedExecutionAuditForMessage('session-1', 'assistant-1')).toThrow(
+      ExecutionJournalCorruptionError
+    )
+  })
+
   it('propagates persistence failures and rolls back the journal fact', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
@@ -1385,6 +1459,84 @@ itIfSqlite('loads only unterminated Runs through the dedicated SQLite index', ()
     )
     expect(planDetails).toMatch(
       /SEARCH nested USING INDEX idx_deepchat_tape_entries_execution_operation_payload/
+    )
+  } finally {
+    db.close()
+  }
+})
+
+itIfSqlite('loads complete nested audit pairs through the message index', () => {
+  const db = new DatabaseCtor(':memory:')
+  try {
+    const table = new DeepChatExecutionJournalStore(db)
+    table.createTable()
+    const service = new ExecutionJournalService(() => table)
+    service.commitRunStarted({
+      sessionId: 'session-1',
+      runId: RUN_IDS.completed,
+      messageId: 'assistant-1',
+      runKind: 'loop'
+    })
+    service.commitDispatch({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: operation(RUN_IDS.completed),
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool call' },
+      target: { serverName: 'agent-cli', originalName: 'exec' }
+    })
+    service.commitNestedDispatch({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: nestedOperation(RUN_IDS.completed, 0),
+      toolName: 'search',
+      toolSource: 'mcp',
+      normalizedArguments: { query: 'hello' },
+      target: { serverName: 'search-server', originalName: 'search' },
+      definitionHash: '1'.repeat(64),
+      capabilityHash: '2'.repeat(64)
+    })
+    service.commitNestedToolOutcome({
+      sessionId: 'session-1',
+      messageId: 'assistant-1',
+      operation: nestedOperation(RUN_IDS.completed, 0),
+      responseText: 'done',
+      isError: false
+    })
+
+    expect(table.listNestedOperationEventsForMessage('session-1', 'assistant-1', 1)).toHaveLength(2)
+    expect(service.listNestedExecutionAuditForMessage('session-1', 'assistant-1')).toMatchObject({
+      state: 'available',
+      operations: [{ childOrdinal: 0, status: 'success' }]
+    })
+    const indexes = db.prepare("PRAGMA index_list('deepchat_tape_entries')").all() as Array<{
+      name: string
+    }>
+    expect(indexes.map((index) => index.name)).toContain(
+      'idx_deepchat_tape_entries_execution_message_payload'
+    )
+
+    db.prepare(
+      `UPDATE deepchat_tape_entries
+       SET payload_json = json_set(payload_json, '$.data.messageId', 'assistant-other')
+       WHERE provenance_key LIKE 'execution:v2:%:outcome'`
+    ).run()
+    expect(() => service.listNestedExecutionAuditForMessage('session-1', 'assistant-1')).toThrow(
+      ExecutionJournalCorruptionError
+    )
+    db.prepare(
+      `UPDATE deepchat_tape_entries
+       SET payload_json = json_set(payload_json, '$.data.messageId', 'assistant-1')
+       WHERE provenance_key LIKE 'execution:v2:%:outcome'`
+    ).run()
+    db.prepare(
+      `UPDATE deepchat_tape_entries
+       SET payload_json = json_set(payload_json, '$.data.protocolVersion', 1)
+       WHERE provenance_key LIKE 'execution:v2:%:dispatch'`
+    ).run()
+    expect(() => service.listNestedExecutionAuditForMessage('session-1', 'assistant-1')).toThrow(
+      ExecutionJournalCorruptionError
     )
   } finally {
     db.close()

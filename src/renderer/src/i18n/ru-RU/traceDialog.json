@@ -12,13 +12,14 @@
   "notImplemented": "Пока не поддерживается",
   "notImplementedDesc": "Этот поставщик пока недоступен для предварительного просмотра.",
   "provider": "Поставщик",
-  "title": "Предварительный просмотр параметров запроса",
+  "title": "Диагностика сообщения",
   "model": "Модель",
   "tabs": {
     "request": "Запрос",
     "view": "Представление",
     "entries": "Записи",
-    "budget": "Бюджет"
+    "budget": "Бюджет",
+    "execution": "Execution"
   },
   "empty": "Нет диагностических данных",
   "emptyDesc": "Для этого сообщения нет трассировки запроса или манифеста представления",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Для этого сообщения нет сохранённой трассировки запроса к провайдеру",
   "manifestUnavailable": "Нет манифеста представления",
   "manifestUnavailableDesc": "Для этого сообщения нет сохранённого манифеста представления Tape",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "ID представления",
   "policy": "Политика",
   "policyVersion": "Версия политики",

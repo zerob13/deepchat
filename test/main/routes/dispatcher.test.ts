@@ -433,6 +433,12 @@ function createRuntime() {
     getTapeContext: vi.fn().mockResolvedValue({ entries: [] }),
     listMessageTraces: vi.fn().mockResolvedValue([]),
     listMessageViewManifests: vi.fn().mockResolvedValue([]),
+    listNestedExecutionAudit: vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      state: 'available',
+      operations: [],
+      truncated: false
+    }),
     exportMessageTapeReplaySlice: vi.fn().mockResolvedValue(null),
     renameSession: vi.fn().mockResolvedValue(undefined),
     toggleSessionPinned: vi.fn().mockResolvedValue(undefined),

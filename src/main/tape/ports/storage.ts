@@ -105,6 +105,11 @@ export interface ExecutionJournalPersistenceStore
     input: TapeEventAppendInput & { name: ExecutionJournalEventName }
   ): DeepChatTapeEntryRow
   listUnterminatedRunEvents(): Iterable<ExecutionJournalRecoveryRow>
+  listNestedOperationEventsForMessage(
+    sessionId: string,
+    messageId: string,
+    maximumOperations: number
+  ): DeepChatTapeEntryRow[]
   listNestedOperationEventsForRun(sessionId: string, runId: string): DeepChatTapeEntryRow[]
   listNestedOperationEventsForParent(
     sessionId: string,

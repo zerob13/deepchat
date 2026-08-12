@@ -232,6 +232,32 @@ function createTapeTableMock() {
         })
       )
     }),
+    listNestedOperationEventsForMessage: vi.fn(
+      (sessionId: string, messageId: string, maximumOperations: number) => {
+        const matching = entries.filter((entry) => {
+          if (
+            entry.session_id !== sessionId ||
+            entry.kind !== 'event' ||
+            (entry.name !== 'execution/dispatch_committed' &&
+              entry.name !== 'execution/tool_outcome')
+          ) {
+            return false
+          }
+          const data = parseJsonRecord(entry.payload_json).data ?? {}
+          return data.protocolVersion === 2 && data.messageId === messageId
+        })
+        const selected = new Set<string>()
+        for (const entry of matching) {
+          const operation = parseJsonRecord(entry.payload_json).data?.operation ?? {}
+          selected.add(JSON.stringify(operation))
+          if (selected.size >= maximumOperations) break
+        }
+        return matching.filter((entry) => {
+          const operation = parseJsonRecord(entry.payload_json).data?.operation ?? {}
+          return selected.has(JSON.stringify(operation))
+        })
+      }
+    ),
     listNestedOperationEventsForRun: vi.fn((sessionId: string, runId: string) =>
       entries.filter((entry) => {
         if (

@@ -1,5 +1,5 @@
 {
-  "title": "Önizleme İste",
+  "title": "İleti tanılama",
   "provider": "sağlayıcı",
   "model": "Modeli",
   "endpoint": "API Uç nokta",
@@ -18,7 +18,8 @@
     "request": "İstek",
     "view": "Görünüm",
     "entries": "Girdiler",
-    "budget": "Bütçe"
+    "budget": "Bütçe",
+    "execution": "Execution"
   },
   "empty": "Tanılama yok",
   "emptyDesc": "Bu ileti için istek izi veya görünüm bildirimi yok",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Bu iletinin kalıcı sağlayıcı istek izi yok",
   "manifestUnavailable": "Görünüm bildirimi yok",
   "manifestUnavailableDesc": "Bu iletinin kalıcı Tape görünüm bildirimi yok",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "Görünüm Kimliği",
   "policy": "İlke",
   "policyVersion": "İlke sürümü",

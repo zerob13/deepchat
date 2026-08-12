@@ -41,6 +41,7 @@ import type {
   ToolSurfacePersistenceStore,
   TapeTransactionRunner
 } from '@/tape/ports/storage'
+import { DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT } from '@shared/types/execution-journal-audit'
 
 export {
   normalizeDeepChatTapeReadSources,
@@ -92,6 +93,26 @@ const TAPE_ENTRY_INDEX_SQL = `
     )
     WHERE kind = 'event'
       AND name IN ('execution/dispatch_committed', 'execution/tool_outcome');
+  CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_execution_message_payload
+    ON deepchat_tape_entries(
+      session_id,
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.messageId') END),
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.protocolVersion') END),
+      entry_id
+    )
+    WHERE kind = 'event'
+      AND name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+      AND (
+        (provenance_key >= 'execution:v2:' AND provenance_key < 'execution:v2:~')
+        OR (CASE WHEN json_valid(meta_json)
+          THEN json_extract(meta_json, '$.protocolVersion') END) = 2
+        OR (CASE WHEN json_valid(payload_json)
+          THEN json_extract(payload_json, '$.data.protocolVersion') END) = 2
+        OR (CASE WHEN json_valid(payload_json)
+          THEN json_extract(payload_json, '$.data.operation.kind') END) = 'nested'
+      );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_provenance
     ON deepchat_tape_entries(session_id, provenance_key)
     WHERE provenance_key IS NOT NULL;
@@ -1429,6 +1450,126 @@ export class DeepChatExecutionJournalStore
     return this.db
       .prepare(UNTERMINATED_EXECUTION_JOURNAL_EVENTS_SQL)
       .iterate() as IterableIterator<ExecutionJournalRecoveryRow>
+  }
+
+  listNestedOperationEventsForMessage(
+    sessionId: string,
+    messageId: string,
+    maximumOperations: number
+  ): DeepChatTapeEntryRow[] {
+    const operationLimit = Math.min(
+      Math.max(Math.floor(maximumOperations), 1),
+      DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT + 1
+    )
+    return this.db
+      .prepare(
+        `WITH message_nested_events AS (
+           SELECT
+             journal.session_id,
+             journal.entry_id,
+             journal.kind,
+             journal.name,
+             journal.source_type,
+             journal.source_id,
+             journal.source_seq,
+             journal.provenance_key,
+             journal.payload_json,
+             journal.meta_json,
+             journal.created_at,
+             CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(journal.payload_json, '$.data.operation.runId') END AS audit_run_id,
+             CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(
+                 journal.payload_json,
+                 '$.data.operation.requestSeq'
+               ) END AS audit_request_seq,
+             CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(
+                 journal.payload_json,
+                 '$.data.operation.providerToolCallId'
+               ) END AS audit_provider_tool_call_id,
+             CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(
+                 journal.payload_json,
+                 '$.data.operation.childOrdinal'
+               ) END AS audit_child_ordinal
+           FROM deepchat_tape_entries AS journal
+             INDEXED BY idx_deepchat_tape_entries_execution_message_payload
+           WHERE journal.session_id = ?
+             AND journal.kind = 'event'
+             AND journal.name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+             AND (CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(journal.payload_json, '$.data.messageId') END) = ?
+             AND (
+               (journal.provenance_key >= 'execution:v2:'
+                 AND journal.provenance_key < 'execution:v2:~')
+               OR (CASE WHEN json_valid(journal.meta_json)
+                 THEN json_extract(journal.meta_json, '$.protocolVersion') END) = 2
+               OR (CASE WHEN json_valid(journal.payload_json)
+                 THEN json_extract(journal.payload_json, '$.data.protocolVersion') END) = 2
+               OR (CASE WHEN json_valid(journal.payload_json)
+                 THEN json_extract(journal.payload_json, '$.data.operation.kind') END) = 'nested'
+             )
+         ),
+         selected_operations AS (
+           SELECT
+             audit_run_id,
+             audit_request_seq,
+             audit_provider_tool_call_id,
+             audit_child_ordinal,
+             min(entry_id) AS first_entry_id
+           FROM message_nested_events
+           GROUP BY
+             audit_run_id,
+             audit_request_seq,
+             audit_provider_tool_call_id,
+             audit_child_ordinal
+           ORDER BY first_entry_id ASC
+           LIMIT ?
+         )
+         SELECT
+           journal.session_id,
+           journal.entry_id,
+           journal.kind,
+           journal.name,
+           journal.source_type,
+           journal.source_id,
+           journal.source_seq,
+           journal.provenance_key,
+           journal.payload_json,
+           journal.meta_json,
+           journal.created_at
+         FROM selected_operations AS selected
+         CROSS JOIN deepchat_tape_entries AS journal
+           INDEXED BY idx_deepchat_tape_entries_execution_operation_payload
+         WHERE journal.session_id = ?
+           AND journal.kind = 'event'
+           AND journal.name IN ('execution/dispatch_committed', 'execution/tool_outcome')
+           AND (CASE WHEN json_valid(journal.payload_json)
+             THEN json_extract(journal.payload_json, '$.data.operation.runId') END)
+               IS selected.audit_run_id
+           AND (CASE WHEN json_valid(journal.payload_json)
+             THEN json_extract(journal.payload_json, '$.data.operation.requestSeq') END)
+               IS selected.audit_request_seq
+           AND (CASE WHEN json_valid(journal.payload_json)
+             THEN json_extract(journal.payload_json, '$.data.operation.providerToolCallId') END)
+               IS selected.audit_provider_tool_call_id
+           AND (CASE WHEN json_valid(journal.payload_json)
+             THEN json_extract(journal.payload_json, '$.data.operation.childOrdinal') END)
+               IS selected.audit_child_ordinal
+           AND (
+             (journal.provenance_key >= 'execution:v2:'
+               AND journal.provenance_key < 'execution:v2:~')
+             OR (CASE WHEN json_valid(journal.meta_json)
+               THEN json_extract(journal.meta_json, '$.protocolVersion') END) = 2
+             OR (CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(journal.payload_json, '$.data.protocolVersion') END) = 2
+             OR (CASE WHEN json_valid(journal.payload_json)
+               THEN json_extract(journal.payload_json, '$.data.operation.kind') END) = 'nested'
+           )
+         ORDER BY journal.entry_id ASC`
+      )
+      .all(sessionId, messageId, operationLimit, sessionId) as DeepChatTapeEntryRow[]
   }
 
   listNestedOperationEventsForRun(sessionId: string, runId: string): DeepChatTapeEntryRow[] {

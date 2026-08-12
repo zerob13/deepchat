@@ -1,5 +1,5 @@
 {
-  "title": "Poproś o podgląd",
+  "title": "Diagnostyka wiadomości",
   "provider": "Dostawca",
   "model": "Modelka",
   "endpoint": "Punkt końcowy API",
@@ -18,7 +18,8 @@
     "request": "Żądanie",
     "view": "Widok",
     "entries": "Wpisy",
-    "budget": "Budżet"
+    "budget": "Budżet",
+    "execution": "Execution"
   },
   "empty": "Brak diagnostyki",
   "emptyDesc": "Dla tej wiadomości nie ma śladu żądania ani manifestu widoku",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Ta wiadomość nie ma zapisanego śladu żądania dostawcy",
   "manifestUnavailable": "Brak manifestu widoku",
   "manifestUnavailableDesc": "Ta wiadomość nie ma zapisanego manifestu widoku Tape",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "ID widoku",
   "policy": "Zasada",
   "policyVersion": "Wersja zasady",

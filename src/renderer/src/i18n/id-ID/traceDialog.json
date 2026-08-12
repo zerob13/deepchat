@@ -1,5 +1,5 @@
 {
-  "title": "Minta pratinjau parameter",
+  "title": "Diagnostik pesan",
   "provider": "pemasok",
   "model": "model",
   "endpoint": "API Endpoint",
@@ -18,7 +18,8 @@
     "request": "Permintaan",
     "view": "Tampilan",
     "entries": "Entri",
-    "budget": "Anggaran"
+    "budget": "Anggaran",
+    "execution": "Execution"
   },
   "empty": "Tidak ada diagnostik",
   "emptyDesc": "Tidak ada jejak permintaan atau manifes tampilan untuk pesan ini",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Pesan ini tidak memiliki jejak permintaan penyedia yang tersimpan",
   "manifestUnavailable": "Tidak ada manifes tampilan",
   "manifestUnavailableDesc": "Pesan ini tidak memiliki manifes tampilan Tape yang tersimpan",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "ID tampilan",
   "policy": "Kebijakan",
   "policyVersion": "Versi kebijakan",

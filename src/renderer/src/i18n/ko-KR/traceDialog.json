@@ -13,12 +13,13 @@
   "notImplementedDesc": "이 공급업체는 아직 미리 볼 수 없습니다.",
   "provider": "공급업체",
   "model": "모델",
-  "title": "요청 매개변수 미리보기",
+  "title": "메시지 진단",
   "tabs": {
     "request": "요청",
     "view": "보기",
     "entries": "항목",
-    "budget": "예산"
+    "budget": "예산",
+    "execution": "Execution"
   },
   "empty": "진단 없음",
   "emptyDesc": "이 메시지에는 요청 추적 또는 보기 매니페스트가 없습니다",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "이 메시지에는 저장된 제공자 요청 추적이 없습니다",
   "manifestUnavailable": "보기 매니페스트 없음",
   "manifestUnavailableDesc": "이 메시지에는 저장된 Tape 보기 매니페스트가 없습니다",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "보기 ID",
   "policy": "정책",
   "policyVersion": "정책 버전",

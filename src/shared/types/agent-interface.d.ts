@@ -416,6 +416,7 @@ export interface ChatMessageRecord {
   isContextEdge: number
   metadata: string // JSON string: MessageMetadata
   traceCount?: number
+  hasNestedExecutionAudit?: boolean
   createdAt: number
   updatedAt: number
 }

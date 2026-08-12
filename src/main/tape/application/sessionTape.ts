@@ -18,6 +18,7 @@ import type {
   DeepChatTapeReplayExportOptions,
   DeepChatTapeReplaySlice
 } from '@shared/types/tape-replay'
+import type { DeepChatNestedExecutionAudit } from '@shared/types/execution-journal-audit'
 import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '../domain/entry'
 import type { TapeMessageReplacementOptions, TapeToolFactInput } from '../domain/facts'
 import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
@@ -40,6 +41,7 @@ import type {
   TapeProviderAttemptWriter,
   TapeToolSurfaceViewReader,
   TapeToolSurfaceViewWriter,
+  ExecutionJournalAuditReader,
   ExecutionJournalRecoveryReader,
   ExecutionJournalWriter,
   TapeRawEntryReader,
@@ -112,6 +114,7 @@ export class SessionTape
     TapeInspectionReader,
     TapeLifecycleAdmin,
     ExecutionJournalWriter,
+    ExecutionJournalAuditReader,
     ExecutionJournalRecoveryReader
 {
   private readonly providers: TapeApplicationProviders
@@ -192,6 +195,13 @@ export class SessionTape
 
   classifyRecoveryCandidates(): ExecutionRecoveryReport[] {
     return this.executionJournal.classifyRecoveryCandidates()
+  }
+
+  listNestedExecutionAuditForMessage(
+    sessionId: string,
+    messageId: string
+  ): DeepChatNestedExecutionAudit {
+    return this.executionJournal.listNestedExecutionAuditForMessage(sessionId, messageId)
   }
 
   hasAnyCommittedDispatchForMessageToolCall(

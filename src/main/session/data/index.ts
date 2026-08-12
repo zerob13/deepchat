@@ -83,6 +83,10 @@ export function createSessionDataFromDatabase(
       ensureTape(sessionId)
       return Promise.resolve(tapeStore.listViewManifestsByMessage(sessionId, messageId))
     },
+    listNestedExecutionAuditForMessage(sessionId, messageId) {
+      ensureTape(sessionId)
+      return Promise.resolve(tapeStore.listNestedExecutionAuditForMessage(sessionId, messageId))
+    },
     exportMessageTapeReplaySlice(sessionId, messageId, options) {
       ensureTape(sessionId)
       return Promise.resolve(tapeStore.exportReplaySlice(sessionId, messageId, options))

@@ -13,12 +13,13 @@
   "notImplementedDesc": "Este fornecedor ainda não está disponível para visualização.",
   "provider": "Fornecedor",
   "model": "Modelo",
-  "title": "Prévia dos parâmetros da solicitação",
+  "title": "Diagnóstico da mensagem",
   "tabs": {
     "request": "Requisição",
     "view": "Visualização",
     "entries": "Entradas",
-    "budget": "Orçamento"
+    "budget": "Orçamento",
+    "execution": "Execution"
   },
   "empty": "Sem diagnósticos",
   "emptyDesc": "Não há rastreamento de requisição nem manifesto de visualização disponível para esta mensagem",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Esta mensagem não tem rastreamento persistido da requisição ao provedor",
   "manifestUnavailable": "Sem manifesto de visualização",
   "manifestUnavailableDesc": "Esta mensagem não tem manifesto de visualização do Tape persistido",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "ID da visualização",
   "policy": "Política",
   "policyVersion": "Versão da política",

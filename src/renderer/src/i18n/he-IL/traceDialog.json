@@ -1,5 +1,5 @@
 {
-  "title": "תצוגה מקדימה של הבקשה",
+  "title": "אבחון הודעה",
   "provider": "ספק",
   "model": "מודל",
   "endpoint": "נקודת קצה (API Endpoint)",
@@ -18,7 +18,8 @@
     "request": "בקשה",
     "view": "תצוגה",
     "entries": "רשומות",
-    "budget": "תקציב"
+    "budget": "תקציב",
+    "execution": "Execution"
   },
   "empty": "אין אבחון",
   "emptyDesc": "אין מעקב בקשה או מניפסט תצוגה זמינים עבור הודעה זו",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "להודעה זו אין מעקב בקשת ספק שנשמר",
   "manifestUnavailable": "אין מניפסט תצוגה",
   "manifestUnavailableDesc": "להודעה זו אין מניפסט תצוגת Tape שנשמר",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "מזהה תצוגה",
   "policy": "מדיניות",
   "policyVersion": "גרסת מדיניות",

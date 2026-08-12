@@ -13,12 +13,13 @@
   "notImplementedDesc": "このサプライヤーはまだプレビューできません",
   "provider": "サプライヤー",
   "model": "モデル",
-  "title": "リクエストパラメータプレビュー",
+  "title": "メッセージ診断",
   "tabs": {
     "request": "リクエスト",
     "view": "ビュー",
     "entries": "エントリ",
-    "budget": "予算"
+    "budget": "予算",
+    "execution": "Execution"
   },
   "empty": "診断情報なし",
   "emptyDesc": "このメッセージにはリクエストトレースまたはビューマニフェストがありません",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "このメッセージには保存済みのプロバイダーリクエストトレースがありません",
   "manifestUnavailable": "ビューマニフェストなし",
   "manifestUnavailableDesc": "このメッセージには保存済みの Tape ビューマニフェストがありません",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "ビュー ID",
   "policy": "ポリシー",
   "policyVersion": "ポリシーバージョン",

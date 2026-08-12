@@ -1,5 +1,5 @@
 {
-  "title": "Anmodningsforhåndsvisning",
+  "title": "Beskeddiagnostik",
   "provider": "Udbyder",
   "model": "Model",
   "endpoint": "API-endpoint",
@@ -18,7 +18,8 @@
     "request": "Anmodning",
     "view": "Visning",
     "entries": "Poster",
-    "budget": "Tokenbudget"
+    "budget": "Tokenbudget",
+    "execution": "Execution"
   },
   "empty": "Ingen diagnostik",
   "emptyDesc": "Der er ingen anmodningssporing eller visningsmanifest for denne besked",
@@ -26,6 +27,20 @@
   "requestUnavailableDesc": "Denne besked har ingen gemt udbyderanmodningssporing",
   "manifestUnavailable": "Intet visningsmanifest",
   "manifestUnavailableDesc": "Denne besked har intet gemt Tape-visningsmanifest",
+  "execution": {
+    "empty": "No nested executions",
+    "emptyDesc": "No programmatic tool operation is recorded for this request",
+    "corrupt": "Execution audit is corrupt",
+    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
+    "unavailable": "Execution audit unavailable",
+    "unavailableDesc": "The nested Journal facts could not be read",
+    "truncated": "Only the first 256 nested operations are shown",
+    "status": {
+      "success": "Success",
+      "error": "Error",
+      "indeterminate": "Indeterminate"
+    }
+  },
   "viewId": "Visnings-id",
   "policy": "Politik",
   "policyVersion": "Politikversion",
