@@ -1118,10 +1118,7 @@ export class DeepChatContextCoordinator {
                   'retry_projection_cannot_fit'
                 )
               }
-              if (
-                retryProjection.effectiveMaxTokens === providerMaxTokens &&
-                isDeepStrictEqual(retryProjection.messages, providerMessages)
-              ) {
+              if (isDeepStrictEqual(retryProjection.messages, providerMessages)) {
                 throw buildProviderOverflowRetryFailure(
                   providerMessages,
                   providerMaxTokens,

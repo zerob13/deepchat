@@ -637,6 +637,11 @@ describe('DeepChatContextCoordinator', () => {
       ]
     })
     registerMessageSkill(fixture)
+    const optionalHistory: ChatMessage = { role: 'assistant', content: 'optional history' }
+    fixture.input.requestMessages.push(optionalHistory)
+    fixture.input.budget.fitStrictRetry = vi.fn(({ messages }) =>
+      messages.filter((message) => message !== optionalHistory)
+    )
 
     await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
 
@@ -914,6 +919,17 @@ describe('DeepChatContextCoordinator', () => {
         ]
       ]
     })
+    const optionalHistory: ChatMessage = { role: 'assistant', content: 'optional history' }
+    const currentInput: ChatMessage = { role: 'user', content: 'current input' }
+    fixture.input.requestMessages.splice(
+      0,
+      fixture.input.requestMessages.length,
+      optionalHistory,
+      currentInput
+    )
+    fixture.input.budget.fitStrictRetry = vi.fn(({ messages }) =>
+      messages.filter((message) => message !== optionalHistory)
+    )
 
     const events = await collect(
       new DeepChatContextCoordinator().streamProviderAttempts(fixture.input)
@@ -925,6 +941,8 @@ describe('DeepChatContextCoordinator', () => {
     ])
     expect(fixture.input.recovery.recover).toHaveBeenCalledOnce()
     expect(fixture.providerRequests).toHaveLength(2)
+    expect(fixture.providerRequests[0].messages).toEqual([optionalHistory, currentInput])
+    expect(fixture.providerRequests[1].messages).toEqual([currentInput])
     expect(fixture.manifests.map((manifest) => manifest.requestSeq)).toEqual([1, 2])
     expect(fixture.run.requestSeq).toBe(2)
     expect(fixture.run.logicalRound).toBe(1)
@@ -961,12 +979,10 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
   })
 
-  it('skips a context retry when its final provider projection would be identical', async () => {
+  it('skips a protected-only context retry when only its output cap would change', async () => {
     const fixture = createAttemptInput({
       providerEvents: [[{ type: 'error', error_message: 'context overflow' }]]
     })
-    fixture.input.budget.getStrictRetryMaxTokens = (maxTokens: number) => maxTokens
-    fixture.input.budget.getStrictRetryExtraReserve = () => 0
     const facts = {
       matched: true,
       actualTokens: 1200,
@@ -1593,6 +1609,17 @@ describe('DeepChatContextCoordinator', () => {
         transientFailure
       ]
     })
+    const optionalHistory: ChatMessage = { role: 'assistant', content: 'optional history' }
+    const currentInput: ChatMessage = { role: 'user', content: 'current input' }
+    fixture.input.requestMessages.splice(
+      0,
+      fixture.input.requestMessages.length,
+      optionalHistory,
+      currentInput
+    )
+    fixture.input.budget.fitStrictRetry = vi.fn(({ messages }) =>
+      messages.filter((message) => message !== optionalHistory)
+    )
     fixture.input.retryObserver = (event) => lifecycle.push(structuredClone(event))
 
     const events = await collect(
