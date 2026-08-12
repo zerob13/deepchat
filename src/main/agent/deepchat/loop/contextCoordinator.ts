@@ -1101,6 +1101,7 @@ export class DeepChatContextCoordinator {
                   observation.contextOverflowFacts ?? undefined
                 )
               }
+              const failedProviderMessages = providerMessages.slice()
               if (contextRecoveryAction === 'strict_retry') {
                 strictProviderOverflowRetryPending = true
               } else {
@@ -1118,7 +1119,7 @@ export class DeepChatContextCoordinator {
                   'retry_projection_cannot_fit'
                 )
               }
-              if (isDeepStrictEqual(retryProjection.messages, providerMessages)) {
+              if (isDeepStrictEqual(retryProjection.messages, failedProviderMessages)) {
                 throw buildProviderOverflowRetryFailure(
                   providerMessages,
                   providerMaxTokens,

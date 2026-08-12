@@ -1340,7 +1340,7 @@ describe('Integration: multi-turn context', () => {
     })
   })
 
-  it('keeps a strict overflow retry in one active provider round', async () => {
+  it('skips a protected-only overflow retry in one active provider round', async () => {
     const sessionId = 's-loop-run'
     const observedRuns: DeepChatActiveGeneration[] = []
     let providerAttempt = 0
@@ -1370,15 +1370,15 @@ describe('Integration: multi-turn context', () => {
     })
     await deepchatAgent.processMessage(sessionId, 'Hello', { maxProviderRounds: 2 })
 
-    expect(providerInstance.coreStream).toHaveBeenCalledTimes(2)
-    expect(observedRuns).toHaveLength(2)
-    expect(observedRuns[0]).toBe(observedRuns[1])
-    expect(observedRuns[1]).toMatchObject({
+    expect(providerInstance.coreStream).toHaveBeenCalledTimes(1)
+    expect(observedRuns).toHaveLength(1)
+    expect(observedRuns[0]).toMatchObject({
       logicalRound: 1,
-      requestSeq: 2,
+      requestSeq: 1,
       physicalAttempt: 1,
       providerRecovery: {
-        strictProviderOverflowRetryUsed: true
+        contextOverflowHandoffAttempted: true,
+        strictProviderOverflowRetryUsed: false
       }
     })
   })

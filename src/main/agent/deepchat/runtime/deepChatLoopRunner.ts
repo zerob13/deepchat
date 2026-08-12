@@ -353,7 +353,7 @@ function buildProviderContextOverflowAfterRecoveryErrorMessage(
     : ''
   const summary =
     disposition === 'retry_projection_unchanged'
-      ? 'The provider reported a context overflow. DeepChat skipped a second provider call because recovery would not change the messages or output limit.'
+      ? 'The provider reported a context overflow. DeepChat skipped a second provider call because recovery would not remove or rewrite any provider messages; lowering only the requested output limit is not a reliable recovery for an input overflow.'
       : disposition === 'retry_projection_cannot_fit'
         ? 'The provider reported a context overflow. After applying the available context ceiling, the protected request still cannot fit, so DeepChat did not send a doomed retry.'
         : 'The provider still reported a context overflow after DeepChat compacted or trimmed the request.'

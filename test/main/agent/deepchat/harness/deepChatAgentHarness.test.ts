@@ -9864,7 +9864,7 @@ describe('DeepChatAgentHarness', () => {
       expect(llmProvider.generateText).not.toHaveBeenCalled()
     })
 
-    it('uses an explicit provider limit as a runtime ceiling without overwriting model config', async () => {
+    it('uses an explicit provider limit as a runtime ceiling without retrying protected input', async () => {
       providerSettings.resolveDeepChatAgentConfig.mockResolvedValue({
         autoCompactionEnabled: false
       })
@@ -9898,12 +9898,9 @@ describe('DeepChatAgentHarness', () => {
         ?.getContextWindowObservation('new-api', 'custom-model')
       const manifests = getViewManifests()
 
-      expect(providerCoreStream).toHaveBeenCalledTimes(2)
-      expect(providerCoreStream.mock.calls[1][4]).toBeLessThan(512)
-      expect(providerCoreStream.mock.calls[1][2].contextLength).toBe(8192)
-      expect(manifests.map((manifest: any) => manifest.tokenBudget.contextLength)).toEqual([
-        8192, 8192
-      ])
+      expect(providerCoreStream).toHaveBeenCalledTimes(1)
+      expect(providerCoreStream.mock.calls[0][2].contextLength).toBe(8192)
+      expect(manifests.map((manifest: any) => manifest.tokenBudget.contextLength)).toEqual([8192])
       expect(observation).toEqual({
         providerId: 'new-api',
         modelId: 'custom-model',
@@ -10443,7 +10440,7 @@ describe('DeepChatAgentHarness', () => {
       expect(manifest.included.map((ref: any) => ref.reason)).not.toContain('memory_context')
     })
 
-    it('keeps strict overflow retry within one provider round while advancing request sequence', async () => {
+    it('does not retry when preflight compaction leaves only protected provider messages', async () => {
       await agent.initSession('s1', {
         providerId: 'openai',
         modelId: 'gpt-4',
@@ -10459,86 +10456,26 @@ describe('DeepChatAgentHarness', () => {
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
       const providerCoreStream = llmProvider.providerInstance.coreStream
       providerCoreStream.mockReset()
-      providerCoreStream
-        .mockImplementationOnce(async function* () {
-          yield { type: 'error', error_message: 'input exceeds the context window' }
-        })
-        .mockImplementationOnce(async function* () {
-          yield { type: 'text', content: 'Recovered by strict trim' }
-          yield { type: 'stop', stop_reason: 'complete' }
-        })
-
-      const events = await collectProviderEvents(callArgs, [
-        { role: 'system', content: 'Base system prompt' },
-        { role: 'user', content: makeTextWithEstimatedTokens(4100) }
-      ])
-      const manifests = getViewManifests()
-      const strictManifest = manifests[1]
-      const contextLength = 8192
-      const requestedMaxTokens = 4096
-      const strictRetryMaxTokens = Math.floor(requestedMaxTokens / 2)
-      const strictRetryExtraReserve = Math.max(256, Math.min(Math.floor(contextLength * 0.1), 8192))
-
-      expect(events).toEqual([
-        { type: 'text', content: 'Recovered by strict trim' },
-        { type: 'stop', stop_reason: 'complete' }
-      ])
-      expect(callArgs.maxProviderRounds).toBe(1)
-      expect(providerCoreStream).toHaveBeenCalledTimes(2)
-      expect(llmProvider.generateText).toHaveBeenCalledTimes(1)
-      expect(getContextOverflowAnchorCalls()).toHaveLength(1)
-      expect(manifests.map((manifest: any) => manifest.requestSeq)).toEqual([1, 2])
-      expect(callArgs.run.requestSeq).toBe(2)
-      expect(strictManifest).toMatchObject({
-        requestSeq: 2,
-        policy: 'context_pressure_recovery_shadow',
-        tokenBudget: {
-          requestedMaxTokens: strictRetryMaxTokens,
-          reserveTokens: strictRetryMaxTokens + strictRetryExtraReserve
-        }
+      providerCoreStream.mockImplementationOnce(async function* () {
+        yield { type: 'error', error_message: 'input exceeds the context window' }
       })
-      expect(strictManifest.tokenBudget.effectiveMaxTokens).toBeLessThanOrEqual(
-        strictRetryMaxTokens
-      )
-    })
-
-    it('does not run a second handoff when strict retry after preflight compaction still overflows', async () => {
-      await agent.initSession('s1', {
-        providerId: 'openai',
-        modelId: 'gpt-4',
-        generationSettings: {
-          contextLength: 8192,
-          maxTokens: 4096
-        }
-      })
-      await agent.processMessage('s1', 'Hello')
-      sqlitePresenter.deepchatMessagesTable.getBySession.mockReturnValue(createSentTurnRecords(3))
-      llmProvider.generateText.mockClear()
-
-      const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
-      const providerCoreStream = llmProvider.providerInstance.coreStream
-      providerCoreStream.mockReset()
-      providerCoreStream
-        .mockImplementationOnce(async function* () {
-          yield { type: 'error', error_message: 'maximum context length exceeded' }
-        })
-        .mockImplementationOnce(async function* () {
-          yield {
-            type: 'error',
-            error_message: 'provider raw red marker: input exceeds the context window'
-          }
-        })
 
       const errorMessage = await collectProviderErrorMessage(callArgs, [
         { role: 'system', content: 'Base system prompt' },
+        { role: 'user', content: makeTextWithEstimatedTokens(1000) },
+        { role: 'assistant', content: 'removable history' },
         { role: 'user', content: makeTextWithEstimatedTokens(4100) }
       ])
+      const manifests = getViewManifests()
 
-      expect(providerCoreStream).toHaveBeenCalledTimes(2)
+      expect(callArgs.maxProviderRounds).toBe(1)
+      expect(providerCoreStream).toHaveBeenCalledTimes(1)
       expect(llmProvider.generateText).toHaveBeenCalledTimes(1)
       expect(getContextOverflowAnchorCalls()).toHaveLength(1)
-      expect(errorMessage).toContain('provider still reported a context overflow after DeepChat')
-      expect(errorMessage).not.toContain('provider raw red marker')
+      expect(manifests.map((manifest: any) => manifest.requestSeq)).toEqual([1])
+      expect(callArgs.run.requestSeq).toBe(1)
+      expect(errorMessage).toContain('skipped a second provider call')
+      expect(errorMessage).toContain('lowering only the requested output limit')
     })
 
     it('trims provider request history without deleting stored messages when compaction is disabled', async () => {

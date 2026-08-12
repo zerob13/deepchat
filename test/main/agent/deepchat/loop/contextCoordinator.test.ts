@@ -979,6 +979,43 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.order.indexOf('outcome:1')).toBeLessThan(fixture.order.indexOf('manifest:2'))
   })
 
+  it('retries when handoff replaces an aliased provider message projection', async () => {
+    const fixture = createAttemptInput({
+      providerEvents: [
+        [{ type: 'error', error_message: 'context overflow' }],
+        [
+          { type: 'text', content: 'recovered' },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
+      ]
+    })
+    const optionalHistory: ChatMessage = { role: 'assistant', content: 'optional history' }
+    const currentInput: ChatMessage = { role: 'user', content: 'current input' }
+    fixture.input.requestMessages.splice(
+      0,
+      fixture.input.requestMessages.length,
+      optionalHistory,
+      currentInput
+    )
+    fixture.input.recovery.recover = vi.fn(async () => ({
+      messages: [currentInput],
+      summaryCursorOrderSeq: 4
+    }))
+
+    const events = await collect(
+      new DeepChatContextCoordinator().streamProviderAttempts(fixture.input)
+    )
+
+    expect(events).toEqual([
+      { type: 'text', content: 'recovered' },
+      { type: 'stop', stop_reason: 'complete' }
+    ])
+    expect(fixture.providerRequests.map(({ messages }) => messages)).toEqual([
+      [optionalHistory, currentInput],
+      [currentInput]
+    ])
+  })
+
   it('skips a protected-only context retry when only its output cap would change', async () => {
     const fixture = createAttemptInput({
       providerEvents: [[{ type: 'error', error_message: 'context overflow' }]]
