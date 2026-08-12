@@ -126,7 +126,7 @@ canonical equality; it never writes a second result fact. Do not change supporti
 semantics. Add an execution-local projection registry so a root view already provided by Session,
 message, or prior tool result returns a bounded confirmation. A failed, truncated, or offloaded
 root result does not activate the Skill and stops that run from issuing a provider request with an
-unrecorded behavior contract. Expose this behavior only after schema-6 strict Skill-bearing
+unrecorded behavior contract. Expose this behavior only after strict executable Skill-bearing
 manifests are active in the same commit.
 
 ## Message And Session Projection
@@ -204,7 +204,7 @@ second Provider call and return actionable category diagnostics.
 - A supported older reader ignores the new physical `context` kind because its effective,
   transcript, search, and Memory projections select only known kinds. It may copy an unknown row
   during fork merge, but the row stays inert and fails destination identity validation. Old code
-  must not reinterpret ViewManifest schema 6.
+  must not reinterpret ViewManifest schemas 6 or 7.
 - No persistent field is repurposed from derived token observations.
 
 ## Security And Privacy
@@ -236,7 +236,7 @@ second Provider call and return actionable category diagnostics.
 
 - New/strictly reused/corrupt materialization fact tests using real SQLite where available.
 - UTF-8 byte bound, canonical equality, Tape reset/incarnation, and narrow capability tests.
-- Schema 1–6 parser and hash-vector tests, including contract/no-contract legal states and duplicate
+- Schema 1–7 parser and hash-vector tests, including contract/no-contract legal states and duplicate
   run/request binding rejection.
 - Effective view, FTS/fallback search, Agent Tape tools, Memory, renderer, and fork isolation tests.
 - Previous-reader compatibility tests proving unknown `context` rows cannot surface instruction

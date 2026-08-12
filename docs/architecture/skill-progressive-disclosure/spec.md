@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned. This specification governs the bounded Skill catalog, deterministic discovery, scoped
+Implemented. This specification governs the bounded Skill catalog, deterministic discovery, scoped
 activation projection, and Tape-backed Skill context materialization described below.
 
 ## User Need
@@ -328,22 +328,23 @@ external call starts.
 
 ### ViewManifest Evolution
 
-Skill-bearing requests use ViewManifest schema version 6 and hash version 4. Schema 6 adds required
-`runId` and non-empty `skillContexts` when full Skill content is projected. Each Skill context
-records activation scope, canonical Agent/Skill identity, authoritative materialization or strict
-`tool_result` entry ref, triggering message entry ref where applicable, role, exact
-projected-effective-content hash, projection version, and selected deduplication source. That hash
-must equal the authoritative materialization or tool-result content hash; provider-message
-wrappers remain covered by the whole-prompt hash instead of creating an unbacked second content
-identity. An
-`ExecutionContract` is optional in schema 6 but, when present, must satisfy the same immutable
-request/provenance checks as schema 5.
+Message and Session Skill contexts without runtime executable authority use ViewManifest schema 6
+and hash version 4. Requests that carry runtime `skill_view` execution authority use schema 7 and
+hash version 5, binding the provider-visible `tool_result` and exact execution package in one
+occurrence. Both schemas require `runId` and non-empty `skillContexts` when full Skill content is
+projected. Each Skill context records activation scope, canonical Agent/Skill identity,
+authoritative materialization or strict `tool_result` entry ref, triggering message entry ref where
+applicable, role, exact projected-effective-content hash, projection version, and selected
+deduplication source. That hash must equal the authoritative materialization or tool-result content
+hash; provider-message wrappers remain covered by the whole-prompt hash instead of creating an
+unbacked second content identity. An `ExecutionContract` is optional in schemas 6 and 7 but, when
+present, must satisfy the same immutable request/provenance checks as schema 5.
 
 Schemas 1–4 retain hash version 2 behavior. Schema 5 retains hash version 3 and its mandatory
-ExecutionContract. Schema 6 alone uses hash version 4 and hashes `runId`, `skillContexts`, and the
-optional contract under its own exact recipe. Manifest assembly receives a separate
-`requireDurableManifest` flag whenever full Skill content is projected; it is independent from
-`strictViewContract`. Duplicate, missing, or conflicting schema-6 manifests for one
+ExecutionContract. Schema 6 uses hash version 4; schema 7 uses hash version 5 and adds executable
+Skill evidence. Each version keeps its own exact hash recipe. Manifest assembly receives a
+separate `requireDurableManifest` flag whenever full Skill content is projected; it is independent
+from `strictViewContract`. Duplicate, missing, or conflicting schema-6/schema-7 manifests for one
 `(sessionId, tapeIncarnation, runId, requestSeq)` binding fail closed. Existing schemas and hash
 recipes remain readable and are never reinterpreted under the new semantics.
 

@@ -113,7 +113,7 @@
       environment, extraction, or hash drift.
 - [x] Revalidate the exact Skill-bearing request authority after rate/retry waits and immediately
       before every physical Provider attempt.
-- [ ] Run format, i18n, lint, Node/web type checks, main/renderer tests, and build.
-- [ ] Review generated provider and ACP registry output.
-- [ ] Review the complete `dev...HEAD` diff by severity and fix every material finding.
-- [ ] Confirm the branch has no unexpected files, no upstream, and no push occurred.
+- [x] Run format, i18n, lint, Node/web type checks, main/renderer tests, and build.
+- [x] Review generated provider and ACP registry output.
+- [x] Review the complete `dev...HEAD` diff by severity and fix every material finding.
+- [x] Confirm the branch has no unexpected files, no upstream, and no push occurred.
