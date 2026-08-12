@@ -65,6 +65,112 @@ function setup() {
 }
 
 describe('ProgrammaticToolParentRegistry', () => {
+  it('prepares an inert grant and exposes it exactly once after the real outer T1', () => {
+    const operationBinding = binding()
+    const { table } = createTapeTableMock()
+    const journal = new ExecutionJournalService(() => table)
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => 'r'.repeat(43),
+      createTokenId: () => 'prepared-programmatic-token'
+    })
+    const registry = new ProgrammaticToolParentRegistry({
+      tokenAuthority: authority,
+      executionJournal: journal
+    })
+    journal.commitRunStarted({
+      sessionId: operationBinding.operation.sessionId,
+      runId: operationBinding.operation.runId,
+      messageId: operationBinding.operation.messageId,
+      runKind: 'loop'
+    })
+    const registration = registry.prepare({
+      binding: operationBinding,
+      assertAuthorityActive: () => undefined
+    })
+
+    expect(authority.beginRequest('r'.repeat(43))).toEqual({ status: 'invalid' })
+    expect(() => registration.takeArmedToken()).toThrow(/no armed invocation token/)
+    const outerDispatch = journal.commitDispatch({
+      sessionId: operationBinding.operation.sessionId,
+      messageId: operationBinding.operation.messageId,
+      operation: {
+        runId: operationBinding.operation.runId,
+        requestSeq: operationBinding.operation.requestSeq,
+        providerToolCallId: operationBinding.operation.providerToolCallId
+      },
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool call', stdin: '{}' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' }
+    })
+    registration.armOuterDispatch({
+      ...outerDispatch,
+      operation: operationBinding.operation
+    })
+
+    const armed = registration.takeArmedToken()
+    expect(armed.token).toBe('r'.repeat(43))
+    expect(() => registration.takeArmedToken()).toThrow(/no armed invocation token/)
+    expect(
+      registration.settleLaunchFailure({ responseText: 'launcher unavailable' })
+    ).toMatchObject({ created: true })
+    expect(authority.beginRequest(armed.token)).toEqual({ status: 'invalid' })
+    expect(() => registry.assertRunTerminalAllowed(RUN)).not.toThrow()
+  })
+
+  it('settles a known launch error when live View authority is revoked after outer T1', () => {
+    const operationBinding = binding()
+    const { table } = createTapeTableMock()
+    const journal = new ExecutionJournalService(() => table)
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => 's'.repeat(43),
+      createTokenId: () => 'revoked-programmatic-token'
+    })
+    const registry = new ProgrammaticToolParentRegistry({
+      tokenAuthority: authority,
+      executionJournal: journal
+    })
+    let active = true
+    journal.commitRunStarted({
+      sessionId: operationBinding.operation.sessionId,
+      runId: operationBinding.operation.runId,
+      messageId: operationBinding.operation.messageId,
+      runKind: 'loop'
+    })
+    const registration = registry.prepare({
+      binding: operationBinding,
+      assertAuthorityActive: () => {
+        if (!active) throw new Error('View revoked')
+      }
+    })
+    const outerDispatch = journal.commitDispatch({
+      sessionId: operationBinding.operation.sessionId,
+      messageId: operationBinding.operation.messageId,
+      operation: {
+        runId: operationBinding.operation.runId,
+        requestSeq: operationBinding.operation.requestSeq,
+        providerToolCallId: operationBinding.operation.providerToolCallId
+      },
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool call', stdin: '{}' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' }
+    })
+    active = false
+
+    expect(() =>
+      registration.armOuterDispatch({
+        ...outerDispatch,
+        operation: operationBinding.operation
+      })
+    ).toThrow('View revoked')
+    expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
+    expect(registration.settleLaunchFailure({ responseText: 'View revoked' })).toMatchObject({
+      created: true
+    })
+    expect(() => registry.assertRunTerminalAllowed(RUN)).not.toThrow()
+  })
+
   it('blocks Run terminal before outer settlement and does not invoke its writer', () => {
     const { registry } = setup()
     const commit = vi.fn(() => ({ sessionId: RUN.sessionId, entryId: 99, created: true }))
@@ -90,10 +196,11 @@ describe('ProgrammaticToolParentRegistry', () => {
       normalizedArguments: { command: 'deepchat tool call' },
       target: { serverName: 'agent-filesystem', originalName: 'exec' }
     })
-    const armed = registration.armOuterDispatch({
+    registration.armOuterDispatch({
       ...outerDispatch,
       operation: operationBinding.operation
     })
+    const armed = registration.takeArmedToken()
     controller.failBeforeChildPlan()
     expect(authority.beginRequest(armed.token)).toEqual({ status: 'invalid' })
     expect(

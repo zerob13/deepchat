@@ -310,13 +310,17 @@ describe('ToolService', () => {
     const agentToolManager = (toolService as any).agentToolManager
     const callTool = vi.fn().mockResolvedValue('done')
     agentToolManager.callTool = callTool
+    const programmaticToolParent = { takeArmedToken: vi.fn() } as never
 
     await expect(
       toolService.callTool(
         {
           id: 'exec-1',
           type: 'function',
-          function: { name: 'exec', arguments: '{"command":"pwd"}' },
+          function: {
+            name: 'exec',
+            arguments: '{"command":"deepchat tool call","stdin":"{}"}'
+          },
           conversationId: request.sessionId
         },
         {
@@ -326,20 +330,22 @@ describe('ToolService', () => {
           permissionMode: 'full_access',
           toolSurfaceSnapshot: snapshot,
           programmaticToolCapability: capability,
+          programmaticToolParent,
           commitDispatch: vi.fn()
         }
       )
     ).resolves.toMatchObject({ content: 'done' })
     expect(callTool).toHaveBeenCalledWith(
       'exec',
-      { command: 'pwd' },
+      { command: 'deepchat tool call', stdin: '{}' },
       request.sessionId,
       expect.objectContaining({
         toolCallId: 'exec-1',
         runId: request.runId,
         messageId: request.messageId,
         requestSeq: request.requestSeq,
-        programmaticToolCapability: capability
+        programmaticToolCapability: capability,
+        programmaticToolParent
       })
     )
 
@@ -357,10 +363,11 @@ describe('ToolService', () => {
           requestSeq: request.requestSeq,
           toolSurfaceSnapshot: snapshot,
           programmaticToolCapability: capability,
+          programmaticToolParent,
           commitDispatch: vi.fn()
         }
       )
-    ).rejects.toThrow(/requires active request-scoped exec dispatch with durable commit authority/)
+    ).rejects.toThrow(/requires active request-scoped exec dispatch with durable parent authority/)
     expect(callTool).toHaveBeenCalledOnce()
 
     await expect(
@@ -376,10 +383,11 @@ describe('ToolService', () => {
           runId: request.runId,
           requestSeq: request.requestSeq,
           toolSurfaceSnapshot: snapshot,
-          programmaticToolCapability: capability
+          programmaticToolCapability: capability,
+          programmaticToolParent
         }
       )
-    ).rejects.toThrow(/requires active request-scoped exec dispatch with durable commit authority/)
+    ).rejects.toThrow(/requires active request-scoped exec dispatch with durable parent authority/)
     expect(callTool).toHaveBeenCalledOnce()
   })
 

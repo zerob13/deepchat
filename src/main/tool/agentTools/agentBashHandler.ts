@@ -23,6 +23,7 @@ import { resolveUsableSpawnCwd } from '@/agent/shared/process/spawnGuard'
 import { resolveSessionDir } from '@/agent/shared/storage/sessionPaths'
 import type { ResolvedCommandShell } from '@shared/commandShell'
 import { normalizeCommandShellFilePath } from '@/agent/shared/process/commandShellPath'
+import type { ArmedAgentCliProgrammaticToken } from '@/cli/agentTokenAuthority'
 
 // Consider moving to a shared handlers location in future refactoring
 import {
@@ -55,7 +56,9 @@ export interface ExecuteCommandOptions {
   outputPrefix?: string
   outputPreviewChars?: number
   allowExternalCwd?: boolean
-  beforeExecute?: (normalizedArguments: Record<string, unknown>) => void
+  beforeExecute?: (
+    normalizedArguments: Record<string, unknown>
+  ) => ArmedAgentCliProgrammaticToken | void
 }
 
 export interface AgentCommandEnvironmentPort {
@@ -70,6 +73,30 @@ export interface AgentCommandEnvironmentPort {
         preserveCommand: boolean
       }>
     | undefined
+  createProgrammaticEnvironment?(
+    armed: ArmedAgentCliProgrammaticToken,
+    conversationId: string,
+    command: string,
+    stdin: string,
+    commandShell: ResolvedCommandShell
+  ): Readonly<{
+    variables: Readonly<Record<string, string>>
+    prependPath: readonly string[]
+    preserveCommand: boolean
+  }>
+}
+
+export class ProgrammaticCommandLaunchError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('Programmatic CLI launch did not reach authoritative settlement', options)
+    this.name = 'ProgrammaticCommandLaunchError'
+  }
+}
+
+export function isProgrammaticCommandLaunchError(
+  error: unknown
+): error is ProgrammaticCommandLaunchError {
+  return error instanceof ProgrammaticCommandLaunchError
 }
 
 interface PreparedCommand {
@@ -195,7 +222,10 @@ export class AgentBashHandler {
     const spawnCwd = resolveUsableSpawnCwd(cwd)
     let result: ShellProcessResult
 
-    const resolvedEnvironment = this.resolveCommandEnvironment(command, options)
+    const resolvedEnvironment =
+      options.stdin === undefined
+        ? this.resolveCommandEnvironment(command, options)
+        : { env: options.env, preserveCommand: true }
     const prepared = await this.prepareCommand(
       command,
       resolvedEnvironment.env,
@@ -203,25 +233,61 @@ export class AgentBashHandler {
       resolvedEnvironment.preserveCommand || options.stdin !== undefined
     )
 
-    options.beforeExecute?.({
-      command: prepared.command,
-      cwd: spawnCwd,
-      timeoutMs: resolvedTimeout,
-      background: false,
-      ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
-      ...(prepared.rewritten
-        ? {
-            fallbackCommand: prepared.originalCommand,
-            fallbackPolicy: 'rtk_capability_error'
-          }
-        : {}),
-      ...(yieldMs === undefined ? {} : { yieldMs })
-    })
-    result = await this.runShellProcess(prepared.command, spawnCwd, resolvedTimeout, {
-      ...options,
-      env: prepared.env,
-      yieldMs
-    })
+    let armedProgrammaticToken: ArmedAgentCliProgrammaticToken | void
+    try {
+      armedProgrammaticToken = options.beforeExecute?.({
+        command: prepared.command,
+        cwd: spawnCwd,
+        timeoutMs: resolvedTimeout,
+        background: false,
+        ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
+        ...(prepared.rewritten
+          ? {
+              fallbackCommand: prepared.originalCommand,
+              fallbackPolicy: 'rtk_capability_error'
+            }
+          : {}),
+        ...(yieldMs === undefined ? {} : { yieldMs })
+      })
+      if (options.stdin !== undefined) {
+        if (!armedProgrammaticToken || !options.conversationId) {
+          throw new Error('Programmatic CLI launch requires an armed outer operation grant')
+        }
+        const programmaticEnvironment = this.commandEnvironment?.createProgrammaticEnvironment?.(
+          armedProgrammaticToken,
+          options.conversationId,
+          prepared.command,
+          options.stdin,
+          options.commandShell
+        )
+        if (!programmaticEnvironment) {
+          throw new Error('Programmatic CLI command environment is unavailable')
+        }
+        prepared.env = mergeCommandEnvironment({
+          processEnv: process.env,
+          overrides: { ...prepared.env, ...programmaticEnvironment.variables },
+          prependPathSources: [...programmaticEnvironment.prependPath],
+          includeDefaultPaths: false
+        })
+      }
+    } catch (error) {
+      if (options.stdin !== undefined) {
+        throw new ProgrammaticCommandLaunchError({ cause: error })
+      }
+      throw error
+    }
+    try {
+      result = await this.runShellProcess(prepared.command, spawnCwd, resolvedTimeout, {
+        ...options,
+        env: prepared.env,
+        yieldMs
+      })
+    } catch (error) {
+      if (options.stdin !== undefined) {
+        throw new ProgrammaticCommandLaunchError({ cause: error })
+      }
+      throw error
+    }
 
     if (result.kind === 'running') {
       return {

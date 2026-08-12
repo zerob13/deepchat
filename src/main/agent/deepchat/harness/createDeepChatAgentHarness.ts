@@ -296,7 +296,13 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
   const interactionParking = new InteractionParkingRegistry()
   const toolSurfaceDiagnostics = new ToolSurfaceShadowDiagnosticsRegistry()
   const programmaticToolParents =
-    deps.programmaticToolParents ?? new ProgrammaticToolParentRegistry()
+    deps.programmaticToolParents ??
+    (deps.agentCliTokenAuthority
+      ? new ProgrammaticToolParentRegistry({
+          tokenAuthority: deps.agentCliTokenAuthority,
+          executionJournal: tapeService
+        })
+      : new ProgrammaticToolParentRegistry())
   const sessionLifecycle = new SessionLifecycleCoordinator({
     registry: runtime,
     providerSettings,

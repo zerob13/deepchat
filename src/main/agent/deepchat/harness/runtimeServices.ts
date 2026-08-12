@@ -38,6 +38,7 @@ import type { ToolSurfaceShadowDiagnosticsRegistry } from '@/agent/deepchat/runt
 import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
 import type { ToolSurfaceRunModePort } from '@/agent/deepchat/runtime/deepChatLoopRunner'
 import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
+import type { AgentCliTokenAuthority } from '@/cli/agentTokenAuthority'
 
 export type DeepChatHarnessSkillPort = Pick<
   SkillServicePort,
@@ -84,6 +85,8 @@ export interface DeepChatHarnessDependencies {
   toolSurfaceRunMode?: ToolSurfaceRunModePort
   /** Process-live causality owner. It never reconstructs dispatch authority from Tape. */
   programmaticToolParents?: ProgrammaticToolParentRegistry
+  /** Shared local-control authority used only to prepare inert exact-operation grants. */
+  agentCliTokenAuthority?: Pick<AgentCliTokenAuthority, 'prepareProgrammaticOperation'>
 }
 
 /**

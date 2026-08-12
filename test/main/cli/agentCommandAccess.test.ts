@@ -1,10 +1,14 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LOCAL_CONTROL_AGENT_TOKEN_ENV } from '@shared/contracts/localControl'
 import { AgentCliCommandAccess, resolveBundledCliDirectory } from '@/cli/agentCommandAccess'
-import { AgentCliTokenAuthority } from '@/cli/agentTokenAuthority'
+import {
+  AgentCliTokenAuthority,
+  buildAgentCliProgrammaticInvocationHash,
+  type ArmedAgentCliProgrammaticToken
+} from '@/cli/agentTokenAuthority'
 import { CommandPermissionService } from '@/tool/permission/commandPermissionService'
 import {
   CMD_COMMAND_SHELL,
@@ -71,6 +75,107 @@ describe('AgentCliCommandAccess', () => {
     })
     first.grant.release()
     expect(authority.beginRequest(agentToken)).toEqual({ status: 'quota-exhausted' })
+  })
+
+  it('injects only an already armed exact-operation token without minting another grant', async () => {
+    const { directory } = await createCliDirectory()
+    const authority = new AgentCliTokenAuthority()
+    const issue = vi.spyOn(authority, 'issue')
+    const access = new AgentCliCommandAccess({
+      tokenAuthority: authority,
+      commandPermission: new CommandPermissionService(),
+      resolveCliDirectory: () => directory
+    })
+    const armed = {
+      token: 'p'.repeat(43),
+      conversationId: 'conversation-1',
+      programmaticOperation: {
+        command: { domain: 'tool', verb: 'call' },
+        route: 'tool.call',
+        canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
+          command: { domain: 'tool', verb: 'call' },
+          route: 'tool.call',
+          params: {}
+        }),
+        operation: { sessionId: 'conversation-1' }
+      }
+    } as unknown as ArmedAgentCliProgrammaticToken
+
+    expect(
+      access.createProgrammaticEnvironment(
+        armed,
+        ' conversation-1 ',
+        'deepchat tool call',
+        '{}',
+        POSIX_COMMAND_SHELL
+      )
+    ).toEqual({
+      variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: armed.token },
+      prependPath: [directory],
+      preserveCommand: true
+    })
+    expect(issue).not.toHaveBeenCalled()
+    expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
+
+    expect(() =>
+      access.createProgrammaticEnvironment(
+        armed,
+        'conversation-2',
+        'deepchat tool call',
+        '{}',
+        POSIX_COMMAND_SHELL
+      )
+    ).toThrow(/does not match its exact invocation/)
+    expect(() =>
+      access.createProgrammaticEnvironment(
+        armed,
+        'conversation-1',
+        'deepchat tool call --target remote',
+        '{}',
+        POSIX_COMMAND_SHELL
+      )
+    ).toThrow(/does not match its exact invocation/)
+    expect(() =>
+      access.createProgrammaticEnvironment(
+        armed,
+        'conversation-1',
+        'deepchat tool call',
+        '{"target":"changed"}',
+        POSIX_COMMAND_SHELL
+      )
+    ).toThrow(/does not match its exact invocation/)
+  })
+
+  it('fails closed when an armed Programmatic invocation has no bundled launcher', () => {
+    const access = new AgentCliCommandAccess({
+      tokenAuthority: new AgentCliTokenAuthority(),
+      commandPermission: new CommandPermissionService(),
+      resolveCliDirectory: () => null
+    })
+    const armed = {
+      token: 'p'.repeat(43),
+      conversationId: 'conversation-1',
+      programmaticOperation: {
+        command: { domain: 'tool', verb: 'batch' },
+        route: 'tool.batch',
+        canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
+          command: { domain: 'tool', verb: 'batch' },
+          route: 'tool.batch',
+          params: {}
+        }),
+        operation: { sessionId: 'conversation-1' }
+      }
+    } as unknown as ArmedAgentCliProgrammaticToken
+
+    expect(() =>
+      access.createProgrammaticEnvironment(
+        armed,
+        'conversation-1',
+        'deepchat tool batch',
+        '{}',
+        POSIX_COMMAND_SHELL
+      )
+    ).toThrow(/Bundled DeepChat CLI is unavailable/)
   })
 
   it.each([

@@ -1206,7 +1206,7 @@ describe('processStream', () => {
       expect(harness.toolService.callTool).not.toHaveBeenCalled()
     })
 
-    it('settles native Agent tools in CLI Programmatic Views without ToolSearch batching', async () => {
+    it('settles ordinary Agent tools without granting Programmatic authority', async () => {
       const exec = {
         ...makeTool('exec'),
         source: 'agent' as const,
@@ -1298,10 +1298,13 @@ describe('processStream', () => {
           runId: RUN_ID,
           messageId: 'm1',
           requestSeq: 1,
-          toolSurfaceSnapshot: snapshot,
-          programmaticToolCapability: programmaticCapability
+          toolSurfaceSnapshot: snapshot
         })
       )
+      expect(toolService.callTool.mock.calls[0][1]).not.toHaveProperty(
+        'programmaticToolCapability'
+      )
+      expect(toolService.callTool.mock.calls[0][1]).not.toHaveProperty('programmaticToolParent')
       expect(toolService.assertToolSurfaceAuthority).toHaveBeenCalledOnce()
       expect(releaseActivationCandidates).not.toHaveBeenCalled()
     })

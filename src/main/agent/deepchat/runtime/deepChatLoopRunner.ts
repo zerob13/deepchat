@@ -301,7 +301,10 @@ export interface DeepChatLoopRunnerPorts {
   inputPreparationCoordinator: InputPreparationCoordinator
   contextCoordinator: DeepChatContextCoordinator
   toolSurfaceRunMode?: ToolSurfaceRunModePort
-  programmaticToolParents: Pick<ProgrammaticToolParentRegistry, 'commitRunTerminal'>
+  programmaticToolParents: Pick<
+    ProgrammaticToolParentRegistry,
+    'prepare' | 'commitRunTerminal'
+  >
   toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistryPort
   memoryIngestionObserver: MemoryIngestionObserver
   toolExecutionPort: ToolExecutionPort
@@ -801,6 +804,7 @@ export class DeepChatLoopRunner {
         },
         toolExecution: this.ports.toolExecutionPort,
         toolResults: this.ports.toolResultPort,
+        programmaticToolParents: this.ports.programmaticToolParents,
         coreStream: async function* (
           requestMessages,
           requestModelId,

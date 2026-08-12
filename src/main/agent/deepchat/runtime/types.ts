@@ -34,6 +34,7 @@ import type { CommandShellProfile } from '@shared/commandShell'
 import type { ExecutionJournalWriter, TapeToolFactWriter } from '@/tape/ports/capabilities'
 import type { SessionPermissionGrant } from '@/session/contracts'
 import type { ToolSurfaceDeferredDispatchBindingV1 } from './toolSurface'
+import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 
 export interface InterleavedReasoningConfig {
   preserveReasoningContent: boolean
@@ -264,6 +265,7 @@ export interface ProcessParams {
   notificationObserver?: DeepChatLoopNotificationObserver
   controls?: ProcessControlCollaborators
   diagnostics?: ProcessInternalDiagnostics
+  programmaticToolParents?: Pick<ProgrammaticToolParentRegistry, 'prepare'>
   commitRunTerminal(selection: ProcessTerminalSelection): void
   io: ProcessIoParams
 }

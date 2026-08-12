@@ -3,6 +3,8 @@ import {
   AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
   AgentCliTokenAuthority,
   AgentCliTokenCapacityError,
+  buildAgentCliProgrammaticInvocationHash,
+  parseAgentCliProgrammaticExecInvocation,
   type AgentCliOuterDispatchReceipt,
   type AgentCliProgrammaticOperationBinding
 } from '@/cli/agentTokenAuthority'
@@ -273,6 +275,53 @@ describe('AgentCliTokenAuthority', () => {
     request.grant.release()
     expect(authority.beginRequest(agentToken)).toEqual({ status: 'quota-exhausted' })
     expect(assertAuthorityActive).toHaveBeenCalledTimes(4)
+  })
+
+  it('binds exact call and batch commands to canonical owned stdin', () => {
+    const first = parseAgentCliProgrammaticExecInvocation({
+      command: 'deepchat tool call',
+      stdin: '{"arguments":{"limit":2,"query":"weather"},"target":"remote_search"}'
+    })
+    const reordered = parseAgentCliProgrammaticExecInvocation({
+      command: 'deepchat tool call',
+      stdin: '{ "target": "remote_search", "arguments": { "query": "weather", "limit": 2 } }'
+    })
+    const changed = parseAgentCliProgrammaticExecInvocation({
+      command: 'deepchat tool call',
+      stdin: '{"arguments":{"limit":3,"query":"weather"},"target":"remote_search"}'
+    })
+    const batch = parseAgentCliProgrammaticExecInvocation({
+      command: 'deepchat tool batch',
+      stdin: '{"steps":[{"target":"remote_search","arguments":{}}]}'
+    })
+
+    expect(first).toMatchObject({
+      command: { domain: 'tool', verb: 'call' },
+      route: 'tool.call'
+    })
+    expect(first.canonicalInvocationHash).toBe(reordered.canonicalInvocationHash)
+    expect(first.canonicalInvocationHash).not.toBe(changed.canonicalInvocationHash)
+    expect(first.canonicalInvocationHash).not.toBe(batch.canonicalInvocationHash)
+    expect(first.canonicalInvocationHash).toBe(
+      buildAgentCliProgrammaticInvocationHash({
+        command: { domain: 'tool', verb: 'call' },
+        route: 'tool.call',
+        params: {
+          target: 'remote_search',
+          arguments: { query: 'weather', limit: 2 }
+        }
+      })
+    )
+  })
+
+  it.each([
+    { command: 'deepchat tool search', stdin: '{}' },
+    { command: 'deepchat tool call --target remote', stdin: '{}' },
+    { command: 'deepchat tool call', stdin: '' },
+    { command: 'deepchat tool call', stdin: '[]' },
+    { command: 'deepchat tool batch', stdin: '{' }
+  ])('rejects non-exact Programmatic exec invocation %#', (input) => {
+    expect(() => parseAgentCliProgrammaticExecInvocation(input)).toThrow()
   })
 
   it('cannot reuse one outer T1 receipt to arm another prepared grant', () => {

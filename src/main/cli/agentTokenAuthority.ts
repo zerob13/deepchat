@@ -14,6 +14,7 @@ import {
   MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES,
   MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES
 } from '@/tape/domain/toolSurfaceFacts'
+import { hashJsonData } from '@/tape/domain/canonicalJson'
 
 export const DEFAULT_AGENT_CLI_TOKEN_TTL_MS = 35 * 60_000
 export const DEFAULT_AGENT_CLI_TOKEN_MAX_CALLS = 64
@@ -30,6 +31,15 @@ const MAX_OPERATION_IDENTITY_CHARACTERS = 1_024
 export const AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION = 1 as const
 
 export type AgentCliProgrammaticToolVerb = 'search' | 'describe' | 'call' | 'batch'
+
+export type AgentCliProgrammaticInvocation = Readonly<{
+  command: Readonly<{
+    domain: 'tool'
+    verb: AgentCliProgrammaticToolVerb
+  }>
+  route: `tool.${AgentCliProgrammaticToolVerb}`
+  canonicalInvocationHash: string
+}>
 
 export type AgentCliProgrammaticOperationIdentity = Readonly<{
   sessionId: string
@@ -206,6 +216,62 @@ const AgentCliProgrammaticOperationGrantSchema = z
       })
     }
   })
+
+function requireCanonicalInvocationParams(value: unknown): Readonly<Record<string, unknown>> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Programmatic Tool stdin must contain one JSON object')
+  }
+  return value as Readonly<Record<string, unknown>>
+}
+
+export function buildAgentCliProgrammaticInvocationHash(input: {
+  command: Readonly<{ domain: 'tool'; verb: AgentCliProgrammaticToolVerb }>
+  route: `tool.${AgentCliProgrammaticToolVerb}`
+  params: Readonly<Record<string, unknown>>
+}): string {
+  if (input.route !== `tool.${input.command.verb}`) {
+    throw new Error('Programmatic Tool invocation route does not match its command')
+  }
+  return hashJsonData({
+    surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+    command: input.command,
+    route: input.route,
+    params: input.params
+  })
+}
+
+export function parseAgentCliProgrammaticExecInvocation(input: {
+  command: string
+  stdin: string
+}): AgentCliProgrammaticInvocation {
+  const command = input.command
+  const verb =
+    command === 'deepchat tool call'
+      ? ('call' as const)
+      : command === 'deepchat tool batch'
+        ? ('batch' as const)
+        : null
+  if (!verb) {
+    throw new Error('Programmatic Tool exec requires an exact call or batch command')
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(input.stdin)
+  } catch {
+    throw new Error('Programmatic Tool stdin must contain valid JSON')
+  }
+  const invocationCommand = Object.freeze({ domain: 'tool' as const, verb })
+  const route = `tool.${verb}` as const
+  return Object.freeze({
+    command: invocationCommand,
+    route,
+    canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
+      command: invocationCommand,
+      route,
+      params: requireCanonicalInvocationParams(parsed)
+    })
+  })
+}
 
 export function parseAgentCliProgrammaticOperationGrant(
   input: unknown

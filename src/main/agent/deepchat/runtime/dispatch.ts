@@ -46,7 +46,10 @@ import type {
   ToolExecutionPort,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
-import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
+import {
+  assertProgrammaticToolCapabilityViewActive,
+  type ProgrammaticToolCapabilityV1
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
 import {
   CommandShellProfileSchema,
   type CommandShellProfile,
@@ -86,6 +89,19 @@ import {
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
 import type { LoopRunRequestToolSurfaceBinding } from '@/agent/deepchat/loop/loopRun'
+import type {
+  ProgrammaticToolParentRegistration,
+  ProgrammaticToolParentRegistry
+} from '@/cli/programmaticToolParentRegistry'
+import {
+  AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+  parseAgentCliProgrammaticExecInvocation
+} from '@/cli/agentTokenAuthority'
+import { LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION } from '@shared/contracts/localControl'
+import {
+  ProgrammaticCommandLaunchError,
+  isProgrammaticCommandLaunchError
+} from '@/tool/agentTools/agentBashHandler'
 import {
   buildToolSurfaceDeferredDispatchBinding,
   claimToolSurfaceExecution,
@@ -1715,6 +1731,55 @@ function flushBlocksToRenderer(io: IoParams, blocks: AssistantMessageBlock[]): v
   })
 }
 
+function prepareProgrammaticExecParent(input: {
+  execution: ToolExecutionContext
+  operation: ExecutionOperationIdentity
+  io: Pick<IoParams, 'sessionId' | 'messageId'>
+  toolSurfaceSnapshot?: ToolSurfaceSnapshot
+  capability?: ProgrammaticToolCapabilityV1
+  parents?: Pick<ProgrammaticToolParentRegistry, 'prepare'>
+}): ProgrammaticToolParentRegistration | undefined {
+  if (input.execution.completedToolCall.name !== 'exec') return undefined
+  let args: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(input.execution.completedToolCall.arguments)
+    args = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return undefined
+  }
+  const command = typeof args.command === 'string' ? args.command : ''
+  const stdin = typeof args.stdin === 'string' ? args.stdin : undefined
+  const attemptsProgrammaticInvocation =
+    stdin !== undefined || command === 'deepchat tool call' || command === 'deepchat tool batch'
+  if (!attemptsProgrammaticInvocation) return undefined
+  if (!stdin || !input.capability || !input.toolSurfaceSnapshot || !input.parents) {
+    throw new Error('Programmatic Tool exec requires its exact active View capability and stdin')
+  }
+  assertProgrammaticToolCapabilityViewActive(input.capability, input.toolSurfaceSnapshot)
+  const invocation = parseAgentCliProgrammaticExecInvocation({ command, stdin })
+  const operation = Object.freeze({
+    sessionId: input.io.sessionId,
+    messageId: input.io.messageId,
+    ...input.operation
+  })
+  return input.parents.prepare({
+    binding: {
+      schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+      surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+      operation,
+      command: invocation.command,
+      route: invocation.route,
+      canonicalInvocationHash: invocation.canonicalInvocationHash,
+      adapterMode: input.capability.adapterMode,
+      capabilityHash: input.capability.capabilityHash,
+      programmaticSurfaceHash: input.capability.programmaticSurfaceHash,
+      quotas: input.capability.quotas
+    },
+    assertAuthorityActive: () =>
+      assertProgrammaticToolCapabilityViewActive(input.capability, input.toolSurfaceSnapshot)
+  })
+}
+
 async function runToolCall(params: {
   execution: ToolExecutionContext
   toolExecution: ToolExecutionPort
@@ -1734,6 +1799,7 @@ async function runToolCall(params: {
   toolSurfaceExecutionBatch?: ToolSurfaceExecutionBatch
   toolSurfaceSnapshot?: ToolSurfaceSnapshot
   programmaticToolCapability?: ProgrammaticToolCapabilityV1
+  programmaticToolParents?: Pick<ProgrammaticToolParentRegistry, 'prepare'>
   toolCallOrdinalWithinBatch: number
   commandShell: ResolvedCommandShell
   oneShotCommandGrantId?: string
@@ -1759,6 +1825,7 @@ async function runToolCall(params: {
     toolSurfaceExecutionBatch,
     toolSurfaceSnapshot,
     programmaticToolCapability,
+    programmaticToolParents,
     toolCallOrdinalWithinBatch,
     commandShell,
     oneShotCommandGrantId,
@@ -1785,6 +1852,19 @@ async function runToolCall(params: {
   let returnedToolResult: MCPToolResponse | null = null
   let dispatchedOperation: ExecutionOperationIdentity | undefined
   let committedOutcome: StagedToolResult | undefined
+  let programmaticToolParent: ProgrammaticToolParentRegistration | undefined
+  let programmaticToolParentCancelled = false
+  const cancelProgrammaticParentBeforeDispatch = (): void => {
+    if (
+      !programmaticToolParent ||
+      programmaticToolParentCancelled ||
+      dispatchedOperation
+    ) {
+      return
+    }
+    programmaticToolParent.cancelBeforeOuterDispatch()
+    programmaticToolParentCancelled = true
+  }
   const pendingOutcomeProjections: ToolOutcomeProjection[] = []
   const releaseOutcomeProjections = (outcomeCommitted: boolean): void => {
     if (pendingOutcomeProjections.length === 0) return
@@ -1802,6 +1882,16 @@ async function runToolCall(params: {
     if (outcome.kind !== 'staged') {
       return outcome
     }
+    if (
+      programmaticToolParent &&
+      outcome.stagedResult.operation &&
+      !outcome.stagedResult.outcomeCommitted
+    ) {
+      throw new ExecutionJournalError(
+        'Programmatic outer outcome has no process-live settlement receipt.',
+        'invalid_fact'
+      )
+    }
     const stagedResult = commitDispatchedToolOutcome(
       outcome.stagedResult,
       executionJournal,
@@ -1816,6 +1906,9 @@ async function runToolCall(params: {
   const failPostDispatchPermission = (): void => {
     if (!dispatchedOperation) return
     const responseText = `Error: Tool ${toolContext.name} requested permission after dispatch.`
+    if (programmaticToolParent) {
+      throw new ExecutionJournalError(responseText, 'invalid_fact')
+    }
     const stagedResult = commitDispatchedToolOutcome(
       {
         toolCallId: completedToolCall.id,
@@ -1843,6 +1936,14 @@ async function runToolCall(params: {
       providerToolCallId: completedToolCall.id
     })
     io.abortSignal.throwIfAborted()
+    programmaticToolParent = prepareProgrammaticExecParent({
+      execution,
+      operation,
+      io,
+      toolSurfaceSnapshot,
+      capability: programmaticToolCapability,
+      parents: programmaticToolParents
+    })
     const applyProgressUpdate = (update: AgentToolProgressUpdate) => {
       if (
         update.kind === 'agent_plan' &&
@@ -1894,6 +1995,10 @@ async function runToolCall(params: {
         throw new ExecutionJournalDuplicateDispatchError(operation)
       }
       dispatchedOperation = operation
+      programmaticToolParent?.armOuterDispatch({
+        ...receipt,
+        operation: programmaticToolParent.operation
+      })
       activePermissionDispatchCommit?.()
     }
     const callTool = async (
@@ -1917,8 +2022,8 @@ async function runToolCall(params: {
           requestSeq: operationScope.requestSeq,
           ...(executionContract ? { executionContract } : {}),
           ...(toolSurfaceSnapshot ? { toolSurfaceSnapshot } : {}),
-          ...(completedToolCall.name === 'exec' && programmaticToolCapability
-            ? { programmaticToolCapability }
+          ...(programmaticToolParent && programmaticToolCapability
+            ? { programmaticToolCapability, programmaticToolParent }
             : {}),
           onProgress: applyProgressUpdate,
           signal: io.abortSignal,
@@ -1960,6 +2065,7 @@ async function runToolCall(params: {
       if (pendingPermission) {
         failPostDispatchPermission()
         if (pendingPermission.requiresUserConfirmation) {
+          cancelProgrammaticParentBeforeDispatch()
           return {
             kind: 'permission',
             permission: pendingPermission,
@@ -1995,6 +2101,7 @@ async function runToolCall(params: {
             )
             toolRawData = toolCallResult.rawData
           } else {
+            cancelProgrammaticParentBeforeDispatch()
             return {
               kind: 'permission',
               permission: pendingPermission,
@@ -2002,6 +2109,7 @@ async function runToolCall(params: {
             }
           }
         } else {
+          cancelProgrammaticParentBeforeDispatch()
           return {
             kind: 'permission',
             permission: pendingPermission,
@@ -2024,6 +2132,7 @@ async function runToolCall(params: {
       )
       if (pendingPermission) {
         failPostDispatchPermission()
+        cancelProgrammaticParentBeforeDispatch()
         return {
           kind: 'permission',
           permission: pendingPermission,
@@ -2092,6 +2201,13 @@ async function runToolCall(params: {
     const stagedIsError = preparedResult.kind === 'tool_error' || toolRawData.isError === true
 
     const activatedSkill = extractActivatedSkillAfterCall(completedToolCall.name, toolRawData)
+    if (programmaticToolParent && dispatchedOperation) {
+      throw new ProgrammaticCommandLaunchError({
+        cause: new Error(
+          'Programmatic CLI process completed without a process-live settlement receipt.'
+        )
+      })
+    }
     const stagedResult = commitDispatchedToolOutcome(
       {
         toolCallId: completedToolCall.id,
@@ -2140,8 +2256,48 @@ async function runToolCall(params: {
       toolsChanged: Boolean(activatedSkill)
     }
   } catch (err) {
+    if (programmaticToolParent && !dispatchedOperation) {
+      cancelProgrammaticParentBeforeDispatch()
+    }
+    if (
+      isProgrammaticCommandLaunchError(err) &&
+      isExecutionJournalError(err.cause)
+    ) {
+      throw err.cause
+    }
+    if (
+      programmaticToolParent &&
+      dispatchedOperation &&
+      isProgrammaticCommandLaunchError(err)
+    ) {
+      const responseText = 'Error: Programmatic CLI launch failed before child execution.'
+      try {
+        programmaticToolParent.settleLaunchFailure({ responseText })
+      } catch (settlementError) {
+        if (isExecutionJournalError(settlementError)) {
+          throw settlementError
+        }
+        throw new ExecutionJournalError(
+          'Programmatic CLI failure could not settle its outer operation before child execution.',
+          'invalid_fact',
+          { cause: settlementError }
+        )
+      }
+      const settled = buildToolErrorOutcome(execution, new Error(responseText), dispatchedOperation)
+      settled.stagedResult.responseText = responseText
+      settled.stagedResult.outcomeCommitted = true
+      committedOutcome = settled.stagedResult
+      return settled
+    }
     if (isExecutionJournalError(err)) {
       throw err
+    }
+    if (programmaticToolParent && dispatchedOperation) {
+      throw new ExecutionJournalError(
+        'Programmatic outer execution failed after dispatch without a settlement receipt.',
+        'projection_failed',
+        { cause: err }
+      )
     }
     if (committedOutcome?.operation) {
       throw new CommittedToolOutcomeProjectionError(committedOutcome.operation, { cause: err })
@@ -2179,6 +2335,7 @@ export interface SettleToolBatchParams {
   operationScope: Pick<ExecutionOperationIdentity, 'runId' | 'requestSeq'>
   executionContract?: DeepChatExecutionContract | null
   toolSurface?: LoopRunRequestToolSurfaceBinding | null
+  programmaticToolParents?: Pick<ProgrammaticToolParentRegistry, 'prepare'>
   commandShell: ResolvedCommandShell
 }
 
@@ -2212,6 +2369,7 @@ export async function settleToolBatch(
     operationScope,
     executionContract,
     toolSurface,
+    programmaticToolParents,
     commandShell
   } = params
   if (
@@ -2469,6 +2627,7 @@ export async function settleToolBatch(
               toolSurfaceExecutionBatch: toolSurfaceExecutionBatch ?? undefined,
               toolSurfaceSnapshot: toolSurface?.snapshot,
               programmaticToolCapability: toolSurface?.programmaticCapability,
+              programmaticToolParents,
               toolCallOrdinalWithinBatch,
               commandShell,
               oneShotCommandGrantId,
@@ -2792,6 +2951,7 @@ export async function settleToolBatch(
           toolSurfaceExecutionBatch: toolSurfaceExecutionBatch ?? undefined,
           toolSurfaceSnapshot: toolSurface?.snapshot,
           programmaticToolCapability: toolSurface?.programmaticCapability,
+          programmaticToolParents,
           toolCallOrdinalWithinBatch,
           commandShell,
           oneShotCommandGrantId,

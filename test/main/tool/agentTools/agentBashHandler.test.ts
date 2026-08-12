@@ -5,8 +5,12 @@ import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundExecSessionManager'
 import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
-import { AgentBashHandler } from '@/tool/agentTools/agentBashHandler'
+import {
+  AgentBashHandler,
+  type AgentCommandEnvironmentPort
+} from '@/tool/agentTools/agentBashHandler'
 import { CommandPermissionService } from '@/tool/permission/commandPermissionService'
+import type { ArmedAgentCliProgrammaticToken } from '@/cli/agentTokenAuthority'
 import {
   POSIX_COMMAND_SHELL,
   WINDOWS_POWERSHELL_COMMAND_SHELL
@@ -26,6 +30,29 @@ const createPermissionService = (): CommandPermissionService => {
     reason: 'whitelist'
   })
   return service
+}
+
+const armedProgrammaticToken = {
+  token: 'p'.repeat(43),
+  conversationId: 'conv-1',
+  programmaticOperation: {
+    command: { domain: 'tool', verb: 'call' },
+    operation: { sessionId: 'conv-1' }
+  }
+} as ArmedAgentCliProgrammaticToken
+
+function createProgrammaticCommandEnvironment(order?: string[]): AgentCommandEnvironmentPort {
+  return {
+    createEnvironment: vi.fn(),
+    createProgrammaticEnvironment: vi.fn(() => {
+      order?.push('environment')
+      return {
+        variables: { DEEPCHAT_CLI_AGENT_TOKEN: armedProgrammaticToken.token },
+        prependPath: ['/bundled/cli'],
+        preserveCommand: true
+      }
+    })
+  }
 }
 
 describe('AgentBashHandler', () => {
@@ -256,10 +283,13 @@ describe('AgentBashHandler', () => {
   })
 
   it('bypasses RTK rewrites when exact owned stdin must not be replayed', async () => {
+    const order: string[] = []
+    const commandEnvironment = createProgrammaticCommandEnvironment(order)
     const handler = new AgentBashHandler(
       [workspaceRoot],
       { get: () => undefined },
-      createPermissionService()
+      createPermissionService(),
+      commandEnvironment
     )
     const prepareCommand = vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
       originalCommand: 'deepchat tool call',
@@ -272,14 +302,20 @@ describe('AgentBashHandler', () => {
     })
     const runShellProcess = vi
       .spyOn(handler as never, 'runShellProcess' as never)
-      .mockResolvedValue({
-        kind: 'completed',
-        output: 'owned input',
-        exitCode: 0,
-        timedOut: false,
-        offloaded: false
+      .mockImplementation(async () => {
+        order.push('spawn')
+        return {
+          kind: 'completed',
+          output: 'owned input',
+          exitCode: 0,
+          timedOut: false,
+          offloaded: false
+        }
       })
-    const beforeExecute = vi.fn()
+    const beforeExecute = vi.fn(() => {
+      order.push('outer-t1')
+      return armedProgrammaticToken
+    })
 
     await handler.executeCommand(
       { command: 'deepchat tool call', description: 'Call programmatic tool' },
@@ -300,7 +336,54 @@ describe('AgentBashHandler', () => {
     expect(beforeExecute).toHaveBeenCalledWith(
       expect.objectContaining({ stdin: 'owned input', background: false })
     )
+    expect(commandEnvironment.createEnvironment).not.toHaveBeenCalled()
+    expect(commandEnvironment.createProgrammaticEnvironment).toHaveBeenCalledWith(
+      armedProgrammaticToken,
+      'conv-1',
+      'deepchat tool call',
+      'owned input',
+      POSIX_COMMAND_SHELL
+    )
+    expect(order).toEqual(['outer-t1', 'environment', 'spawn'])
     expect(runShellProcess).toHaveBeenCalledOnce()
+  })
+
+  it('does not spawn when the armed Programmatic environment cannot be created', async () => {
+    const commandEnvironment = createProgrammaticCommandEnvironment()
+    vi.mocked(commandEnvironment.createProgrammaticEnvironment!).mockImplementation(() => {
+      throw new Error('launcher missing')
+    })
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService(),
+      commandEnvironment
+    )
+    vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: 'deepchat tool call',
+      command: 'deepchat tool call',
+      env: {},
+      rewritten: false,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    })
+    const runShellProcess = vi.spyOn(handler as never, 'runShellProcess' as never)
+
+    await expect(
+      handler.executeCommand(
+        { command: 'deepchat tool call', description: 'Call programmatic tool' },
+        {
+          commandShell: POSIX_COMMAND_SHELL,
+          conversationId: 'conv-1',
+          stdin: '{}',
+          beforeExecute: () => armedProgrammaticToken
+        }
+      )
+    ).rejects.toMatchObject({
+      name: 'ProgrammaticCommandLaunchError',
+      cause: expect.objectContaining({ message: 'launcher missing' })
+    })
+    expect(runShellProcess).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -673,10 +756,12 @@ describe('AgentBashHandler', () => {
   })
 
   it('keeps owned stdin execution attached until the Programmatic command settles', async () => {
+    const commandEnvironment = createProgrammaticCommandEnvironment()
     const handler = new AgentBashHandler(
       [workspaceRoot],
       { get: () => undefined },
-      createPermissionService()
+      createPermissionService(),
+      commandEnvironment
     )
     vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
       originalCommand: 'deepchat tool call',
@@ -709,7 +794,8 @@ describe('AgentBashHandler', () => {
       {
         commandShell: POSIX_COMMAND_SHELL,
         conversationId: 'conv-1',
-        stdin: '{"target":"remote"}'
+        stdin: '{"target":"remote"}',
+        beforeExecute: () => armedProgrammaticToken
       }
     )
 
@@ -722,10 +808,12 @@ describe('AgentBashHandler', () => {
   })
 
   it('cleans up a spawned Programmatic command when owned stdin delivery fails', async () => {
+    const commandEnvironment = createProgrammaticCommandEnvironment()
     const handler = new AgentBashHandler(
       [workspaceRoot],
       { get: () => undefined },
-      createPermissionService()
+      createPermissionService(),
+      commandEnvironment
     )
     vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
       originalCommand: 'deepchat tool call',
@@ -749,10 +837,14 @@ describe('AgentBashHandler', () => {
         {
           commandShell: POSIX_COMMAND_SHELL,
           conversationId: 'conv-1',
-          stdin: '{}'
+          stdin: '{}',
+          beforeExecute: () => armedProgrammaticToken
         }
       )
-    ).rejects.toThrow('stdin failed')
+    ).rejects.toMatchObject({
+      name: 'ProgrammaticCommandLaunchError',
+      cause: expect.objectContaining({ message: 'stdin failed' })
+    })
 
     expect(removeSpy).toHaveBeenCalledWith('conv-1', 'bg_failed_stdin')
     expect(completionSpy).not.toHaveBeenCalled()

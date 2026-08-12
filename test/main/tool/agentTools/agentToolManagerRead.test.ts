@@ -362,7 +362,8 @@ describe('AgentToolManager read routing', () => {
         {
           programmaticToolCapability: {
             quotas: { maxInputBytes: 32, maxDurationMs: 45_000 }
-          } as never
+          } as never,
+          programmaticToolParent: { takeArmedToken: vi.fn() } as never
         }
       )) as { content: string }
 
@@ -418,7 +419,8 @@ describe('AgentToolManager read routing', () => {
           {
             programmaticToolCapability: {
               quotas: { maxInputBytes: 3, maxDurationMs: 45_000 }
-            } as never
+            } as never,
+            programmaticToolParent: { takeArmedToken: vi.fn() } as never
           }
         )
       ).rejects.toThrow(/exceeds the active Programmatic Tool input quota/)
@@ -445,7 +447,8 @@ describe('AgentToolManager read routing', () => {
           {
             programmaticToolCapability: {
               quotas: { maxInputBytes: 32, maxDurationMs: 45_000 }
-            } as never
+            } as never,
+            programmaticToolParent: { takeArmedToken: vi.fn() } as never
           }
         )
       ).rejects.toThrow(/exceeds the active Programmatic Tool duration quota/)

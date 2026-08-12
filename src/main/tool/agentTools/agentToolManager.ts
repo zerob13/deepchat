@@ -92,6 +92,7 @@ import {
   parseToolSearchInput,
   searchToolSurfaceSnapshot
 } from './toolSearchTool'
+import type { ProgrammaticToolParentRegistration } from '@/cli/programmaticToolParentRegistry'
 
 // Consider moving to a shared handlers location in future refactoring
 import {
@@ -162,6 +163,7 @@ interface AgentToolExecutionOptions {
   activeSkillNames?: string[]
   toolSurfaceContext?: ToolSurfaceExecutionContext
   programmaticToolCapability?: ProgrammaticToolCapabilityV1
+  programmaticToolParent?: ProgrammaticToolParentRegistration
   registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
   liveDelegationAuthorization?: LiveDelegationStartAuthorization
   commitDispatch?: ToolDispatchCommit
@@ -227,7 +229,11 @@ export class AgentToolManager {
     serverName: string,
     normalizedArguments: Record<string, unknown>,
     options?: AgentToolExecutionOptions
-  ): ((resolvedArguments?: Record<string, unknown>) => void) | undefined {
+  ):
+    | ((
+        resolvedArguments?: Record<string, unknown>
+      ) => ReturnType<ProgrammaticToolParentRegistration['takeArmedToken']> | void)
+    | undefined {
     const commitDispatch = options?.commitDispatch
     if (!commitDispatch) return undefined
     return (resolvedArguments = normalizedArguments) => {
@@ -238,6 +244,7 @@ export class AgentToolManager {
         normalizedArguments: resolvedArguments,
         target: { serverName, originalName: toolName }
       })
+      return options?.programmaticToolParent?.takeArmedToken()
     }
   }
 
@@ -1293,7 +1300,7 @@ export class AgentToolManager {
         yieldMs?: number
       }
       if (execArgs.stdin !== undefined) {
-        if (!options.programmaticToolCapability) {
+        if (!options.programmaticToolCapability || !options.programmaticToolParent) {
           throw new Error('Owned exec stdin requires an active Programmatic Tool capability.')
         }
         if (

@@ -1342,6 +1342,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               executionJournal: params.io.executionJournalWriter,
               executionContract: batch.executionContract,
               toolSurface: batch.toolSurface,
+              programmaticToolParents: params.programmaticToolParents,
               operationScope: {
                 runId: run.runId,
                 requestSeq: batch.requestSeq

@@ -66,12 +66,12 @@
 - [ ] Add Agent-only `deepchat tool search|describe|call|batch` routes.
 - [ ] Add version-negotiated `CLI_SURFACE_V2` as a strict V1 superset and prove V1 cannot reach the
       new routes.
-- [ ] Mint exact outer-operation invocation tokens only for CLI Programmatic Runs.
-- [ ] Construct the per-View capability without `providerToolCallId`, then derive an exact
+- [x] Mint exact outer-operation invocation tokens only for CLI Programmatic Runs.
+- [x] Construct the per-View capability without `providerToolCallId`, then derive an exact
       provider-operation grant after the outer exec call exists.
-- [ ] Add bounded owned stdin for call/batch bodies and reject background/detached/yielded
+- [x] Add bounded owned stdin for call/batch bodies and reject background/detached/yielded
       Programmatic commands before outer T1.
-- [ ] Keep prepared tokens inert until a new outer T1 receipt arms the grant; revoke on failure and
+- [x] Keep prepared tokens inert until a new outer T1 receipt arms the grant; revoke on failure and
       prevent process spawn.
 - [ ] Bind route plus canonical stdin/scalar arguments, atomically consume once, and reject changed
       body/route, replay, expiry/revocation, and wrong principal/conversation.

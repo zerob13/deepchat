@@ -72,6 +72,7 @@ import {
   assertProgrammaticToolCapabilityViewActive,
   type ProgrammaticToolCapabilityV1
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
+import type { ProgrammaticToolParentRegistration } from '@/cli/programmaticToolParentRegistry'
 import { buildToolSearchDefinition } from './agentTools/toolSearchTool'
 
 type MainProcessToolCallOptions = ToolCallOptions & {
@@ -79,6 +80,7 @@ type MainProcessToolCallOptions = ToolCallOptions & {
   readonly toolSurfaceContext?: ToolSurfaceExecutionContext
   readonly toolSurfaceSnapshot?: ToolSurfaceSnapshot
   readonly programmaticToolCapability?: ProgrammaticToolCapabilityV1
+  readonly programmaticToolParent?: ProgrammaticToolParentRegistration
 }
 type MainProcessToolPreCheckOptions = Pick<
   MainProcessToolCallOptions,
@@ -473,6 +475,7 @@ export class ToolService implements ToolServicePort {
     const toolSurfaceSnapshot = options?.toolSurfaceSnapshot ?? toolSurfaceContext?.snapshot
     const toolSurfaceDeferredDispatch = options?.toolSurfaceDeferredDispatch
     const programmaticToolCapability = options?.programmaticToolCapability
+    const programmaticToolParent = options?.programmaticToolParent
     const commitDispatch = options?.commitDispatch
     if (toolSurfaceDeferredDispatch && toolSurfaceSnapshot) {
       throw new Error('Tool Surface dispatch cannot use active and deferred authority together.')
@@ -491,13 +494,16 @@ export class ToolService implements ToolServicePort {
         toolName !== 'exec' ||
         !toolSurfaceSnapshot ||
         toolSurfaceDeferredDispatch ||
-        !commitDispatch
+        !commitDispatch ||
+        !programmaticToolParent
       ) {
         throw new Error(
-          'Programmatic Tool capability requires active request-scoped exec dispatch with durable commit authority.'
+          'Programmatic Tool capability requires active request-scoped exec dispatch with durable parent authority.'
         )
       }
       assertProgrammaticToolCapabilityViewActive(programmaticToolCapability, toolSurfaceSnapshot)
+    } else if (programmaticToolParent) {
+      throw new Error('Programmatic Tool parent authority requires its exact View capability.')
     }
     const assertToolSurfaceContextActive = (): void => {
       if (!toolSurfaceContext) return
@@ -662,7 +668,8 @@ export class ToolService implements ToolServicePort {
             ? {
                 messageId: options?.messageId,
                 requestSeq: options?.requestSeq,
-                programmaticToolCapability
+                programmaticToolCapability,
+                programmaticToolParent
               }
             : {}),
           commandShell: options?.commandShell,

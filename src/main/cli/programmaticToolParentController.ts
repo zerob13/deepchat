@@ -223,17 +223,38 @@ export class ProgrammaticToolParentController {
     }
   ): ArmedAgentCliProgrammaticToken {
     this.requireState('prepared')
+    const operation = this.preparedGrant.binding.operation
+    if (
+      receipt.created !== true ||
+      receipt.sessionId !== operation.sessionId ||
+      !Number.isSafeInteger(receipt.entryId) ||
+      receipt.entryId <= 0 ||
+      receipt.operation.sessionId !== operation.sessionId ||
+      receipt.operation.messageId !== operation.messageId ||
+      receipt.operation.runId !== operation.runId ||
+      receipt.operation.requestSeq !== operation.requestSeq ||
+      receipt.operation.providerToolCallId !== operation.providerToolCallId
+    ) {
+      this.markFatal()
+      throw new ProgrammaticParentOperationError(
+        'Programmatic grant requires its newly committed outer dispatch receipt',
+        'identity_mismatch'
+      )
+    }
+    this.outerDispatchEntryId = receipt.entryId
     try {
       const armed = this.preparedGrant.arm({
         ...receipt,
         preparedTokenId: this.preparedGrant.tokenId,
         operation: receipt.operation
       })
-      this.outerDispatchEntryId = receipt.entryId
       this.stateValue = 'armed'
       return armed
     } catch (error) {
-      this.markFatal()
+      // The outer T1 is already durable, but no bearer token has escaped and no child can have
+      // started. Preserve a deterministic pre-child failure state so the owner can commit T2.
+      this.preparedGrant.revoke()
+      this.stateValue = 'armed'
       throw error
     }
   }
