@@ -18,6 +18,7 @@ import type {
   ToolSurfaceExecutionContext,
   ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
+import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import type { DeepChatTaskContractContext } from '@shared/types/task-contract'
 import type { ResolvedCommandShell } from '@shared/commandShell'
@@ -55,6 +56,7 @@ export type ToolExecutionOptions = Omit<ToolCallOptions, 'commitDispatch' | 'com
   toolSurfaceDeferredDispatch?: ToolSurfaceDeferredDispatch
   toolSurfaceContext?: ToolSurfaceExecutionContext
   toolSurfaceSnapshot?: ToolSurfaceSnapshot
+  programmaticToolCapability?: ProgrammaticToolCapabilityV1
 }
 
 export type ToolExecutionPreCheckOptions = Pick<

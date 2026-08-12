@@ -44,7 +44,11 @@ import {
   revokeToolSurfaceDeferredDispatch,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
-import { createProgrammaticToolSurfaceRunControllerV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
+import {
+  buildProgrammaticToolCapabilityV1,
+  createProgrammaticToolSurfaceRunControllerV1,
+  markProgrammaticToolCapabilityProvenanceCommitted
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
@@ -1236,6 +1240,23 @@ describe('processStream', () => {
         eligibleDefinitions: [exec, remote]
       })
       controller.admit(snapshot)
+      const programmaticCapability = buildProgrammaticToolCapabilityV1({
+        snapshot,
+        taskContractContext: null,
+        ceilings: {
+          maxToolEffect: 'write',
+          workspace: { kind: 'runtime_default' },
+          maxSubagentDepth: 0
+        },
+        quotas: {
+          maxChildren: 4,
+          maxBatchSteps: 4,
+          maxInputBytes: 1024,
+          maxOutputBytes: 2048,
+          maxDurationMs: 30_000
+        }
+      })
+      markProgrammaticToolCapabilityProvenanceCommitted(programmaticCapability, snapshot)
       const releaseActivationCandidates = vi.fn()
       const run = createLoopRun({
         runId: RUN_ID,
@@ -1252,7 +1273,13 @@ describe('processStream', () => {
         },
         initialRequestSeq: 1
       })
-      bindActiveRequestToolSurface(run, 1, snapshot, releaseActivationCandidates)
+      bindActiveRequestToolSurface(
+        run,
+        1,
+        snapshot,
+        releaseActivationCandidates,
+        programmaticCapability
+      )
       const toolService = createMockToolService({ exec: 'done' })
 
       const result = await processStream(
@@ -1265,6 +1292,16 @@ describe('processStream', () => {
 
       expect(result.status).toBe('completed')
       expect(toolService.callTool).toHaveBeenCalledOnce()
+      expect(toolService.callTool).toHaveBeenCalledWith(
+        expect.objectContaining({ function: expect.objectContaining({ name: 'exec' }) }),
+        expect.objectContaining({
+          runId: RUN_ID,
+          messageId: 'm1',
+          requestSeq: 1,
+          toolSurfaceSnapshot: snapshot,
+          programmaticToolCapability: programmaticCapability
+        })
+      )
       expect(toolService.assertToolSurfaceAuthority).toHaveBeenCalledOnce()
       expect(releaseActivationCandidates).not.toHaveBeenCalled()
     })

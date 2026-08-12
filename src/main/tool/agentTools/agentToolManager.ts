@@ -83,6 +83,7 @@ import {
   assertActiveToolSurfaceExecutionContext,
   type ToolSurfaceExecutionContext
 } from '@/agent/deepchat/runtime/toolSurface'
+import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import {
   TOOL_SEARCH_TOOL_SERVER_NAME,
   parseToolSearchInput,
@@ -150,11 +151,14 @@ interface AgentToolManagerOptions {
 interface AgentToolExecutionOptions {
   toolCallId?: string
   runId?: string
+  messageId?: string
+  requestSeq?: number
   onProgress?: (update: AgentToolProgressUpdate) => void
   signal?: AbortSignal
   allowExternalFileAccess?: boolean
   activeSkillNames?: string[]
   toolSurfaceContext?: ToolSurfaceExecutionContext
+  programmaticToolCapability?: ProgrammaticToolCapabilityV1
   registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
   liveDelegationAuthorization?: LiveDelegationStartAuthorization
   commitDispatch?: ToolDispatchCommit

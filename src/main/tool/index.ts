@@ -68,12 +68,17 @@ import {
   type ToolSurfaceExecutionContext,
   type ToolSurfaceSnapshot
 } from '@/agent/deepchat/runtime/toolSurface'
+import {
+  assertProgrammaticToolCapabilityViewActive,
+  type ProgrammaticToolCapabilityV1
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
 import { buildToolSearchDefinition } from './agentTools/toolSearchTool'
 
 type MainProcessToolCallOptions = ToolCallOptions & {
   readonly toolSurfaceDeferredDispatch?: ToolSurfaceDeferredDispatch
   readonly toolSurfaceContext?: ToolSurfaceExecutionContext
   readonly toolSurfaceSnapshot?: ToolSurfaceSnapshot
+  readonly programmaticToolCapability?: ProgrammaticToolCapabilityV1
 }
 type MainProcessToolPreCheckOptions = Pick<
   MainProcessToolCallOptions,
@@ -467,6 +472,7 @@ export class ToolService implements ToolServicePort {
     const toolSurfaceContext = options?.toolSurfaceContext
     const toolSurfaceSnapshot = options?.toolSurfaceSnapshot ?? toolSurfaceContext?.snapshot
     const toolSurfaceDeferredDispatch = options?.toolSurfaceDeferredDispatch
+    const programmaticToolCapability = options?.programmaticToolCapability
     const commitDispatch = options?.commitDispatch
     if (toolSurfaceDeferredDispatch && toolSurfaceSnapshot) {
       throw new Error('Tool Surface dispatch cannot use active and deferred authority together.')
@@ -479,6 +485,19 @@ export class ToolService implements ToolServicePort {
     }
     if (toolName !== TOOL_SEARCH_AGENT_TOOL_NAME && toolSurfaceContext) {
       throw new Error('Tool Surface execution context is reserved for ToolSearch.')
+    }
+    if (programmaticToolCapability) {
+      if (
+        toolName !== 'exec' ||
+        !toolSurfaceSnapshot ||
+        toolSurfaceDeferredDispatch ||
+        !commitDispatch
+      ) {
+        throw new Error(
+          'Programmatic Tool capability requires active request-scoped exec dispatch with durable commit authority.'
+        )
+      }
+      assertProgrammaticToolCapabilityViewActive(programmaticToolCapability, toolSurfaceSnapshot)
     }
     const assertToolSurfaceContextActive = (): void => {
       if (!toolSurfaceContext) return
@@ -550,6 +569,9 @@ export class ToolService implements ToolServicePort {
     assertToolSurfaceDispatchAllowed()
     if (!source) {
       throw new Error(`Tool ${toolName} not found in any source`)
+    }
+    if (programmaticToolCapability && source !== 'agent') {
+      throw new Error('Programmatic Tool capability requires the native Agent exec target.')
     }
     await this.assertExecutionContractDispatchAllowed(request, source, options)
     assertToolSurfaceDispatchAllowed()
@@ -635,6 +657,13 @@ export class ToolService implements ToolServicePort {
           activeSkillNames: options?.activeSkillNames,
           ...(toolName === TOOL_SEARCH_AGENT_TOOL_NAME && options?.toolSurfaceContext
             ? { toolSurfaceContext: options.toolSurfaceContext }
+            : {}),
+          ...(programmaticToolCapability
+            ? {
+                messageId: options?.messageId,
+                requestSeq: options?.requestSeq,
+                programmaticToolCapability
+              }
             : {}),
           commandShell: options?.commandShell,
           oneShotCommandGrantId: options?.oneShotCommandGrantId,

@@ -46,6 +46,7 @@ import type {
   ToolExecutionPort,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
+import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import {
   CommandShellProfileSchema,
   type CommandShellProfile,
@@ -1732,6 +1733,7 @@ async function runToolCall(params: {
   executionContract?: DeepChatExecutionContract | null
   toolSurfaceExecutionBatch?: ToolSurfaceExecutionBatch
   toolSurfaceSnapshot?: ToolSurfaceSnapshot
+  programmaticToolCapability?: ProgrammaticToolCapabilityV1
   toolCallOrdinalWithinBatch: number
   commandShell: ResolvedCommandShell
   oneShotCommandGrantId?: string
@@ -1756,6 +1758,7 @@ async function runToolCall(params: {
     executionContract,
     toolSurfaceExecutionBatch,
     toolSurfaceSnapshot,
+    programmaticToolCapability,
     toolCallOrdinalWithinBatch,
     commandShell,
     oneShotCommandGrantId,
@@ -1914,6 +1917,9 @@ async function runToolCall(params: {
           requestSeq: operationScope.requestSeq,
           ...(executionContract ? { executionContract } : {}),
           ...(toolSurfaceSnapshot ? { toolSurfaceSnapshot } : {}),
+          ...(completedToolCall.name === 'exec' && programmaticToolCapability
+            ? { programmaticToolCapability }
+            : {}),
           onProgress: applyProgressUpdate,
           signal: io.abortSignal,
           permissionMode: toolPermissionMode,
@@ -2462,6 +2468,7 @@ export async function settleToolBatch(
               executionContract,
               toolSurfaceExecutionBatch: toolSurfaceExecutionBatch ?? undefined,
               toolSurfaceSnapshot: toolSurface?.snapshot,
+              programmaticToolCapability: toolSurface?.programmaticCapability,
               toolCallOrdinalWithinBatch,
               commandShell,
               oneShotCommandGrantId,
@@ -2784,6 +2791,7 @@ export async function settleToolBatch(
           executionContract,
           toolSurfaceExecutionBatch: toolSurfaceExecutionBatch ?? undefined,
           toolSurfaceSnapshot: toolSurface?.snapshot,
+          programmaticToolCapability: toolSurface?.programmaticCapability,
           toolCallOrdinalWithinBatch,
           commandShell,
           oneShotCommandGrantId,

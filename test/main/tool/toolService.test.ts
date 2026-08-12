@@ -36,6 +36,11 @@ import {
   revokeToolSurfaceExecutionEligibility,
   type ToolSurfaceShadowPolicy
 } from '@/agent/deepchat/runtime/toolSurface'
+import {
+  buildProgrammaticToolCapabilityV1,
+  createProgrammaticToolSurfaceRunControllerV1,
+  markProgrammaticToolCapabilityProvenanceCommitted
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
 import { buildToolSearchDefinition } from '@/tool/agentTools/toolSearchTool'
 
 vi.mock('electron', () => ({
@@ -247,6 +252,137 @@ const cronJobRunFixture = {
 } as any
 
 describe('ToolService', () => {
+  it('carries only the active frozen Programmatic capability to native exec', async () => {
+    const toolService = new ToolService({
+      skillSettings: { isEnabled: () => false } as any,
+      mcpService: {
+        getAllToolDefinitions: vi.fn().mockResolvedValue([]),
+        callTool: vi.fn()
+      } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+    const definitions = await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: 'session-1',
+      sessionKind: 'regular',
+      agentWorkspacePath: '/workspace'
+    })
+    const exec = definitions.find((definition) => definition.function.name === 'exec')
+    if (!exec) throw new Error('Expected native exec definition')
+    const remote = buildContractMcpDefinition()
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: [exec, remote],
+      providerActiveDefinitions: [exec],
+      policyVersion: 'tool-service-programmatic-v1'
+    })
+    const request = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 1
+    }
+    const snapshot = controller.build({
+      request,
+      eligibleDefinitions: [exec, remote]
+    })
+    controller.admit(snapshot)
+    const capability = buildProgrammaticToolCapabilityV1({
+      snapshot,
+      taskContractContext: null,
+      ceilings: {
+        maxToolEffect: 'write',
+        workspace: { kind: 'runtime_default' },
+        maxSubagentDepth: 0
+      },
+      quotas: {
+        maxChildren: 4,
+        maxBatchSteps: 4,
+        maxInputBytes: 1024,
+        maxOutputBytes: 2048,
+        maxDurationMs: 30_000
+      }
+    })
+    markProgrammaticToolCapabilityProvenanceCommitted(capability, snapshot)
+    const agentToolManager = (toolService as any).agentToolManager
+    const callTool = vi.fn().mockResolvedValue('done')
+    agentToolManager.callTool = callTool
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'exec-1',
+          type: 'function',
+          function: { name: 'exec', arguments: '{"command":"pwd"}' },
+          conversationId: request.sessionId
+        },
+        {
+          messageId: request.messageId,
+          runId: request.runId,
+          requestSeq: request.requestSeq,
+          permissionMode: 'full_access',
+          toolSurfaceSnapshot: snapshot,
+          programmaticToolCapability: capability,
+          commitDispatch: vi.fn()
+        }
+      )
+    ).resolves.toMatchObject({ content: 'done' })
+    expect(callTool).toHaveBeenCalledWith(
+      'exec',
+      { command: 'pwd' },
+      request.sessionId,
+      expect.objectContaining({
+        toolCallId: 'exec-1',
+        runId: request.runId,
+        messageId: request.messageId,
+        requestSeq: request.requestSeq,
+        programmaticToolCapability: capability
+      })
+    )
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'read-1',
+          type: 'function',
+          function: { name: 'read', arguments: '{"path":"README.md"}' },
+          conversationId: request.sessionId
+        },
+        {
+          messageId: request.messageId,
+          runId: request.runId,
+          requestSeq: request.requestSeq,
+          toolSurfaceSnapshot: snapshot,
+          programmaticToolCapability: capability,
+          commitDispatch: vi.fn()
+        }
+      )
+    ).rejects.toThrow(/requires active request-scoped exec dispatch with durable commit authority/)
+    expect(callTool).toHaveBeenCalledOnce()
+
+    await expect(
+      toolService.callTool(
+        {
+          id: 'exec-without-commit',
+          type: 'function',
+          function: { name: 'exec', arguments: '{"command":"pwd"}' },
+          conversationId: request.sessionId
+        },
+        {
+          messageId: request.messageId,
+          runId: request.runId,
+          requestSeq: request.requestSeq,
+          toolSurfaceSnapshot: snapshot,
+          programmaticToolCapability: capability
+        }
+      )
+    ).rejects.toThrow(/requires active request-scoped exec dispatch with durable commit authority/)
+    expect(callTool).toHaveBeenCalledOnce()
+  })
+
   it('dispatches an unchanged MCP definition through the exact Tool Surface boundary', async () => {
     const definition = buildContractMcpDefinition()
     const controller = createFullToolSurfaceRunController({
