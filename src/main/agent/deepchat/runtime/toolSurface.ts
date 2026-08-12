@@ -294,6 +294,25 @@ export interface ToolSurfaceSnapshotActivation {
   readonly decisions: readonly ToolSurfaceActivationDecision[]
 }
 
+export type ToolSurfaceSkillActivationRejectionCode =
+  | 'required-target-unavailable'
+  | 'definition-drift'
+  | 'per-run-target-cap'
+  | 'total-surface-count-cap'
+  | 'total-surface-token-cap'
+
+export type ToolSurfaceSkillActivationPreparation =
+  | {
+      readonly kind: 'prepared'
+      readonly eligibleDefinitions: readonly MCPToolDefinition[]
+      readonly providerActiveDefinitions: readonly MCPToolDefinition[]
+      apply(): void
+    }
+  | {
+      readonly kind: 'rejected'
+      readonly rejectionCode: ToolSurfaceSkillActivationRejectionCode
+    }
+
 export interface ToolSurfaceRunController {
   readonly ceiling: ToolSurfaceRunCeiling
   readonly policyVersion: string
@@ -305,6 +324,10 @@ export interface ToolSurfaceRunController {
     readonly toolSearchAvailable?: boolean
   }): ToolSurfaceSnapshot
   stageActivationBatch(candidates: readonly ToolSurfaceActivationEvidence[]): void
+  prepareSkillActivation?(input: {
+    readonly requiredStableTargetKeys: readonly string[]
+    readonly eligibleDefinitions: readonly MCPToolDefinition[]
+  }): ToolSurfaceSkillActivationPreparation
   admit(snapshot: ToolSurfaceSnapshot): void
 }
 
@@ -3469,6 +3492,9 @@ export function createPolicySelectedToolSurfaceRun(input: {
   const ceilingEntryByTarget = new Map(
     ceiling.catalog.entries.map((entry) => [entry.stableTargetKey, entry])
   )
+  const ceilingRunEntryByTarget = new Map(
+    ceiling.entries.map((entry) => [entry.catalogEntry.stableTargetKey, entry])
+  )
   let latestAdmittedRequest: ToolSurfaceRequestIdentity | null = null
   let pendingCandidates: readonly ToolSurfaceActivationEvidence[] | null = null
   let pendingOriginRequest: ToolSurfaceRequestIdentity | null = null
@@ -3563,6 +3589,128 @@ export function createPolicySelectedToolSurfaceRun(input: {
       pendingCandidates = merged
       pendingOriginRequest = origin
       pendingFingerprint = fingerprint
+    },
+    prepareSkillActivation: ({ requiredStableTargetKeys, eligibleDefinitions }) => {
+      if (!latestAdmittedRequest) {
+        return Object.freeze({
+          kind: 'rejected',
+          rejectionCode: 'required-target-unavailable'
+        })
+      }
+      const requiredTargets = new Set(requiredStableTargetKeys)
+      if (requiredTargets.size !== requiredStableTargetKeys.length) {
+        return Object.freeze({
+          kind: 'rejected',
+          rejectionCode: 'required-target-unavailable'
+        })
+      }
+
+      const liveCatalog = buildCanonicalToolCatalog(eligibleDefinitions)
+      const liveEntryByVisibleName = new Map(
+        liveCatalog.entries.map((entry) => [entry.target.providerVisibleName, entry])
+      )
+      const projectedDefinitions: MCPToolDefinition[] = []
+      const projectedTargets = new Set<string>()
+      const driftedTargets = new Set<string>()
+      for (const definition of eligibleDefinitions) {
+        const liveEntry = liveEntryByVisibleName.get(definition.function.name)
+        if (!liveEntry || projectedTargets.has(liveEntry.stableTargetKey)) continue
+        const ceilingEntry = ceilingEntryByTarget.get(liveEntry.stableTargetKey)
+        if (!ceilingEntry) continue
+        if (!catalogEntryMatches(ceilingEntry, liveEntry)) {
+          driftedTargets.add(liveEntry.stableTargetKey)
+          continue
+        }
+        const ceilingRunEntry = ceilingRunEntryByTarget.get(liveEntry.stableTargetKey)
+        if (!ceilingRunEntry) {
+          return Object.freeze({
+            kind: 'rejected',
+            rejectionCode: 'required-target-unavailable'
+          })
+        }
+        projectedTargets.add(liveEntry.stableTargetKey)
+        projectedDefinitions.push(ceilingRunEntry.definition)
+      }
+
+      for (const stableTargetKey of requiredTargets) {
+        if (driftedTargets.has(stableTargetKey)) {
+          return Object.freeze({ kind: 'rejected', rejectionCode: 'definition-drift' })
+        }
+        if (!ceilingEntryByTarget.has(stableTargetKey) || !projectedTargets.has(stableTargetKey)) {
+          return Object.freeze({
+            kind: 'rejected',
+            rejectionCode: 'required-target-unavailable'
+          })
+        }
+      }
+
+      const ledgerTargets = new Set(
+        admittedLedger.entries.map((entry) => entry.stableTargetKey)
+      )
+      const additions = [...requiredTargets]
+        .filter((stableTargetKey) => !ledgerTargets.has(stableTargetKey))
+        .sort(compareCodePoints)
+        .map((stableTargetKey) => copyDefinitionIdentity(ceilingEntryByTarget.get(stableTargetKey)!))
+      if (admittedAppendedTargets + additions.length > input.policy.maxAppendedTargetsPerRun) {
+        return Object.freeze({ kind: 'rejected', rejectionCode: 'per-run-target-cap' })
+      }
+      if (admittedLedger.entries.length + additions.length > input.policy.maxInitialToolCount) {
+        return Object.freeze({
+          kind: 'rejected',
+          rejectionCode: 'total-surface-count-cap'
+        })
+      }
+      const currentDefinitionTokens = admittedLedger.entries.reduce(
+        (sum, entry) => sum + (ceilingEntryByTarget.get(entry.stableTargetKey)?.definitionTokens ?? 0),
+        0
+      )
+      const addedDefinitionTokens = additions.reduce(
+        (sum, entry) => sum + ceilingEntryByTarget.get(entry.stableTargetKey)!.definitionTokens,
+        0
+      )
+      if (
+        currentDefinitionTokens + addedDefinitionTokens >
+        input.policy.maxInitialDefinitionTokens
+      ) {
+        return Object.freeze({
+          kind: 'rejected',
+          rejectionCode: 'total-surface-token-cap'
+        })
+      }
+
+      const nextLedger = appendToolSurfaceActivationBatch(admittedLedger, additions)
+      const nextReasonByTarget = new Map(reasonByTarget)
+      for (const addition of additions) {
+        nextReasonByTarget.set(addition.stableTargetKey, 'active-skill')
+      }
+      const preparedDefinitions = Object.freeze(projectedDefinitions)
+      const preparedDefinitionByTarget = new Map<string, MCPToolDefinition>()
+      for (const definition of preparedDefinitions) {
+        const entry = liveEntryByVisibleName.get(definition.function.name)
+        if (entry) preparedDefinitionByTarget.set(entry.stableTargetKey, definition)
+      }
+      preparedDefinitionByTarget.set(searchEntry.stableTargetKey, runToolSearchDefinition)
+      const providerActiveDefinitions = Object.freeze(
+        nextLedger.entries.flatMap((entry) => {
+          const definition = preparedDefinitionByTarget.get(entry.stableTargetKey)
+          return definition ? [definition] : []
+        })
+      )
+      let applied = false
+      return Object.freeze({
+        kind: 'prepared',
+        eligibleDefinitions: preparedDefinitions,
+        providerActiveDefinitions,
+        apply: () => {
+          if (applied) return
+          applied = true
+          admittedLedger = nextLedger
+          admittedAppendedTargets += additions.length
+          for (const [stableTargetKey, reason] of nextReasonByTarget) {
+            reasonByTarget.set(stableTargetKey, reason)
+          }
+        }
+      })
     },
     build: ({ request, eligibleDefinitions, toolSearchAvailable }) => {
       if (toolSearchAvailable !== true) {

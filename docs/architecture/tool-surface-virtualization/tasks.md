@@ -36,7 +36,7 @@
 - [ ] Release after durable outcome; ordinal-merge and deduplicate after complete batch settlement.
 - [ ] Discard pre-admission candidates across restart and activate only in the next View.
 - [ ] Enforce reserve, batch, Run, provider, and V5 budgets without eviction/full fallback.
-- [ ] Return bounded Skill activation failure and stage serialized no-I/O resource bundles.
+- [x] Return bounded Skill activation failure and stage serialized no-I/O resource bundles.
 - [ ] Reject guessed inactive calls before target resolution and compare canonical definition hash
       before target T1.
 - [ ] Add bounded hash-valid catalog/provider surface facts and exclude them from View/Memory/search.

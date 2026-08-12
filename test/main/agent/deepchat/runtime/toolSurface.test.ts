@@ -2494,6 +2494,110 @@ describe('Tool Surface production selection', () => {
     expect(restored.activeEntries.map((entry) => entry.activationOrdinal)).toEqual([0, 1])
   })
 
+  it('prepares Skill-required tools without mutation and appends them only when applied', () => {
+    const harness = createActivationHarness(['skill_required', 'outside'])
+    const required = harness.byName.get('skill_required')!
+    const prepare = harness.selected.controller.prepareSkillActivation!
+
+    const preparation = prepare({
+      requiredStableTargetKeys: [required.stableTargetKey],
+      eligibleDefinitions: [...harness.definitions, agentTool('new_after_run')]
+    })
+
+    expect(preparation.kind).toBe('prepared')
+    if (preparation.kind !== 'prepared') throw new Error('Expected prepared Skill activation.')
+    expect(Object.isFrozen(preparation)).toBe(true)
+    expect(Object.isFrozen(preparation.eligibleDefinitions)).toBe(true)
+    expect(Object.isFrozen(preparation.providerActiveDefinitions)).toBe(true)
+    expect(
+      preparation.eligibleDefinitions.map((definition) => definition.function.name)
+    ).not.toContain('new_after_run')
+    expect(
+      preparation.providerActiveDefinitions.map((definition) => definition.function.name)
+    ).toEqual(['core', TOOL_SEARCH_AGENT_TOOL_NAME, 'skill_required'])
+    expect(harness.build(2).toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'core',
+      TOOL_SEARCH_AGENT_TOOL_NAME
+    ])
+
+    preparation.apply()
+    preparation.apply()
+    const activated = harness.build(3, [...preparation.eligibleDefinitions])
+    expect(activated.toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'core',
+      TOOL_SEARCH_AGENT_TOOL_NAME,
+      'skill_required'
+    ])
+    expect(
+      activated.activeEntries.find(
+        (entry) => entry.definition.function.name === 'skill_required'
+      )
+    ).toMatchObject({ reason: 'active-skill', activationOrdinal: 2 })
+  })
+
+  it('rejects Skill activation before the originating View is admitted', () => {
+    const definitions = [agentTool('core'), agentTool('skill_required')]
+    const catalog = buildCanonicalToolCatalog(definitions)
+    const required = catalog.entries.find(
+      (entry) => entry.target.providerVisibleName === 'skill_required'
+    )!
+    const selected = createPolicySelectedToolSurfaceRun({
+      ceilingDefinitions: definitions,
+      initialEligibleDefinitions: definitions,
+      toolSearchDefinition: agentTool(TOOL_SEARCH_AGENT_TOOL_NAME),
+      policy: { ...productionPolicy, enterToolCount: 1, exitToolCount: 0 },
+      coreStableTargetKeys: [
+        catalog.entries.find((entry) => entry.target.providerVisibleName === 'core')!.stableTargetKey
+      ]
+    })
+
+    expect(
+      selected.controller.prepareSkillActivation?.({
+        requiredStableTargetKeys: [required.stableTargetKey],
+        eligibleDefinitions: definitions
+      })
+    ).toEqual({ kind: 'rejected', rejectionCode: 'required-target-unavailable' })
+  })
+
+  it('rejects unavailable, drifted, and over-budget Skill requirements without changing the ledger', () => {
+    const harness = createActivationHarness(['skill_required'], { maxAppendedTargetsPerRun: 0 })
+    const required = harness.byName.get('skill_required')!
+    const prepare = harness.selected.controller.prepareSkillActivation!
+
+    expect(
+      prepare({
+        requiredStableTargetKeys: ['missing'],
+        eligibleDefinitions: harness.definitions
+      })
+    ).toEqual({ kind: 'rejected', rejectionCode: 'required-target-unavailable' })
+    expect(
+      prepare({
+        requiredStableTargetKeys: [required.stableTargetKey],
+        eligibleDefinitions: [
+          agentTool('core'),
+          agentTool('skill_required', {
+            function: {
+              ...harness.definitions.find(
+                (definition) => definition.function.name === 'skill_required'
+              )!.function,
+              description: 'drifted after Run creation'
+            }
+          })
+        ]
+      })
+    ).toEqual({ kind: 'rejected', rejectionCode: 'definition-drift' })
+    expect(
+      prepare({
+        requiredStableTargetKeys: [required.stableTargetKey],
+        eligibleDefinitions: harness.definitions
+      })
+    ).toEqual({ kind: 'rejected', rejectionCode: 'per-run-target-cap' })
+    expect(harness.build(2).toolDefinitions.map((definition) => definition.function.name)).toEqual([
+      'core',
+      TOOL_SEARCH_AGENT_TOOL_NAME
+    ])
+  })
+
   it('stages immutable activation provenance and commits it only on the next admitted View', () => {
     const read = agentTool('read')
     const hidden = agentTool('hidden')

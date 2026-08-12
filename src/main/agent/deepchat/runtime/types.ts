@@ -108,6 +108,15 @@ export type ProcessIoParams = Pick<
   executionJournalWriter: Pick<ExecutionJournalWriter, 'commitDispatch' | 'commitToolOutcome'>
 }
 
+export type SkillActivationPreparation =
+  | {
+      readonly kind: 'prepared'
+      apply(): void
+    }
+  | {
+      readonly kind: 'rejected'
+    }
+
 export interface ProcessControlCollaborators {
   autoGrantPermission?: (
     permission: NonNullable<PendingToolInteraction['permission']>
@@ -128,6 +137,7 @@ export interface ProcessControlCollaborators {
   getActiveSkillNames?: () => string[]
   getEnabledMcpServerIds?: () => string[] | null | undefined
   getAgentId?: () => string | undefined
+  prepareSkillActivation?: (skillName: string) => Promise<SkillActivationPreparation>
   activateSkill?: (skillName: string) => Promise<string[]>
   cacheImage?: (data: string) => Promise<string>
 }

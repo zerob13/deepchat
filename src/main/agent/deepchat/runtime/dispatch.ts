@@ -164,6 +164,9 @@ type SkillDraftToolResult = {
   }
 }
 
+const SKILL_ACTIVATION_REJECTED_MESSAGE =
+  'This skill cannot be activated in the current Run because its required tools are unavailable or exceed the active tool budget.'
+
 type ToolRunOutcome =
   | {
       kind: 'staged'
@@ -882,8 +885,15 @@ function extractSkillDraftPromptPayload(
   return { draftId, skillName }
 }
 
-function extractActivatedSkillAfterCall(toolName: string, rawData: MCPToolResponse): string | null {
-  if (toolName !== 'skill_view') {
+function extractActivatedSkillAfterCall(
+  toolDefinition: MCPToolDefinition | undefined,
+  rawData: MCPToolResponse
+): string | null {
+  if (
+    toolDefinition?.function.name !== 'skill_view' ||
+    toolDefinition.source !== 'agent' ||
+    toolDefinition.server.name !== 'agent-skills'
+  ) {
     return null
   }
 
@@ -899,6 +909,25 @@ function extractActivatedSkillAfterCall(toolName: string, rawData: MCPToolRespon
   const activatedSkill =
     typeof toolResult.activatedSkill === 'string' ? toolResult.activatedSkill.trim() : ''
   return activatedSkill || null
+}
+
+function buildRejectedSkillActivationResult(toolCallId: string): MCPToolResponse {
+  const content = JSON.stringify({
+    success: false,
+    error: SKILL_ACTIVATION_REJECTED_MESSAGE,
+    activeForCurrentMessage: false,
+    activatedForMessage: false,
+    activationScope: 'none'
+  })
+  return {
+    content,
+    toolCallId,
+    isError: true,
+    toolResult: {
+      activationApplied: false,
+      activationSource: 'none'
+    }
+  }
 }
 
 function buildToolExecutionContext(
@@ -1867,6 +1896,23 @@ async function runToolCall(params: {
   > | undefined
   let programmaticOuterOutcomeCommitted = false
   let programmaticToolParentCancelled = false
+  let pendingSkillActivationName: string | null = null
+  let preparedSkillActivation: Extract<
+    Awaited<ReturnType<NonNullable<ProcessControlCollaborators['prepareSkillActivation']>>>,
+    { kind: 'prepared' }
+  > | null = null
+  let preparedSkillActivationApplied = false
+  const applyPreparedSkillActivation = (stagedResult: StagedToolResult): void => {
+    if (!preparedSkillActivation || preparedSkillActivationApplied || stagedResult.isError) return
+    if (!stagedResult.outcomeCommitted) {
+      throw new ExecutionJournalError(
+        'Prepared Skill activation requires a committed tool outcome before apply.',
+        'invalid_fact'
+      )
+    }
+    preparedSkillActivation.apply()
+    preparedSkillActivationApplied = true
+  }
   const cancelProgrammaticParentBeforeDispatch = (): void => {
     if (
       !programmaticToolParent ||
@@ -1923,6 +1969,7 @@ async function runToolCall(params: {
       committedOutcome = stagedResult
     }
     releaseOutcomeProjections(stagedResult.outcomeCommitted === true)
+    applyPreparedSkillActivation(stagedResult)
     return { ...outcome, stagedResult }
   }
   const failPostDispatchPermission = (): void => {
@@ -2195,10 +2242,41 @@ async function runToolCall(params: {
       programmaticOuterOutcomeCommitted = true
     }
 
+    pendingSkillActivationName = extractActivatedSkillAfterCall(execution.toolDef, toolRawData)
+    if (
+      pendingSkillActivationName &&
+      controls?.prepareSkillActivation &&
+      !dispatchedOperation
+    ) {
+      throw new ExecutionJournalError(
+        'Native Skill activation requires a committed dispatch before preparation.',
+        'invalid_fact'
+      )
+    }
+    if (
+      io.abortSignal.aborted &&
+      pendingSkillActivationName &&
+      controls?.prepareSkillActivation
+    ) {
+      toolRawData = buildRejectedSkillActivationResult(completedToolCall.id)
+      returnedToolResult = toolRawData
+    }
     if (io.abortSignal.aborted) {
       return commitOutcome(
         buildReturnedToolResultOutcome(execution, toolRawData, dispatchedOperation)
       )
+    }
+
+    let activatedSkill = pendingSkillActivationName
+    if (activatedSkill && controls?.prepareSkillActivation) {
+      const preparation = await controls.prepareSkillActivation(activatedSkill)
+      if (preparation.kind === 'rejected') {
+        toolRawData = buildRejectedSkillActivationResult(completedToolCall.id)
+        returnedToolResult = toolRawData
+        activatedSkill = null
+      } else {
+        preparedSkillActivation = preparation
+      }
     }
 
     const subagentState = extractSubagentToolState(toolRawData)
@@ -2247,7 +2325,6 @@ async function runToolCall(params: {
       preparedResult.kind === 'tool_error' ? preparedResult.message : preparedResult.content
     const stagedIsError = preparedResult.kind === 'tool_error' || toolRawData.isError === true
 
-    const activatedSkill = extractActivatedSkillAfterCall(completedToolCall.name, toolRawData)
     const uncommittedResult: StagedToolResult = {
       toolCallId: completedToolCall.id,
       toolName: completedToolCall.name,
@@ -2289,6 +2366,7 @@ async function runToolCall(params: {
       committedOutcome = stagedResult
     }
     releaseOutcomeProjections(stagedResult.outcomeCommitted === true)
+    applyPreparedSkillActivation(stagedResult)
     if (allowProgressUpdates && (subagentState.subagentProgress || subagentState.subagentFinal)) {
       updateSubagentToolCallBlock(
         batchToolCallBlocks,
@@ -2298,7 +2376,7 @@ async function runToolCall(params: {
         subagentState.subagentFinal
       )
     }
-    if (activatedSkill) {
+    if (activatedSkill && !preparedSkillActivation) {
       await controls?.activateSkill?.(activatedSkill)
       io.abortSignal.throwIfAborted()
     }
@@ -2306,7 +2384,7 @@ async function runToolCall(params: {
     return {
       kind: 'staged',
       stagedResult,
-      toolsChanged: Boolean(activatedSkill)
+      toolsChanged: Boolean(activatedSkill && (preparedSkillActivationApplied || !preparedSkillActivation))
     }
   } catch (err) {
     if (programmaticToolParent && !dispatchedOperation) {
@@ -2345,6 +2423,21 @@ async function runToolCall(params: {
     if (isExecutionJournalError(err)) {
       throw err
     }
+    if (
+      pendingSkillActivationName &&
+      controls?.prepareSkillActivation &&
+      !preparedSkillActivationApplied &&
+      dispatchedOperation &&
+      !committedOutcome?.operation
+    ) {
+      return commitOutcome(
+        buildReturnedToolResultOutcome(
+          execution,
+          buildRejectedSkillActivationResult(completedToolCall.id),
+          dispatchedOperation
+        )
+      )
+    }
     if (programmaticOuterOutcomeCommitted && dispatchedOperation) {
       throw new CommittedToolOutcomeProjectionError(dispatchedOperation, { cause: err })
     }
@@ -2359,6 +2452,13 @@ async function runToolCall(params: {
       throw new CommittedToolOutcomeProjectionError(committedOutcome.operation, { cause: err })
     }
     if (io.abortSignal.aborted && returnedToolResult) {
+      if (
+        pendingSkillActivationName &&
+        controls?.prepareSkillActivation &&
+        !preparedSkillActivationApplied
+      ) {
+        returnedToolResult = buildRejectedSkillActivationResult(completedToolCall.id)
+      }
       return commitOutcome(
         buildReturnedToolResultOutcome(execution, returnedToolResult, dispatchedOperation)
       )

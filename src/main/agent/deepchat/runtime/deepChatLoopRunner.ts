@@ -80,7 +80,8 @@ import type { AgentTraceSettingsPort } from '@/agent/traceSettings'
 import type { RuntimeHookSink } from './runtimeHookSink'
 import {
   resolveDeepChatToolProfileKind,
-  type DeepChatToolResolver
+  type DeepChatToolResolver,
+  type RunSkillToolRequirements
 } from '@/agent/deepchat/runtime/toolResolver'
 import type {
   ToolSurfaceProviderAttemptDiagnostic,
@@ -633,6 +634,7 @@ export class DeepChatLoopRunner {
     }
     let toolSurfaceController: ToolSurfaceRunController | null = null
     let programmaticProviderActiveDefinitions: readonly MCPToolDefinition[] | null = null
+    let frozenSkillRequirementByName: ReadonlyMap<string, RunSkillToolRequirements> | null = null
     if (toolSurfaceMode !== 'legacy') {
       const universe = await awaitWithAbort(
         this.ports.toolResolver.resolveRunToolDefinitionUniverse(
@@ -645,11 +647,7 @@ export class DeepChatLoopRunner {
         abortSignal
       )
       resourceScope.assertCurrent()
-      if (
-        universe.status !== 'resolved' ||
-        !universe.complete ||
-        universe.mandatoryAdmissionBlocked
-      ) {
+      if (!universe.complete || universe.mandatoryAdmissionBlocked) {
         throw new Error(
           `${
             toolSurfaceMode === 'full'
@@ -672,6 +670,9 @@ export class DeepChatLoopRunner {
           policyVersion: FULL_TOOL_SURFACE_POLICY_VERSION
         })
       } else if (toolSurfaceMode === 'native-activation') {
+        frozenSkillRequirementByName = new Map(
+          universe.skillRequirements.map((requirement) => [requirement.skillName, requirement])
+        )
         const eligibleCatalog = buildCanonicalToolCatalog(tools)
         const activeSkillRequiredStableTargetKeys = universe.skillRequirements
           .filter((requirement) => requirement.activeAtRunStart && requirement.activatable)
@@ -697,6 +698,9 @@ export class DeepChatLoopRunner {
           throw new Error('Native Activation assignment did not produce a virtualized controller.')
         }
         toolSurfaceController = selected.controller
+        if (!toolSurfaceController.prepareSkillActivation) {
+          throw new Error('Native Activation controller cannot prepare Skill activation.')
+        }
       } else {
         const initialProviderActiveDefinitions = tools.filter(
           (definition) => definition.source === 'agent'
@@ -725,6 +729,34 @@ export class DeepChatLoopRunner {
       runPromptAssembly === initialPromptAssembly
         ? messages
         : projectSystemPrompt(messages, runPromptAssembly.prompt)
+    const resolveRefreshedPromptAssembly = async (
+      activeSkillNames: string[] | undefined,
+      refreshedTools: MCPToolDefinition[]
+    ): Promise<DeepChatPromptAssembly> => {
+      if (refreshSystemPrompt) {
+        const refreshed = await refreshSystemPrompt(
+          getEffectiveRuntimeSkillNames(activeSkillNames),
+          refreshedTools
+        )
+        const refreshedAssembly =
+          typeof refreshed === 'string' ? createOpaquePromptAssembly(refreshed) : refreshed
+        return toolSurfaceMode === 'cli-programmatic'
+          ? appendCliProgrammaticToolAdapterSection(refreshedAssembly)
+          : refreshedAssembly
+      }
+      const refreshedAssembly = await this.ports.promptAssembly
+        .createBasePromptAssembler(resourceInstance)
+        .assembleWithProvenance({
+          sessionId: toAppSessionId(sessionId),
+          configuredPrompt: generationSettings.systemPrompt,
+          toolDefinitions: refreshedTools,
+          activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames),
+          commandShell
+        })
+      return toolSurfaceMode === 'cli-programmatic'
+        ? appendCliProgrammaticToolAdapterSection(refreshedAssembly)
+        : refreshedAssembly
+    }
     const { supportsVision, supportsAudioInput } = resolveProviderInputCapabilities(
       this.ports.providerSettings,
       state.providerId,
@@ -845,31 +877,7 @@ export class DeepChatLoopRunner {
         maxProviderRounds,
         providerReplayProjector,
         toolCatalog,
-        refreshSystemPrompt: async (activeSkillNames, refreshedTools) => {
-          if (refreshSystemPrompt) {
-            const refreshed = await refreshSystemPrompt(
-              getEffectiveRuntimeSkillNames(activeSkillNames),
-              refreshedTools
-            )
-            const refreshedAssembly =
-              typeof refreshed === 'string' ? createOpaquePromptAssembly(refreshed) : refreshed
-            return toolSurfaceMode === 'cli-programmatic'
-              ? appendCliProgrammaticToolAdapterSection(refreshedAssembly)
-              : refreshedAssembly
-          }
-          const refreshedAssembly = await this.ports.promptAssembly
-            .createBasePromptAssembler(resourceInstance)
-            .assembleWithProvenance({
-              sessionId: toAppSessionId(sessionId),
-              configuredPrompt: generationSettings.systemPrompt,
-              toolDefinitions: refreshedTools,
-              activeSkillNames: getEffectiveRuntimeSkillNames(activeSkillNames),
-              commandShell: loopRun.resources.commandShell
-            })
-          return toolSurfaceMode === 'cli-programmatic'
-            ? appendCliProgrammaticToolAdapterSection(refreshedAssembly)
-            : refreshedAssembly
-        },
+        refreshSystemPrompt: resolveRefreshedPromptAssembly,
         toolExecution: this.ports.toolExecutionPort,
         toolResults: this.ports.toolResultPort,
         programmaticToolParents: this.ports.programmaticToolParents,
@@ -1276,6 +1284,94 @@ export class DeepChatLoopRunner {
             resourceInstance.getAgentId()?.trim() ||
             this.ports.identity.getAgentId(sessionId) ||
             'deepchat',
+          ...(toolSurfaceMode === 'native-activation'
+            ? {
+                prepareSkillActivation: async (skillName: string) => {
+                  const requirement = frozenSkillRequirementByName?.get(skillName)
+                  const prepareSurface = toolSurfaceController?.prepareSkillActivation
+                  if (!requirement?.activatable || !prepareSurface) {
+                    return Object.freeze({ kind: 'rejected' as const })
+                  }
+                  try {
+                    const validated = await this.ports.toolResolver.validateSkillNamesForSession(
+                      sessionId,
+                      [skillName],
+                      resourceInstance
+                    )
+                    abortSignal.throwIfAborted()
+                    resourceScope.assertCurrent()
+                    if (!validated.includes(skillName)) {
+                      return Object.freeze({ kind: 'rejected' as const })
+                    }
+                    const nextActiveSkillNames = Object.freeze(
+                      Array.from(
+                        new Set([...getEffectiveRuntimeSkillNames(), skillName])
+                      ).sort((left, right) => left.localeCompare(right))
+                    )
+                    const resolvedTools = await toolCatalog.resolve({
+                      activeSkillNames: [...nextActiveSkillNames]
+                    })
+                    abortSignal.throwIfAborted()
+                    resourceScope.assertCurrent()
+                    const preparedSurface = prepareSurface({
+                      requiredStableTargetKeys: requirement.requiredStableTargetKeys,
+                      eligibleDefinitions: resolvedTools
+                    })
+                    if (preparedSurface.kind === 'rejected') {
+                      return Object.freeze({ kind: 'rejected' as const })
+                    }
+                    const refreshedAssembly = await resolveRefreshedPromptAssembly(
+                      [...nextActiveSkillNames],
+                      [...preparedSurface.providerActiveDefinitions]
+                    )
+                    abortSignal.throwIfAborted()
+                    resourceScope.assertCurrent()
+                    const priorSystemPrompt =
+                      loopRun.messages[0]?.role === 'system' &&
+                      typeof loopRun.messages[0].content === 'string'
+                        ? loopRun.messages[0].content
+                        : ''
+                    const effectiveSystemPrompt = refreshedAssembly.prompt || priorSystemPrompt
+                    const preparedPromptAssembly = reconcilePromptAssembly(
+                      refreshedAssembly,
+                      effectiveSystemPrompt
+                    )
+                    let applied = false
+                    return Object.freeze({
+                      kind: 'prepared' as const,
+                      apply: () => {
+                        if (applied) return
+                        applied = true
+                        preparedSurface.apply()
+                        resourceInstance.activateRuntimeSkill(skillName)
+                        loopRun.resources.activeSkillNames = [...nextActiveSkillNames]
+                        loopRun.resources.toolDefinitions = [
+                          ...preparedSurface.eligibleDefinitions
+                        ]
+                        loopRun.resources.promptAssembly = preparedPromptAssembly
+                        if (refreshedAssembly.prompt) {
+                          if (loopRun.messages[0]?.role === 'system') {
+                            loopRun.messages[0] = {
+                              ...loopRun.messages[0],
+                              content: refreshedAssembly.prompt
+                            }
+                          } else {
+                            loopRun.messages.unshift({
+                              role: 'system',
+                              content: refreshedAssembly.prompt
+                            })
+                          }
+                        }
+                      }
+                    })
+                  } catch {
+                    abortSignal.throwIfAborted()
+                    resourceScope.assertCurrent()
+                    return Object.freeze({ kind: 'rejected' as const })
+                  }
+                }
+              }
+            : {}),
           activateSkill: async (skillName) => {
             const validated = await this.ports.toolResolver.validateSkillNamesForSession(
               sessionId,

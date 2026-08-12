@@ -182,6 +182,14 @@ function makeTool(name: string): MCPToolDefinition {
   }
 }
 
+function makeAgentSkillViewTool(): MCPToolDefinition {
+  return {
+    ...makeTool('skill_view'),
+    source: 'agent',
+    server: { name: 'agent-skills', icons: '', description: 'Agent Skills management' }
+  }
+}
+
 function createProcessToolSurfaceHarness(hiddenNames: readonly string[] = ['hidden']) {
   const hiddenDefinitions = hiddenNames.map((name) => ({
     ...makeTool(name),
@@ -3359,7 +3367,7 @@ describe('processStream', () => {
     const getActiveSkillNames = vi.fn(() => [...activeSkillNames])
     const resolveTools = vi
       .fn()
-      .mockResolvedValue([makeTool('skill_view'), makeTool('deepchat_settings_set_theme')])
+      .mockResolvedValue([makeAgentSkillViewTool(), makeTool('deepchat_settings_set_theme')])
     const refreshSystemPrompt = vi.fn().mockResolvedValue('  refreshed skill prompt\n')
 
     const coreStream = vi.fn(
@@ -3412,7 +3420,7 @@ describe('processStream', () => {
       coreStream,
       toolExecution: createToolExecutionPort(toolService),
       toolCatalog: { resolve: resolveTools },
-      tools: [makeTool('skill_view')],
+      tools: [makeAgentSkillViewTool()],
       refreshSystemPrompt,
       controls: {
         activateSkill,
@@ -3504,7 +3512,7 @@ describe('processStream', () => {
       coreStream,
       toolExecution: createToolExecutionPort(toolService),
       toolCatalog: { resolve: resolveTools },
-      tools: [makeTool('skill_view')]
+      tools: [makeAgentSkillViewTool()]
     })
 
     const promise = processStream(params)

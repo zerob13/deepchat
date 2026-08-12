@@ -3248,6 +3248,186 @@ describe('DeepChatAgentHarness', () => {
       ).toEqual(['native-activation'])
     })
 
+    it('prepares and atomically applies a Native Activation Skill bundle for the next View', async () => {
+      const agentTool = (name: string): MCPToolDefinition => ({
+        type: 'function',
+        function: {
+          name,
+          description: `${name} description`,
+          parameters: { type: 'object', properties: {} }
+        },
+        server: { name: 'agent-tools', icons: '', description: 'Agent tools' },
+        source: 'agent',
+        execution: TOOL_EXECUTION.read.parallel
+      })
+      const question = agentTool('deepchat_question')
+      const required = agentTool('skill_required')
+      const hidden = agentTool('skill_optional_hidden')
+      const definitions = [question, required, hidden]
+      const skillMetadata = {
+        name: 'review-skill',
+        description: 'Review skill',
+        category: 'engineering',
+        platforms: [],
+        metadata: {},
+        allowedTools: ['skill_required']
+      }
+      const skillService = getSkillServiceMock()
+      skillService.snapshotCachedMetadataList.mockReturnValue({
+        state: 'ready',
+        skills: [skillMetadata]
+      })
+      skillService.getMetadataList.mockResolvedValue([skillMetadata])
+      skillService.loadSkillContent.mockResolvedValue({ content: '# Review instructions' })
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockImplementation(async (context: any) =>
+        context.activeSkillNames?.includes('review-skill') ? definitions : [question]
+      )
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions,
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'native-activation')
+
+      const bindings: LoopRunRequestToolSurfaceBinding[] = []
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        const initial = params.run.activeRequestToolSurface
+        if (!initial) throw new Error('Expected the initial Native Activation binding.')
+        bindings.push(initial)
+
+        const preparation = await params.controls?.prepareSkillActivation?.('review-skill')
+        expect(preparation?.kind).toBe('prepared')
+        expect(params.run.resources.activeSkillNames).toEqual([])
+        expect(params.run.resources.toolDefinitions.map((tool) => tool.function.name)).toEqual([
+          'deepchat_question'
+        ])
+        if (preparation?.kind !== 'prepared') {
+          throw new Error('Expected a prepared Skill activation.')
+        }
+        preparation.apply()
+
+        expect(params.run.resources.activeSkillNames).toEqual(['review-skill'])
+        expect(params.run.resources.toolDefinitions.map((tool) => tool.function.name)).toEqual([
+          'deepchat_question',
+          'skill_required',
+          'skill_optional_hidden'
+        ])
+        expect(params.run.resources.promptAssembly?.prompt).toContain('# Review instructions')
+        expect(String(params.run.messages[0]?.content)).toContain('# Review instructions')
+        expect(toolService.buildToolSystemPrompt).toHaveBeenLastCalledWith({
+          conversationId: 's1',
+          toolDefinitions: expect.arrayContaining([
+            expect.objectContaining({
+              function: expect.objectContaining({ name: 'skill_required' })
+            })
+          ])
+        })
+        const promptToolDefinitions = toolService.buildToolSystemPrompt.mock.lastCall?.[0]
+          .toolDefinitions as MCPToolDefinition[]
+        expect(promptToolDefinitions.map((tool) => tool.function.name)).not.toContain(
+          'skill_optional_hidden'
+        )
+
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        const activated = params.run.activeRequestToolSurface
+        if (!activated) throw new Error('Expected the activated Native Activation binding.')
+        bindings.push(activated)
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      expect(bindings).toHaveLength(2)
+      expect(bindings[1].snapshot.toolDefinitions.map((tool) => tool.function.name)).toEqual([
+        'deepchat_question',
+        TOOL_SEARCH_AGENT_TOOL_NAME,
+        'skill_required'
+      ])
+      expect(
+        bindings[1].snapshot.activeEntries.find(
+          (entry) => entry.definition.function.name === 'skill_required'
+        )
+      ).toMatchObject({ reason: 'active-skill' })
+    })
+
+    it('keeps a Run alive while rejecting an inactive Skill with unresolved requirements', async () => {
+      const question: MCPToolDefinition = {
+        type: 'function',
+        function: {
+          name: 'deepchat_question',
+          description: 'Ask a question',
+          parameters: { type: 'object', properties: {} }
+        },
+        server: { name: 'agent-tools', icons: '', description: 'Agent tools' },
+        source: 'agent',
+        execution: TOOL_EXECUTION.read.parallel
+      }
+      const skillMetadata = {
+        name: 'broken-skill',
+        description: 'Broken skill',
+        category: 'engineering',
+        platforms: [],
+        metadata: {},
+        allowedTools: ['missing_required_tool']
+      }
+      const skillService = getSkillServiceMock()
+      skillService.snapshotCachedMetadataList.mockReturnValue({
+        state: 'ready',
+        skills: [skillMetadata]
+      })
+      skillService.getMetadataList.mockResolvedValue([skillMetadata])
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue([question])
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions: [question],
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'native-activation')
+
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        expect(params.run.resources.toolSurfaceMode).toBe('native-activation')
+        await expect(params.controls?.prepareSkillActivation?.('broken-skill')).resolves.toEqual({
+          kind: 'rejected'
+        })
+        expect(params.run.resources.activeSkillNames).toEqual([])
+        expect(params.run.resources.toolDefinitions.map((tool) => tool.function.name)).toEqual([
+          'deepchat_question'
+        ])
+        return { status: 'completed', stopReason: 'complete' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await expect(agent.processMessage('s1', 'Hello')).resolves.toMatchObject({
+        messageId: 'mock-msg-id'
+      })
+    })
+
     it('assembles and persists exact CLI Programmatic provider Views', async () => {
       const taskContract = buildTaskContract({
         delegationId: 'delegation-programmatic-surface',

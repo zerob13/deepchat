@@ -278,11 +278,11 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     })
 
     const manager = buildManager()
-    const result = (await manager.callTool(
-      'skill_view',
-      { name: 'deepchat-settings' },
-      'conv-1'
-    )) as { content: string; rawData?: { toolResult?: unknown } }
+    const commitDispatch = vi.fn()
+    const result = (await manager.callTool('skill_view', { name: 'deepchat-settings' }, 'conv-1', {
+      activeSkillNames: [],
+      commitDispatch
+    })) as { content: string; rawData?: { toolResult?: unknown } }
 
     const content = JSON.parse(result.content) as Record<string, unknown>
     expect(content.isPinned).toBe(false)
@@ -290,6 +290,13 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
     expect(content.activatedForMessage).toBe(true)
     expect(content.activationScope).toBe('message')
     expect(skillService.setActiveSkills).not.toHaveBeenCalled()
+    expect(commitDispatch).toHaveBeenCalledOnce()
+    expect(commitDispatch).toHaveBeenCalledWith({
+      toolName: 'skill_view',
+      toolSource: 'agent',
+      normalizedArguments: { name: 'deepchat-settings' },
+      target: { serverName: 'agent-skills', originalName: 'skill_view' }
+    })
     expect(result.rawData?.toolResult).toEqual({
       activationApplied: true,
       activationSource: 'skill_md',

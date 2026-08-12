@@ -2727,6 +2727,9 @@ export class AgentToolManager {
             : isLinkedFileView
               ? 'file'
               : 'none'
+      if (activationApplied) {
+        this.createAgentDispatchCommit(toolName, 'agent-skills', validationResult.data, options)?.()
+      }
       const content = JSON.stringify({
         ...result,
         isPinned: result.isPinned === true,

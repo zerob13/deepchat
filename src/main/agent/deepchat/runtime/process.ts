@@ -1454,39 +1454,46 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           }
 
           if (executed.toolsChanged) {
-            const activeSkillNames = controls?.getActiveSkillNames?.()
-            run.resources.activeSkillNames = [...(activeSkillNames ?? [])]
-            try {
-              run.resources.toolDefinitions = await toolCatalog.resolve({ activeSkillNames })
+            if (controls?.prepareSkillActivation) {
               currentTools = run.resources.toolDefinitions
-            } catch (error) {
-              console.warn('[ProcessStream] failed to refresh tools after skill activation:', error)
-            }
-            if (params.refreshSystemPrompt) {
+            } else {
+              const activeSkillNames = controls?.getActiveSkillNames?.()
+              run.resources.activeSkillNames = [...(activeSkillNames ?? [])]
               try {
-                const refreshedSystemPrompt = await params.refreshSystemPrompt(
-                  activeSkillNames,
-                  currentTools
-                )
-                const refreshedAssembly =
-                  typeof refreshedSystemPrompt === 'string'
-                    ? createOpaquePromptAssembly(refreshedSystemPrompt)
-                    : refreshedSystemPrompt
-                replaceLeadingSystemMessage(conversationMessages, refreshedAssembly.prompt)
-                const effectiveSystemPrompt =
-                  conversationMessages[0]?.role === 'system' &&
-                  typeof conversationMessages[0].content === 'string'
-                    ? conversationMessages[0].content
-                    : ''
-                run.resources.promptAssembly = reconcilePromptAssembly(
-                  refreshedAssembly,
-                  effectiveSystemPrompt
-                )
+                run.resources.toolDefinitions = await toolCatalog.resolve({ activeSkillNames })
+                currentTools = run.resources.toolDefinitions
               } catch (error) {
                 console.warn(
-                  '[ProcessStream] failed to refresh system prompt after skill activation:',
+                  '[ProcessStream] failed to refresh tools after skill activation:',
                   error
                 )
+              }
+              if (params.refreshSystemPrompt) {
+                try {
+                  const refreshedSystemPrompt = await params.refreshSystemPrompt(
+                    activeSkillNames,
+                    currentTools
+                  )
+                  const refreshedAssembly =
+                    typeof refreshedSystemPrompt === 'string'
+                      ? createOpaquePromptAssembly(refreshedSystemPrompt)
+                      : refreshedSystemPrompt
+                  replaceLeadingSystemMessage(conversationMessages, refreshedAssembly.prompt)
+                  const effectiveSystemPrompt =
+                    conversationMessages[0]?.role === 'system' &&
+                    typeof conversationMessages[0].content === 'string'
+                      ? conversationMessages[0].content
+                      : ''
+                  run.resources.promptAssembly = reconcilePromptAssembly(
+                    refreshedAssembly,
+                    effectiveSystemPrompt
+                  )
+                } catch (error) {
+                  console.warn(
+                    '[ProcessStream] failed to refresh system prompt after skill activation:',
+                    error
+                  )
+                }
               }
             }
           }
