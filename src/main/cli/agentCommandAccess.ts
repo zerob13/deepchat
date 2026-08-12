@@ -106,11 +106,10 @@ export class AgentCliCommandAccess {
     armed: ArmedAgentCliProgrammaticToken,
     conversationId: string,
     command: string,
-    stdin: string,
+    stdin: string | undefined,
     commandShell: ResolvedCommandShell
   ): AgentCommandEnvironment {
     const normalizedConversationId = conversationId.trim()
-    const expectedCommand = `deepchat tool ${armed.programmaticOperation.command.verb}`
     let invocation: ReturnType<typeof parseAgentCliProgrammaticExecInvocation>
     try {
       invocation = parseAgentCliProgrammaticExecInvocation({ command, stdin })
@@ -121,7 +120,6 @@ export class AgentCliCommandAccess {
       !normalizedConversationId ||
       armed.conversationId !== normalizedConversationId ||
       armed.programmaticOperation.operation.sessionId !== normalizedConversationId ||
-      command !== expectedCommand ||
       invocation.route !== armed.programmaticOperation.route ||
       invocation.canonicalInvocationHash !== armed.programmaticOperation.canonicalInvocationHash ||
       this.options.commandPermission.extractBaseCommand(command) !== 'deepchat' ||

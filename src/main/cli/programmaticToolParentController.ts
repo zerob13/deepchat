@@ -57,6 +57,11 @@ export type ProgrammaticParentSettlementReceipt = Readonly<{
   settledChildren: number
 }>
 
+export type ProgrammaticCompletedInvocationResult = Readonly<{
+  responseText: string
+  isError: boolean
+}>
+
 export class ProgrammaticParentOperationError extends Error {
   constructor(
     message: string,
@@ -202,6 +207,8 @@ export class ProgrammaticToolParentController {
   private materializedInputBytes = 0
   private childOutputBytes = 0
   private childFailed = false
+  private completedInvocationResult: ProgrammaticCompletedInvocationResult | null = null
+  private completedInvocationResultClaimed = false
   private settlementReceipt: ProgrammaticParentSettlementReceipt | null = null
 
   constructor(
@@ -291,6 +298,71 @@ export class ProgrammaticToolParentController {
     this.children = new Map()
     this.childFailed = true
     this.preparedGrant.revoke()
+  }
+
+  failBeforeDiscoveryResult(): void {
+    this.requireState('armed')
+    const verb = this.preparedGrant.binding.command.verb
+    if (verb !== 'search' && verb !== 'describe') {
+      throw new ProgrammaticParentOperationError(
+        'This Programmatic operation is not a discovery request',
+        'invalid_state'
+      )
+    }
+    if (this.completedInvocationResult) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic discovery already has an authoritative result',
+        'invalid_state'
+      )
+    }
+    this.childFailed = true
+    this.preparedGrant.revoke()
+  }
+
+  completeDiscoveryInvocation(input: ProgrammaticCompletedInvocationResult): void {
+    this.requireState('armed')
+    const verb = this.preparedGrant.binding.command.verb
+    if (verb !== 'search' && verb !== 'describe') {
+      throw new ProgrammaticParentOperationError(
+        'Only Programmatic discovery can complete without a child plan',
+        'invalid_state'
+      )
+    }
+    if (this.completedInvocationResult) {
+      this.markFatal()
+      throw new ProgrammaticParentOperationError(
+        'Programmatic discovery produced more than one authoritative result',
+        'identity_mismatch'
+      )
+    }
+    if (typeof input.isError !== 'boolean') {
+      this.markFatal()
+      throw new ProgrammaticParentOperationError(
+        'Programmatic discovery result error state is invalid',
+        'identity_mismatch'
+      )
+    }
+    this.requireOutputWithinQuota(
+      input.responseText,
+      0,
+      'Programmatic discovery result exceeds the output quota'
+    )
+    this.completedInvocationResult = Object.freeze({
+      responseText: input.responseText,
+      isError: input.isError
+    })
+  }
+
+  takeCompletedInvocationResult(): ProgrammaticCompletedInvocationResult {
+    this.requireState('armed')
+    if (!this.completedInvocationResult || this.completedInvocationResultClaimed) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic invocation has no unclaimed authoritative result',
+        'invalid_state'
+      )
+    }
+    this.completedInvocationResultClaimed = true
+    return this.completedInvocationResult
   }
 
   reserveChildren(plan: readonly ProgrammaticChildReservation[]): void {
@@ -492,11 +564,28 @@ export class ProgrammaticToolParentController {
       0,
       'Programmatic outer result exceeds the output quota'
     )
-    if (
-      (this.preparedGrant.binding.command.verb === 'call' ||
-        this.preparedGrant.binding.command.verb === 'batch') &&
-      !this.children
-    ) {
+    const verb = this.preparedGrant.binding.command.verb
+    if (verb === 'search' || verb === 'describe') {
+      if (this.completedInvocationResult) {
+        if (
+          !this.completedInvocationResultClaimed ||
+          this.completedInvocationResult.responseText !== input.responseText ||
+          this.completedInvocationResult.isError !== input.isError
+        ) {
+          this.markFatal()
+          throw new ProgrammaticParentOperationError(
+            'Programmatic outer result does not match its authoritative discovery result',
+            'identity_mismatch'
+          )
+        }
+      } else if (!this.childFailed) {
+        throw new ProgrammaticParentOperationError(
+          'Programmatic discovery cannot settle before an authoritative result',
+          'invalid_state'
+        )
+      }
+    }
+    if ((verb === 'call' || verb === 'batch') && !this.children) {
       throw new ProgrammaticParentOperationError(
         'Programmatic tool execution requires a reserved child plan',
         'invalid_state'

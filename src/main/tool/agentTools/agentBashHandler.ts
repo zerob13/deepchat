@@ -35,7 +35,6 @@ const COMMAND_DEFAULT_TIMEOUT_MS = 120000
 const COMMAND_KILL_GRACE_MS = 5000
 const COMMAND_OFFLOAD_THRESHOLD = 10000
 const COMMAND_PREVIEW_CHARS = 12000
-const PROGRAMMATIC_TOOL_STDIN_COMMANDS = new Set(['deepchat tool call', 'deepchat tool batch'])
 
 const ExecuteCommandArgsSchema = z.object({
   command: z.string().min(1),
@@ -52,6 +51,7 @@ export interface ExecuteCommandOptions {
   conversationId?: string
   env?: Record<string, string>
   stdin?: string
+  programmatic?: boolean
   maxTimeoutMs?: number
   outputPrefix?: string
   outputPreviewChars?: number
@@ -77,7 +77,7 @@ export interface AgentCommandEnvironmentPort {
     armed: ArmedAgentCliProgrammaticToken,
     conversationId: string,
     command: string,
-    stdin: string,
+    stdin: string | undefined,
     commandShell: ResolvedCommandShell
   ): Readonly<{
     variables: Readonly<Record<string, string>>
@@ -167,17 +167,15 @@ export class AgentBashHandler {
     }
 
     const { command, timeout, background, cwd: requestedCwd, yieldMs } = parsed.data
-    if (options.stdin !== undefined) {
-      if (
-        !options.conversationId ||
-        background ||
-        yieldMs !== undefined ||
-        !PROGRAMMATIC_TOOL_STDIN_COMMANDS.has(command)
-      ) {
-        throw new Error(
-          'Owned stdin is limited to foreground DeepChat Programmatic Tool call and batch commands.'
-        )
-      }
+    const isProgrammaticInvocation = options.programmatic === true
+    if (
+      isProgrammaticInvocation &&
+      (!options.conversationId || background || yieldMs !== undefined)
+    ) {
+      throw new Error('DeepChat Programmatic Tool commands must remain attached and foreground.')
+    }
+    if (!isProgrammaticInvocation && options.stdin !== undefined) {
+      throw new Error('Owned stdin is limited to DeepChat Programmatic Tool commands.')
     }
     const cwd = this.resolveWorkingDirectory(
       requestedCwd,
@@ -222,15 +220,14 @@ export class AgentBashHandler {
     const spawnCwd = resolveUsableSpawnCwd(cwd)
     let result: ShellProcessResult
 
-    const resolvedEnvironment =
-      options.stdin === undefined
-        ? this.resolveCommandEnvironment(command, options)
-        : { env: options.env, preserveCommand: true }
+    const resolvedEnvironment = !isProgrammaticInvocation
+      ? this.resolveCommandEnvironment(command, options)
+      : { env: options.env, preserveCommand: true }
     const prepared = await this.prepareCommand(
       command,
       resolvedEnvironment.env,
       options.commandShell,
-      resolvedEnvironment.preserveCommand || options.stdin !== undefined
+      resolvedEnvironment.preserveCommand || isProgrammaticInvocation
     )
 
     let armedProgrammaticToken: ArmedAgentCliProgrammaticToken | void
@@ -249,7 +246,7 @@ export class AgentBashHandler {
           : {}),
         ...(yieldMs === undefined ? {} : { yieldMs })
       })
-      if (options.stdin !== undefined) {
+      if (isProgrammaticInvocation) {
         if (!armedProgrammaticToken || !options.conversationId) {
           throw new Error('Programmatic CLI launch requires an armed outer operation grant')
         }
@@ -271,7 +268,7 @@ export class AgentBashHandler {
         })
       }
     } catch (error) {
-      if (options.stdin !== undefined) {
+      if (isProgrammaticInvocation) {
         throw new ProgrammaticCommandLaunchError({ cause: error })
       }
       throw error
@@ -283,7 +280,7 @@ export class AgentBashHandler {
         yieldMs
       })
     } catch (error) {
-      if (options.stdin !== undefined) {
+      if (isProgrammaticInvocation) {
         throw new ProgrammaticCommandLaunchError({ cause: error })
       }
       throw error
@@ -455,7 +452,7 @@ export class AgentBashHandler {
     }
 
     const yielded =
-      options.stdin === undefined
+      options.stdin === undefined && options.programmatic !== true
         ? await backgroundExecSessionManager.waitForCompletionOrYield(
             conversationId,
             session.sessionId,
@@ -475,7 +472,8 @@ export class AgentBashHandler {
       return yielded
     }
 
-    const retainOffloadedSession = options.stdin === undefined && yielded.result.offloaded
+    const retainOffloadedSession =
+      options.stdin === undefined && options.programmatic !== true && yielded.result.offloaded
 
     try {
       return {

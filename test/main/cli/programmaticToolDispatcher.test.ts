@@ -164,9 +164,13 @@ function agentCaller(conversationId = 'session-1'): CliRouteCaller {
 
 function createDispatcher(input: ReturnType<typeof buildCapability>) {
   const resolveInvocation = vi.fn(() => input)
+  const recordDiscoveryResult = vi.fn()
   return {
-    dispatcher: new ProgrammaticToolDispatcher({ parents: { resolveInvocation } }),
-    resolveInvocation
+    dispatcher: new ProgrammaticToolDispatcher({
+      parents: { resolveInvocation, recordDiscoveryResult }
+    }),
+    resolveInvocation,
+    recordDiscoveryResult
   }
 }
 
@@ -202,7 +206,7 @@ describe('ProgrammaticToolDispatcher', () => {
       definitions: [zeta, nativePinned, exec, alpha],
       providerActiveDefinitions: [exec, nativePinned]
     })
-    const { dispatcher } = createDispatcher(context)
+    const { dispatcher, recordDiscoveryResult } = createDispatcher(context)
 
     const output = toolSearchRoute.output.parse(
       await dispatcher.dispatch(
@@ -223,6 +227,13 @@ describe('ProgrammaticToolDispatcher', () => {
     expect(output.tools[0]?.inputSignature).toContain('...')
     expect(output.tools[0]?.callExample).toContain('deepchat tool call')
     expect(output.truncated).toBe(false)
+    expect(recordDiscoveryResult).toHaveBeenCalledWith(
+      expect.objectContaining({ route: 'tool.search' }),
+      {
+        responseText: `${JSON.stringify(output, null, 2)}\nExit Code: 0`,
+        isError: false
+      }
+    )
   })
 
   it('describes canonical input schema without exposing internal target metadata', async () => {
@@ -235,7 +246,7 @@ describe('ProgrammaticToolDispatcher', () => {
       rawMeta: { secretMarker }
     })
     const context = buildCapability({ definitions: [exec, remote] })
-    const { dispatcher } = createDispatcher(context)
+    const { dispatcher, recordDiscoveryResult } = createDispatcher(context)
 
     const output = toolDescribeRoute.output.parse(
       await dispatcher.dispatch(
@@ -254,6 +265,10 @@ describe('ProgrammaticToolDispatcher', () => {
     expect(serialized).not.toContain(BINDING_HASH)
     expect(serialized).not.toContain(context.capability.capabilityHash)
     expect(serialized).not.toContain(secretMarker)
+    expect(recordDiscoveryResult).toHaveBeenCalledWith(
+      expect.objectContaining({ route: 'tool.describe' }),
+      expect.objectContaining({ isError: false })
+    )
   })
 
   it('rejects target and property names that cannot cross the CLI boundary safely', () => {
@@ -278,7 +293,7 @@ describe('ProgrammaticToolDispatcher', () => {
       definitions: [exec, nativePinned, mcpTool({ name: 'remote_search' })],
       providerActiveDefinitions: [exec, nativePinned]
     })
-    const { dispatcher } = createDispatcher(context)
+    const { dispatcher, recordDiscoveryResult } = createDispatcher(context)
     const grant = operationGrant(context.capability, 'describe')
 
     const unknown = await expectCliError(
@@ -304,6 +319,11 @@ describe('ProgrammaticToolDispatcher', () => {
 
     expect(providerActive.message).toBe(unknown.message)
     expect(providerActive.httpStatus).toBe(unknown.httpStatus)
+    expect(recordDiscoveryResult).toHaveBeenCalledTimes(2)
+    expect(recordDiscoveryResult).toHaveBeenNthCalledWith(1, grant, {
+      responseText: 'Error: Tool is not available in the current session',
+      isError: true
+    })
   })
 
   it('truncates search to the capability output quota and rejects oversized descriptions', async () => {
@@ -312,7 +332,7 @@ describe('ProgrammaticToolDispatcher', () => {
       definitions: [exec, mcpTool({ name: 'remote_search' })],
       maxOutputBytes: 100
     })
-    const { dispatcher } = createDispatcher(context)
+    const { dispatcher, recordDiscoveryResult } = createDispatcher(context)
 
     const search = toolSearchRoute.output.parse(
       await dispatcher.dispatch(
@@ -334,6 +354,13 @@ describe('ProgrammaticToolDispatcher', () => {
         new AbortController().signal
       ),
       'result_too_large'
+    )
+    expect(recordDiscoveryResult).toHaveBeenLastCalledWith(
+      expect.objectContaining({ route: 'tool.describe' }),
+      {
+        responseText: 'Error: Programmatic Tool result exceeds its output quota',
+        isError: true
+      }
     )
   })
 

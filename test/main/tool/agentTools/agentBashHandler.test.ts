@@ -323,6 +323,7 @@ describe('AgentBashHandler', () => {
         commandShell: POSIX_COMMAND_SHELL,
         conversationId: 'conv-1',
         stdin: 'owned input',
+        programmatic: true,
         beforeExecute
       }
     )
@@ -342,6 +343,63 @@ describe('AgentBashHandler', () => {
       'conv-1',
       'deepchat tool call',
       'owned input',
+      POSIX_COMMAND_SHELL
+    )
+    expect(order).toEqual(['outer-t1', 'environment', 'spawn'])
+    expect(runShellProcess).toHaveBeenCalledOnce()
+  })
+
+  it('keeps scalar Programmatic discovery attached without requiring stdin', async () => {
+    const order: string[] = []
+    const commandEnvironment = createProgrammaticCommandEnvironment(order)
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService(),
+      commandEnvironment
+    )
+    const command = 'deepchat tool search --query calendar --limit 4'
+    vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: command,
+      command,
+      env: {},
+      rewritten: false,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    })
+    const runShellProcess = vi
+      .spyOn(handler as never, 'runShellProcess' as never)
+      .mockImplementation(async () => {
+        order.push('spawn')
+        return {
+          kind: 'completed',
+          output: '{"tools":[]}',
+          exitCode: 0,
+          timedOut: false,
+          offloaded: false
+        }
+      })
+    const beforeExecute = vi.fn(() => {
+      order.push('outer-t1')
+      return armedProgrammaticToken
+    })
+
+    await handler.executeCommand(
+      { command, description: 'Search programmatic tools' },
+      {
+        commandShell: POSIX_COMMAND_SHELL,
+        conversationId: 'conv-1',
+        programmatic: true,
+        beforeExecute
+      }
+    )
+
+    expect(commandEnvironment.createEnvironment).not.toHaveBeenCalled()
+    expect(commandEnvironment.createProgrammaticEnvironment).toHaveBeenCalledWith(
+      armedProgrammaticToken,
+      'conv-1',
+      command,
+      undefined,
       POSIX_COMMAND_SHELL
     )
     expect(order).toEqual(['outer-t1', 'environment', 'spawn'])
@@ -376,6 +434,7 @@ describe('AgentBashHandler', () => {
           commandShell: POSIX_COMMAND_SHELL,
           conversationId: 'conv-1',
           stdin: '{}',
+          programmatic: true,
           beforeExecute: () => armedProgrammaticToken
         }
       )
@@ -399,7 +458,7 @@ describe('AgentBashHandler', () => {
         description: 'Call programmatic tool',
         background: true
       },
-      options: { conversationId: 'conv-1', stdin: '{}' }
+      options: { conversationId: 'conv-1', stdin: '{}', programmatic: true }
     },
     {
       name: 'yielded execution',
@@ -408,12 +467,12 @@ describe('AgentBashHandler', () => {
         description: 'Batch programmatic tools',
         yieldMs: 100
       },
-      options: { conversationId: 'conv-1', stdin: '{}' }
+      options: { conversationId: 'conv-1', stdin: '{}', programmatic: true }
     },
     {
       name: 'detached execution',
       args: { command: 'deepchat tool call', description: 'Call programmatic tool' },
-      options: { stdin: '{}' }
+      options: { stdin: '{}', programmatic: true }
     }
   ])('rejects owned stdin for $name before shell execution', async ({ args, options }) => {
     const handler = new AgentBashHandler(
@@ -425,7 +484,7 @@ describe('AgentBashHandler', () => {
 
     await expect(
       handler.executeCommand(args, { commandShell: POSIX_COMMAND_SHELL, ...options })
-    ).rejects.toThrow(/Owned stdin is limited/)
+    ).rejects.toThrow(/Owned stdin is limited|attached and foreground/)
     expect(prepareCommand).not.toHaveBeenCalled()
   })
 
@@ -795,6 +854,7 @@ describe('AgentBashHandler', () => {
         commandShell: POSIX_COMMAND_SHELL,
         conversationId: 'conv-1',
         stdin: '{"target":"remote"}',
+        programmatic: true,
         beforeExecute: () => armedProgrammaticToken
       }
     )
@@ -838,6 +898,7 @@ describe('AgentBashHandler', () => {
           commandShell: POSIX_COMMAND_SHELL,
           conversationId: 'conv-1',
           stdin: '{}',
+          programmatic: true,
           beforeExecute: () => armedProgrammaticToken
         }
       )

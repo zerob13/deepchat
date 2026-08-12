@@ -175,6 +175,73 @@ describe('ProgrammaticToolParentRegistry', () => {
     expect(() => registry.assertRunTerminalAllowed(RUN)).not.toThrow()
   })
 
+  it('hands one authoritative discovery result from local control to outer settlement', () => {
+    const operationBinding = binding()
+    const searchBinding: AgentCliProgrammaticOperationBinding = {
+      ...operationBinding,
+      command: { domain: 'tool', verb: 'search' },
+      route: 'tool.search'
+    }
+    const { table, entries } = createTapeTableMock()
+    const journal = new ExecutionJournalService(() => table)
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => 'd'.repeat(43),
+      createTokenId: () => 'discovery-programmatic-token'
+    })
+    const registry = new ProgrammaticToolParentRegistry({
+      tokenAuthority: authority,
+      executionJournal: journal
+    })
+    const capability = {
+      capabilityHash: searchBinding.capabilityHash,
+      programmaticSurfaceHash: searchBinding.programmaticSurfaceHash
+    } as ProgrammaticToolCapabilityV1
+    journal.commitRunStarted({
+      sessionId: searchBinding.operation.sessionId,
+      runId: searchBinding.operation.runId,
+      messageId: searchBinding.operation.messageId,
+      runKind: 'loop'
+    })
+    const registration = registry.prepare({
+      binding: searchBinding,
+      invocationAuthority: { capability, snapshot: {} as ToolSurfaceSnapshot },
+      assertAuthorityActive: () => undefined
+    })
+    const outerDispatch = journal.commitDispatch({
+      sessionId: searchBinding.operation.sessionId,
+      messageId: searchBinding.operation.messageId,
+      operation: {
+        runId: searchBinding.operation.runId,
+        requestSeq: searchBinding.operation.requestSeq,
+        providerToolCallId: searchBinding.operation.providerToolCallId
+      },
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool search --query calendar' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' }
+    })
+    registration.armOuterDispatch({ ...outerDispatch, operation: searchBinding.operation })
+    const armed = registration.takeArmedToken()
+    const responseText = '{"tools":[]}\nExit Code: 0'
+
+    registry.recordDiscoveryResult(armed.programmaticOperation, {
+      responseText,
+      isError: false
+    })
+    expect(registration.takeCompletedInvocationResult()).toEqual({ responseText, isError: false })
+    expect(registration.settleOuterOutcome({ responseText, isError: false })).toMatchObject({
+      created: true
+    })
+    expect(authority.beginRequest(armed.token)).toEqual({ status: 'invalid' })
+    expect(
+      entries.filter(
+        (entry) =>
+          entry.name === 'execution/dispatch_committed' || entry.name === 'execution/tool_outcome'
+      )
+    ).toHaveLength(2)
+    expect(entries.every((entry) => !entry.payload_json.includes(responseText))).toBe(true)
+  })
+
   it('settles a known launch error when live View authority is revoked after outer T1', () => {
     const operationBinding = binding()
     const { table } = createTapeTableMock()

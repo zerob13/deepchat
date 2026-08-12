@@ -1750,10 +1750,13 @@ function prepareProgrammaticExecParent(input: {
   const command = typeof args.command === 'string' ? args.command : ''
   const stdin = typeof args.stdin === 'string' ? args.stdin : undefined
   const attemptsProgrammaticInvocation =
-    stdin !== undefined || command === 'deepchat tool call' || command === 'deepchat tool batch'
+    stdin !== undefined || /^deepchat tool (?:search|describe|call|batch)(?:\s|$)/.test(command)
   if (!attemptsProgrammaticInvocation) return undefined
-  if (!stdin || !input.capability || !input.toolSurfaceSnapshot || !input.parents) {
-    throw new Error('Programmatic Tool exec requires its exact active View capability and stdin')
+  if (!input.capability || !input.toolSurfaceSnapshot || !input.parents) {
+    throw new Error('Programmatic Tool exec requires its exact active View capability')
+  }
+  if (args.background === true || args.yieldMs !== undefined) {
+    throw new Error('Programmatic Tool exec must remain attached and foreground')
   }
   assertProgrammaticToolCapabilityViewActive(input.capability, input.toolSurfaceSnapshot)
   const invocation = parseAgentCliProgrammaticExecInvocation({ command, stdin })
@@ -1857,6 +1860,10 @@ async function runToolCall(params: {
   let dispatchedOperation: ExecutionOperationIdentity | undefined
   let committedOutcome: StagedToolResult | undefined
   let programmaticToolParent: ProgrammaticToolParentRegistration | undefined
+  let programmaticCompletedResult: ReturnType<
+    ProgrammaticToolParentRegistration['takeCompletedInvocationResult']
+  > | undefined
+  let programmaticOuterOutcomeCommitted = false
   let programmaticToolParentCancelled = false
   const cancelProgrammaticParentBeforeDispatch = (): void => {
     if (
@@ -1891,6 +1898,15 @@ async function runToolCall(params: {
       outcome.stagedResult.operation &&
       !outcome.stagedResult.outcomeCommitted
     ) {
+      if (programmaticOuterOutcomeCommitted) {
+        const stagedResult: StagedToolResult = {
+          ...outcome.stagedResult,
+          outcomeCommitted: true
+        }
+        committedOutcome = stagedResult
+        releaseOutcomeProjections(true)
+        return { ...outcome, stagedResult }
+      }
       throw new ExecutionJournalError(
         'Programmatic outer outcome has no process-live settlement receipt.',
         'invalid_fact'
@@ -2143,6 +2159,7 @@ async function runToolCall(params: {
           toolContext
         }
       }
+      cancelProgrammaticParentBeforeDispatch()
       return commitOutcome(
         buildToolErrorOutcome(
           execution,
@@ -2150,6 +2167,29 @@ async function runToolCall(params: {
           dispatchedOperation
         )
       )
+    }
+
+    if (programmaticToolParent) {
+      try {
+        programmaticCompletedResult = programmaticToolParent.takeCompletedInvocationResult()
+      } catch (cause) {
+        throw new ProgrammaticCommandLaunchError({ cause })
+      }
+      toolCallResult = {
+        content: programmaticCompletedResult.responseText,
+        rawData: {
+          toolCallId: completedToolCall.id,
+          content: programmaticCompletedResult.responseText,
+          isError: programmaticCompletedResult.isError
+        }
+      }
+      toolRawData = toolCallResult.rawData
+      returnedToolResult = toolRawData
+      programmaticToolParent.settleOuterOutcome({
+        responseText: programmaticCompletedResult.responseText,
+        isError: programmaticCompletedResult.isError
+      })
+      programmaticOuterOutcomeCommitted = true
     }
 
     if (io.abortSignal.aborted) {
@@ -2205,37 +2245,43 @@ async function runToolCall(params: {
     const stagedIsError = preparedResult.kind === 'tool_error' || toolRawData.isError === true
 
     const activatedSkill = extractActivatedSkillAfterCall(completedToolCall.name, toolRawData)
-    if (programmaticToolParent && dispatchedOperation) {
-      throw new ProgrammaticCommandLaunchError({
-        cause: new Error(
-          'Programmatic CLI process completed without a process-live settlement receipt.'
-        )
-      })
+    const uncommittedResult: StagedToolResult = {
+      toolCallId: completedToolCall.id,
+      toolName: completedToolCall.name,
+      toolSource: execution.toolDef?.source,
+      serverName: toolContext.serverName,
+      toolArgs: completedToolCall.arguments,
+      responseText: stagedResponseText,
+      isError: stagedIsError,
+      offloadPath: preparedResult.kind === 'ok' ? preparedResult.offloadPath : undefined,
+      existingOffloadPath: toolRawData.outputOffloadPath,
+      searchPayload,
+      rtkApplied: toolRawData.rtkApplied,
+      rtkMode: toolRawData.rtkMode,
+      rtkFallbackReason: toolRawData.rtkFallbackReason,
+      imagePreviews,
+      mcpResult: toolRawData.mcpResult,
+      skillDraftPrompt: extractSkillDraftPromptPayload(toolRawData),
+      postHookKind: stagedIsError ? 'failure' : 'success',
+      operation: dispatchedOperation
     }
-    const stagedResult = commitDispatchedToolOutcome(
-      {
-        toolCallId: completedToolCall.id,
-        toolName: completedToolCall.name,
-        toolSource: execution.toolDef?.source,
-        serverName: toolContext.serverName,
-        toolArgs: completedToolCall.arguments,
-        responseText: stagedResponseText,
-        isError: stagedIsError,
-        offloadPath: preparedResult.kind === 'ok' ? preparedResult.offloadPath : undefined,
-        existingOffloadPath: toolRawData.outputOffloadPath,
-        searchPayload,
-        rtkApplied: toolRawData.rtkApplied,
-        rtkMode: toolRawData.rtkMode,
-        rtkFallbackReason: toolRawData.rtkFallbackReason,
-        imagePreviews,
-        mcpResult: toolRawData.mcpResult,
-        skillDraftPrompt: extractSkillDraftPromptPayload(toolRawData),
-        postHookKind: stagedIsError ? 'failure' : 'success',
-        operation: dispatchedOperation
-      },
-      executionJournal,
-      io
-    )
+    let stagedResult: StagedToolResult
+    if (programmaticToolParent && dispatchedOperation) {
+      if (
+        !programmaticOuterOutcomeCommitted ||
+        !programmaticCompletedResult ||
+        stagedResponseText !== programmaticCompletedResult.responseText ||
+        stagedIsError !== programmaticCompletedResult.isError
+      ) {
+        throw new ExecutionJournalError(
+          'Programmatic outer projection does not match its committed process-live result.',
+          'projection_failed'
+        )
+      }
+      stagedResult = { ...uncommittedResult, outcomeCommitted: true }
+    } else {
+      stagedResult = commitDispatchedToolOutcome(uncommittedResult, executionJournal, io)
+    }
     if (stagedResult.outcomeCommitted) {
       committedOutcome = stagedResult
     }
@@ -2295,6 +2341,9 @@ async function runToolCall(params: {
     }
     if (isExecutionJournalError(err)) {
       throw err
+    }
+    if (programmaticOuterOutcomeCommitted && dispatchedOperation) {
+      throw new CommittedToolOutcomeProjectionError(dispatchedOperation, { cause: err })
     }
     if (programmaticToolParent && dispatchedOperation) {
       throw new ExecutionJournalError(

@@ -1299,22 +1299,33 @@ export class AgentToolManager {
         background?: boolean
         yieldMs?: number
       }
-      if (execArgs.stdin !== undefined) {
-        if (!options.programmaticToolCapability || !options.programmaticToolParent) {
-          throw new Error('Owned exec stdin requires an active Programmatic Tool capability.')
+      const isProgrammaticInvocation = options.programmaticToolParent !== undefined
+      if (isProgrammaticInvocation) {
+        if (!options.programmaticToolCapability) {
+          throw new Error('Programmatic exec requires an active Programmatic Tool capability.')
         }
+        const invocationInput = execArgs.stdin ?? execArgs.command
         if (
-          Buffer.byteLength(execArgs.stdin, 'utf8') >
+          Buffer.byteLength(invocationInput, 'utf8') >
           options.programmaticToolCapability.quotas.maxInputBytes
         ) {
-          throw new Error('Owned exec stdin exceeds the active Programmatic Tool input quota.')
+          throw new Error(
+            'Programmatic exec input exceeds the active Programmatic Tool input quota.'
+          )
         }
         if (
           execArgs.timeoutMs !== undefined &&
           execArgs.timeoutMs > options.programmaticToolCapability.quotas.maxDurationMs
         ) {
-          throw new Error('Owned exec timeout exceeds the active Programmatic Tool duration quota.')
+          throw new Error(
+            'Programmatic exec timeout exceeds the active Programmatic Tool duration quota.'
+          )
         }
+      } else if (execArgs.stdin !== undefined) {
+        if (!options.programmaticToolCapability) {
+          throw new Error('Owned exec stdin requires an active Programmatic Tool capability.')
+        }
+        throw new Error('Owned exec stdin requires an active Programmatic Tool parent operation.')
       }
       if (execArgs.cwd) {
         const skillScopeGuard = new AgentFileSystemHandler(allowedDirectories, {
@@ -1341,10 +1352,10 @@ export class AgentToolManager {
           commandShell: options.commandShell,
           oneShotCommandGrantId: options.oneShotCommandGrantId,
           stdin: execArgs.stdin,
-          maxTimeoutMs:
-            execArgs.stdin === undefined
-              ? undefined
-              : options.programmaticToolCapability?.quotas.maxDurationMs,
+          programmatic: isProgrammaticInvocation,
+          maxTimeoutMs: isProgrammaticInvocation
+            ? options.programmaticToolCapability?.quotas.maxDurationMs
+            : undefined,
           allowExternalCwd: allowExternalFileAccess,
           outputPreviewChars: outputLimits.commandOutputInlineChars,
           beforeExecute: this.createAgentDispatchCommit(

@@ -267,6 +267,86 @@ describe('ProgrammaticToolParentController', () => {
     expect(entries.some((entry) => JSON.parse(entry.meta_json).protocolVersion === 2)).toBe(false)
   })
 
+  it('binds discovery settlement to one process-live authoritative result', () => {
+    const searchBinding = binding({
+      command: { domain: 'tool', verb: 'search' },
+      route: 'tool.search'
+    })
+    const { controller, entries } = setup(searchBinding)
+    controller.completeDiscoveryInvocation({
+      responseText: '{"tools":[]}\nExit Code: 0',
+      isError: false
+    })
+
+    expect(controller.takeCompletedInvocationResult()).toEqual({
+      responseText: '{"tools":[]}\nExit Code: 0',
+      isError: false
+    })
+    expect(() => controller.takeCompletedInvocationResult()).toThrow(/no unclaimed authoritative/)
+    expect(() =>
+      controller.issueSettlementReceipt({ responseText: 'forged error', isError: true })
+    ).toThrow(/does not match its authoritative discovery result/)
+    expect(controller.state).toBe('fatal')
+    expect(entries.some((entry) => entry.name === 'execution/tool_outcome')).toBe(false)
+
+    const duplicated = setup(searchBinding)
+    duplicated.controller.completeDiscoveryInvocation({
+      responseText: '{"tools":[]}\nExit Code: 0',
+      isError: false
+    })
+    expect(() =>
+      duplicated.controller.completeDiscoveryInvocation({
+        responseText: '{"tools":[]}\nExit Code: 0',
+        isError: false
+      })
+    ).toThrow(/more than one authoritative result/)
+    expect(duplicated.controller.state).toBe('fatal')
+
+    const settled = setup(searchBinding)
+    const responseText = '{"tools":[]}\nExit Code: 0'
+    settled.controller.completeDiscoveryInvocation({
+      responseText,
+      isError: false
+    })
+    settled.controller.takeCompletedInvocationResult()
+    const receipt = settled.controller.issueSettlementReceipt({
+      responseText,
+      isError: false
+    })
+    expect(
+      settled.controller.commitOuterOutcome(receipt, {
+        responseText,
+        isError: false
+      })
+    ).toMatchObject({ created: true })
+    expect(settled.controller.state).toBe('settled')
+    expect(settled.entries.some((entry) => entry.meta_json.includes('protocolVersion\":2'))).toBe(
+      false
+    )
+  })
+
+  it('settles discovery launch failure without inventing a child operation', () => {
+    const describeBinding = binding({
+      command: { domain: 'tool', verb: 'describe' },
+      route: 'tool.describe'
+    })
+    const { authority, armed, controller, entries } = setup(describeBinding)
+
+    controller.failBeforeDiscoveryResult()
+    expect(authority.beginRequest(armed.token)).toEqual({ status: 'invalid' })
+    const settlement = controller.issueSettlementReceipt({
+      responseText: 'Error: discovery request failed before completion',
+      isError: true
+    })
+    controller.commitOuterOutcome(settlement, {
+      responseText: 'Error: discovery request failed before completion',
+      isError: true
+    })
+
+    expect(controller.state).toBe('settled')
+    expect(entries.some((entry) => JSON.parse(entry.meta_json).protocolVersion === 2)).toBe(false)
+  })
+
   it('parks an outer T1 when the settlement receipt is missing or mismatched', () => {
     const first = setup()
     first.controller.reserveChildren([child(0)])

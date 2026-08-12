@@ -7,6 +7,7 @@ import type {
 } from './agentTokenAuthority'
 import {
   ProgrammaticParentOperationError,
+  type ProgrammaticCompletedInvocationResult,
   type ProgrammaticParentSettlementReceipt,
   ProgrammaticToolParentController
 } from './programmaticToolParentController'
@@ -33,6 +34,7 @@ export type ProgrammaticToolParentRegistration = Readonly<{
     receipt: ExecutionJournalCommitReceipt & { operation: AgentCliProgrammaticOperationIdentity }
   ): void
   takeArmedToken(): ArmedAgentCliProgrammaticToken
+  takeCompletedInvocationResult(): ProgrammaticCompletedInvocationResult
   cancelBeforeOuterDispatch(): void
   settleLaunchFailure(input: { responseText: string }): ExecutionJournalCommitReceipt
   settleOuterOutcome(input: {
@@ -156,6 +158,10 @@ export class ProgrammaticToolParentRegistry {
         armedToken = null
         return token
       },
+      takeCompletedInvocationResult: () => {
+        requireRegistered()
+        return controller.takeCompletedInvocationResult()
+      },
       cancelBeforeOuterDispatch: () => {
         requireRegistered()
         controller.cancelBeforeOuterDispatch()
@@ -164,7 +170,12 @@ export class ProgrammaticToolParentRegistry {
       },
       settleLaunchFailure: (input) => {
         requireRegistered()
-        controller.failBeforeChildPlan()
+        const verb = controller.binding.command.verb
+        if (verb === 'search' || verb === 'describe') {
+          controller.failBeforeDiscoveryResult()
+        } else {
+          controller.failBeforeChildPlan()
+        }
         armedToken = null
         const settlement = controller.issueSettlementReceipt({
           responseText: input.responseText,
@@ -229,6 +240,21 @@ export class ProgrammaticToolParentRegistry {
       )
     }
     return Object.freeze({ capability: authority.capability, snapshot: authority.snapshot })
+  }
+
+  recordDiscoveryResult(
+    grant: AgentCliProgrammaticOperationGrant,
+    result: ProgrammaticCompletedInvocationResult
+  ): void {
+    this.resolveInvocation(grant)
+    const registered = this.parents.get(operationKey(grant.operation))
+    if (!registered) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic discovery parent authority is unavailable',
+        'invalid_state'
+      )
+    }
+    registered.controller.completeDiscoveryInvocation(result)
   }
 
   assertRunTerminalAllowed(run: ProgrammaticToolParentRunIdentity): void {

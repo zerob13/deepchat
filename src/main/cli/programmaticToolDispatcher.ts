@@ -31,7 +31,7 @@ type ProgrammaticToolSummary = Readonly<{
 }>
 
 export type ProgrammaticToolDispatcherOptions = Readonly<{
-  parents: Pick<ProgrammaticToolParentRegistry, 'resolveInvocation'>
+  parents: Pick<ProgrammaticToolParentRegistry, 'resolveInvocation' | 'recordDiscoveryResult'>
 }>
 
 function normalizeText(value: unknown, maximum: number): string {
@@ -188,8 +188,16 @@ function unavailableTarget(): never {
   })
 }
 
+function formatSuccessfulOuterResponse(output: unknown): string {
+  return `${JSON.stringify(output, null, 2)}\nExit Code: 0`
+}
+
+function formatFailedOuterResponse(error: CliRequestError): string {
+  return `Error: ${error.message}`
+}
+
 function measureOuterResponseBytes(output: unknown): number {
-  return Buffer.byteLength(`${JSON.stringify(output, null, 2)}\nExit Code: 0`, 'utf8')
+  return Buffer.byteLength(formatSuccessfulOuterResponse(output), 'utf8')
 }
 
 function assertOutputWithinCapabilityQuota(
@@ -241,60 +249,90 @@ export class ProgrammaticToolDispatcher {
     signal.throwIfAborted()
 
     if (method === toolSearchRoute.name) {
-      const query = toolSearchRoute.input.parse(input)
-      const normalizedQuery = normalizeText(query.query, query.query.length).toLocaleLowerCase(
-        'en-US'
-      )
-      const tokens = tokenize(normalizedQuery)
-      const matches: Array<Readonly<{ summary: ProgrammaticToolSummary; score: number }>> = []
-      for (let index = 0; index < capability.entries.length; index += 1) {
-        if (index % SEARCH_ABORT_CHECK_INTERVAL === 0) signal.throwIfAborted()
-        const summary = summarize(capability.entries[index])
-        const score = scoreEntry(normalizedQuery, tokens, summary)
-        if (score > 0) matches.push({ summary, score })
+      try {
+        const query = toolSearchRoute.input.parse(input)
+        const normalizedQuery = normalizeText(query.query, query.query.length).toLocaleLowerCase(
+          'en-US'
+        )
+        const tokens = tokenize(normalizedQuery)
+        const matches: Array<Readonly<{ summary: ProgrammaticToolSummary; score: number }>> = []
+        for (let index = 0; index < capability.entries.length; index += 1) {
+          if (index % SEARCH_ABORT_CHECK_INTERVAL === 0) signal.throwIfAborted()
+          const summary = summarize(capability.entries[index])
+          const score = scoreEntry(normalizedQuery, tokens, summary)
+          if (score > 0) matches.push({ summary, score })
+        }
+        matches.sort(
+          (left, right) =>
+            right.score - left.score ||
+            (left.summary.name < right.summary.name
+              ? -1
+              : left.summary.name > right.summary.name
+                ? 1
+                : 0)
+        )
+        const limit = query.limit ?? DEFAULT_SEARCH_LIMIT
+        const selected = matches.slice(0, limit).map((match) => match.summary)
+        const output = {
+          tools: selected,
+          truncated: matches.length > limit
+        }
+        while (
+          output.tools.length > 0 &&
+          measureOuterResponseBytes(output) > capability.quotas.maxOutputBytes
+        ) {
+          output.tools.pop()
+          output.truncated = true
+        }
+        assertOutputWithinCapabilityQuota(output, capability)
+        signal.throwIfAborted()
+        const result = toolSearchRoute.output.parse(output)
+        this.options.parents.recordDiscoveryResult(grant, {
+          responseText: formatSuccessfulOuterResponse(result),
+          isError: false
+        })
+        return result
+      } catch (error) {
+        if (error instanceof CliRequestError) {
+          this.options.parents.recordDiscoveryResult(grant, {
+            responseText: formatFailedOuterResponse(error),
+            isError: true
+          })
+        }
+        throw error
       }
-      matches.sort(
-        (left, right) =>
-          right.score - left.score ||
-          (left.summary.name < right.summary.name
-            ? -1
-            : left.summary.name > right.summary.name
-              ? 1
-              : 0)
-      )
-      const limit = query.limit ?? DEFAULT_SEARCH_LIMIT
-      const selected = matches.slice(0, limit).map((match) => match.summary)
-      const output = {
-        tools: selected,
-        truncated: matches.length > limit
-      }
-      while (
-        output.tools.length > 0 &&
-        measureOuterResponseBytes(output) > capability.quotas.maxOutputBytes
-      ) {
-        output.tools.pop()
-        output.truncated = true
-      }
-      assertOutputWithinCapabilityQuota(output, capability)
-      signal.throwIfAborted()
-      return toolSearchRoute.output.parse(output)
     }
 
     if (method === toolDescribeRoute.name) {
-      const request = toolDescribeRoute.input.parse(input)
-      const entry = capability.entries.find(
-        (candidate) => candidate.target.providerVisibleName === request.target
-      )
-      if (!entry) unavailableTarget()
-      const output = {
-        tool: {
-          ...summarize(entry),
-          inputSchema: inputSchema(entry)
+      try {
+        const request = toolDescribeRoute.input.parse(input)
+        const entry = capability.entries.find(
+          (candidate) => candidate.target.providerVisibleName === request.target
+        )
+        if (!entry) unavailableTarget()
+        const output = {
+          tool: {
+            ...summarize(entry),
+            inputSchema: inputSchema(entry)
+          }
         }
+        assertOutputWithinCapabilityQuota(output, capability)
+        signal.throwIfAborted()
+        const result = toolDescribeRoute.output.parse(output)
+        this.options.parents.recordDiscoveryResult(grant, {
+          responseText: formatSuccessfulOuterResponse(result),
+          isError: false
+        })
+        return result
+      } catch (error) {
+        if (error instanceof CliRequestError) {
+          this.options.parents.recordDiscoveryResult(grant, {
+            responseText: formatFailedOuterResponse(error),
+            isError: true
+          })
+        }
+        throw error
       }
-      assertOutputWithinCapabilityQuota(output, capability)
-      signal.throwIfAborted()
-      return toolDescribeRoute.output.parse(output)
     }
 
     throw new CliRequestError('unavailable', 'Programmatic Tool execution is not available', {

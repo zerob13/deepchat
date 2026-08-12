@@ -372,11 +372,53 @@ describe('AgentToolManager read routing', () => {
         expect.objectContaining({
           conversationId: 'conv1',
           stdin: 'owned input',
+          programmatic: true,
           maxTimeoutMs: 45_000,
           outputPreviewChars: 7_000
         })
       )
       expect(result.content).toContain('ok')
+    } finally {
+      executeCommand.mockRestore()
+    }
+  })
+
+  it('routes scalar Programmatic discovery without owned stdin', async () => {
+    const executeCommand = vi
+      .spyOn(AgentBashHandler.prototype, 'executeCommand')
+      .mockResolvedValue({
+        output: '{"tools":[]}\nExit Code: 0',
+        rtkApplied: false,
+        rtkMode: 'bypass'
+      })
+
+    try {
+      await manager.callTool(
+        'exec',
+        {
+          command: 'deepchat tool search --query calendar --limit 4',
+          description: 'Search programmatic tools'
+        },
+        'conv1',
+        {
+          programmaticToolCapability: {
+            quotas: { maxInputBytes: 1024, maxDurationMs: 45_000 }
+          } as never,
+          programmaticToolParent: { takeArmedToken: vi.fn() } as never
+        }
+      )
+
+      expect(executeCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: 'deepchat tool search --query calendar --limit 4'
+        }),
+        expect.objectContaining({
+          conversationId: 'conv1',
+          stdin: undefined,
+          programmatic: true,
+          maxTimeoutMs: 45_000
+        })
+      )
     } finally {
       executeCommand.mockRestore()
     }

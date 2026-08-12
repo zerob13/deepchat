@@ -9,7 +9,9 @@ import {
 import {
   PROGRAMMATIC_TOOL_RPC_MAX_BODY_BYTES,
   toolBatchRoute,
-  toolCallRoute
+  toolCallRoute,
+  toolDescribeRoute,
+  toolSearchRoute
 } from '@shared/contracts/routes/tools.routes'
 import { z } from 'zod'
 import {
@@ -33,6 +35,8 @@ const DEFAULT_MAX_TOKENS = 256
 const DEFAULT_MAX_TOKENS_PER_CONVERSATION = 8
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/
 const MAX_OPERATION_IDENTITY_CHARACTERS = 1_024
+const PROGRAMMATIC_TOOL_SAFE_SCALAR_PATTERN = /^[\p{L}\p{N}_.:@/,+-]+$/u
+const PROGRAMMATIC_TOOL_CANONICAL_LIMIT_PATTERN = /^[1-9][0-9]*$/
 const AgentCliProgrammaticRouteSchema = z.enum([
   'tool.search',
   'tool.describe',
@@ -259,25 +263,65 @@ export function buildAgentCliProgrammaticInvocationHash(input: {
 
 export function parseAgentCliProgrammaticExecInvocation(input: {
   command: string
-  stdin: string
+  stdin?: string
 }): AgentCliProgrammaticInvocation {
   const command = input.command
-  const verb =
-    command === 'deepchat tool call'
-      ? ('call' as const)
-      : command === 'deepchat tool batch'
-        ? ('batch' as const)
-        : null
-  if (!verb) {
-    throw new Error('Programmatic Tool exec requires an exact call or batch command')
+  const tokens = command.split(' ')
+  if (
+    tokens.some((token) => token.length === 0) ||
+    tokens[0] !== 'deepchat' ||
+    tokens[1] !== 'tool'
+  ) {
+    throw new Error('Programmatic Tool exec requires one canonical DeepChat Tool command')
   }
-  const stdinBytes = Buffer.from(input.stdin, 'utf8')
-  if (stdinBytes.length > MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES) {
-    throw new Error('Programmatic Tool stdin exceeds its supported byte limit')
+
+  const verb = tokens[2]
+  let parsed: Readonly<Record<string, unknown>>
+  if (verb === 'search') {
+    if (
+      input.stdin !== undefined ||
+      (tokens.length !== 5 && tokens.length !== 7) ||
+      tokens[3] !== '--query' ||
+      !PROGRAMMATIC_TOOL_SAFE_SCALAR_PATTERN.test(tokens[4]) ||
+      tokens[4].startsWith('-') ||
+      (tokens.length === 7 &&
+        (tokens[5] !== '--limit' || !PROGRAMMATIC_TOOL_CANONICAL_LIMIT_PATTERN.test(tokens[6])))
+    ) {
+      throw new Error('Programmatic Tool search requires canonical bounded scalar arguments')
+    }
+    parsed = toolSearchRoute.input.parse({
+      query: tokens[4],
+      ...(tokens.length === 7 ? { limit: Number(tokens[6]) } : {})
+    })
+  } else if (verb === 'describe') {
+    if (
+      input.stdin !== undefined ||
+      tokens.length !== 5 ||
+      tokens[3] !== '--target' ||
+      !PROGRAMMATIC_TOOL_SAFE_SCALAR_PATTERN.test(tokens[4]) ||
+      tokens[4].startsWith('-')
+    ) {
+      throw new Error('Programmatic Tool describe requires one canonical bounded target')
+    }
+    parsed = toolDescribeRoute.input.parse({ target: tokens[4] })
+  } else if (verb === 'call' || verb === 'batch') {
+    if (tokens.length !== 3 || input.stdin === undefined) {
+      throw new Error('Programmatic Tool call and batch require an exact command and owned stdin')
+    }
+    const stdinBytes = Buffer.from(input.stdin, 'utf8')
+    if (stdinBytes.length > MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES) {
+      throw new Error('Programmatic Tool stdin exceeds its supported byte limit')
+    }
+    const parsedBody = parseBoundedJsonBytes(stdinBytes)
+    parsed = (verb === 'call' ? toolCallRoute : toolBatchRoute).input.parse(parsedBody)
+  } else {
+    throw new Error('Programmatic Tool exec command is unsupported')
   }
-  const parsedBody = parseBoundedJsonBytes(stdinBytes)
-  const parsed = (verb === 'call' ? toolCallRoute : toolBatchRoute).input.parse(parsedBody)
-  const invocationCommand = Object.freeze({ domain: 'tool' as const, verb })
+
+  const invocationCommand = Object.freeze({
+    domain: 'tool' as const,
+    verb: verb as AgentCliProgrammaticToolVerb
+  })
   const route = `tool.${verb}` as const
   return Object.freeze({
     command: invocationCommand,

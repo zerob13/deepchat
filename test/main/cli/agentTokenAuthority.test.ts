@@ -386,8 +386,45 @@ describe('AgentCliTokenAuthority', () => {
     )
   })
 
+  it('binds canonical search and describe scalar arguments without shell parsing', () => {
+    const search = parseAgentCliProgrammaticExecInvocation({
+      command: 'deepchat tool search --query calendar --limit 4'
+    })
+    const describe = parseAgentCliProgrammaticExecInvocation({
+      command: 'deepchat tool describe --target calendar_search'
+    })
+
+    expect(search).toMatchObject({
+      command: { domain: 'tool', verb: 'search' },
+      route: 'tool.search'
+    })
+    expect(search.canonicalInvocationHash).toBe(
+      buildAgentCliProgrammaticInvocationHash({
+        command: { domain: 'tool', verb: 'search' },
+        route: 'tool.search',
+        params: { query: 'calendar', limit: 4 }
+      })
+    )
+    expect(describe.canonicalInvocationHash).toBe(
+      buildAgentCliProgrammaticInvocationHash({
+        command: { domain: 'tool', verb: 'describe' },
+        route: 'tool.describe',
+        params: { target: 'calendar_search' }
+      })
+    )
+  })
+
   it.each([
     { command: 'deepchat tool search', stdin: '{}' },
+    { command: 'deepchat tool search --query "calendar mail"' },
+    { command: 'deepchat tool search --query calendar --limit 2 --limit 3' },
+    { command: 'deepchat tool search --limit 2 --query calendar' },
+    { command: 'deepchat tool search --query calendar --limit 0x4' },
+    { command: 'deepchat tool search --query calendar --limit +4' },
+    { command: 'deepchat tool search --query calendar | cat' },
+    { command: 'deepchat tool describe --target $TARGET' },
+    { command: 'deepchat tool call' },
+    { command: 'deepchat tool batch' },
     { command: 'deepchat tool call --target remote', stdin: '{}' },
     { command: 'deepchat tool call', stdin: '' },
     { command: 'deepchat tool call', stdin: '[]' },
