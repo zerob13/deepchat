@@ -4357,7 +4357,7 @@ describe('DeepChatAgentHarness', () => {
       )
     })
 
-    it('counts automatic assignments whose controller setup fails before Run creation', async () => {
+    it('degrades an automatic assignment when the Run universe is temporarily incomplete', async () => {
       providerSettings.getModelConfig.mockReturnValue({
         ...providerSettings.getModelConfig(),
         functionCall: true
@@ -4371,6 +4371,11 @@ describe('DeepChatAgentHarness', () => {
         mode: 'automatic',
         cliProgrammaticCapability: 'unproven'
       }))
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        expect(params.run.resources.toolSurfaceMode).toBe('legacy')
+        expect(params.run.activeRequestToolSurface).toBeNull()
+        return { status: 'completed', stopReason: 'complete' }
+      })
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       await agent.processMessage('s1', 'Hello')
@@ -4379,13 +4384,55 @@ describe('DeepChatAgentHarness', () => {
         expect.objectContaining({
           entered: 1,
           selected: 0,
-          setupFailed: 1,
+          setupFailed: 0,
           aborted: 0,
-          excluded: 0,
+          excluded: 1,
           inFlight: 0
         })
       ])
       expect(agent.getToolSurfaceCanaryDiagnostics('s1')?.cohorts).toEqual([])
+    })
+
+    it('still blocks automatic admission for an invalid active Skill requirement', async () => {
+      const skillService = getSkillServiceMock()
+      const skillMetadata = {
+        name: 'broken-skill',
+        description: 'Broken skill',
+        category: 'engineering',
+        platforms: [],
+        metadata: {},
+        allowedTools: ['missing_required_tool']
+      }
+      skillService.snapshotCachedMetadataList.mockReturnValue({
+        state: 'ready',
+        skills: [skillMetadata]
+      })
+      skillService.getMetadataList.mockResolvedValue([skillMetadata])
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions: [],
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => ({
+        mode: 'automatic',
+        cliProgrammaticCapability: 'unproven'
+      }))
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', {
+        text: 'Use the broken skill',
+        activeSkills: ['broken-skill']
+      })
+
+      expect(processStream).not.toHaveBeenCalled()
+      expect((await agent.getSessionState('s1'))?.status).toBe('error')
+      expect(agent.getToolSurfaceCanaryDiagnostics('s1')?.assignments).toEqual([
+        expect.objectContaining({ entered: 1, setupFailed: 1, excluded: 0, inFlight: 0 })
+      ])
     })
 
     it('rejects full Tool Surfaces for prompt-emulated tool models', async () => {

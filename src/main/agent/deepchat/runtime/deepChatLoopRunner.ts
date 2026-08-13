@@ -809,7 +809,10 @@ export class DeepChatLoopRunner {
         abortSignal
       )
       resourceScope.assertCurrent()
-      if (!universe.complete || universe.mandatoryAdmissionBlocked) {
+      if (
+        universe.mandatoryAdmissionBlocked ||
+        (!universe.complete && !automaticToolSurfaceAssignment)
+      ) {
         throw new Error(
           `${
             automaticToolSurfaceAssignment
@@ -822,6 +825,15 @@ export class DeepChatLoopRunner {
           } mode requires a complete Run tool universe.`
         )
       }
+      if (!universe.complete && automaticToolSurfaceAssignment) {
+        toolSurfaceMode = 'legacy'
+        this.ports.toolSurfaceCanaryDiagnostics.recordAutomaticAssignment({
+          scope: toolSurfaceCanaryScope,
+          cliProgrammaticCapability: automaticToolSurfaceAssignment.cliProgrammaticCapability,
+          phase: 'excluded'
+        })
+      }
+      if (toolSurfaceMode !== 'legacy') {
       const ceilingDefinitions = meetTaskContractToolDefinitions(
         sessionId,
         universe.definitions,
@@ -988,6 +1000,7 @@ export class DeepChatLoopRunner {
             .filter((entry) => entry.catalogEntry.target.source === 'agent')
             .map((entry) => entry.definition)
         )
+      }
       }
       }
     } catch (error) {

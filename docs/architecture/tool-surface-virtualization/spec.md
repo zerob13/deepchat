@@ -84,6 +84,11 @@ inactive-Skill requirement makes that Skill non-activatable for this Run with bo
 the same defect in an initially active mandatory Skill fails admission. Shadow diagnostics retain
 only counts/reason codes.
 
+An automatic canary assignment that cannot prove a complete universe, but has no initially active
+mandatory defect, is excluded from managed adapters and retains legacy delivery for that Run.
+Explicit managed modes and initially active mandatory defects still fail admission because they
+cannot claim a complete frozen ceiling.
+
 The TaskContract meet precedes freezing maximum stable targets as the Run Tool Ceiling. This is not
 the resolver's initially active Skill profile. The ceiling binds stable target/definition identity,
 never becomes persisted authority, and never expands. Current revocation may remove or reject a
