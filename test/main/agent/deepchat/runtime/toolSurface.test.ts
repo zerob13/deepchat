@@ -2535,6 +2535,30 @@ describe('Tool Surface production selection', () => {
     ).toMatchObject({ reason: 'active-skill', activationOrdinal: 2 })
   })
 
+  it('records a search candidate as ineligible when the same batch activates it through a Skill', () => {
+    const harness = createActivationHarness(['shared'])
+    const shared = harness.byName.get('shared')!
+    const preparation = harness.selected.controller.prepareSkillActivation!({
+      requiredStableTargetKeys: [shared.stableTargetKey],
+      eligibleDefinitions: harness.definitions
+    })
+    expect(preparation.kind).toBe('prepared')
+    if (preparation.kind !== 'prepared') throw new Error('Expected prepared Skill activation.')
+
+    preparation.apply()
+    expect(() =>
+      harness.selected.controller.stageActivationBatch([harness.candidate('shared', 1)])
+    ).not.toThrow()
+    const nextView = harness.build(2)
+
+    expect(nextView.activation.decisions).toEqual([
+      expect.objectContaining({ accepted: false, rejectionCode: 'ineligible' })
+    ])
+    expect(
+      nextView.activeEntries.find((entry) => entry.definition.function.name === 'shared')
+    ).toMatchObject({ reason: 'active-skill' })
+  })
+
   it('rejects Skill activation before the originating View is admitted', () => {
     const definitions = [agentTool('core'), agentTool('skill_required')]
     const catalog = buildCanonicalToolCatalog(definitions)
@@ -2771,6 +2795,65 @@ describe('Tool Surface production selection', () => {
     )
     harness.selected.controller.admit(laterView)
     expect(harness.build(4).activation).toEqual({ originRequestSeq: null, decisions: [] })
+  })
+
+  it('queues a later search release behind candidates deferred by recovery', () => {
+    const harness = createActivationHarness(['first', 'second'])
+    const first = harness.candidate('first', 1)
+    const second = harness.candidate('second', 2)
+    harness.selected.controller.stageActivationBatch([first])
+
+    const recoveryView = harness.selected.controller.build({
+      request: request(2),
+      eligibleDefinitions: harness.definitions,
+      toolSearchAvailable: true,
+      deferActivationCandidates: true
+    })
+    harness.selected.controller.admit(recoveryView)
+    expect(() => harness.selected.controller.stageActivationBatch([second])).not.toThrow()
+    expect(() =>
+      harness.selected.controller.stageActivationBatch([structuredClone(first)])
+    ).not.toThrow()
+
+    const firstLaterView = harness.build(3)
+    expect(firstLaterView.activation).toEqual({
+      originRequestSeq: 1,
+      decisions: [{ ...first, accepted: true }]
+    })
+    harness.selected.controller.admit(firstLaterView)
+
+    const secondLaterView = harness.build(4)
+    expect(secondLaterView.activation).toEqual({
+      originRequestSeq: 2,
+      decisions: [{ ...second, accepted: true }]
+    })
+    harness.selected.controller.admit(secondLaterView)
+    expect(harness.build(5).activation).toEqual({ originRequestSeq: null, decisions: [] })
+  })
+
+  it('omits an unrelated drifted definition without failing candidate activation', () => {
+    const harness = createActivationHarness(['hidden', 'drifted'])
+    harness.selected.controller.stageActivationBatch([harness.candidate('hidden', 1)])
+    const drifted = harness.definitions.find(
+      (definition) => definition.function.name === 'drifted'
+    )!
+
+    const nextView = harness.build(2, [
+      ...harness.definitions.filter((definition) => definition.function.name !== 'drifted'),
+      agentTool('drifted', {
+        function: { ...drifted.function, description: 'changed after Run creation' }
+      })
+    ])
+
+    expect(nextView.activation.decisions).toEqual([
+      expect.objectContaining({
+        accepted: true,
+        stableTargetKey: harness.byName.get('hidden')!.stableTargetKey
+      })
+    ])
+    expect(nextView.toolDefinitions.map((definition) => definition.function.name)).not.toContain(
+      'drifted'
+    )
   })
 
   it('does not reconstruct an unadmitted activation after its Run controller is recreated', () => {
@@ -3152,7 +3235,7 @@ describe('Tool Surface production selection', () => {
     ])
   })
 
-  it('rejects definition drift and targets outside the frozen virtualized ceiling', () => {
+  it('omits definition drift and rejects targets outside the frozen virtualized ceiling', () => {
     const read = agentTool('read')
     const write = agentTool('write')
     const selected = createPolicySelectedToolSurfaceRun({
@@ -3168,15 +3251,14 @@ describe('Tool Surface production selection', () => {
         toolSearchAvailable: true
       })
 
-    expectSurfaceError(
-      () =>
-        build([
-          agentTool('read', {
-            function: { ...read.function, description: 'drifted after Run creation' }
-          }),
-          write
-        ]),
-      'conflicting_tool'
+    const drifted = build([
+      agentTool('read', {
+        function: { ...read.function, description: 'drifted after Run creation' }
+      }),
+      write
+    ])
+    expect(drifted.toolDefinitions.map((definition) => definition.function.name)).not.toContain(
+      'read'
     )
     expectSurfaceError(() => build([read, write, agentTool('outside')]), 'conflicting_tool')
   })

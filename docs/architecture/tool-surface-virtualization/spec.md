@@ -149,7 +149,9 @@ Before the next request recheck ceiling, live authority, definition identity, an
 accepted candidates and update the ledger only at provider admission—after facts for strict V5 or
 bounded diagnostics for V4. In-process preflight recovery keeps candidates pending. Crash before
 admission discards them; recovery after provider start carries the committed ledger. Tape or mutable
-catalogs never reconstruct them. They never cross Runs, and incomplete batches cannot start Views.
+catalogs never reconstruct them. A later release queues behind an older release deferred by recovery;
+each admitted View consumes at most one bounded release in originating-request order. They never
+cross Runs, and incomplete batches cannot start Views.
 
 ### Programmatic Surface and Capability
 

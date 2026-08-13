@@ -3030,8 +3030,7 @@ export function createToolSurfaceSnapshot(input: {
         compareActivationCandidateOrder(previousActivationCandidate, candidate) >= 0) ||
       (accepted &&
         (!projectedTargets.has(candidate.stableTargetKey) ||
-          reasonByTarget.get(candidate.stableTargetKey) !== 'search-result')) ||
-      (!accepted && projectedTargets.has(candidate.stableTargetKey))
+          reasonByTarget.get(candidate.stableTargetKey) !== 'search-result'))
     ) {
       throw new ToolSurfaceError(
         'Tool Surface activation decision is invalid.',
@@ -3527,9 +3526,12 @@ export function createPolicySelectedToolSurfaceRun(input: {
     ceiling.entries.map((entry) => [entry.catalogEntry.stableTargetKey, entry])
   )
   let latestAdmittedRequest: ToolSurfaceRequestIdentity | null = null
-  let pendingCandidates: readonly ToolSurfaceActivationEvidence[] | null = null
-  let pendingOriginRequest: ToolSurfaceRequestIdentity | null = null
-  let pendingFingerprint: string | null = null
+  type PendingActivationRelease = Readonly<{
+    candidates: readonly ToolSurfaceActivationEvidence[]
+    originRequest: ToolSurfaceRequestIdentity
+    fingerprint: string
+  }>
+  let pendingReleases: readonly PendingActivationRelease[] = Object.freeze([])
   let admittedActivationBatches = 0
   let admittedAppendedTargets = 0
   const consumedReleaseFingerprintByRequestSeq = new Map<number, string>()
@@ -3543,9 +3545,8 @@ export function createPolicySelectedToolSurfaceRun(input: {
         ToolSurfaceActivationEvidence
       >
       readonly nextAcceptedSearchEvidenceByTarget: Map<string, ToolSurfaceActivationEvidence>
-      readonly pendingCandidates: readonly ToolSurfaceActivationEvidence[] | null
-      readonly pendingFingerprint: string | null
-      readonly consumesPendingCandidates: boolean
+      readonly pendingRelease: PendingActivationRelease | null
+      readonly consumesPendingRelease: boolean
       readonly appendedTargets: number
     }
   >()
@@ -3590,19 +3591,27 @@ export function createPolicySelectedToolSurfaceRun(input: {
           'conflicting_tool'
         )
       }
+      const existingRelease = pendingReleases.find(
+        (release) => release.originRequest.requestSeq === originRequestSeq
+      )
+      if (existingRelease) {
+        if (existingRelease.fingerprint === fingerprint) return
+        throw new ToolSurfaceError(
+          'Activation candidate batch conflicts with an existing release.',
+          'conflicting_tool'
+        )
+      }
       if (originRequestSeq !== origin.requestSeq) {
         throw new ToolSurfaceError(
           'Activation candidates must originate from the latest admitted View.',
           'invalid_definition'
         )
       }
-      const admittedTargets = new Set(admittedLedger.entries.map((entry) => entry.stableTargetKey))
       for (const candidate of merged) {
         const ceilingEntry = ceilingEntryByTarget.get(candidate.stableTargetKey)
         if (
           !ceilingEntry ||
           ceilingEntry.canonicalToolDefinitionHash !== candidate.canonicalToolDefinitionHash ||
-          admittedTargets.has(candidate.stableTargetKey) ||
           isToolSearchCatalogEntry(ceilingEntry)
         ) {
           throw new ToolSurfaceError(
@@ -3611,16 +3620,19 @@ export function createPolicySelectedToolSurfaceRun(input: {
           )
         }
       }
-      if (pendingCandidates) {
-        if (pendingFingerprint === fingerprint) return
+      if (
+        pendingReleases.length + consumedReleaseFingerprintByRequestSeq.size >=
+        MAX_TOOL_SURFACE_CANDIDATE_BATCHES
+      ) {
         throw new ToolSurfaceError(
-          'Activation candidate batch conflicts with an existing release.',
-          'conflicting_tool'
+          'Activation candidate releases exceed their Run limit.',
+          'limit_exceeded'
         )
       }
-      pendingCandidates = merged
-      pendingOriginRequest = origin
-      pendingFingerprint = fingerprint
+      pendingReleases = Object.freeze([
+        ...pendingReleases,
+        Object.freeze({ candidates: merged, originRequest: origin, fingerprint })
+      ])
     },
     prepareSkillActivation: ({ requiredStableTargetKeys, eligibleDefinitions }) => {
       if (!latestAdmittedRequest) {
@@ -3768,13 +3780,13 @@ export function createPolicySelectedToolSurfaceRun(input: {
           'invalid_definition'
         )
       }
+      const pendingRelease = pendingReleases[0] ?? null
       if (
-        pendingCandidates &&
-        (!pendingOriginRequest ||
-          request.sessionId !== pendingOriginRequest.sessionId ||
-          request.messageId !== pendingOriginRequest.messageId ||
-          request.runId !== pendingOriginRequest.runId ||
-          request.requestSeq <= pendingOriginRequest.requestSeq)
+        pendingRelease &&
+        (request.sessionId !== pendingRelease.originRequest.sessionId ||
+          request.messageId !== pendingRelease.originRequest.messageId ||
+          request.runId !== pendingRelease.originRequest.runId ||
+          request.requestSeq <= pendingRelease.originRequest.requestSeq)
       ) {
         throw new ToolSurfaceError(
           'An activation proposal must be a later View in the same Run scope.',
@@ -3801,19 +3813,11 @@ export function createPolicySelectedToolSurfaceRun(input: {
         effectiveEligibleDefinitions.push(definition)
         eligibleIdentities.push(copyDefinitionIdentity(ceilingEntry))
       }
-      const pendingTargets = new Set(
-        (pendingCandidates ?? []).map((candidate) => candidate.stableTargetKey)
-      )
-      if ([...driftedTargets].some((target) => !pendingTargets.has(target))) {
-        throw new ToolSurfaceError(
-          'Eligible Tool Surface is outside the Run Tool Ceiling.',
-          'conflicting_tool'
-        )
-      }
       const eligibleTargets = new Set(eligibleIdentities.map((entry) => entry.stableTargetKey))
       const eligibleByTarget = new Map(
         eligibleIdentities.map((identity) => [identity.stableTargetKey, identity])
       )
+      const pendingCandidates = pendingRelease?.candidates ?? null
       const ledgerTargets = new Set(admittedLedger.entries.map((entry) => entry.stableTargetKey))
       const decisions: ToolSurfaceActivationDecision[] = []
       const additions: ToolSurfaceDefinitionIdentity[] = []
@@ -3901,7 +3905,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
         activation: {
           originRequestSeq: deferActivationCandidates
             ? null
-            : (pendingOriginRequest?.requestSeq ?? null),
+            : (pendingRelease?.originRequest.requestSeq ?? null),
           decisions
         }
       })
@@ -3910,9 +3914,8 @@ export function createPolicySelectedToolSurfaceRun(input: {
         nextLedger,
         baseAcceptedSearchEvidenceByTarget: acceptedSearchEvidenceByTarget,
         nextAcceptedSearchEvidenceByTarget,
-        pendingCandidates,
-        pendingFingerprint,
-        consumesPendingCandidates: !deferActivationCandidates,
+        pendingRelease,
+        consumesPendingRelease: !deferActivationCandidates,
         appendedTargets: additions.length
       })
       return snapshot
@@ -3939,7 +3942,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
           'conflicting_tool'
         )
       }
-      if (proposal.pendingCandidates !== pendingCandidates) {
+      if (proposal.pendingRelease !== (pendingReleases[0] ?? null)) {
         throw new ToolSurfaceError(
           'Tool Surface snapshot was prepared from stale activation candidates.',
           'conflicting_tool'
@@ -3947,11 +3950,10 @@ export function createPolicySelectedToolSurfaceRun(input: {
       }
       let consumedRelease: { readonly requestSeq: number; readonly fingerprint: string } | null =
         null
-      if (proposal.consumesPendingCandidates && proposal.pendingCandidates) {
+      if (proposal.consumesPendingRelease && proposal.pendingRelease) {
         const consumedRequestSeq = snapshot.activation.originRequestSeq
         if (
           consumedRequestSeq === null ||
-          !proposal.pendingFingerprint ||
           consumedReleaseFingerprintByRequestSeq.size >= MAX_TOOL_SURFACE_CANDIDATE_BATCHES
         ) {
           throw new ToolSurfaceError(
@@ -3963,7 +3965,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
         }
         consumedRelease = Object.freeze({
           requestSeq: consumedRequestSeq,
-          fingerprint: proposal.pendingFingerprint
+          fingerprint: proposal.pendingRelease.fingerprint
         })
       }
       if (latestExecutionEligibleSnapshot) {
@@ -3972,16 +3974,14 @@ export function createPolicySelectedToolSurfaceRun(input: {
       admittedLedger = proposal.nextLedger
       acceptedSearchEvidenceByTarget = proposal.nextAcceptedSearchEvidenceByTarget
       latestAdmittedRequest = snapshot.request
-      if (proposal.consumesPendingCandidates && proposal.pendingCandidates && consumedRelease) {
+      if (proposal.consumesPendingRelease && proposal.pendingRelease && consumedRelease) {
         consumedReleaseFingerprintByRequestSeq.set(
           consumedRelease.requestSeq,
           consumedRelease.fingerprint
         )
         admittedActivationBatches += 1
         admittedAppendedTargets += proposal.appendedTargets
-        pendingCandidates = null
-        pendingOriginRequest = null
-        pendingFingerprint = null
+        pendingReleases = Object.freeze(pendingReleases.slice(1))
         for (const decision of snapshot.activation.decisions) {
           if (decision.accepted) reasonByTarget.set(decision.stableTargetKey, 'search-result')
         }
