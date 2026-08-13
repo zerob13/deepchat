@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CUA_PLUGIN_ID } from '@shared/types/plugin'
 import { ToolManager, type ComputerUsePreviewObserver } from '@/mcp/toolManager'
+import { McpPreDispatchError } from '@/mcp/errors'
 import { validateAndCloneMcpTool } from '@/mcp/schemaValidation'
 import type { PluginRuntimeStartReason } from '@/plugin/runtimeSupervisor'
 import * as toolPolicyStore from '@/plugin/toolPolicyStore'
@@ -645,6 +646,21 @@ describe('ToolManager', () => {
     expect(result.content).toContain(
       'schema differs from the packaged catalog for server "catalog-server" at "#/properties/display_id" (not present in packaged schema)'
     )
+    expect(liveClient.callTool).not.toHaveBeenCalled()
+
+    await expect(
+      manager.callTool(
+        {
+          id: 'strict-catalog-schema-drift',
+          type: 'function',
+          function: { name: 'inspect_screen', arguments: '{}' }
+        },
+        { throwPreDispatchErrors: true }
+      )
+    ).rejects.toMatchObject({
+      code: 'definition_changed',
+      name: 'McpPreDispatchError'
+    } satisfies Partial<McpPreDispatchError>)
     expect(liveClient.callTool).not.toHaveBeenCalled()
   })
 
@@ -1652,6 +1668,52 @@ describe('ToolManager', () => {
       isError: true,
       content: expect.stringContaining('server binding changed before dispatch')
     })
+    expect(commitDispatch).not.toHaveBeenCalled()
+    expect(client.callTool).not.toHaveBeenCalled()
+  })
+
+  it('throws a typed pre-dispatch error for strict callers when a binding changes', async () => {
+    const serverName = 'bound-server'
+    const client = createClient(serverName)
+    const providerSettings = createProviderSettings(serverName)
+    const originalConfig = {
+      serverId: '11111111-1111-4111-8111-111111111111',
+      configGeneration: 1,
+      bindingHash: 'binding-a'
+    }
+    providerSettings.getMcpServers.mockResolvedValue({ [serverName]: originalConfig })
+    const manager = createToolManager(providerSettings, createServerManager([client]))
+    const [definition] = await manager.getAllToolDefinitions()
+
+    providerSettings.getMcpServers.mockResolvedValue({
+      [serverName]: { ...originalConfig, configGeneration: 2, bindingHash: 'binding-b' }
+    })
+    const commitDispatch = vi.fn()
+
+    await expect(
+      manager.callTool(
+        {
+          id: 'strict-bound-call',
+          type: 'function',
+          function: { name: 'echo', arguments: '{}' }
+        },
+        {
+          expectedTarget: {
+            finalName: definition.function.name,
+            serverName: definition.server.name,
+            serverId: definition.server.id!,
+            configGeneration: definition.server.configGeneration!,
+            bindingHash: definition.server.bindingHash!,
+            originalName: definition.raw!.name
+          },
+          throwPreDispatchErrors: true,
+          commitDispatch
+        }
+      )
+    ).rejects.toMatchObject({
+      code: 'target_changed',
+      name: 'McpPreDispatchError'
+    } satisfies Partial<McpPreDispatchError>)
     expect(commitDispatch).not.toHaveBeenCalled()
     expect(client.callTool).not.toHaveBeenCalled()
   })

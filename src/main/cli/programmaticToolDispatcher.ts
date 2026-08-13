@@ -36,6 +36,9 @@ import {
   recordToolSurfaceCanaryDiscovery,
   recordToolSurfaceCanarySettledToolResult
 } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
+import { ToolSurfaceError } from '@/agent/deepchat/runtime/toolSurface'
+import { ExecutionContractDispatchError } from '@/tape/domain/executionContract'
+import { McpPreDispatchError } from '@/mcp/errors'
 
 const DEFAULT_SEARCH_LIMIT = 5
 const MAX_SEARCH_TOKENS = 32
@@ -287,6 +290,102 @@ function errorStep(
       retriable
     })
   })
+}
+
+function runtimeGateErrorStep(
+  error: unknown,
+  childOrdinal: number
+): ProgrammaticToolStepResult | null {
+  if (error instanceof ToolSurfaceError) {
+    if (error.code === 'conflicting_tool') {
+      return errorStep(
+        'definition_changed',
+        'Tool definition changed after the current Programmatic Surface was frozen',
+        false,
+        childOrdinal
+      )
+    }
+    if (error.code === 'ineligible_exposure') {
+      return errorStep(
+        'authority_changed',
+        'Tool execution authority changed after the current Programmatic Surface was frozen',
+        false,
+        childOrdinal
+      )
+    }
+  }
+  if (error instanceof McpPreDispatchError) {
+    switch (error.code) {
+      case 'definition_changed':
+        return errorStep(
+          'definition_changed',
+          'Tool definition changed after the current Programmatic Surface was frozen',
+          false,
+          childOrdinal
+        )
+      case 'invalid_request':
+        return errorStep(
+          'invalid_request',
+          'Tool arguments were rejected before dispatch',
+          false,
+          childOrdinal
+        )
+      case 'target_changed':
+        return errorStep(
+          'target_changed',
+          'Tool target changed after the current Programmatic Surface was frozen',
+          false,
+          childOrdinal
+        )
+      case 'target_unavailable':
+        return errorStep(
+          'target_unavailable',
+          'Tool target is no longer available in the current session',
+          false,
+          childOrdinal
+        )
+      case 'tool_not_allowed':
+        return errorStep(
+          'tool_disabled',
+          'Tool is disabled by current runtime authority',
+          false,
+          childOrdinal
+        )
+      case 'runtime_unavailable':
+        return errorStep(
+          'runtime_unavailable',
+          'Tool runtime is temporarily unavailable',
+          true,
+          childOrdinal
+        )
+    }
+  }
+  if (!(error instanceof ExecutionContractDispatchError)) return null
+  switch (error.code) {
+    case 'tool_not_allowed':
+      return errorStep(
+        'tool_disabled',
+        'Tool is disabled by current runtime authority',
+        false,
+        childOrdinal
+      )
+    case 'target_mismatch':
+      return errorStep(
+        'target_unavailable',
+        'Tool target is no longer available in the current session',
+        false,
+        childOrdinal
+      )
+    case 'invalid_runtime_authority':
+      return errorStep(
+        'runtime_authority_unavailable',
+        'Current runtime authority is temporarily unavailable',
+        true,
+        childOrdinal
+      )
+    default:
+      return null
+  }
 }
 
 function abortStep(signal: AbortSignal, childOrdinal: number): ProgrammaticToolStepResult {
@@ -737,6 +836,7 @@ export class ProgrammaticToolDispatcher {
         )
       }
       this.options.parents.stopBeforeChild(input.grant, input.childOrdinal)
+      const runtimeGateStep = runtimeGateErrorStep(error, input.childOrdinal)
       const step = input.signal.aborted
         ? abortStep(input.signal, input.childOrdinal)
         : error instanceof CliRequestError
@@ -748,7 +848,7 @@ export class ProgrammaticToolDispatcher {
                 false,
                 input.childOrdinal
               )
-            : unavailableStep(input.childOrdinal)
+            : (runtimeGateStep ?? unavailableStep(input.childOrdinal))
       return Object.freeze({ step, journalResponseText: null })
     }
 

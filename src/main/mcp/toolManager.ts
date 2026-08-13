@@ -38,6 +38,7 @@ import { createPersistedMcpToolResult, getToolVisibility } from './resultProject
 import { resolveCachedImageDataUrl as resolveCachedImageDataUrlFromDisk } from '@/platform/imageCache'
 import { findJsonValueDifference, type JsonValueDifference } from './schemaValidation'
 import { types as nodeTypes } from 'node:util'
+import { McpPreDispatchError, type McpPreDispatchErrorCode } from './errors'
 
 const isAbortError = (error: unknown): boolean =>
   error instanceof Error && (error.name === 'AbortError' || error.name === 'CanceledError')
@@ -792,10 +793,29 @@ export class ToolManager {
     return null
   }
 
-  private createTargetChangedResponse(toolCallId: string, reason: string): MCPToolResponse {
+  private createTargetChangedResponse(
+    toolCallId: string,
+    reason: string,
+    throwError = false
+  ): MCPToolResponse {
+    return this.createPreDispatchErrorResponse(
+      toolCallId,
+      'target_changed',
+      `Error: MCP tool execution was cancelled because ${reason}. Refresh tools and retry.`,
+      throwError
+    )
+  }
+
+  private createPreDispatchErrorResponse(
+    toolCallId: string,
+    code: McpPreDispatchErrorCode,
+    content: string,
+    throwError = false
+  ): MCPToolResponse {
+    if (throwError) throw new McpPreDispatchError(content, code)
     return {
       toolCallId,
-      content: `Error: MCP tool execution was cancelled because ${reason}. Refresh tools and retry.`,
+      content,
       isError: true
     }
   }
@@ -807,6 +827,7 @@ export class ToolManager {
       runId?: string
       expectedTarget?: McpExpectedToolTarget
       assertCurrentToolDefinition?: (definition: MCPToolDefinition) => void
+      throwPreDispatchErrors?: boolean
       commitDispatch?: ToolDispatchCommit
       registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
     }
@@ -836,22 +857,24 @@ export class ToolManager {
 
       if (!this.toolNameToTargetMap) {
         console.error('Tool target map is not available.')
-        return {
-          toolCallId: toolCall.id,
-          content: `Error: Internal error - tool information not available.`,
-          isError: true
-        }
+        return this.createPreDispatchErrorResponse(
+          toolCall.id,
+          'runtime_unavailable',
+          'Error: Internal error - tool information not available.',
+          access?.throwPreDispatchErrors
+        )
       }
 
       const targetInfo = this.toolNameToTargetMap.get(finalName)
 
       if (!targetInfo) {
         console.error(`Tool '${finalName}' not found in the target map.`)
-        return {
-          toolCallId: toolCall.id,
-          content: `Error: Tool '${finalName}' not found or server not running.`,
-          isError: true
-        }
+        return this.createPreDispatchErrorResponse(
+          toolCall.id,
+          'target_unavailable',
+          `Error: Tool '${finalName}' not found or server not running.`,
+          access?.throwPreDispatchErrors
+        )
       }
 
       const { originalName, serverName: toolServerName } = targetInfo
@@ -861,7 +884,11 @@ export class ToolManager {
         access?.expectedTarget
       )
       if (targetMismatch) {
-        return this.createTargetChangedResponse(toolCall.id, targetMismatch)
+        return this.createTargetChangedResponse(
+          toolCall.id,
+          targetMismatch,
+          access?.throwPreDispatchErrors
+        )
       }
       const accessContext = normalizeToolAccessContext({
         agentId: access?.agentId,
@@ -875,11 +902,12 @@ export class ToolManager {
       if (shouldCheckAcpAccess) {
         const agentId = accessContext.agentId
         if (!agentId) {
-          return {
-            toolCallId: toolCall.id,
-            content: 'ACP agent context is required for MCP access control.',
-            isError: true
-          }
+          return this.createPreDispatchErrorResponse(
+            toolCall.id,
+            'tool_not_allowed',
+            'ACP agent context is required for MCP access control.',
+            access?.throwPreDispatchErrors
+          )
         }
 
         try {
@@ -890,11 +918,12 @@ export class ToolManager {
               access?.signal
             )
             if (!selections?.length || !selections.includes(toolServerName)) {
-              return {
-                toolCallId: toolCall.id,
-                content: `MCP server '${toolServerName}' is not allowed for ACP agent '${agentId}'. Configure MCP access in ACP settings.`,
-                isError: true
-              }
+              return this.createPreDispatchErrorResponse(
+                toolCall.id,
+                'tool_not_allowed',
+                `MCP server '${toolServerName}' is not allowed for ACP agent '${agentId}'. Configure MCP access in ACP settings.`,
+                access?.throwPreDispatchErrors
+              )
             }
           }
         } catch (error) {
@@ -933,11 +962,12 @@ export class ToolManager {
             args = repaired
           } catch (repairError: unknown) {
             console.error('Error parsing MCP tool arguments even after jsonrepair:', repairError)
-            return {
-              toolCallId: toolCall.id,
-              content: 'Error: MCP tool arguments must be a valid JSON object.',
-              isError: true
-            }
+            return this.createPreDispatchErrorResponse(
+              toolCall.id,
+              'invalid_request',
+              'Error: MCP tool arguments must be a valid JSON object.',
+              access?.throwPreDispatchErrors
+            )
           }
         }
       }
@@ -948,11 +978,12 @@ export class ToolManager {
       const serverConfig = servers[toolServerName]
       if (!serverConfig) {
         console.error(`Configuration for server '${toolServerName}' not found.`)
-        return {
-          toolCallId: toolCall.id,
-          content: `Error: Configuration missing for server '${toolServerName}'.`,
-          isError: true
-        }
+        return this.createPreDispatchErrorResponse(
+          toolCall.id,
+          'target_unavailable',
+          `Error: Configuration missing for server '${toolServerName}'.`,
+          access?.throwPreDispatchErrors
+        )
       }
       const bindingMismatch = this.describeExpectedTargetMismatch(
         finalName,
@@ -961,14 +992,19 @@ export class ToolManager {
         serverConfig
       )
       if (bindingMismatch) {
-        return this.createTargetChangedResponse(toolCall.id, bindingMismatch)
+        return this.createTargetChangedResponse(
+          toolCall.id,
+          bindingMismatch,
+          access?.throwPreDispatchErrors
+        )
       }
       if (!this.isServerAllowedByContext(toolServerName, accessContext)) {
-        return {
-          toolCallId: toolCall.id,
-          content: `MCP server '${toolServerName}' is not allowed for DeepChat agent '${accessContext.agentId ?? 'unknown'}'. Configure MCP access in DeepChat agent settings.`,
-          isError: true
-        }
+        return this.createPreDispatchErrorResponse(
+          toolCall.id,
+          'tool_not_allowed',
+          `MCP server '${toolServerName}' is not allowed for DeepChat agent '${accessContext.agentId ?? 'unknown'}'. Configure MCP access in DeepChat agent settings.`,
+          access?.throwPreDispatchErrors
+        )
       }
       const pluginPolicy = resolvePluginToolPolicy(toolServerName, originalName)
       if (
@@ -976,14 +1012,14 @@ export class ToolManager {
         pluginPolicy.decision !== 'allow' &&
         pluginPolicy.decision !== 'ask'
       ) {
-        return {
-          toolCallId: toolCall.id,
-          content:
-            pluginPolicy.decision === 'deny'
-              ? `Tool '${originalName}' on server '${toolServerName}' is blocked by plugin policy.`
-              : `Tool '${originalName}' on server '${toolServerName}' is not declared by its closed plugin policy.`,
-          isError: true
-        }
+        return this.createPreDispatchErrorResponse(
+          toolCall.id,
+          'tool_not_allowed',
+          pluginPolicy.decision === 'deny'
+            ? `Tool '${originalName}' on server '${toolServerName}' is blocked by plugin policy.`
+            : `Tool '${originalName}' on server '${toolServerName}' is not declared by its closed plugin policy.`,
+          access?.throwPreDispatchErrors
+        )
       }
       const targetClient = await this.resolveToolClient(targetInfo, access?.signal)
       access?.signal?.throwIfAborted()
@@ -995,11 +1031,12 @@ export class ToolManager {
       )
       access?.signal?.throwIfAborted()
       if (!preparedArgs.ok) {
-        return {
-          toolCallId: toolCall.id,
-          content: `Error: ${preparedArgs.error}`,
-          isError: true
-        }
+        return this.createPreDispatchErrorResponse(
+          toolCall.id,
+          'invalid_request',
+          `Error: ${preparedArgs.error}`,
+          access?.throwPreDispatchErrors
+        )
       }
 
       const currentServers = await awaitWithAbort(this.mcpSettings.getMcpServers(), access?.signal)
@@ -1020,7 +1057,8 @@ export class ToolManager {
       ) {
         return this.createTargetChangedResponse(
           toolCall.id,
-          finalMismatch || 'the active MCP client changed before dispatch'
+          finalMismatch || 'the active MCP client changed before dispatch',
+          access?.throwPreDispatchErrors
         )
       }
 
@@ -1140,6 +1178,14 @@ export class ToolManager {
       if (dispatchBoundaryFailed) {
         throw error
       }
+      if (error instanceof McpPreDispatchError) {
+        if (access?.throwPreDispatchErrors) throw error
+      } else if (access?.throwPreDispatchErrors && !dispatchCommitted) {
+        throw new McpPreDispatchError(
+          'MCP runtime became unavailable before target dispatch.',
+          'runtime_unavailable'
+        )
+      }
 
       const errorMessage = error instanceof Error ? error.message : String(error)
       console.error('Unhandled error during tool call:', error)
@@ -1224,13 +1270,13 @@ export class ToolManager {
     if (!liveTool) {
       const errorMessage = `Live MCP tool "${catalogTool.name}" is missing from catalog-backed server "${client.serverName}"`
       this.serverManager.setServerLastError(client.serverName, errorMessage)
-      throw new Error(errorMessage)
+      throw new McpPreDispatchError(errorMessage, 'definition_changed')
     }
     const difference = findJsonValueDifference(catalogTool.inputSchema, liveTool.inputSchema)
     if (difference) {
       const errorMessage = `Live MCP tool "${catalogTool.name}" schema differs from the packaged catalog for server "${client.serverName}" at ${formatSchemaDifference(difference)}`
       this.serverManager.setServerLastError(client.serverName, errorMessage)
-      throw new Error(errorMessage)
+      throw new McpPreDispatchError(errorMessage, 'definition_changed')
     }
     validation.verifiedToolNames.add(catalogTool.name)
   }

@@ -569,7 +569,10 @@ export class ToolService implements ToolServicePort {
       if (programmaticToolChild) {
         const currentDefinition = this.getMcpDefinition(toolName, request.conversationId)
         if (!currentDefinition) {
-          throw new Error(`Tool '${toolName}' is not enabled by current runtime authority.`)
+          throw new ExecutionContractDispatchError(
+            `Tool '${toolName}' no longer resolves to its frozen Programmatic target.`,
+            'target_mismatch'
+          )
         }
         assertProgrammaticToolChildDefinitionAllowsDispatch({
           ...programmaticToolChild,
@@ -863,7 +866,10 @@ export class ToolService implements ToolServicePort {
       signal: options?.signal,
       expectedTarget,
       ...(toolSurfaceSnapshot || toolSurfaceDeferredDispatch || programmaticToolChild
-        ? { assertCurrentToolDefinition: assertExactToolSurfaceDefinitionAllowed }
+        ? {
+            assertCurrentToolDefinition: assertExactToolSurfaceDefinitionAllowed,
+            ...(programmaticToolChild ? { throwPreDispatchErrors: true } : {})
+          }
         : {}),
       commitDispatch: guardedCommitDispatch,
       registerOutcomeProjection: options?.registerOutcomeProjection

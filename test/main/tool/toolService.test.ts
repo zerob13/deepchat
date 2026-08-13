@@ -558,6 +558,10 @@ describe('ToolService', () => {
         permissionMode: 'full_access'
       })
     ).resolves.toMatchObject({ content: 'written' })
+    expect(mcpCallTool).toHaveBeenLastCalledWith(
+      childRequest,
+      expect.objectContaining({ throwPreDispatchErrors: true })
+    )
     expect(resolveConversationExecutionAuthority).toHaveBeenCalledTimes(4)
     expect(resolveConversationExecutionAuthorityNow).toHaveBeenCalledOnce()
     expect(childAccess.commitDispatch).toHaveBeenCalledWith({
@@ -577,7 +581,10 @@ describe('ToolService', () => {
         ...childAccess,
         permissionMode: 'full_access'
       })
-    ).rejects.toThrow(/disabled by current runtime authority/)
+    ).rejects.toMatchObject({
+      code: 'tool_not_allowed',
+      message: expect.stringMatching(/disabled by current runtime authority/)
+    })
     expect(mcpCallTool).toHaveBeenCalledOnce()
 
     enabledMcpServerIds = undefined
@@ -599,7 +606,28 @@ describe('ToolService', () => {
         ...childAccess,
         permissionMode: 'full_access'
       })
-    ).rejects.toThrow(/definition changed after provider View assembly/)
+    ).rejects.toMatchObject({
+      code: 'conflicting_tool',
+      message: expect.stringMatching(/definition changed after provider View assembly/)
+    })
+    expect(mcpCallTool).toHaveBeenCalledOnce()
+
+    getAllToolDefinitions.mockResolvedValueOnce([])
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: requestIdentity.sessionId,
+      sessionKind: 'regular',
+      agentWorkspacePath: null
+    })
+    await expect(
+      toolService.callProgrammaticToolChild({
+        ...childAccess,
+        permissionMode: 'full_access'
+      })
+    ).rejects.toMatchObject({
+      code: 'target_mismatch',
+      message: expect.stringMatching(/no longer resolves to its frozen Programmatic target/)
+    })
     expect(mcpCallTool).toHaveBeenCalledOnce()
 
     currentDefinition = remote

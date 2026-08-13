@@ -1274,6 +1274,7 @@ export class McpService implements McpServicePort {
       runId?: string
       expectedTarget?: McpExpectedToolTarget
       assertCurrentToolDefinition?: (definition: MCPToolDefinition) => void
+      throwPreDispatchErrors?: boolean
       commitDispatch?: ToolDispatchCommit
       registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
     }

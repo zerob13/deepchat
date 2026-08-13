@@ -30,6 +30,9 @@ import { ProgrammaticToolDispatcher } from '@/cli/programmaticToolDispatcher'
 import type { CliRouteCaller } from '@/routes/routeRegistry'
 import { ProgrammaticParentOperationError } from '@/cli/programmaticToolParentController'
 import { ExecutionJournalError } from '@/tape/domain/executionJournal'
+import { ExecutionContractDispatchError } from '@/tape/domain/executionContract'
+import { ToolSurfaceError } from '@/agent/deepchat/runtime/toolSurface'
+import { McpPreDispatchError } from '@/mcp/errors'
 
 const SERVER_ID = '22222222-2222-4222-8222-222222222222'
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
@@ -778,6 +781,98 @@ describe('ProgrammaticToolDispatcher', () => {
     expect(fixture.failToolInvocationBeforePlan).toHaveBeenCalledOnce()
     expect(fixture.reserveChildren).not.toHaveBeenCalled()
     expect(fixture.executeChild).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      label: 'disabled runtime authority',
+      error: new ExecutionContractDispatchError('sensitive disabled target', 'tool_not_allowed'),
+      code: 'tool_disabled',
+      message: 'Tool is disabled by current runtime authority',
+      retriable: false
+    },
+    {
+      label: 'removed runtime target',
+      error: new ExecutionContractDispatchError('sensitive removed target', 'target_mismatch'),
+      code: 'target_unavailable',
+      message: 'Tool target is no longer available in the current session',
+      retriable: false
+    },
+    {
+      label: 'drifted runtime definition',
+      error: new ToolSurfaceError('sensitive changed schema', 'conflicting_tool'),
+      code: 'definition_changed',
+      message: 'Tool definition changed after the current Programmatic Surface was frozen',
+      retriable: false
+    },
+    {
+      label: 'reduced runtime ceiling',
+      error: new ToolSurfaceError('sensitive workspace path', 'ineligible_exposure'),
+      code: 'authority_changed',
+      message: 'Tool execution authority changed after the current Programmatic Surface was frozen',
+      retriable: false
+    },
+    {
+      label: 'temporarily unavailable runtime authority',
+      error: new ExecutionContractDispatchError(
+        'sensitive runtime authority failure',
+        'invalid_runtime_authority'
+      ),
+      code: 'runtime_authority_unavailable',
+      message: 'Current runtime authority is temporarily unavailable',
+      retriable: true
+    },
+    {
+      label: 'late MCP binding change',
+      error: new McpPreDispatchError('sensitive binding details', 'target_changed'),
+      code: 'target_changed',
+      message: 'Tool target changed after the current Programmatic Surface was frozen',
+      retriable: false
+    },
+    {
+      label: 'late MCP request rejection',
+      error: new McpPreDispatchError('sensitive argument details', 'invalid_request'),
+      code: 'invalid_request',
+      message: 'Tool arguments were rejected before dispatch',
+      retriable: false
+    },
+    {
+      label: 'late MCP runtime loss',
+      error: new McpPreDispatchError('sensitive runtime details', 'runtime_unavailable'),
+      code: 'runtime_unavailable',
+      message: 'Tool runtime is temporarily unavailable',
+      retriable: true
+    }
+  ])('returns a bounded specific step for a known target with $label', async (expected) => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_known' })]
+    })
+    const fixture = createDispatcher(context)
+    fixture.executeChild.mockRejectedValue(expected.error)
+
+    const output = toolCallRoute.output.parse(
+      await fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 'remote_known', arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    )
+
+    expect(output.step).toEqual({
+      childOrdinal: 0,
+      status: 'error',
+      error: {
+        code: expected.code,
+        message: expected.message,
+        retriable: expected.retriable
+      }
+    })
+    expect(JSON.stringify(output)).not.toContain(expected.error.message)
+    expect(fixture.stopBeforeChild).toHaveBeenCalledWith(expect.anything(), 0)
+    expect(fixture.commitChildDispatch).not.toHaveBeenCalled()
+    expect(fixture.commitChildOutcome).not.toHaveBeenCalled()
   })
 
   it('settles a known target error and leaves later batch children unstarted', async () => {

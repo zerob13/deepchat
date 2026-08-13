@@ -369,7 +369,14 @@ argument, effect, and ordinal. It is not a Batch v1 commitment.
 Before target resolution, Native Activation checks originating active membership. Hidden,
 ineligible, revoked-before-View, and nonexistent names share one bounded unavailable response, with
 no side effect or target `dispatch_committed`. Active targets retain specific errors for changed
-authority, permission, approval, Session state, or binding.
+authority, permission, approval, Session state, or binding. CLI Programmatic applies the same
+anti-oracle boundary before its child plan: once frozen Programmatic membership is established,
+pre-T1 runtime failures distinguish disabled authority, an unavailable target, definition drift,
+changed bindings, rejected arguments, unavailable target runtimes, and temporarily unavailable
+Session authority. The bounded step codes are `tool_disabled`, `authority_changed`,
+`target_unavailable`, `target_changed`, `definition_changed`, `invalid_request`,
+`runtime_unavailable`, and `runtime_authority_unavailable`. These errors never expose raw
+definitions or internal exceptions and do not create a child T1.
 
 `canonicalToolDefinitionHash` is canonical JSON of complete `MCPToolDefinition` after
 `stripToolExecutionContract`, including function/server/raw fields and excluding only execution
