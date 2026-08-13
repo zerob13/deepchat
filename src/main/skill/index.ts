@@ -5184,6 +5184,13 @@ export class SkillService implements SkillServicePort {
     })
   }
 
+  completeNewAgentSessionSkillsDeletion(conversationId: string): void {
+    // The Session row is gone, so stale writers can no longer restore persistent state. Keep the
+    // tombstone until this explicit lifecycle boundary rather than retaining every deleted ID for
+    // the lifetime of the process.
+    this.retiredSessionSkillScopes.delete(conversationId)
+  }
+
   async revalidateActiveSkillsForAgent(conversationId: string, agentId: string): Promise<string[]> {
     if (this.retiredSessionSkillScopes.has(conversationId)) return []
     const persisted = this.getPersistedNewSessionSkills(conversationId)

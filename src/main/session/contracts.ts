@@ -632,6 +632,7 @@ export interface SessionLifecyclePermissionPort {
 
 export interface SessionDeletionSkillPort {
   clearNewAgentSessionSkills(sessionId: string): Promise<void>
+  completeNewAgentSessionSkillsDeletion(sessionId: string): void
 }
 
 export type SessionAssignmentAcpControlPort = AcpAsLlmProviderSessionControlPort

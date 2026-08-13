@@ -1622,7 +1622,9 @@ export async function createMainProcessControl(dependencies: {
     permissions: sessionPermissionPort,
     skills: {
       clearNewAgentSessionSkills: async (sessionId) =>
-        await clearNewAgentSessionSkills.call(skillService, sessionId)
+        await clearNewAgentSessionSkills.call(skillService, sessionId),
+      completeNewAgentSessionSkillsDeletion: (sessionId) =>
+        skillService.completeNewAgentSessionSkillsDeletion(sessionId)
     }
   })
   sessionAssignment = new SessionAssignment({

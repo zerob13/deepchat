@@ -3682,6 +3682,16 @@ describe('SkillService', () => {
       await expect(Promise.all([clear, set])).resolves.toEqual([undefined, []])
       expect(newSessionActiveSkillsStore.get('new-session-retired')).toEqual([])
     })
+
+    it('releases a deletion tombstone after the Session row is gone', async () => {
+      await skillService.clearNewAgentSessionSkills('new-session-deleted')
+
+      expect((skillService as any).retiredSessionSkillScopes.has('new-session-deleted')).toBe(true)
+
+      skillService.completeNewAgentSessionSkillsDeletion('new-session-deleted')
+
+      expect((skillService as any).retiredSessionSkillScopes.has('new-session-deleted')).toBe(false)
+    })
   })
 
   describe('validateSkillNames', () => {
