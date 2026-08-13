@@ -24,6 +24,7 @@ import { SessionLifecycleCoordinator } from '@/agent/deepchat/runtime/sessionLif
 import { SessionSettingsCoordinator } from '@/agent/deepchat/runtime/sessionSettingsCoordinator'
 import { SessionStateResolver } from '@/agent/deepchat/runtime/sessionStateResolver'
 import { SessionStatusPublisher } from '@/agent/deepchat/runtime/sessionStatusPublisher'
+import { SkillContextMaterializer } from '@/agent/deepchat/runtime/skillContextMaterializer'
 import {
   createToolExecutionPort,
   createToolResultPort
@@ -49,6 +50,10 @@ import type {
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalRecoveryReader } from '@/tape/ports/capabilities'
 import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
+import {
+  createDeepChatLoopTapePort,
+  createSkillContextTapePort
+} from '@/tape/application/capabilityAdapters'
 
 const MAX_STARTUP_RECOVERY_DETAILS = 100
 const MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS = 2_048
@@ -163,11 +168,13 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     cacheImage,
     commandShell,
     database,
+    diagnosticNow,
     hookObserver,
     providerRuntime,
     providerSettings,
     publishEvent,
     publishSessionUpdate,
+    runJournalObserver,
     sessionData,
     sessionPermissionPort,
     skillService,
@@ -355,10 +362,16 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     messageProjection,
     commandShell,
     executionJournal: tapeService,
-    programmaticToolParents
+    programmaticToolParents,
+    runJournalObserver,
+    diagnosticNow
   })
   const inputPreparationCoordinator = new InputPreparationCoordinator()
   const contextCoordinator = new DeepChatContextCoordinator()
+  const skillContextMaterializer = new SkillContextMaterializer({
+    skills: deps.skillService,
+    tape: createSkillContextTapePort(tapeService)
+  })
   const loopRunner = new DeepChatLoopRunner({
     publishEvent,
     publishSessionUpdate,
@@ -367,7 +380,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     traceSettings,
     sessionStore,
     messageStore,
-    tape: tapeService,
+    tape: createDeepChatLoopTapePort(tapeService),
     pendingInputCoordinator,
     toolResolver,
     providerPermissionCoordinator,
@@ -386,11 +399,14 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     registry: runtime,
     sessionSettings,
     promptAssembly,
+    skillContextMaterializer,
     identity,
     sessionPermissionPort,
     reviewToolPermission: createToolPermissionReviewer(toolRuntimeBindings),
     hookSink,
-    compaction
+    compaction,
+    runJournalObserver,
+    diagnosticNow
   })
   const turnCoordinator = new TurnCoordinator({
     publishEvent,
@@ -399,6 +415,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     toolService,
     sessionStore,
     messageStore,
+    pendingInputs: pendingInputCoordinator,
     tapeReconciliation: tapeService,
     toolResolver,
     compactionService,
@@ -415,6 +432,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     sessionSettings,
     promptAssembly,
     identity,
+    skillContextMaterializer,
     taskContractContext: deps.taskContractContext,
     commandShell,
     loopRunner,
@@ -510,14 +528,26 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
           runtime.getOrHydrateScope(toAppSessionId(sessionId)).instance,
         getGenerationSettings: async (sessionId, instance) =>
           await sessionSettings.getEffectiveGenerationSettings(sessionId, instance),
-        buildSystemPrompt: async (sessionId, basePrompt, tools, activeSkills, instance) =>
+        buildSystemPrompt: async (
+          sessionId,
+          basePrompt,
+          tools,
+          activeSkills,
+          sessionActiveSkills,
+          contextLength,
+          instance
+        ) =>
           await promptAssembly.build(
             sessionId,
             basePrompt,
             tools,
             await commandShell.resolveForTurn(),
             activeSkills,
-            instance
+            instance,
+            {
+              sessionActiveSkillNamesOverride: sessionActiveSkills,
+              contextLength
+            }
           ),
         emitRateLimitWaitingMessage: (sessionId, messageId, requestId, snapshot) =>
           loopRunner.emitRateLimitWaitingMessage(sessionId, messageId, requestId, snapshot),
@@ -528,10 +558,11 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
       input
     )
 
-  const recoveredPendingInputs = pendingInputCoordinator.recoverClaimedInputsAfterRestart()
-  if (recoveredPendingInputs > 0) {
+  const pendingInputRecovery = pendingInputCoordinator.recoverInputsAfterRestart()
+  pendingInputPump.holdRestartedQueueInputs(pendingInputRecovery.heldQueueInputIds)
+  if (pendingInputRecovery.affectedSessionIds.size > 0) {
     logger.info(
-      `DeepChatAgent: recovered ${recoveredPendingInputs} sessions with claimed pending inputs`
+      `DeepChatAgent: reconciled ${pendingInputRecovery.affectedSessionIds.size} sessions with pending inputs`
     )
   }
 

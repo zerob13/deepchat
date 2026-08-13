@@ -181,7 +181,9 @@ deepchat run cancel --run <run-id> --json
 ```
 
 `agent run` 先创建 durable detached Session，再启动首轮。CLI 断开不会删除 run；可以通过
-`run get` 恢复消息，human caller 可通过 cursor 续接 `run watch`。Agent caller 自身不能递归执行
+`run get` 恢复消息和 `running | awaiting_interaction | terminal` phase，human caller 可通过 cursor
+续接 `run watch`。一次 provider stream 完成或失败不会提前结束 watch；只有 root Session 进入
+`idle`/`error` 才是整个 detached run 的终态。Agent caller 自身不能递归执行
 `agent run`，也不能等待当前正在执行的自身 run；Agent 仅可使用非阻塞的 `run get` 与幂等的
 `run cancel`。
 
@@ -218,7 +220,7 @@ Agent 调用额外经过以下控制：
 
 1. shell command permission；
 2. main 签发的短期 scoped token；
-3. deny-by-default `CLI_SURFACE_V1` caller/scope policy；
+3. deny-by-default `CLI_SURFACE_V3` caller/scope policy；
 4. effect policy 与 renderer-only approval；
 5. ownership、rate、call/byte quota 与脱敏审计。
 
@@ -252,8 +254,8 @@ effect、approval、transport、输入/输出边界、quota 和 audit 语义。
 
 V1 明确不包含：ACP server、远程访问、raw MCP tool invocation、TUI/交互 shell、任意配置或 secret
 读取、server-side OCR batch/layout/model 管理、通用费用预算系统，以及内置 benchmark runner。
-V2 仅为冻结到 CLI Programmatic adapter 的 Agent Run 增加受 originating View capability 约束的
-`tool search|describe|call|batch`；它不是 human raw MCP tunnel，普通 Agent token 和 V1 client 均不可达。
+V3 仅为冻结到 CLI Programmatic adapter 的 Agent Run 增加受 originating View capability 约束的
+`tool search|describe|call|batch`；它不是 human raw MCP tunnel，普通 Agent token 和 V2 client 均不可达。
 benchmark 是建立在稳定 JSON/JSONL 合同上的外部 harness。
 
 完整架构与安全不变量见

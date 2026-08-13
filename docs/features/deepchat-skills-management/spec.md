@@ -78,6 +78,14 @@ Draft interaction cannot bypass filesystem, name or owner rules.
 - Skill execution uses explicit workspace/process ports and follows the same permission/cancellation policy as
   other Agent capabilities.
 
+The target progressive-disclosure contract is maintained in
+`docs/architecture/skill-progressive-disclosure/`. Enabled Skill metadata is projected through a bounded
+Route catalog and paginated Discover tool. Full effective content is built once and projected according to
+message, tool-loop or Session scope. Message selections remain message-scoped, while existing persistent
+Session selections remain a compatibility state that must be visible and removable. Provider-visible
+message and Session Skill bodies are backed by Session Tape facts; materialized instruction bodies are
+excluded from ordinary transcript, search, Memory and fork projections.
+
 The application-level Skill master switch can disable Skill functionality globally, but it does not grant
 one Agent access to another Agent's files.
 

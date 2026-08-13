@@ -31,6 +31,7 @@ import {
 } from '../domain/toolSurfaceFacts'
 import {
   TAPE_VIEW_MANIFEST_EVENT_NAME,
+  getTapeViewManifestExecutionContract,
   hashJson,
   verifyTapeViewManifestHash
 } from '../domain/viewManifest'
@@ -214,16 +215,17 @@ function assertSurfaceMatchesManifest(
   activeToolDefinitions: readonly MCPToolDefinition[]
 ): void {
   const request = surface.request
+  const executionContract = getTapeViewManifestExecutionContract(manifest)
   if (
     request.sessionId !== manifest.sessionId ||
     request.messageId !== manifest.messageId ||
     request.requestSeq !== manifest.requestSeq ||
-    surface.contractBearing !== (manifest.schemaVersion === 5)
+    surface.contractBearing !== Boolean(executionContract)
   ) {
     throw new TypeError('Tool surface request identity does not match its View manifest.')
   }
   const toolDefinitionsHash =
-    manifest.schemaVersion === 5
+    manifest.schemaVersion === 5 || manifest.schemaVersion === 6 || manifest.schemaVersion === 7
       ? buildProviderVisibleToolDefinitionsHash(activeToolDefinitions)
       : hashJson(activeToolDefinitions.map(stripToolExecutionContract))
   if (
@@ -249,16 +251,16 @@ function assertSurfaceMatchesManifest(
       throw new TypeError('Tool surface definition does not match its active evidence.')
     }
   }
-  if (manifest.schemaVersion !== 5) return
+  if (!executionContract) return
 
-  const contractRequest = manifest.executionContract.request
+  const contractRequest = executionContract.request
   if (canonicalJsonStringifyData(contractRequest) !== canonicalJsonStringifyData(request)) {
     throw new TypeError('Tool surface request identity does not match its ExecutionContract.')
   }
-  if (manifest.executionContract.ceilings.tools.length !== surface.activeEntries.length) {
+  if (executionContract.ceilings.tools.length !== surface.activeEntries.length) {
     throw new TypeError('Tool surface active set does not match its ExecutionContract ceiling.')
   }
-  for (const ceiling of manifest.executionContract.ceilings.tools) {
+  for (const ceiling of executionContract.ceilings.tools) {
     const key = buildExecutionToolTargetKey(ceiling.target)
     const active = activeByTarget.get(key)
     if (
@@ -288,7 +290,7 @@ function assertProgrammaticSurfaceMatchesView(
     throw new TypeError('Programmatic Tool Surface does not belong to its provider View.')
   }
   const manifestTaskContractRef =
-    manifest.schemaVersion === 5 ? manifest.executionContract.provenance.taskContractRef : null
+    getTapeViewManifestExecutionContract(manifest)?.provenance.taskContractRef ?? null
   if (
     canonicalJsonStringifyData(programmaticSurface.taskContractRef) !==
     canonicalJsonStringifyData(manifestTaskContractRef)
@@ -962,7 +964,7 @@ export class ToolSurfaceProvenanceService
             ...prepared.programmaticSurface,
             manifestHash: manifest.hashes.manifestHash,
             catalog: catalogReference,
-            contractBearing: manifest.schemaVersion === 5
+            contractBearing: Boolean(getTapeViewManifestExecutionContract(manifest))
           })
           const programmaticInput = programmaticSurfaceEventInput(
             manifest,

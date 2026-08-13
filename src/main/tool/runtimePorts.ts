@@ -30,6 +30,7 @@ import type { SkillServicePort } from '@shared/types/skill'
 import type { AgentMemoryCategory } from '@shared/types/agent-memory'
 import type { MemoryCommandResult } from '@shared/contracts/routes/memory.routes'
 import type { SessionRuntimeUpdate } from '@/session/runtimeEvents'
+import type { SkillExecutionAuthorityPort } from '@/skill/skillExecutionAuthority'
 import type { MemoryScopeContext, MemoryWriteOutcome } from '../memory/types'
 import type {
   CronJob,
@@ -264,6 +265,7 @@ export interface AgentToolDependencies {
   liveDelegation?: AgentLiveDelegationToolPort
   agentInvocationAdmission: AgentInvocationAdmissionPort
   skills: SkillServicePort
+  skillExecutionAuthority: SkillExecutionAuthorityPort
   browser: AgentBrowserToolPort
   files: AgentFileToolPort
   provider: AgentProviderToolPort

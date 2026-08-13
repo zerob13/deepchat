@@ -9,7 +9,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -83,9 +82,11 @@ const waitForMainAppWindow = async (electronApp: ElectronApplication): Promise<P
 export type ElectronAppInstance = {
   electronApp: ElectronApplication
   page: Page
+  userDataDir: string
+  ownsUserDataDir: boolean
   consoleLogs: string[]
   pageErrors: string[]
-  close: () => Promise<void>
+  close: () => Promise<'graceful' | 'forced'>
 }
 
 type ElectronFixtures = {
@@ -162,7 +163,7 @@ const readMainProcessLogs = (): string => {
     return `No main process log directory found at ${logDir}`
   }
 
-  const files = readdirSync(logDir)
+  const files = ['main.old.jsonl', 'main.jsonl']
     .map((fileName) => resolve(logDir, fileName))
     .filter((filePath) => {
       try {
@@ -171,7 +172,6 @@ const readMainProcessLogs = (): string => {
         return false
       }
     })
-    .sort()
 
   if (files.length === 0) {
     return `No main process log files found at ${logDir}`
@@ -195,6 +195,7 @@ const seedE2eUserDataDir = (userDataDir: string): void => {
     JSON.stringify(
       {
         init_complete: true,
+        loggingEnabled: true,
         guidedOnboardingState: {
           version: GUIDED_ONBOARDING_VERSION,
           status: 'completed',
@@ -295,32 +296,33 @@ export const test = base.extend<ElectronFixtures>({
         timeout: 120_000
       })
 
-      let closed = false
+      let closeOutcomePromise: Promise<'graceful' | 'forced'> | undefined
       const app: ElectronAppInstance = {
         electronApp,
         page: undefined as unknown as Page,
+        userDataDir,
+        ownsUserDataDir,
         consoleLogs,
         pageErrors,
-        close: async () => {
-          if (closed) {
-            return
-          }
-
-          closed = true
+        close: () => {
+          if (closeOutcomePromise) return closeOutcomePromise
           launchedApps.delete(app)
-          const closePromise = electronApp.close()
-          const closedGracefully = await Promise.race([
-            closePromise.then(
-              () => true,
-              () => false
-            ),
-            delay(APP_CLOSE_TIMEOUT_MS).then(() => false)
-          ])
+          closeOutcomePromise = (async () => {
+            const closePromise = electronApp.close()
+            const closedGracefully = await Promise.race([
+              closePromise.then(
+                () => true,
+                () => false
+              ),
+              delay(APP_CLOSE_TIMEOUT_MS).then(() => false)
+            ])
 
-          if (!closedGracefully) {
+            if (closedGracefully) return 'graceful'
             electronApp.process().kill('SIGKILL')
             await Promise.race([closePromise.catch(() => undefined), delay(1_000)])
-          }
+            return 'forced'
+          })()
+          return closeOutcomePromise
         }
       }
 

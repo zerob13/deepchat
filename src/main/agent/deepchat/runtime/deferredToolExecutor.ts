@@ -20,10 +20,15 @@ import {
   type ExecutionRunOutcome
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalWriter } from '@/tape/ports/capabilities'
-import type { PendingToolInteraction } from './types'
+import {
+  notifyRunJournalObserver,
+  type PendingToolInteraction,
+  type RunJournalObserver
+} from './types'
 import type { DeepChatToolResolver } from './toolResolver'
 import type { MessageProjectionService } from './messageProjectionService'
 import type { RunLifecycleCoordinator } from './runLifecycleCoordinator'
+import { elapsedMonotonicMs, readMonotonicNow, type MonotonicClock } from '@/lib/monotonicTime'
 import type { SessionIdentityService } from './sessionIdentityService'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { SessionStateResolver } from './sessionStateResolver'
@@ -86,6 +91,8 @@ export interface DeferredToolExecutorDependencies {
   executionJournal: ExecutionJournalWriter
   programmaticToolParents: Pick<ProgrammaticToolParentRegistry, 'commitRunTerminal' | 'prepare'>
   commandShell: Pick<CommandShellService, 'resolveForTurn' | 'resolveProfile'>
+  runJournalObserver?: RunJournalObserver
+  diagnosticNow?: MonotonicClock
 }
 
 function throwIfAbortRequested(signal?: AbortSignal): void {
@@ -150,6 +157,7 @@ export class DeferredToolExecutor {
     let invoked = false
     let runId: string | null = null
     let runStartedCommitted = false
+    let observedRunStartedAt: number | undefined
     let terminalCommitAttempted = false
     let dispatchCommitted = false
     let outcomeCommitted = false
@@ -219,6 +227,20 @@ export class DeferredToolExecutor {
           `Execution Journal terminal for deferred tool Run ${committedRunId} already existed.`
         )
       }
+      const durationMs = elapsedMonotonicMs(
+        observedRunStartedAt,
+        this.dependencies.diagnosticNow
+      )
+      notifyRunJournalObserver(this.dependencies.runJournalObserver, {
+        type: 'terminal',
+        runKind: 'deferred_tool',
+        runId: committedRunId,
+        sessionId,
+        messageId,
+        outcome: input.outcome,
+        stopReason: input.stopReason,
+        ...(durationMs === undefined ? {} : { durationMs })
+      })
     }
     const releaseOutcomeProjections = (): void => {
       if (pendingOutcomeProjections.length === 0) return
@@ -466,6 +488,14 @@ export class DeferredToolExecutor {
         )
       }
       runStartedCommitted = true
+      observedRunStartedAt = readMonotonicNow(this.dependencies.diagnosticNow)
+      notifyRunJournalObserver(this.dependencies.runJournalObserver, {
+        type: 'started',
+        runKind: 'deferred_tool',
+        runId: deferredRunId,
+        sessionId,
+        messageId
+      })
 
       throwIfAbortRequested(deferredAbortSignal)
       invoked = true

@@ -12,7 +12,10 @@ import {
 } from '@/agent/deepchat/runtime/toolSurface'
 import { resolveDeferredToolSurfaceDispatch } from '@/agent/deepchat/runtime/deferredToolSurface'
 import { buildExecutionContract } from '@/tape/domain/executionContract'
-import { createTapeViewManifest } from '@/tape/domain/viewManifest'
+import {
+  createTapeViewManifest,
+  type TapeViewManifestBuildInput
+} from '@/tape/domain/viewManifest'
 import type { TapeToolSurfaceFact } from '@/tape/domain/toolSurfaceFacts'
 
 const RUN_ID = '11111111-1111-4111-8111-111111111111'
@@ -34,7 +37,11 @@ const TOOL: MCPToolDefinition = {
   server: { name: 'agent-filesystem', icons: '', description: 'Agent filesystem' }
 }
 
-function createFixture(toolCallId = 'call-1', contractBearing = true) {
+function createFixture(
+  toolCallId = 'call-1',
+  contractBearing = true,
+  skillContexts?: TapeViewManifestBuildInput['skillContexts']
+) {
   const controller = createFullToolSurfaceRunController({
     ceilingDefinitions: [TOOL],
     initialActiveDefinitions: [TOOL],
@@ -89,6 +96,13 @@ function createFixture(toolCallId = 'call-1', contractBearing = true) {
     supportsAudioInput: false,
     traceDebugEnabled: false,
     ...(contractBearing ? { executionContract } : {}),
+    ...(skillContexts?.length
+      ? {
+          runId: RUN_ID,
+          tapeIncarnationId: 'tape-1',
+          skillContexts
+        }
+      : {}),
     assembledAt: 123
   })
   const projection = projectToolSurfaceTapeProvenance(snapshot, contractBearing)
@@ -256,6 +270,75 @@ describe('deferred Tool Surface recovery', () => {
         TOOL
       )
     ).not.toThrow()
+  })
+
+  it.each([
+    {
+      name: 'contract-bearing schema-v7',
+      contractBearing: true,
+      context: {
+        activationScope: 'runtime_view' as const,
+        agentId: 'deepchat',
+        sourceType: 'builtin' as const,
+        sourceId: 'builtin-skills',
+        skillName: 'review',
+        authoritativeRef: {
+          kind: 'tool_result' as const,
+          entryId: 6,
+          contentHash: 'b'.repeat(64)
+        },
+        executionRef: {
+          kind: 'materialization' as const,
+          entryId: 7,
+          tapeIncarnationId: 'tape-1',
+          agentId: 'deepchat',
+          sourceType: 'builtin' as const,
+          sourceId: 'builtin-skills',
+          skillName: 'review',
+          effectiveContentHash: 'a'.repeat(64)
+        },
+        providerRole: 'tool' as const,
+        sourceEntryIds: [],
+        projectedContentHash: 'b'.repeat(64),
+        projectionVersion: 1,
+        deduplicationSource: 'runtime_view' as const
+      },
+      schemaVersion: 7
+    },
+    {
+      name: 'non-contract schema-v6',
+      contractBearing: false,
+      context: {
+        activationScope: 'session' as const,
+        agentId: 'deepchat',
+        sourceType: 'builtin' as const,
+        sourceId: 'builtin-skills',
+        skillName: 'review',
+        authoritativeRef: {
+          kind: 'materialization' as const,
+          entryId: 7,
+          tapeIncarnationId: 'tape-1',
+          agentId: 'deepchat',
+          sourceType: 'builtin' as const,
+          sourceId: 'builtin-skills',
+          skillName: 'review',
+          effectiveContentHash: 'a'.repeat(64)
+        },
+        providerRole: 'system' as const,
+        sourceEntryIds: [],
+        projectedContentHash: 'a'.repeat(64),
+        projectionVersion: 1,
+        deduplicationSource: 'session' as const
+      },
+      schemaVersion: 6
+    }
+  ])('recovers $name Tool Surface authority', ({ contractBearing, context, schemaVersion }) => {
+    const fixture = createFixture(`skill-schema-${schemaVersion}`, contractBearing, [context])
+
+    expect(fixture.manifestRecord.manifest.schemaVersion).toBe(schemaVersion)
+    const recovered = resolve(fixture, createPorts(fixture))
+
+    expect(recovered?.authorityKind).toBe('durable-binding')
   })
 
   it('rejects restart recovery after the exact deferred tool call crossed T1', () => {

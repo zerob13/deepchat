@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { DEEPCHAT_ROUTE_CATALOG } from '@shared/contracts/routes'
 import {
-  CLI_SURFACE_V1,
   CLI_SURFACE_V2,
+  CLI_SURFACE_V3,
   getCliSurfaceEntry,
   getCliSurfaceRegistry,
   listCliSurfaceCapabilities,
@@ -16,9 +16,9 @@ import {
 const humanApprovalCaller = { principal: 'human' } as const
 const agentApprovalCaller = { principal: 'agent' } as const
 
-describe('CLI surface V1', () => {
+describe('CLI surfaces', () => {
   it('contains only explicit canonical route contracts', () => {
-    const methods = Array.from(CLI_SURFACE_V1.keys()).sort()
+    const methods = Array.from(CLI_SURFACE_V2.keys()).sort()
 
     expect(methods).toEqual([
       'artifacts.delete',
@@ -68,7 +68,7 @@ describe('CLI surface V1', () => {
       'speech.generate',
       'videos.generate'
     ])
-    for (const [method, entry] of CLI_SURFACE_V1) {
+    for (const [method, entry] of CLI_SURFACE_V2) {
       expect(entry.contract).toBe(
         DEEPCHAT_ROUTE_CATALOG[method as keyof typeof DEEPCHAT_ROUTE_CATALOG]
       )
@@ -84,16 +84,16 @@ describe('CLI surface V1', () => {
     expect(getCliSurfaceEntry('approvals.resolve')).toBeUndefined()
   })
 
-  it('keeps Programmatic routes in the exact-grant V2 surface only', () => {
-    expect(getCliSurfaceRegistry(LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION)).toBe(CLI_SURFACE_V1)
+  it('keeps Programmatic routes in the exact-grant V3 surface only', () => {
+    expect(getCliSurfaceRegistry(LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION)).toBe(CLI_SURFACE_V2)
     expect(getCliSurfaceRegistry(LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION)).toBe(
-      CLI_SURFACE_V2
+      CLI_SURFACE_V3
     )
-    expect(CLI_SURFACE_V2).not.toBe(CLI_SURFACE_V1)
-    expect([...CLI_SURFACE_V2.keys()].slice(0, CLI_SURFACE_V1.size)).toEqual([
-      ...CLI_SURFACE_V1.keys()
+    expect(CLI_SURFACE_V3).not.toBe(CLI_SURFACE_V2)
+    expect([...CLI_SURFACE_V3.keys()].slice(0, CLI_SURFACE_V2.size)).toEqual([
+      ...CLI_SURFACE_V2.keys()
     ])
-    expect([...CLI_SURFACE_V2.keys()].slice(CLI_SURFACE_V1.size)).toEqual([
+    expect([...CLI_SURFACE_V3.keys()].slice(CLI_SURFACE_V2.size)).toEqual([
       'tool.search',
       'tool.describe',
       'tool.call',
@@ -113,7 +113,7 @@ describe('CLI surface V1', () => {
   })
 
   it('keeps Agent mutation policy as an explicit operation opt-in', () => {
-    const policies = Array.from(CLI_SURFACE_V1, ([method, entry]) => ({ method, entry })).filter(
+    const policies = Array.from(CLI_SURFACE_V3, ([method, entry]) => ({ method, entry })).filter(
       ({ entry }) => entry.agentPolicy !== undefined
     )
 

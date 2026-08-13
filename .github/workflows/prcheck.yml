@@ -100,6 +100,10 @@ jobs:
 
       - name: Test renderer
         run: pnpm run test:renderer
+        env:
+          # Reused jsdom workers accumulate heap across suites and breach the
+          # 4GB Node default on 16GB runners; 6GB keeps two workers in budget.
+          NODE_OPTIONS: --max-old-space-size=6144
 
   build:
     runs-on: ubuntu-24.04
@@ -157,6 +161,20 @@ jobs:
 
       - name: Smoke native SQLite
         run: node scripts/smoke-memory-native-sqlite.js
+
+      - name: Validate native Tape storage
+        env:
+          DEEPCHAT_REQUIRE_NATIVE_SQLITE: '1'
+        run: >-
+          pnpm exec vitest --config vitest.config.ts --run
+          test/main/tape/skillMaterialization.test.ts
+          test/main/tape/executionJournal.test.ts
+          test/main/tape/taskContractPersistence.test.ts
+          test/main/session/data/tapeFork.test.ts
+          test/main/session/data/tapeLifecycle.test.ts
+          test/main/session/data/tapeLineage.test.ts
+          test/main/session/data/tapeRecall.test.ts
+          test/main/session/data/tapeViewReplay.test.ts
 
       - name: Validate encrypted OCR artifact storage
         env:

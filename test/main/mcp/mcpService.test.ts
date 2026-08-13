@@ -81,7 +81,8 @@ const createMcpService = (
   mcpApps?: {
     registry: { revokeByServer(serverId: string): void }
   },
-  cacheImage?: (data: string, options?: CacheImageOptions) => Promise<string>
+  cacheImage?: (data: string, options?: CacheImageOptions) => Promise<string>,
+  onInitializationFailed?: () => void
 ) =>
   new McpService(
     providerSettings,
@@ -105,7 +106,8 @@ const createMcpService = (
           validateSource: vi.fn(),
           persistModelContext: vi.fn()
         } as never)
-      : undefined
+      : undefined,
+    onInitializationFailed
   )
 
 describe('McpService', () => {
@@ -571,6 +573,27 @@ describe('McpService', () => {
       expect.objectContaining({ onBackgroundConnected: expect.any(Function) })
     )
     expect(serverManagerMocks.startServer).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a swallowed initialization failure once without exposing the error', async () => {
+    const providerSettings = createProviderSettings(true)
+    providerSettings.getMcpServers.mockRejectedValue(new Error('SECRET_MCP_CONFIGURATION'))
+    const onInitializationFailed = vi.fn(() => {
+      throw new Error('diagnostic sink failed')
+    })
+    const presenter = createMcpService(
+      providerSettings,
+      undefined,
+      undefined,
+      undefined,
+      onInitializationFailed
+    )
+
+    await expect(presenter.initialize()).resolves.toBeUndefined()
+    await expect(presenter.initialize()).resolves.toBeUndefined()
+
+    expect(onInitializationFailed).toHaveBeenCalledOnce()
+    expect(onInitializationFailed).toHaveBeenCalledWith()
   })
 
   it('does not start plugin-owned servers when enabling the global MCP switch', async () => {

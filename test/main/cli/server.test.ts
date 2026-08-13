@@ -3,8 +3,10 @@ import { request as httpRequest } from 'node:http'
 import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { z } from 'zod'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cliVersionRoute, type DeepchatRouteName } from '@shared/contracts/routes'
+import { defineRouteContract } from '@shared/contracts/contract'
 import type { JsonValue } from '@shared/contracts/json'
 import {
   LOCAL_CONTROL_PROTOCOL_VERSION,
@@ -348,6 +350,7 @@ async function createTestServer(
   completeProgrammaticToolPreDispatchFailure: ReturnType<typeof vi.fn>
   dispatchUpload: ReturnType<typeof vi.fn>
   authorize: ReturnType<typeof vi.fn>
+  log: Readonly<{ warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> }>
 }> {
   const userDataPath = await createTemporaryDirectory()
   let server: CliServer
@@ -370,6 +373,7 @@ async function createTestServer(
     options.completeProgrammaticToolPreDispatchFailure ?? (() => undefined)
   )
   const authorize = vi.fn(options.authorize ?? (async () => ({ release: () => undefined })))
+  const log = { warn: vi.fn(), error: vi.fn() }
   server = new CliServer({
     userDataPath,
     appVersion: '1.2.3',
@@ -405,7 +409,7 @@ async function createTestServer(
     dispatchUpload,
     ...(options.authorize ? { authorize } : {}),
     surface: options.surface,
-    log: { warn: vi.fn(), error: vi.fn() }
+    log
   })
   servers.push(server)
   const descriptor = await server.start()
@@ -417,7 +421,8 @@ async function createTestServer(
     dispatchProgrammaticTool,
     completeProgrammaticToolPreDispatchFailure,
     dispatchUpload,
-    authorize
+    authorize,
+    log
   }
 }
 
@@ -530,10 +535,17 @@ describe('CLI local transport', () => {
   it('enforces protocol versions and the explicit surface before dispatch', async () => {
     const { descriptor, dispatch } = await createTestServer()
 
-    const incompatible = await rpcRequest(descriptor, { protocolVersion: 2 })
+    const incompatibleProtocol = await rpcRequest(descriptor, { protocolVersion: 2 })
+    const unsupportedSurface = await rpcRequest(descriptor, {
+      surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION
+    })
     const hidden = await rpcRequest(descriptor, { method: 'settings.getSnapshot' })
 
-    expect(incompatible).toMatchObject({
+    expect(incompatibleProtocol).toMatchObject({
+      status: 409,
+      body: { ok: false, error: { code: 'unsupported_version' } }
+    })
+    expect(unsupportedSurface).toMatchObject({
       status: 409,
       body: { ok: false, error: { code: 'unsupported_version' } }
     })
@@ -541,7 +553,7 @@ describe('CLI local transport', () => {
       status: 404,
       body: {
         ok: false,
-        error: { code: 'not_found', message: 'Method is not exposed by CLI surface V1' }
+        error: { code: 'not_found', message: 'Method is not exposed by CLI surface V2' }
       }
     })
     expect(dispatch).not.toHaveBeenCalled()
@@ -595,6 +607,55 @@ describe('CLI local transport', () => {
       status: 500,
       body: { ok: false, error: { code: 'internal_error' } }
     })
+  })
+
+  it('rejects route output that passes its contract but is not a JSON value', async () => {
+    const sentinel = 'secret-route-key'
+    const contract = defineRouteContract({
+      name: 'test.optionalRecord',
+      input: z.object({}).default({}),
+      output: z.object({ values: z.record(z.string(), z.string().optional()) })
+    })
+    const output = { values: { [sentinel]: undefined } }
+    const surface = new Map<string, CliSurfaceEntry>([
+      [
+        contract.name,
+        {
+          contract,
+          effect: 'read',
+          callers: ['human'],
+          scopes: ['system:read'],
+          transport: 'rpc',
+          approval: 'never',
+          limits: { maxBodyBytes: 1024, timeoutMs: 5_000 }
+        }
+      ]
+    ])
+    expect(contract.output.safeParse(output).success).toBe(true)
+    const { descriptor, log } = await createTestServer({
+      surface,
+      dispatchOutput: () => output
+    })
+
+    const response = await rpcRequest(descriptor, {
+      method: contract.name,
+      params: {}
+    })
+
+    expect(response).toMatchObject({
+      status: 500,
+      body: { ok: false, error: { code: 'internal_error' } }
+    })
+    expect(log.error).toHaveBeenCalledWith(
+      '[CLI] Route returned invalid output',
+      expect.objectContaining({
+        method: contract.name,
+        stage: 'json',
+        issueCount: expect.any(Number),
+        issueCodes: expect.any(Array)
+      })
+    )
+    expect(JSON.stringify(log.error.mock.calls)).not.toContain(sentinel)
   })
 
   it('releases policy admission after a route contract failure', async () => {
@@ -998,7 +1059,7 @@ describe('CLI local transport', () => {
 
   it('recognizes an exact Programmatic route grant without opening that route early', async () => {
     const agentToken = 'v'.repeat(43)
-    const tokenId = 'programmatic-v2-unavailable'
+    const tokenId = 'programmatic-v3-unavailable'
     const params = { target: 'remote_search', arguments: {} }
     const operation = {
       sessionId: 'conversation-1',
@@ -1066,12 +1127,12 @@ describe('CLI local transport', () => {
     expect(dispatch).not.toHaveBeenCalled()
   })
 
-  it('dispatches an admitted V2 request only through the Programmatic handler', async () => {
+  it('dispatches an admitted V3 route only through the Programmatic handler', async () => {
     const token = 'w'.repeat(43)
     const params = { target: 'remote_search', arguments: { query: 'weather' } }
     const { authority, operation } = createArmedProgrammaticAuthority({
       token,
-      tokenId: 'programmatic-v2-dispatch',
+      tokenId: 'programmatic-v3-dispatch',
       params
     })
     const dispatchProgrammaticTool = vi.fn(async () => ({
@@ -1116,7 +1177,7 @@ describe('CLI local transport', () => {
     const params = { target: 'remote_search', arguments: { query: 'weather' } }
     const { authority, operation } = createArmedProgrammaticAuthority({
       token,
-      tokenId: 'programmatic-v2-policy-failure',
+      tokenId: 'programmatic-v3-policy-failure',
       params
     })
     const dispatchProgrammaticTool = vi.fn(async () => ({}))
@@ -1167,7 +1228,7 @@ describe('CLI local transport', () => {
     const params = { target: 'remote_search', arguments: { query: 'weather' } }
     const { authority } = createArmedProgrammaticAuthority({
       token,
-      tokenId: 'programmatic-v2-body-mismatch',
+      tokenId: 'programmatic-v3-body-mismatch',
       params
     })
     const dispatchProgrammaticTool = vi.fn(async () => ({}))
@@ -1199,7 +1260,7 @@ describe('CLI local transport', () => {
     expect(dispatchProgrammaticTool).not.toHaveBeenCalled()
   })
 
-  it('keeps Programmatic routes unreachable to the public V1 descriptor token', async () => {
+  it('keeps Programmatic routes unreachable to the public V2 descriptor token', async () => {
     const { descriptor, dispatch, dispatchProgrammaticTool } = await createTestServer()
 
     const response = await rpcRequest(descriptor, {
@@ -1215,7 +1276,7 @@ describe('CLI local transport', () => {
     expect(dispatchProgrammaticTool).not.toHaveBeenCalled()
   })
 
-  it('rejects malformed Programmatic claims instead of selecting V2', async () => {
+  it('rejects malformed Programmatic claims instead of selecting V3', async () => {
     const agentToken = 'x'.repeat(43)
     const malformedClaims = {
       tokenId: 'malformed-programmatic-claim',

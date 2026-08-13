@@ -16,7 +16,6 @@ import type {
 } from '@shared/types/core/chat-message'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ModelConfig } from '@shared/types/provider'
-import type { DeepChatPromptAssembly } from '@shared/types/prompt-assembly'
 import type { DeepchatEventName } from '@shared/contracts/events'
 import type { DeepChatInternalSessionUpdate } from './sessionUpdates'
 import type { SessionTranscript } from '@/session/data/transcript'
@@ -32,9 +31,62 @@ import type {
 } from '@/agent/deepchat/loop/ports'
 import type { CommandShellProfile } from '@shared/commandShell'
 import type { ExecutionJournalWriter, TapeToolFactWriter } from '@/tape/ports/capabilities'
+import type { EffectiveSkillContentResolution } from '@shared/types/skill'
+import type {
+  ExecutionOperationIdentity,
+  ExecutionRunOutcome
+} from '@/tape/domain/executionJournal'
 import type { SessionPermissionGrant } from '@/session/contracts'
 import type { ToolSurfaceDeferredDispatchBindingV1 } from './toolSurface'
 import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
+
+interface RunJournalObservationIdentity {
+  runId: string
+  sessionId: string
+  messageId: string
+}
+
+export type RunJournalObservation =
+  | (RunJournalObservationIdentity &
+      (
+        | {
+            type: 'started'
+            runKind: 'loop'
+            initialRequestSeq: number
+          }
+        | {
+            type: 'started'
+            runKind: 'deferred_tool'
+          }
+      ))
+  | (RunJournalObservationIdentity & {
+      type: 'terminal'
+      outcome: ExecutionRunOutcome
+      stopReason: string
+      durationMs?: number
+    } & (
+        | {
+            runKind: 'loop'
+            logicalRounds: number
+            toolCalls: number
+          }
+        | {
+            runKind: 'deferred_tool'
+          }
+      ))
+
+export type RunJournalObserver = (observation: RunJournalObservation) => void
+
+export function notifyRunJournalObserver(
+  observer: RunJournalObserver | undefined,
+  observation: RunJournalObservation
+): void {
+  try {
+    observer?.(observation)
+  } catch {
+    // Diagnostics must never alter the durable Run lifecycle.
+  }
+}
 
 export interface InterleavedReasoningConfig {
   preserveReasoningContent: boolean
@@ -139,6 +191,15 @@ export interface ProcessControlCollaborators {
   getAgentId?: () => string | undefined
   prepareSkillActivation?: (skillName: string) => Promise<SkillActivationPreparation>
   activateSkill?: (skillName: string) => Promise<string[]>
+  commitRuntimeSkillView?: (input: {
+    resolution: EffectiveSkillContentResolution
+    toolCallId: string
+    responseText: string
+    blockIndex: number
+    timestamp: number
+    operation: ExecutionOperationIdentity
+    outcomeEntryId: number
+  }) => Promise<void> | void
   cacheImage?: (data: string) => Promise<string>
 }
 
@@ -244,10 +305,6 @@ export interface ProcessTerminalSelection {
 export interface ProcessParams {
   run: LoopRun<StreamState>
   toolCatalog: ToolCatalogPort
-  refreshSystemPrompt?: (
-    activeSkillNames: string[] | undefined,
-    toolDefinitions: MCPToolDefinition[]
-  ) => Promise<DeepChatPromptAssembly | string>
   toolExecution: ToolExecutionPort
   toolResults: ToolResultPort
   coreStream: (

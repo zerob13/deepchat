@@ -182,6 +182,7 @@ function createHarness(
     },
     identity: { getAgentId: vi.fn(() => 'deepchat') },
     messageProjection: { updateSubagentToolCallProgress: vi.fn() },
+    runJournalObserver: vi.fn(),
     commandShell: {
       resolveForTurn: vi.fn(async () => POSIX_COMMAND_SHELL),
       resolveProfile: vi.fn(async (profile) =>
@@ -368,6 +369,9 @@ describe('DeferredToolExecutor Execution Journal', () => {
   it('commits deferred boundaries before target invocation and result projection', async () => {
     const { dependencies, execute, executionJournal, order } = createHarness()
     const onToolCallStarted = vi.fn(() => order.push('tool.started'))
+    vi.mocked(dependencies.runJournalObserver!).mockImplementation((observation) =>
+      order.push(`observe.${observation.type}`)
+    )
 
     await expect(execute(onToolCallStarted)).resolves.toMatchObject({
       responseText: 'done',
@@ -377,6 +381,7 @@ describe('DeferredToolExecutor Execution Journal', () => {
 
     expect(order).toEqual([
       'journal.run_started',
+      'observe.started',
       'tool.started',
       'tool.execute',
       'journal.dispatch',
@@ -385,7 +390,8 @@ describe('DeferredToolExecutor Execution Journal', () => {
       'result.prepare',
       'journal.outcome',
       'outcome.projection',
-      'journal.terminal'
+      'journal.terminal',
+      'observe.terminal'
     ])
     expect(dependencies.toolExecutionPort.execute).toHaveBeenCalledWith(
       expect.any(Object),
@@ -419,6 +425,32 @@ describe('DeferredToolExecutor Execution Journal', () => {
       expect.any(Function)
     )
   })
+
+  it.each(['start', 'terminal'] as const)(
+    'keeps deferred execution durable when the %s diagnostic clock read fails',
+    async (failingRead) => {
+      const { dependencies, execute, executionJournal } = createHarness()
+      dependencies.diagnosticNow =
+        failingRead === 'start'
+          ? vi.fn(() => {
+              throw new Error('clock unavailable')
+            })
+          : vi
+              .fn<() => number>()
+              .mockReturnValueOnce(10)
+              .mockImplementation(() => {
+                throw new Error('clock unavailable')
+              })
+
+      await expect(execute()).resolves.toMatchObject({ responseText: 'done', isError: false })
+
+      expect(executionJournal.commitRunStarted).toHaveBeenCalledOnce()
+      expect(executionJournal.commitRunTerminal).toHaveBeenCalledOnce()
+      const terminalObservation = vi.mocked(dependencies.runJournalObserver!).mock.calls[1][0]
+      expect(terminalObservation).toMatchObject({ type: 'terminal', outcome: 'completed' })
+      expect(terminalObservation).not.toHaveProperty('durationMs')
+    }
+  )
 
   it('uses the originating provider View identity while journaling a distinct deferred run', async () => {
     const { dependencies, executionJournal, executor } = createHarness()
@@ -748,7 +780,7 @@ describe('DeferredToolExecutor Execution Journal', () => {
   })
 
   it('returns a committed outcome only as a non-terminal parked projection', async () => {
-    const { execute, executionJournal, order } = createHarness()
+    const { dependencies, execute, executionJournal, order } = createHarness()
     executionJournal.commitRunTerminal.mockImplementationOnce(() => {
       order.push('journal.terminal.failed')
       throw new Error('storage offline')
@@ -766,6 +798,10 @@ describe('DeferredToolExecutor Execution Journal', () => {
       }
     })
     expect(result).not.toHaveProperty('terminalError')
+    expect(dependencies.runJournalObserver).toHaveBeenCalledOnce()
+    expect(dependencies.runJournalObserver).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'started' })
+    )
 
     expect(order).toEqual([
       'journal.run_started',

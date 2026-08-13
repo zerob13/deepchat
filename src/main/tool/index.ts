@@ -26,6 +26,7 @@ import {
   CRON_JOB_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME,
+  SKILL_LIST_AGENT_TOOL_NAME,
   SUBAGENT_ORCHESTRATOR_TOOL_NAME,
   TAPE_TOOL_NAMES,
   TOOL_SEARCH_AGENT_TOOL_NAME,
@@ -75,6 +76,7 @@ import {
   assertProgrammaticToolCapabilityDeferredDispatch,
   assertProgrammaticToolCapabilityViewActive,
   assertProgrammaticToolCapabilityViewCommitted,
+  projectProgrammaticExecDefinition,
   type ProgrammaticToolCapabilityV1,
   type ProgrammaticToolSurfaceEntryV1
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
@@ -310,6 +312,7 @@ export class ToolService implements ToolServicePort {
     const mapper = new ToolMapper()
     const chatMode = context.chatMode || 'agent'
     const supportsVision = context.supportsVision || false
+    const skillsEnabled = this.options.skillSettings.isEnabled()
     const agentWorkspacePath = context.agentWorkspacePath || null
     const mcpContext = {
       enabledTools: context.enabledMcpTools,
@@ -355,8 +358,6 @@ export class ToolService implements ToolServicePort {
       resolvedMcpDefinitions.filter((tool) => !RESERVED_AGENT_TOOL_NAMES.has(tool.function.name)),
       'mcp'
     )
-    definitions.push(...mcpDefinitions)
-    mapper.registerTools(mcpDefinitions, 'mcp')
 
     try {
       const agentDefinitions = withToolSource(
@@ -368,10 +369,23 @@ export class ToolService implements ToolServicePort {
           activeSkillNames: context.activeSkillNames,
           subagentCapability: context.subagentCapability,
           catalogPurpose: options.mcpDefinitionSource === 'snapshot' ? 'universe' : 'runtime',
-          signal: options.signal
+          signal: options.signal,
+          skillsEnabled,
+          ...(context.requireCompleteCatalog ? { requireCompleteCatalog: true } : {})
         }),
         'agent'
       )
+      const hasBuiltInSkillDiscovery = agentDefinitions.some(
+        (tool) =>
+          tool.function.name === SKILL_LIST_AGENT_TOOL_NAME &&
+          getAgentToolExposure(tool.function.name) === 'system-model'
+      )
+      const effectiveMcpDefinitions = hasBuiltInSkillDiscovery
+        ? mcpDefinitions.filter((tool) => tool.function.name !== SKILL_LIST_AGENT_TOOL_NAME)
+        : mcpDefinitions
+      definitions.push(...effectiveMcpDefinitions)
+      mapper.registerTools(effectiveMcpDefinitions, 'mcp')
+
       const disabledAgentToolSet = new Set(normalizeToolNames(context.disabledAgentTools))
       const filteredAgentDefinitions = agentDefinitions
         .filter((tool) => {
@@ -392,6 +406,7 @@ export class ToolService implements ToolServicePort {
       mapper.registerTools(filteredAgentDefinitions, 'agent')
     } catch (error) {
       options.signal?.throwIfAborted()
+      if (context.requireCompleteCatalog) throw error
       if (options.reportRuntimeDiagnostics) {
         console.warn('[Tool] Failed to load Agent tool definitions', error)
       } else {
@@ -401,6 +416,8 @@ export class ToolService implements ToolServicePort {
           MAX_UNAVAILABLE_TOOL_DEFINITION_SOURCES
         )
       }
+      definitions.push(...mcpDefinitions)
+      mapper.registerTools(mcpDefinitions, 'mcp')
     }
 
     options.signal?.throwIfAborted()
@@ -759,6 +776,9 @@ export class ToolService implements ToolServicePort {
         {
           toolCallId: request.id,
           runId: options?.runId,
+          requestSeq: options?.requestSeq,
+          manifestHash: options?.manifestHash,
+          tapeIncarnationId: options?.tapeIncarnationId,
           onProgress: options?.onProgress,
           signal: options?.signal,
           allowExternalFileAccess: allowsExternalFileAccess(permissionMode),
@@ -1271,12 +1291,33 @@ export class ToolService implements ToolServicePort {
         : currentSource === 'agent'
           ? this.getAgentDefinition(toolName, sessionId)
           : undefined
+    const providerVisibleDefinition = this.projectCurrentToolSurfaceDefinition(
+      authority,
+      currentDefinition
+    )
     this.assertExactToolSurfaceDefinitionAllowsDispatch(
       request,
       authority,
       options,
-      currentDefinition
+      providerVisibleDefinition
     )
+  }
+
+  private projectCurrentToolSurfaceDefinition(
+    authority: {
+      readonly snapshot?: ToolSurfaceSnapshot
+      readonly deferred?: ToolSurfaceDeferredDispatch
+    },
+    currentDefinition: MCPToolDefinition | undefined
+  ): MCPToolDefinition | undefined {
+    if (!currentDefinition) return undefined
+    const snapshot =
+      authority.snapshot ??
+      (authority.deferred?.authorityKind === 'process-live'
+        ? authority.deferred.snapshot
+        : undefined)
+    if (snapshot?.adapterMode !== 'cli-programmatic') return currentDefinition
+    return projectProgrammaticExecDefinition([currentDefinition])[0]
   }
 
   private assertExactToolSurfaceDefinitionAllowsDispatch(

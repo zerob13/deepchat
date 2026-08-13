@@ -23,6 +23,17 @@ import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '../domain/entr
 import type { TapeMessageReplacementOptions, TapeToolFactInput } from '../domain/facts'
 import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
 import type {
+  TapeSkillMaterializationInput,
+  TapeSkillMaterializationRef,
+  TapeSkillMaterializationReceipt
+} from '../domain/skillMaterialization'
+import type {
+  TapeRuntimeSkillViewContextReceipt,
+  TapeRuntimeSkillViewRecoveryInput,
+  TapeSkillViewResultFactInput,
+  TapeSkillViewResultFactReceipt
+} from '../domain/skillContext'
+import type {
   CommitExecutionDispatchInput,
   CommitExecutionRunStartedInput,
   CommitExecutionRunTerminalInput,
@@ -34,6 +45,9 @@ import type {
   TapeAnchorReader,
   TapeAnchorWriter,
   TapeEffectiveMessageSourceEntry,
+  TapeEffectiveUserMessageSourceReader,
+  TapeExecutionViewManifestReader,
+  TapeIncarnationReader,
   TapeInspectionReader,
   TapeLifecycleAdmin,
   TapeMessageFactWriter,
@@ -42,9 +56,16 @@ import type {
   TapeToolSurfaceViewReader,
   TapeToolSurfaceViewWriter,
   ExecutionJournalAuditReader,
+  TapeRunViewManifestReader,
+  TapeRuntimeSkillViewContextReader,
+  TapeSkillViewResultFactWriter,
+  TapeSkillRequestAuthorityBinding,
+  TapeSkillRequestAuthorityReader,
+  TapeSkillMaterializationReader,
+  TapeSkillMaterializationWriter,
   ExecutionJournalRecoveryReader,
   ExecutionJournalWriter,
-  TapeRawEntryReader,
+  TapeNonContextEntryReader,
   TapeReconciliationPort,
   TapeToolFactAppendReceipt,
   TapeToolFactWriter,
@@ -84,6 +105,7 @@ import { TapeReconcilerService } from './reconcilerService'
 import { TapeViewReplayService } from './viewReplayService'
 import { ExecutionJournalService } from './executionJournalService'
 import { ToolSurfaceProvenanceService } from './toolSurfaceProvenanceService'
+import { TapeSkillMaterializationService } from './skillMaterializationService'
 
 export type {
   AgentTapeViewErrorCode,
@@ -103,9 +125,13 @@ export class SessionTape
     TapeMessageFactWriter,
     TapeProviderAttemptReader,
     TapeProviderAttemptWriter,
-    TapeRawEntryReader,
+    TapeNonContextEntryReader,
     TapeReconciliationPort,
     TapeViewManifestReader,
+    TapeEffectiveUserMessageSourceReader,
+    TapeExecutionViewManifestReader,
+    TapeSkillRequestAuthorityReader,
+    TapeRunViewManifestReader,
     TapeViewManifestWriter,
     TapeToolSurfaceViewReader,
     TapeToolSurfaceViewWriter,
@@ -115,7 +141,12 @@ export class SessionTape
     TapeLifecycleAdmin,
     ExecutionJournalWriter,
     ExecutionJournalAuditReader,
-    ExecutionJournalRecoveryReader
+    ExecutionJournalRecoveryReader,
+    TapeIncarnationReader,
+    TapeSkillViewResultFactWriter,
+    TapeRuntimeSkillViewContextReader,
+    TapeSkillMaterializationWriter,
+    TapeSkillMaterializationReader
 {
   private readonly providers: TapeApplicationProviders
   private readonly facts: TapeFactService
@@ -127,6 +158,7 @@ export class SessionTape
   private readonly viewReplay: TapeViewReplayService
   private readonly toolSurfaceProvenance: ToolSurfaceProvenanceService
   private readonly forks: TapeForkService
+  private readonly skillMaterializations: TapeSkillMaterializationService
 
   constructor(database: TapeApplicationDatabase) {
     this.providers = createTapeApplicationProviders(database)
@@ -141,6 +173,7 @@ export class SessionTape
     this.viewReplay = new TapeViewReplayService(this.providers)
     this.toolSurfaceProvenance = new ToolSurfaceProvenanceService(this.providers, this.viewReplay)
     this.forks = new TapeForkService(this.providers)
+    this.skillMaterializations = new TapeSkillMaterializationService(this.providers)
   }
 
   ensureSessionTapeReady(
@@ -167,6 +200,30 @@ export class SessionTape
 
   appendToolFact(input: TapeToolFactInput): Promise<TapeToolFactAppendReceipt> {
     return this.facts.appendToolFact(input)
+  }
+
+  getTapeIncarnationId(sessionId: string): string {
+    return this.facts.getTapeIncarnationId(sessionId)
+  }
+
+  appendSkillViewResultFact(input: TapeSkillViewResultFactInput): TapeSkillViewResultFactReceipt {
+    return this.facts.appendSkillViewResultFact(input)
+  }
+
+  recoverRuntimeSkillViewContexts(
+    input: TapeRuntimeSkillViewRecoveryInput
+  ): TapeRuntimeSkillViewContextReceipt[] {
+    return this.viewReplay.recoverRuntimeSkillViewContexts(input)
+  }
+
+  materializeSkillContexts(
+    inputs: readonly TapeSkillMaterializationInput[]
+  ): TapeSkillMaterializationReceipt[] {
+    return this.skillMaterializations.materializeSkillContexts(inputs)
+  }
+
+  readSkillMaterialization(ref: TapeSkillMaterializationRef): TapeSkillMaterializationReceipt {
+    return this.skillMaterializations.readSkillMaterialization(ref)
   }
 
   appendProviderAttempt(input: TapeProviderAttemptInput): void {
@@ -254,6 +311,10 @@ export class SessionTape
     return this.viewReplay.getViewManifestSourceMaps(sessionId, messageId)
   }
 
+  getEffectiveUserMessageSourceEntryId(sessionId: string, messageId: string): number | null {
+    return this.viewReplay.getEffectiveUserMessageSourceEntryId(sessionId, messageId)
+  }
+
   appendViewManifest(manifest: DeepChatTapeViewManifest): DeepChatTapeEntryRow {
     return this.viewReplay.appendViewManifest(manifest)
   }
@@ -294,6 +355,26 @@ export class SessionTape
     requestSeq: number
   ): DeepChatTapeViewManifestRecord[] {
     return this.viewReplay.listViewManifestsByMessageRequest(sessionId, messageId, requestSeq)
+  }
+
+  getViewManifestByExecutionBinding(input: {
+    sessionId: string
+    runId: string
+    requestSeq: number
+  }): DeepChatTapeViewManifestRecord | null {
+    return this.viewReplay.getViewManifestByExecutionBinding(input)
+  }
+
+  assertSkillRequestAuthority(input: TapeSkillRequestAuthorityBinding): void {
+    this.viewReplay.assertSkillRequestAuthority(input)
+  }
+
+  getLatestViewManifestByRunBinding(input: {
+    sessionId: string
+    messageId: string
+    runId: string
+  }): DeepChatTapeViewManifestRecord | null {
+    return this.viewReplay.getLatestViewManifestByRunBinding(input)
   }
 
   exportReplaySlice(
@@ -369,7 +450,7 @@ export class SessionTape
   }
 
   getBySession(sessionId: string): DeepChatTapeEntryRow[] {
-    return this.providers.getEntryStore().getBySession(sessionId)
+    return this.providers.getEntryStore().getBySessionExcludingContext(sessionId)
   }
 
   getLatestReconstructionAnchor(sessionId: string): DeepChatTapeEntryRow | undefined {

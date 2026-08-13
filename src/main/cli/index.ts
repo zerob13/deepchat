@@ -46,8 +46,8 @@ export {
   type CliProviderModelAdminDependencies
 } from './providerModelAdminRoutes'
 export {
-  CLI_SURFACE_V1,
   CLI_SURFACE_V2,
+  CLI_SURFACE_V3,
   getCliSurfaceEntry,
   getCliSurfaceRegistry,
   listCliSurfaceCapabilities

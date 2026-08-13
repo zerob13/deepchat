@@ -17,7 +17,16 @@ import logger from '@shared/logger'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { ToolCallImagePreview } from '@shared/types/core/mcp'
-import type { SkillManageResult } from '@shared/types/skill'
+import {
+  SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES,
+  SKILL_NAME_MAX_LENGTH,
+  SKILL_RUN_MAX_ARGUMENTS,
+  SKILL_RUN_MAX_ARGUMENT_CHARS,
+  SKILL_RUN_MAX_STDIN_CHARS,
+  SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS,
+  SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES,
+  type SkillManageResult
+} from '@shared/types/skill'
 import { buildBinaryReadGuidance, shouldRejectAgentBinaryRead } from '@/lib/binaryReadGuard'
 import { AgentFileSystemHandler, type ProtectedDirectoryRule } from './agentFileSystemHandler'
 import { AgentBashHandler, type AgentCommandEnvironmentPort } from './agentBashHandler'
@@ -30,6 +39,12 @@ import {
 } from './agentFffSearchHandler'
 import { FffSearchService, type FffSearchMetadata } from '@/platform/fileSearch/fffSearchService'
 import { SkillTools } from '../../skill/skillTools'
+import {
+  SKILL_LIST_CURSOR_MAX_BYTES,
+  SKILL_LIST_DEFAULT_LIMIT,
+  SKILL_LIST_MAX_LIMIT,
+  SKILL_LIST_QUERY_MAX_BYTES
+} from '../../skill/routingCatalog'
 import { SkillExecutionService } from '../../skill/skillExecutionService'
 import { parseQuestionToolInput, questionToolSchema, QUESTION_TOOL_NAME } from './questionTool'
 import {
@@ -62,6 +77,7 @@ import {
   LIVE_DELEGATION_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME,
   TOOL_SEARCH_AGENT_TOOL_NAME,
+  SKILL_LIST_AGENT_TOOL_NAME,
   assertAgentToolExposure,
   isTapeToolName,
   type AgentToolExposure
@@ -159,6 +175,8 @@ interface AgentToolExecutionOptions {
   runId?: string
   messageId?: string
   requestSeq?: number
+  manifestHash?: string
+  tapeIncarnationId?: string
   onProgress?: (update: AgentToolProgressUpdate) => void
   signal?: AbortSignal
   allowExternalFileAccess?: boolean
@@ -353,7 +371,36 @@ export class AgentToolManager {
   }
 
   private readonly skillSchemas = {
-    skill_list: z.object({}),
+    skill_list: z.object({
+      query: z
+        .string()
+        .max(SKILL_LIST_QUERY_MAX_BYTES)
+        .refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= SKILL_LIST_QUERY_MAX_BYTES,
+          `Query may contain at most ${SKILL_LIST_QUERY_MAX_BYTES} UTF-8 bytes`
+        )
+        .optional()
+        .describe(
+          `Optional local lexical search over skill names, categories, and descriptions (up to ${SKILL_LIST_QUERY_MAX_BYTES} UTF-8 bytes).`
+        ),
+      cursor: z
+        .string()
+        .max(SKILL_LIST_CURSOR_MAX_BYTES)
+        .refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= SKILL_LIST_CURSOR_MAX_BYTES,
+          `Cursor may contain at most ${SKILL_LIST_CURSOR_MAX_BYTES} UTF-8 bytes`
+        )
+        .optional()
+        .describe('Opaque cursor from a previous skill_list response.'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(SKILL_LIST_MAX_LIMIT)
+        .optional()
+        .default(SKILL_LIST_DEFAULT_LIMIT)
+        .describe(`Maximum cards to return, up to ${SKILL_LIST_MAX_LIMIT}.`)
+    }),
     skill_view: z.object({
       name: z.string().min(1).describe('Skill name to inspect'),
       file_path: z
@@ -363,13 +410,39 @@ export class AgentToolManager {
         .describe('Optional file path under the skill root to inspect')
     }),
     skill_run: z.object({
-      skill: z.string().min(1).describe('Active skill name that owns the script'),
+      skill: z
+        .string()
+        .min(1)
+        .max(SKILL_NAME_MAX_LENGTH)
+        .describe('Active skill name that owns the script'),
       script: z
         .string()
         .min(1)
-        .describe('Script path under the skill root, usually scripts/<name>.<ext>'),
-      args: z.array(z.string()).optional().default([]).describe('Arguments passed to the script'),
-      stdin: z.string().optional().describe('Optional stdin payload sent to the script'),
+        .max(SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES)
+        .refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES,
+          `Script path may contain at most ${SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES} UTF-8 bytes`
+        )
+        .describe(
+          'Exact canonical script path from the active skill inventory (scripts/<name>.<ext>)'
+        ),
+      args: z
+        .array(z.string().max(SKILL_RUN_MAX_ARGUMENT_CHARS))
+        .max(SKILL_RUN_MAX_ARGUMENTS)
+        .refine(
+          (args) =>
+            args.reduce((total, argument) => total + argument.length, 0) <=
+            SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS,
+          `Arguments may contain at most ${SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS} characters in total`
+        )
+        .optional()
+        .default([])
+        .describe('Arguments passed to the script'),
+      stdin: z
+        .string()
+        .max(SKILL_RUN_MAX_STDIN_CHARS)
+        .optional()
+        .describe('Optional stdin payload sent to the script'),
       background: z
         .boolean()
         .optional()
@@ -495,17 +568,20 @@ export class AgentToolManager {
     subagentCapability?: DeepChatSubagentCapability
     catalogPurpose?: 'runtime' | 'configurable' | 'universe'
     signal?: AbortSignal
+    skillsEnabled?: boolean
+    requireCompleteCatalog?: boolean
   }): Promise<MCPToolDefinition[]> {
     context.signal?.throwIfAborted()
     const defs: MCPToolDefinition[] = []
     const isAgentMode = context.chatMode === 'agent'
+    const skillsEnabled = context.skillsEnabled ?? this.isSkillsEnabled()
     const isConfigurableCatalog = context.catalogPurpose === 'configurable'
     const isUniverseCatalog = context.catalogPurpose === 'universe'
     const isDefinitionOnlyCatalog = isConfigurableCatalog || isUniverseCatalog
     const acceptsExposure = (exposure: AgentToolExposure): boolean =>
       !isConfigurableCatalog || exposure === 'user-configurable'
     const handleAvailabilityError = (message: string, error: unknown): void => {
-      if (isUniverseCatalog) throw error
+      if (isUniverseCatalog || context.requireCompleteCatalog) throw error
       logger.warn(message, { error })
     }
     const appendDefinitions = (
@@ -626,21 +702,32 @@ export class AgentToolManager {
     }
 
     // 3. Skill tools (agent mode only)
-    if (isAgentMode && this.isSkillsEnabled()) {
+    if (isAgentMode && skillsEnabled) {
       const skillDefs = this.getSkillToolDefinitions()
-      appendDefinitions(skillDefs, 'user-configurable')
+      appendDefinitions(
+        skillDefs.filter((definition) => definition.function.name === SKILL_LIST_AGENT_TOOL_NAME),
+        'system-model'
+      )
+      appendDefinitions(
+        skillDefs.filter((definition) => definition.function.name !== SKILL_LIST_AGENT_TOOL_NAME),
+        'user-configurable'
+      )
 
       if (
         isUniverseCatalog ||
         (context.conversationId &&
-          (await this.hasRunnableSkillScripts(context.conversationId, context.activeSkillNames)))
+          (await this.hasRunnableSkillScripts(
+            context.conversationId,
+            context.activeSkillNames,
+            context.requireCompleteCatalog
+          )))
       ) {
         appendDefinitions([this.getSkillRunToolDefinition()], 'user-configurable')
       }
     }
 
     // 4. DeepChat settings tools (agent mode only, skill gated)
-    if (isAgentMode && this.isSkillsEnabled() && context.conversationId) {
+    if (isAgentMode && skillsEnabled && context.conversationId) {
       try {
         const activeSkills = isUniverseCatalog
           ? (context.activeSkillNames ?? [])
@@ -2344,14 +2431,10 @@ export class AgentToolManager {
 
   private getSkillExecutionService(): SkillExecutionService {
     if (!this.skillExecutionService) {
-      this.skillExecutionService = new SkillExecutionService(
-        this.getSkillService(),
-        this.settings,
-        {
-          resolveConversationWorkdir: (conversationId) =>
-            this.getWorkdirForConversation(conversationId)
-        }
-      )
+      this.skillExecutionService = new SkillExecutionService({
+        resolveConversationWorkdir: (conversationId) =>
+          this.getWorkdirForConversation(conversationId)
+      })
     }
     return this.skillExecutionService
   }
@@ -2365,7 +2448,7 @@ export class AgentToolManager {
         function: {
           name: 'skill_list',
           description:
-            'List all available skills and their activation status. Skills provide specialized expertise and behavioral guidance.',
+            'Search or browse available skills as bounded routing cards. Use query to find skills omitted from the system catalog and nextCursor to continue.',
           parameters: toDeepChatJsonSchema(schemas.skill_list) as {
             type: string
             properties: Record<string, unknown>
@@ -2451,7 +2534,8 @@ export class AgentToolManager {
 
   private async hasRunnableSkillScripts(
     conversationId: string,
-    activeSkillNames?: string[]
+    activeSkillNames?: string[],
+    failClosed = false
   ): Promise<boolean> {
     try {
       const skillService = this.getSkillService()
@@ -2470,6 +2554,7 @@ export class AgentToolManager {
         conversationId,
         error
       })
+      if (failClosed) throw error
     }
 
     return false
@@ -2718,7 +2803,7 @@ export class AgentToolManager {
     conversationId?: string,
     options?: AgentToolExecutionOptions
   ): Promise<AgentToolCallResult> {
-    if (!this.isSkillsEnabled()) {
+    if (!this.isSkillsEnabled() && toolName !== SKILL_LIST_AGENT_TOOL_NAME) {
       return {
         content: JSON.stringify({
           success: false,
@@ -2731,7 +2816,15 @@ export class AgentToolManager {
     const effectiveActiveSkills = this.normalizeActiveSkillOption(options?.activeSkillNames)
 
     if (toolName === 'skill_list') {
-      const result = await skillTools.handleSkillList(conversationId, effectiveActiveSkills)
+      const validationResult = this.skillSchemas.skill_list.safeParse(args)
+      if (!validationResult.success) {
+        throw new Error(`Invalid arguments for skill_list: ${validationResult.error.message}`)
+      }
+      const result = await skillTools.handleSkillList(
+        conversationId,
+        effectiveActiveSkills,
+        validationResult.data
+      )
       return { content: JSON.stringify(result) }
     }
 
@@ -2746,7 +2839,43 @@ export class AgentToolManager {
           ? validationResult.data.file_path.trim()
           : ''
       const isLinkedFileView = normalizedFilePath.length > 0
+      const requestedSkillName = validationResult.data.name.trim()
+      if (!isLinkedFileView && effectiveActiveSkills?.includes(requestedSkillName)) {
+        const isPinned = conversationId
+          ? (await this.getSkillService().getActiveSkills(conversationId)).includes(
+              requestedSkillName
+            )
+          : false
+        const content = JSON.stringify({
+          success: true,
+          name: requestedSkillName,
+          isPinned,
+          activeForCurrentMessage: true,
+          activatedForMessage: false,
+          activationScope: 'none',
+          message: 'Skill is already active for the current message.'
+        })
+        return {
+          content,
+          rawData: {
+            content,
+            toolResult: {
+              activationApplied: false,
+              activationSource: 'none'
+            }
+          }
+        }
+      }
+      if (conversationId && !isLinkedFileView) {
+        this.createAgentDispatchCommit(
+          toolName,
+          'agent-skills',
+          { name: requestedSkillName },
+          options
+        )?.()
+      }
       const result = await skillTools.handleSkillView(conversationId, validationResult.data)
+      const { contentIdentity, contentResolution, ...publicResult } = result
       const normalizedViewedSkill = result.name?.trim() || validationResult.data.name.trim()
       const activeSkillNamesForResult = effectiveActiveSkills ?? []
       const activationApplied =
@@ -2763,11 +2892,21 @@ export class AgentToolManager {
             : isLinkedFileView
               ? 'file'
               : 'none'
+      const skillContext = activationApplied ? contentIdentity : null
+      const skillResolution = activationApplied ? contentResolution : null
+      if (activationApplied && (!skillContext || !skillResolution)) {
+        const content = JSON.stringify({
+          success: false,
+          name: normalizedViewedSkill,
+          error: 'Skill execution snapshot could not be resolved safely; activation was refused'
+        })
+        return { content, rawData: { content, isError: true } }
+      }
       if (activationApplied) {
         this.createAgentDispatchCommit(toolName, 'agent-skills', validationResult.data, options)?.()
       }
       const content = JSON.stringify({
-        ...result,
+        ...publicResult,
         isPinned: result.isPinned === true,
         activeForCurrentMessage:
           result.isPinned === true ||
@@ -2775,8 +2914,20 @@ export class AgentToolManager {
             Boolean(normalizedViewedSkill) &&
             (activationApplied || activeSkillNamesForResult.includes(normalizedViewedSkill))),
         activatedForMessage: activationApplied,
-        activationScope: activationApplied ? 'message' : 'none'
+        activationScope: activationApplied ? 'message' : 'none',
+        ...(activationApplied ? { activationEvidenceVersion: 1 } : {})
       })
+      if (
+        activationApplied &&
+        Buffer.byteLength(content, 'utf8') > SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES
+      ) {
+        const errorContent = JSON.stringify({
+          success: false,
+          name: normalizedViewedSkill,
+          error: `Rendered Skill view exceeds ${SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES} bytes and cannot be activated inline`
+        })
+        return { content: errorContent, rawData: { content: errorContent, isError: true } }
+      }
 
       return {
         content,
@@ -2785,7 +2936,9 @@ export class AgentToolManager {
           toolResult: {
             activationApplied,
             activationSource,
-            ...(activationApplied ? { activatedSkill: normalizedViewedSkill } : {})
+            ...(activationApplied
+              ? { activatedSkill: normalizedViewedSkill, skillContext, skillResolution }
+              : {})
           }
         }
       }
@@ -2856,12 +3009,38 @@ export class AgentToolManager {
       throw new Error(`Invalid arguments for skill_run: ${validationResult.error.message}`)
     }
 
-    const result = await this.getSkillExecutionService().execute(validationResult.data, {
+    const requestSeq = options?.requestSeq
+    if (
+      !options?.runId ||
+      requestSeq === undefined ||
+      !Number.isSafeInteger(requestSeq) ||
+      requestSeq <= 0 ||
+      !options.manifestHash ||
+      !options.tapeIncarnationId
+    ) {
+      throw new Error('skill_run requires exact request-bound Skill execution authority')
+    }
+    throwIfAbortRequested(options.signal)
+    const authority = await this.dependencies.skillExecutionAuthority.resolve({
+      sessionId: conversationId,
+      runId: options.runId,
+      requestSeq,
+      manifestHash: options.manifestHash,
+      tapeIncarnationId: options.tapeIncarnationId,
+      skillName: validationResult.data.skill
+    })
+    throwIfAbortRequested(options.signal)
+    const result = await this.getSkillExecutionService().execute(validationResult.data, authority, {
       conversationId,
-      commandShell: this.requireCommandShell(options?.commandShell),
-      activeSkillNames: options?.activeSkillNames,
+      commandShell: this.requireCommandShell(options.commandShell),
+      signal: options.signal,
       outputPreviewChars: (await this.resolveOutputLimitsForConversation(conversationId))
         .commandOutputInlineChars,
+      assertAuthorityCurrent: async () => {
+        throwIfAbortRequested(options.signal)
+        await this.dependencies.skillExecutionAuthority.assertCurrent(authority)
+        throwIfAbortRequested(options.signal)
+      },
       beforeExecute: this.createAgentDispatchCommit(
         toolName,
         'agent-skills',
@@ -2876,6 +3055,7 @@ export class AgentToolManager {
       content,
       rawData: {
         content,
+        isError: result.outputLimited === true,
         rtkApplied: result.rtkApplied,
         rtkMode: result.rtkMode,
         rtkFallbackReason: result.rtkFallbackReason,

@@ -431,6 +431,274 @@ describe('SkillService Agent scopes', () => {
     ])
   })
 
+  it('adds runtime support declarations only to byte-identical legacy bundled Skills', async () => {
+    vi.mocked(app.getAppPath).mockReturnValue(temporaryRoot)
+    const bundledRoot = path.join(temporaryRoot, 'resources', 'skills')
+    const sourceRoot = path.resolve(process.cwd(), 'resources', 'skills')
+    const removeSupportDeclaration = (manifest: string) =>
+      manifest.replace('executionSupportPaths:\n  - ooxml\n', '').replace(/\n$/, '')
+
+    for (const name of ['docx', 'pptx']) {
+      fs.cpSync(path.join(sourceRoot, name), path.join(bundledRoot, name), { recursive: true })
+      fs.cpSync(path.join(sourceRoot, name), path.join(skillsRoot, name), { recursive: true })
+      const installedManifest = path.join(skillsRoot, name, 'SKILL.md')
+      fs.writeFileSync(
+        installedManifest,
+        removeSupportDeclaration(fs.readFileSync(installedManifest, 'utf8')),
+        'utf8'
+      )
+      if (process.platform !== 'win32') fs.chmodSync(installedManifest, 0o600)
+    }
+
+    await service.installBuiltinSkills()
+    await service.installBuiltinSkills()
+
+    for (const name of ['docx', 'pptx']) {
+      const manifest = fs.readFileSync(path.join(skillsRoot, name, 'SKILL.md'), 'utf8')
+      expect(manifest.match(/executionSupportPaths:/g)).toHaveLength(1)
+      expect(manifest).toContain('executionSupportPaths:\n  - ooxml\n')
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(path.join(skillsRoot, name, 'SKILL.md')).mode & 0o777).toBe(0o600)
+      }
+    }
+
+    await service.discoverSkills()
+    const materializations = await service.resolveFreshEffectiveSkillContents('deepchat', [
+      'docx',
+      'pptx'
+    ])
+    expect(
+      materializations[0].executionPackage.files.some(
+        (file) => file.relativePath === 'ooxml/scripts/pack.py'
+      )
+    ).toBe(true)
+    expect(
+      materializations[0].executionPackage.executables.some(
+        (executable) => executable.relativePath === 'scripts/document.py'
+      )
+    ).toBe(true)
+    expect(
+      materializations[1].executionPackage.files.some((file) =>
+        file.relativePath.startsWith('ooxml/schemas/')
+      )
+    ).toBe(true)
+  })
+
+  it('does not migrate customized or unrelated same-name Skill trees', async () => {
+    vi.mocked(app.getAppPath).mockReturnValue(temporaryRoot)
+    const bundledRoot = path.join(temporaryRoot, 'resources', 'skills')
+    const sourceRoot = path.resolve(process.cwd(), 'resources', 'skills')
+    fs.cpSync(path.join(sourceRoot, 'docx'), path.join(bundledRoot, 'docx'), { recursive: true })
+    fs.cpSync(path.join(sourceRoot, 'pptx'), path.join(bundledRoot, 'pptx'), { recursive: true })
+
+    const customizedDocx = path.join(skillsRoot, 'docx')
+    fs.cpSync(path.join(sourceRoot, 'docx'), customizedDocx, { recursive: true })
+    const docxManifest = path.join(customizedDocx, 'SKILL.md')
+    fs.writeFileSync(
+      docxManifest,
+      fs.readFileSync(docxManifest, 'utf8').replace('executionSupportPaths:\n  - ooxml\n', ''),
+      'utf8'
+    )
+    fs.appendFileSync(path.join(customizedDocx, 'scripts', 'document.py'), '\n# customized\n')
+
+    const unrelatedPptx = writeSkill(skillsRoot, 'pptx', '# User Skill')
+
+    await service.installBuiltinSkills()
+
+    expect(fs.readFileSync(docxManifest, 'utf8')).not.toContain('executionSupportPaths:')
+    expect(fs.readFileSync(path.join(unrelatedPptx, 'SKILL.md'), 'utf8')).toContain('# User Skill')
+    expect(fs.readFileSync(path.join(unrelatedPptx, 'SKILL.md'), 'utf8')).not.toContain(
+      'executionSupportPaths:'
+    )
+  })
+
+  it('does not migrate an otherwise legacy builtin tree with an extra empty directory', async () => {
+    vi.mocked(app.getAppPath).mockReturnValue(temporaryRoot)
+    const sourceRoot = path.resolve(process.cwd(), 'resources', 'skills', 'docx')
+    fs.cpSync(sourceRoot, path.join(temporaryRoot, 'resources', 'skills', 'docx'), {
+      recursive: true
+    })
+    const installedRoot = path.join(skillsRoot, 'docx')
+    fs.cpSync(sourceRoot, installedRoot, { recursive: true })
+    const manifestPath = path.join(installedRoot, 'SKILL.md')
+    const legacyManifest = fs
+      .readFileSync(manifestPath, 'utf8')
+      .replace('executionSupportPaths:\n  - ooxml\n', '')
+      .replace(/\n$/, '')
+    fs.writeFileSync(manifestPath, legacyManifest, 'utf8')
+    fs.mkdirSync(path.join(installedRoot, 'custom-empty-directory'))
+
+    await service.installBuiltinSkills()
+
+    expect(fs.readFileSync(manifestPath, 'utf8')).toBe(legacyManifest)
+  })
+
+  it('validates support declarations before requiring a scripts directory', async () => {
+    const skillRoot = writeSkill(skillsRoot, 'support-only', '# support only')
+    const manifestPath = path.join(skillRoot, 'SKILL.md')
+    fs.writeFileSync(
+      manifestPath,
+      `---\nname: support-only\ndescription: support-only\nexecutionSupportPaths:\n  - ../outside\n---\n\n# support only`,
+      'utf8'
+    )
+    await service.discoverSkills()
+
+    await expect(
+      service.resolveFreshEffectiveSkillContents('deepchat', ['support-only'])
+    ).rejects.toThrow('non-portable path')
+
+    fs.writeFileSync(
+      manifestPath,
+      `---\nname: support-only\ndescription: support-only\nexecutionSupportPaths:\n  - references\n---\n\n# support only`,
+      'utf8'
+    )
+    fs.mkdirSync(path.join(skillRoot, 'references'))
+
+    await expect(
+      service.resolveFreshEffectiveSkillContents('deepchat', ['support-only'])
+    ).rejects.toThrow('executionSupportPaths requires a scripts directory')
+  })
+
+  it('preserves script dependencies when no executable entry is recognized', async () => {
+    const skillRoot = writeSkill(skillsRoot, 'data-script', '# data script')
+    fs.mkdirSync(path.join(skillRoot, 'scripts'), { recursive: true })
+    fs.writeFileSync(path.join(skillRoot, 'scripts', 'config.json'), '{"enabled":true}', 'utf8')
+    await service.discoverSkills()
+
+    const [resolution] = await service.resolveFreshEffectiveSkillContents('deepchat', [
+      'data-script'
+    ])
+
+    expect(resolution.executionPackage.files.map((file) => file.relativePath)).toEqual([
+      'scripts/config.json'
+    ])
+    expect(resolution.executionPackage.executables).toEqual([])
+  })
+
+  it('rechecks the complete legacy builtin tree before committing its manifest migration', async () => {
+    vi.mocked(app.getAppPath).mockReturnValue(temporaryRoot)
+    const sourceRoot = path.resolve(process.cwd(), 'resources', 'skills', 'docx')
+    fs.cpSync(sourceRoot, path.join(temporaryRoot, 'resources', 'skills', 'docx'), {
+      recursive: true
+    })
+    const installedRoot = path.join(skillsRoot, 'docx')
+    fs.cpSync(sourceRoot, installedRoot, { recursive: true })
+    const manifestPath = path.join(installedRoot, 'SKILL.md')
+    const legacyManifest = fs
+      .readFileSync(manifestPath, 'utf8')
+      .replace('executionSupportPaths:\n  - ooxml\n', '')
+      .replace(/\n$/, '')
+    fs.writeFileSync(manifestPath, legacyManifest, 'utf8')
+    const hashTree = (service as any).createBoundedSkillTreeHash.bind(service)
+    let hashCount = 0
+    vi.spyOn(service as any, 'createBoundedSkillTreeHash').mockImplementation(
+      async (root: string) => {
+        const hash = await hashTree(root)
+        hashCount += 1
+        if (hashCount === 1) {
+          fs.appendFileSync(
+            path.join(installedRoot, 'scripts', 'document.py'),
+            '\n# concurrent edit\n'
+          )
+        }
+        return hash
+      }
+    )
+
+    await service.installBuiltinSkills()
+
+    expect(hashCount).toBe(2)
+    expect(fs.readFileSync(manifestPath, 'utf8')).toBe(legacyManifest)
+  })
+
+  it('leaves a legacy builtin manifest unchanged when its atomic migration cannot commit', async () => {
+    vi.mocked(app.getAppPath).mockReturnValue(temporaryRoot)
+    const sourceRoot = path.resolve(process.cwd(), 'resources', 'skills', 'docx')
+    fs.cpSync(sourceRoot, path.join(temporaryRoot, 'resources', 'skills', 'docx'), {
+      recursive: true
+    })
+    const installedRoot = path.join(skillsRoot, 'docx')
+    fs.cpSync(sourceRoot, installedRoot, { recursive: true })
+    const manifestPath = path.join(installedRoot, 'SKILL.md')
+    const legacyManifest = fs
+      .readFileSync(manifestPath, 'utf8')
+      .replace('executionSupportPaths:\n  - ooxml\n', '')
+      .replace(/\n$/, '')
+    fs.writeFileSync(manifestPath, legacyManifest, 'utf8')
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('rename failed')
+    })
+
+    await service.installBuiltinSkills()
+
+    expect(rename).toHaveBeenCalled()
+    expect(fs.readFileSync(manifestPath, 'utf8')).toBe(legacyManifest)
+    expect(fs.readdirSync(installedRoot).some((entry) => entry.endsWith('.tmp'))).toBe(false)
+    await service.discoverSkills()
+    await expect(service.resolveFreshEffectiveSkillContents('deepchat', ['docx'])).rejects.toThrow(
+      'legacy runtime files but no executionSupportPaths declaration'
+    )
+  })
+
+  it('cleans a partially written legacy migration file without changing the manifest', async () => {
+    vi.mocked(app.getAppPath).mockReturnValue(temporaryRoot)
+    const sourceRoot = path.resolve(process.cwd(), 'resources', 'skills', 'docx')
+    fs.cpSync(sourceRoot, path.join(temporaryRoot, 'resources', 'skills', 'docx'), {
+      recursive: true
+    })
+    const installedRoot = path.join(skillsRoot, 'docx')
+    fs.cpSync(sourceRoot, installedRoot, { recursive: true })
+    const manifestPath = path.join(installedRoot, 'SKILL.md')
+    const legacyManifest = fs
+      .readFileSync(manifestPath, 'utf8')
+      .replace('executionSupportPaths:\n  - ooxml\n', '')
+      .replace(/\n$/, '')
+    fs.writeFileSync(manifestPath, legacyManifest, 'utf8')
+    if (process.platform !== 'win32') fs.chmodSync(manifestPath, 0o600)
+    vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(((target: number) => {
+      fs.writeSync(target, 'partial')
+      throw new Error('disk full')
+    }) as typeof fs.writeFileSync)
+
+    await service.installBuiltinSkills()
+
+    expect(fs.readFileSync(manifestPath, 'utf8')).toBe(legacyManifest)
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(manifestPath).mode & 0o777).toBe(0o600)
+    }
+    expect(fs.readdirSync(installedRoot).some((entry) => entry.endsWith('.tmp'))).toBe(false)
+  })
+
+  it('migrates exact legacy builtin copies in completed Agent scopes before discovery', async () => {
+    agents.push({ id: 'writer' })
+    settingsState = {
+      version: 2,
+      agents: { deepchat: { skills: {} }, writer: { skills: {} } },
+      migration: {
+        targetAgentIds: ['writer'],
+        completedAgentIds: ['writer'],
+        completedAt: new Date().toISOString()
+      }
+    }
+    const sourceRoot = path.resolve(process.cwd(), 'resources', 'skills', 'docx')
+    const writerRoot = resolveAgentSkillsRoot(skillsRoot, 'writer')
+    const installedRoot = path.join(writerRoot, 'docx')
+    fs.cpSync(sourceRoot, installedRoot, { recursive: true })
+    const manifestPath = path.join(installedRoot, 'SKILL.md')
+    fs.writeFileSync(
+      manifestPath,
+      fs
+        .readFileSync(manifestPath, 'utf8')
+        .replace('executionSupportPaths:\n  - ooxml\n', '')
+        .replace(/\n$/, ''),
+      'utf8'
+    )
+
+    await service.getUnifiedSkillCatalog('writer')
+
+    expect(fs.readFileSync(manifestPath, 'utf8')).toContain('executionSupportPaths:\n  - ooxml\n')
+  })
+
   it('preserves a preexisting independent Agent root instead of overwriting it', async () => {
     agents.push({ id: 'writer' })
     const writerRoot = resolveAgentSkillsRoot(skillsRoot, 'writer')
@@ -546,6 +814,52 @@ describe('SkillService Agent scopes', () => {
     expect(sessionState.setPersistedNewSessionSkills).toHaveBeenCalledWith('conversation-1', [
       'writer-skill'
     ])
+  })
+
+  it('serializes Agent revalidation with concurrent active Skill removal', async () => {
+    agents.push({ id: 'writer' })
+    sessionAgentIds.set('conversation-1', 'writer')
+    let persisted = ['writer-skill', 'builtin-only']
+    sessionState.getPersistedNewSessionSkills.mockImplementation(() => [...persisted])
+    sessionState.setPersistedNewSessionSkills.mockImplementation((_conversationId, skills) => {
+      persisted = [...skills]
+    })
+
+    let releaseFirstCatalogRead!: () => void
+    const firstCatalogRead = new Promise<void>((resolve) => {
+      releaseFirstCatalogRead = resolve
+    })
+    let catalogReadStarted!: () => void
+    const catalogReadWasStarted = new Promise<void>((resolve) => {
+      catalogReadStarted = resolve
+    })
+    let catalogReadCount = 0
+    vi.spyOn(service, 'getMetadataList').mockImplementation(async (agentId?: string) => {
+      expect(agentId).toBe('writer')
+      catalogReadCount += 1
+      if (catalogReadCount === 1) {
+        catalogReadStarted()
+        await firstCatalogRead
+      }
+      return [
+        {
+          name: 'writer-skill',
+          description: 'writer',
+          path: '/writer/writer-skill/SKILL.md',
+          skillRoot: '/writer/writer-skill'
+        }
+      ]
+    })
+
+    const revalidation = service.revalidateActiveSkillsForAgent('conversation-1', 'writer')
+    await catalogReadWasStarted
+    const removal = service.removeActiveSkill('conversation-1', 'writer-skill')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    releaseFirstCatalogRead()
+
+    await expect(revalidation).resolves.toEqual(['writer-skill'])
+    await expect(removal).resolves.toEqual([])
+    expect(persisted).toEqual([])
   })
 
   it('removes an Agent private root, cache, management state, and migration references', async () => {

@@ -149,7 +149,7 @@ Main atomically replaces a descriptor with this public shape:
 ```ts
 type LocalControlDescriptorV1 = {
   protocolVersion: 1
-  surfaceVersion: 1
+  surfaceVersion: 2
   appVersion: string
   endpoint: { kind: 'unix'; path: string } | { kind: 'pipe'; name: string }
   pid: number
@@ -216,7 +216,7 @@ expose those temporary paths.
 
 ## Contract Ownership and Surface
 
-`CLI_SURFACE_V1` is a readonly registry whose entries reference the same `RouteContract` objects used
+`CLI_SURFACE_V2` is a readonly registry whose entries reference the same `RouteContract` objects used
 by renderer IPC. A surface entry adds only transport and policy metadata:
 
 ```ts
@@ -242,7 +242,7 @@ Public method names describe their domain (`models.invoke`, `providers.listPubli
 `sessions.runDetached`). The `cli.*` namespace is reserved for behavior that exists only to operate
 or diagnose the bundled CLI.
 
-### V1 Capability Matrix
+### V2 Capability Matrix
 
 `H` means an authenticated human CLI connection. `A` means a short-lived Agent connection with the
 listed scope. “Policy” means the renderer-only effect policy may be required; it never means a CLI
@@ -541,7 +541,11 @@ existing lifecycle, then starts the initial turn. It returns a durable run/sessi
 streaming. Disconnect does not destroy a detached run; status/messages can be recovered from session
 state and event cursors. If initial-turn startup fails, the response and run event retain that durable
 identity but expose only a stable failure message; upstream error text is excluded from public output
-and logs. `runs.cancel` is idempotent and ownership checked.
+and logs. `runs.get` projects `running`, `awaiting_interaction`, or `terminal` separately from the
+Session status so a valid permission or question pause remains observable. `run watch` treats
+provider-round `chat.stream.completed` and `chat.stream.failed` events as progress only; it exits
+after the root Session reaches `idle` or `error`, never when a descendant Session or one provider
+round finishes. `runs.cancel` is idempotent and ownership checked.
 
 `events.subscribe` is human-only in V1. An Agent can own only its currently executing conversation,
 so waiting on that run from its bash tool would deadlock the run on itself. Agent callers may use the
@@ -693,30 +697,30 @@ and cold application restarts.
 
 ## Resolved Questions
 
-None. Policy values above are the V1 baseline; future changes require an explicit surface/security
+None. Policy values above are the V2 baseline; future changes require an explicit surface/security
 review rather than implicit widening.
 
 ## Approved Programmatic Tool Extension
 
-This section defines `CLI_SURFACE_V2` as a strict, version-negotiated superset of immutable
-`CLI_SURFACE_V1`. V1 names, contracts, callers, and semantics do not change, and V1 tokens cannot
-reach V2 routes. The strict V1 descriptor and wire envelopes remain byte- and shape-compatible at
-surface version 1; adding V2 advertisement fields there would make strict legacy clients reject the
+This section defines `CLI_SURFACE_V3` as a strict, version-negotiated superset of immutable
+`CLI_SURFACE_V2`. V2 names, contracts, callers, and semantics do not change, and V2 tokens cannot
+reach V3 routes. The strict V2 descriptor and wire envelopes remain byte- and shape-compatible at
+surface version 2; adding V3 advertisement fields there would make strict V2 clients reject the
 descriptor. Route-surface negotiation is therefore authenticated rather than caller-declared:
-human and ordinary Agent tokens select V1, while an exact Programmatic-tool grant selects V2. No
+human and ordinary Agent tokens select V2, while an exact Programmatic-tool grant selects V3. No
 header, request-body version, capability query, or descriptor field can widen that selection. An old
-client continues on V1 against a new server; a server that cannot mint the exact V2 grant cannot
+client continues on V2 against a new server; a server that cannot mint the exact V3 grant cannot
 admit a Programmatic command. Unsupported routes fail before invocation. Agent invocation grants
-bind route-surface version 2, so downgrade cannot widen access.
+bind route-surface version 3, so downgrade cannot widen access.
 
-V2 does not open a generic raw MCP tunnel. For a Run frozen to the CLI Programmatic adapter, it adds
+V3 does not open a generic raw MCP tunnel. For a Run frozen to the CLI Programmatic adapter, it adds
 Agent-only `tool.search|describe|call|batch` methods and
 `deepchat tool search|describe|call|batch` commands. This is the sole exception to the raw MCP
 Non-Goal and is bounded by the originating View's immutable Programmatic Surface.
 
-The extension reuses V1's local endpoint, authenticated Agent principal, deny-by-default route
+The extension reuses V2's local endpoint, authenticated Agent principal, deny-by-default route
 registry, shell gate, effect policy, approval infrastructure, quotas, and audit foundation. It also
-adds security-sensitive surface that V1 did not provide: an exact programmatic capability, controlled
+adds security-sensitive surface that V2 did not provide: an exact programmatic capability, controlled
 raw-target invocation, nested Execution Journal v2, and a process-live batch/parent-operation
 controller. It must not be described as zero additional trust surface or as process attestation.
 

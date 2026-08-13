@@ -32,8 +32,10 @@ import type { TranscriptMutationCoordinator } from '@/agent/deepchat/runtime/tra
 import type { TurnCoordinator } from '@/agent/deepchat/runtime/turnCoordinator'
 import type {
   DeepChatEventPublisher,
-  DeepChatSessionUpdatePublisher
+  DeepChatSessionUpdatePublisher,
+  RunJournalObserver
 } from '@/agent/deepchat/runtime/types'
+import type { MonotonicClock } from '@/lib/monotonicTime'
 import type { ToolSurfaceShadowDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceDiagnostics'
 import type { ToolSurfaceCanaryDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 import type { DeepChatTaskContractContextPort } from '@/agent/deepchat/loop/ports'
@@ -51,6 +53,7 @@ export type DeepChatHarnessSkillPort = Pick<
   | 'revalidateActiveSkillsForAgent'
   | 'validateSkillNames'
   | 'loadSkillContent'
+  | 'resolveFreshEffectiveSkillContents'
   | 'viewDraftSkill'
   | 'installDraftSkill'
   | 'discardDraftSkill'
@@ -91,6 +94,8 @@ export interface DeepChatHarnessDependencies {
     AgentCliTokenAuthority,
     'prepareProgrammaticOperation' | 'revokeConversation'
   >
+  runJournalObserver?: RunJournalObserver
+  diagnosticNow?: MonotonicClock
 }
 
 /**

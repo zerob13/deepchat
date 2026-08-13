@@ -32,6 +32,7 @@ import {
   TOOL_SURFACE_TAPE_EVENT_NAMES,
   type ToolSurfaceTapeEventName
 } from '@/tape/domain/toolSurfaceFacts'
+import { SKILL_MATERIALIZATION_NAME } from '@/tape/domain/skillMaterialization'
 import type {
   ContractPersistenceStore,
   ExecutionJournalPersistenceStore,
@@ -39,6 +40,7 @@ import type {
   TapeEntryStore,
   TapeMutationProjection,
   ToolSurfacePersistenceStore,
+  SkillMaterializationPersistenceStore,
   TapeTransactionRunner
 } from '@/tape/ports/storage'
 import { DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT } from '@shared/types/execution-journal-audit'
@@ -418,6 +420,7 @@ const EFFECTIVE_TAPE_ROWS_CTE_SQL = `
     INNER JOIN authorized_sources AS source
       ON source.session_id = tape.session_id
       AND tape.entry_id <= source.max_entry_id
+    WHERE tape.kind != 'context'
   ),
   raw_message_candidates AS (
     SELECT
@@ -624,7 +627,12 @@ const EFFECTIVE_TAPE_SEARCH_ROW_PREDICATE_SQL = `
 
 export class DeepChatTapeEntriesTable
   extends BaseTable
-  implements TapeEntryStore, TapeTransactionRunner, TapeBootstrapStore, ToolSurfacePersistenceStore
+  implements
+    TapeEntryStore,
+    TapeTransactionRunner,
+    TapeBootstrapStore,
+    ToolSurfacePersistenceStore,
+    SkillMaterializationPersistenceStore
 {
   constructor(
     db: Database.Database,
@@ -684,7 +692,7 @@ export class DeepChatTapeEntriesTable
 
   protected appendInternal(
     input: DeepChatTapeAppendInput,
-    authorizedNamespace: 'execution' | 'contract' | 'tool-surface' | null
+    authorizedNamespace: 'execution' | 'contract' | 'tool-surface' | 'skill-materialized' | null
   ): DeepChatTapeEntryRow {
     if (authorizedNamespace !== 'execution' && isExecutionJournalReservedName(input.name)) {
       throw new Error(
@@ -696,6 +704,12 @@ export class DeepChatTapeEntriesTable
     }
     if (authorizedNamespace !== 'tool-surface' && isToolSurfaceTapeReservedName(input.name)) {
       throw new Error('The View Tool Surface namespace is reserved for its provenance writer.')
+    }
+    if (authorizedNamespace !== 'skill-materialized' && input.name === SKILL_MATERIALIZATION_NAME) {
+      throw new Error('skill/materialized is reserved for the strict materialization writer.')
+    }
+    if (authorizedNamespace !== 'skill-materialized' && input.kind === 'context') {
+      throw new Error('The context entry kind is reserved for the strict materialization writer.')
     }
     const append = this.db.transaction(() => {
       const provenanceKey = buildProvenanceKey(input)
@@ -781,6 +795,28 @@ export class DeepChatTapeEntriesTable
     })
 
     return append()
+  }
+
+  appendSkillMaterialization(input: {
+    sessionId: string
+    sourceId: string
+    provenanceKey: string
+    payload: import('@/tape/domain/skillMaterialization').TapeSkillMaterializationPayload
+    payloadHash: string
+  }): DeepChatTapeEntryRow {
+    return this.appendInternal(
+      {
+        sessionId: input.sessionId,
+        kind: 'context',
+        name: SKILL_MATERIALIZATION_NAME,
+        source: { type: 'runtime_event', id: input.sourceId, seq: 0 },
+        provenanceKey: input.provenanceKey,
+        payload: { ...input.payload },
+        meta: { payloadHash: input.payloadHash },
+        idempotent: true
+      },
+      'skill-materialized'
+    )
   }
 
   appendAnchor(input: TapeAnchorAppendInput): DeepChatTapeEntryRow {
@@ -886,16 +922,6 @@ export class DeepChatTapeEntriesTable
       .all(sessionId) as DeepChatTapeEntryRow[]
   }
 
-  getByEntryId(sessionId: string, entryId: number): DeepChatTapeEntryRow | undefined {
-    return this.db
-      .prepare(
-        `SELECT *
-         FROM deepchat_tape_entries
-         WHERE session_id = ? AND entry_id = ?`
-      )
-      .get(sessionId, entryId) as DeepChatTapeEntryRow | undefined
-  }
-
   getEventsBySource(
     sessionId: string,
     name: string,
@@ -936,6 +962,86 @@ export class DeepChatTapeEntriesTable
          ORDER BY source_seq ASC, entry_id ASC`
       )
       .all(sessionId, name, sourceType, sourceId) as DeepChatTapeEntryRow[]
+  }
+
+  getBySessionExcludingContext(sessionId: string): DeepChatTapeEntryRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ? AND kind != 'context'
+         ORDER BY entry_id ASC`
+      )
+      .all(sessionId) as DeepChatTapeEntryRow[]
+  }
+
+  getByEntryIds(sessionId: string, entryIds: readonly number[]): DeepChatTapeEntryRow[] {
+    const normalizedIds = [...new Set(entryIds)]
+      .filter((entryId) => Number.isSafeInteger(entryId) && entryId > 0)
+      .sort((left, right) => left - right)
+    if (normalizedIds.length === 0) return []
+
+    const rows: DeepChatTapeEntryRow[] = []
+    for (let offset = 0; offset < normalizedIds.length; offset += 500) {
+      const chunk = normalizedIds.slice(offset, offset + 500)
+      const placeholders = chunk.map(() => '?').join(', ')
+      rows.push(
+        ...(this.db
+          .prepare(
+            `SELECT * FROM deepchat_tape_entries
+             WHERE session_id = ? AND entry_id IN (${placeholders})
+             ORDER BY entry_id ASC`
+          )
+          .all(sessionId, ...chunk) as DeepChatTapeEntryRow[])
+      )
+    }
+    return rows
+  }
+
+  getViewManifestEventsByMessage(sessionId: string, messageId: string): DeepChatTapeEntryRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = 'view/assembled'
+           AND source_type = 'runtime_event'
+           AND source_id = ?
+         ORDER BY entry_id ASC`
+      )
+      .all(sessionId, messageId) as DeepChatTapeEntryRow[]
+  }
+
+  getByEntryId(sessionId: string, entryId: number): DeepChatTapeEntryRow | undefined {
+    return this.getByEntryIds(sessionId, [entryId])[0]
+  }
+
+  getMessageSourceEntries(sessionId: string, messageId: string): DeepChatTapeEntryRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND source_type = 'message'
+           AND source_id = ?
+           AND (kind = 'message' OR (kind = 'event' AND name = 'message/retracted'))
+         ORDER BY entry_id ASC`
+      )
+      .all(sessionId, messageId) as DeepChatTapeEntryRow[]
+  }
+
+  getBootstrapIncarnation(sessionId: string): string | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT meta_json FROM deepchat_tape_entries WHERE session_id = ? AND kind = 'anchor' AND name = 'session/start' ORDER BY entry_id ASC LIMIT 1"
+      )
+      .get(sessionId) as { meta_json: string } | undefined
+    if (!row) return undefined
+    const value = JSON.parse(row.meta_json) as Record<string, unknown>
+    return typeof value[TAPE_INCARNATION_META_KEY] === 'string'
+      ? value[TAPE_INCARNATION_META_KEY]
+      : undefined
   }
 
   getMaxEventSourceSeq(
@@ -1003,12 +1109,15 @@ export class DeepChatTapeEntriesTable
       .all(JSON.stringify(ids)) as DeepChatTapeEntryRow[]
   }
 
-  getBySessionUpToEntryId(sessionId: string, maxEntryId: number): DeepChatTapeEntryRow[] {
+  getBySessionUpToEntryIdExcludingContext(
+    sessionId: string,
+    maxEntryId: number
+  ): DeepChatTapeEntryRow[] {
     return this.db
       .prepare(
         `SELECT *
          FROM deepchat_tape_entries
-         WHERE session_id = ? AND entry_id <= ?
+         WHERE session_id = ? AND entry_id <= ? AND kind != 'context'
          ORDER BY entry_id ASC`
       )
       .all(sessionId, maxEntryId) as DeepChatTapeEntryRow[]
@@ -1174,6 +1283,17 @@ export class DeepChatTapeEntriesTable
     return row?.max_entry_id ?? 0
   }
 
+  getMaxEntryIdExcludingContext(sessionId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(entry_id) AS max_entry_id
+         FROM deepchat_tape_entries
+         WHERE session_id = ? AND kind != 'context'`
+      )
+      .get(sessionId) as { max_entry_id: number | null } | undefined
+    return row?.max_entry_id ?? 0
+  }
+
   getMaxEntryIdsBySessions(sessionIds: string[]): Map<string, number> {
     const ids = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))]
     const maxEntryIdBySession = new Map(ids.map((id) => [id, 0]))
@@ -1246,7 +1366,7 @@ export class DeepChatTapeEntriesTable
       ['payload_json', 'meta_json', 'name'],
       normalizedQuery
     )
-    const whereClauses = ['session_id = ?', queryPredicate.sql]
+    const whereClauses = ['session_id = ?', "kind != 'context'", queryPredicate.sql]
     const params: Array<string | number> = [sessionId, ...queryPredicate.params]
 
     if (options.kinds?.length) {
@@ -1294,7 +1414,7 @@ export class DeepChatTapeEntriesTable
       ['candidate.payload_json', 'candidate.meta_json', 'candidate.name'],
       normalizedQuery
     )
-    const whereClauses = [queryPredicate.sql]
+    const whereClauses = ["candidate.kind != 'context'", queryPredicate.sql]
     const params: Array<string | number> = [
       serializeDeepChatTapeReadSources(normalizedSources),
       ...queryPredicate.params

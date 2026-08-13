@@ -55,7 +55,7 @@ import {
   type CliControlLayout
 } from './descriptor'
 import { CliRequestError } from './errors'
-import { CLI_SURFACE_V1, CLI_SURFACE_V2 } from './surface'
+import { CLI_SURFACE_V2, CLI_SURFACE_V3 } from './surface'
 import type { CliSurfaceEntry } from './surface'
 import type { CliRuntimeStatus } from './routes'
 import type { ArtifactSpool } from './artifactSpool'
@@ -291,8 +291,8 @@ export class CliServer {
   private readonly platform: NodeJS.Platform
   private readonly pid: number
   private readonly log: Pick<Console, 'warn' | 'error'>
-  private readonly surfaceV1: ReadonlyMap<string, CliSurfaceEntry>
   private readonly surfaceV2: ReadonlyMap<string, CliSurfaceEntry>
+  private readonly surfaceV3: ReadonlyMap<string, CliSurfaceEntry>
   private readonly sockets = new Set<Socket>()
   private readonly connectionIds = new WeakMap<Socket, string>()
   private readonly pendingByConnection = new Map<string, number>()
@@ -311,8 +311,8 @@ export class CliServer {
     this.platform = dependencies.platform ?? process.platform
     this.pid = dependencies.pid ?? process.pid
     this.log = dependencies.log ?? console
-    this.surfaceV1 = new Map(dependencies.surface ?? CLI_SURFACE_V1)
-    this.surfaceV2 = new Map(CLI_SURFACE_V2)
+    this.surfaceV2 = new Map(dependencies.surface ?? CLI_SURFACE_V2)
+    this.surfaceV3 = new Map(CLI_SURFACE_V3)
   }
 
   getStatus(): CliRuntimeStatus {
@@ -721,11 +721,11 @@ export class CliServer {
     try {
       const surface =
         routeSurfaceVersion === LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION
-          ? this.surfaceV2
-          : this.surfaceV1
+          ? this.surfaceV3
+          : this.surfaceV2
       const unavailableMethodMessage =
         routeSurfaceVersion === LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION
-          ? 'Method is not exposed by CLI surface V1'
+          ? 'Method is not exposed by CLI surface V2'
           : 'Method is not exposed by the negotiated CLI surface'
       let rawRequest: unknown
       let transportBinding: LocalControlUploadBinding | undefined
@@ -1035,17 +1035,25 @@ export class CliServer {
     rawOutput: unknown,
     routeMethod: string
   ): JsonValue {
-    const parsedOutput = entry.contract.output.safeParse(rawOutput)
-    const parsedResult = parsedOutput.success
-      ? JsonValueSchema.safeParse(parsedOutput.data)
-      : { success: false as const }
-    if (!parsedOutput.success || !parsedResult.success) {
-      this.log.error('[CLI] Route returned invalid output', { method: routeMethod })
+    const fail = (stage: 'route' | 'json', error: z.ZodError): never => {
+      this.log.error('[CLI] Route returned invalid output', {
+        method: routeMethod,
+        stage,
+        issueCount: error.issues.length,
+        issueCodes: Array.from(new Set(error.issues.slice(0, 16).map((issue) => issue.code)))
+      })
       throw new CliRequestError('internal_error', 'Route returned an invalid result', {
         httpStatus: 500
       })
     }
-    return parsedResult.data as JsonValue
+
+    const parsedOutput = entry.contract.output.safeParse(rawOutput)
+    if (!parsedOutput.success) return fail('route', parsedOutput.error)
+
+    const parsedResult = JsonValueSchema.safeParse(parsedOutput.data)
+    if (!parsedResult.success) return fail('json', parsedResult.error)
+
+    return parsedResult.data
   }
 
   private async dispatchStreamResponse(
@@ -1183,7 +1191,7 @@ export class CliServer {
   ): Promise<void> {
     const rawId = request.url?.slice(LOCAL_CONTROL_ARTIFACT_PATH_PREFIX.length) ?? ''
     const parsedId = ArtifactIdSchema.safeParse(rawId)
-    const entry = this.surfaceV1.get(artifactsReadRoute.name)
+    const entry = this.surfaceV2.get(artifactsReadRoute.name)
     if (!parsedId.success || !entry || entry.transport !== 'download') {
       this.sendFailure(
         response,

@@ -104,9 +104,9 @@
 - [x] Commit all V1 work locally with behavior-specific messages.
 - [x] Do not push.
 
-## Programmatic Tool Extension V2
+## Programmatic Tool Extension V3
 
-- [x] Add version-negotiated `CLI_SURFACE_V2` as a strict immutable-V1 superset with Agent-only
+- [x] Add version-negotiated `CLI_SURFACE_V3` as a strict immutable-V2 superset with Agent-only
       `deepchat tool search|describe|call|batch` entries as the sole raw MCP exception.
 - [x] Add exact outer-operation tokens with route/adapter/capability/surface identity and separate
       RPC, child, batch, I/O, and time quotas.

@@ -4,6 +4,10 @@ import { buildCanonicalToolCatalog } from '@/agent/deepchat/runtime/toolSurface'
 import { buildToolSearchDefinition } from '@/tool/agentTools/toolSearchTool'
 import { buildExecutionContract } from '@/tape/domain/executionContract'
 import {
+  buildTapeSkillMaterializationRef,
+  hashSkillEffectiveContent
+} from '@/tape/domain/skillMaterialization'
+import {
   TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
   TAPE_TOOL_CATALOG_EVENT_NAME,
   TAPE_TOOL_SURFACE_EVENT_NAME,
@@ -15,7 +19,7 @@ import {
   type TapeToolSurfaceActiveEntry
 } from '@/tape/domain/toolSurfaceFacts'
 import { hashJsonData } from '@/tape/domain/canonicalJson'
-import { createTapeViewManifest } from '@/tape/domain/viewManifest'
+import { createTapeViewManifest, type TapeViewManifestBuildInput } from '@/tape/domain/viewManifest'
 import {
   ToolSurfaceProvenanceCorruptionError,
   ToolSurfaceProvenanceError
@@ -142,11 +146,15 @@ function createCommitInput(
     activeTools?: readonly MCPToolDefinition[]
     policyVersion?: string
     virtualizationTriggered?: boolean
+    messages?: TapeViewManifestBuildInput['messages']
+    latestEntryId?: number
+    tapeIncarnationId?: string
+    skillContexts?: TapeViewManifestBuildInput['skillContexts']
   } = {}
 ) {
   const eligibleTools = options.eligibleTools ?? [TOOL]
   const activeTools = options.activeTools ?? [TOOL]
-  const messages = [{ role: 'user' as const, content }]
+  const messages = options.messages ?? [{ role: 'user' as const, content }]
   const catalog = buildCanonicalToolCatalog(eligibleTools)
   const catalogEntries = catalog.entries.map(toCatalogEntry)
   const catalogByTarget = new Map(catalogEntries.map((entry) => [entry.stableTargetKey, entry]))
@@ -195,7 +203,7 @@ function createCommitInput(
     contextBuilderVersion: 'legacy-v1',
     messages,
     tools: activeTools,
-    latestEntryId: 0,
+    latestEntryId: options.latestEntryId ?? 0,
     anchorEntryIds: [],
     included: [],
     excluded: [],
@@ -213,6 +221,13 @@ function createCommitInput(
     supportsAudioInput: false,
     traceDebugEnabled: false,
     executionContract,
+    ...(options.skillContexts?.length
+      ? {
+          runId: RUN_ID,
+          tapeIncarnationId: options.tapeIncarnationId,
+          skillContexts: options.skillContexts
+        }
+      : {}),
     assembledAt: 200 + requestSeq
   })
   const surface = {
@@ -449,6 +464,117 @@ function appendToolSearchResult(table: ReturnType<typeof createTapeTableMock>['t
   }
 }
 
+function createSchema7CommitInput(
+  table: ReturnType<typeof createTapeTableMock>['table'],
+  service: ReturnType<typeof createTapeService>
+) {
+  table.ensureBootstrapAnchor(SESSION_ID)
+  const tapeIncarnationId = table.getBootstrapIncarnation(SESSION_ID)!
+  const skillName = 'runtime-skill'
+  const effectiveContent = '# Runtime Skill\n\nUse the frozen execution package.'
+  const responseText = JSON.stringify({
+    success: true,
+    name: skillName,
+    content: effectiveContent,
+    activatedForMessage: true,
+    activationScope: 'message',
+    activationEvidenceVersion: 1
+  })
+  const operation = {
+    runId: RUN_ID,
+    requestSeq: 1,
+    providerToolCallId: 'skill-call-1'
+  }
+  service.commitRunStarted({
+    sessionId: SESSION_ID,
+    runId: RUN_ID,
+    messageId: MESSAGE_ID,
+    runKind: 'loop'
+  })
+  service.commitDispatch({
+    sessionId: SESSION_ID,
+    messageId: MESSAGE_ID,
+    operation,
+    toolName: 'skill_view',
+    toolSource: 'agent',
+    normalizedArguments: { name: skillName },
+    target: { serverName: 'agent-skills', originalName: 'skill_view' }
+  })
+  const outcome = service.commitToolOutcome({
+    sessionId: SESSION_ID,
+    messageId: MESSAGE_ID,
+    operation,
+    responseText,
+    isError: false
+  })
+  const toolResult = service.appendSkillViewResultFact({
+    sessionId: SESSION_ID,
+    expectedTapeIncarnationId: tapeIncarnationId,
+    messageId: MESSAGE_ID,
+    orderSeq: 2,
+    blockIndex: 0,
+    toolCallId: operation.providerToolCallId,
+    toolName: 'skill_view',
+    responseText,
+    timestamp: 250,
+    operation,
+    outcomeEntryId: outcome.entryId,
+    identity: {
+      agentId: 'deepchat',
+      sourceType: 'builtin',
+      sourceId: 'builtin-skills',
+      skillName
+    }
+  })
+  const [materialization] = service.materializeSkillContexts([
+    {
+      sessionId: SESSION_ID,
+      expectedTapeIncarnationId: tapeIncarnationId,
+      agentId: 'deepchat',
+      sourceType: 'builtin',
+      sourceId: 'builtin-skills',
+      skillName,
+      effectiveContent,
+      builderVersion: 'skill-effective-content-v2',
+      renderedManifestHash: hashSkillEffectiveContent('manifest'),
+      scriptInventoryHash: hashSkillEffectiveContent('scripts'),
+      executionPackage: {
+        files: [],
+        executables: [],
+        runtimePolicy: { python: 'auto', node: 'auto' },
+        environmentBindingId: null
+      }
+    }
+  ])
+  const { sessionId: _sessionId, ...executionRef } =
+    buildTapeSkillMaterializationRef(materialization)
+  return createCommitInput(3, responseText, {
+    messages: [{ role: 'tool', content: responseText, tool_call_id: operation.providerToolCallId }],
+    latestEntryId: materialization.entryId,
+    tapeIncarnationId,
+    skillContexts: [
+      {
+        activationScope: 'runtime_view',
+        agentId: 'deepchat',
+        sourceType: 'builtin',
+        sourceId: 'builtin-skills',
+        skillName,
+        authoritativeRef: {
+          kind: 'tool_result',
+          entryId: toolResult.entryId,
+          contentHash: toolResult.contentHash
+        },
+        executionRef,
+        providerRole: 'tool',
+        sourceEntryIds: [],
+        projectedContentHash: toolResult.contentHash,
+        projectionVersion: 1,
+        deduplicationSource: 'runtime_view'
+      }
+    ]
+  })
+}
+
 describe('ToolSurfaceProvenanceService', () => {
   it('atomically commits one canonical manifest, catalog, and surface', () => {
     const { table, entries } = createTapeTableMock()
@@ -476,6 +602,38 @@ describe('ToolSurfaceProvenanceService', () => {
       catalogFactHash: receipt.catalog.catalogFactHash
     })
     expect(surfacePayload.data.manifestHash).toBe(input.manifest.hashes.manifestHash)
+  })
+
+  it('atomically commits a contract-bearing schema-v7 Skill and Tool Surface View', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createSchema7CommitInput(table, service)
+    const evidenceEntryCount = entries.length
+
+    expect(input.manifest).toMatchObject({ schemaVersion: 7, hashVersion: 5 })
+    const receipt = service.commitToolSurfaceView(input)
+
+    expect(entries.slice(evidenceEntryCount).map((entry) => entry.name)).toEqual([
+      'view/assembled',
+      TAPE_TOOL_CATALOG_EVENT_NAME,
+      TAPE_TOOL_SURFACE_EVENT_NAME
+    ])
+    expect(receipt.manifest.created).toBe(true)
+    expect(receipt.surface.created).toBe(true)
+    expect(JSON.parse(entries.at(-1)!.payload_json).data.contractBearing).toBe(true)
+  })
+
+  it('rolls back a schema-v7 ViewManifest when its Tool Surface transaction fails', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const input = createSchema7CommitInput(table, service)
+    const evidenceEntries = structuredClone(entries)
+    table.appendToolSurfaceEvent.mockImplementationOnce(() => {
+      throw new Error('catalog write failed')
+    })
+
+    expect(() => service.commitToolSurfaceView(input)).toThrow(ToolSurfaceProvenanceError)
+    expect(entries).toEqual(evidenceEntries)
   })
 
   it('atomically appends Programmatic provenance after the provider surface', () => {

@@ -26,6 +26,7 @@ function createMockSqlitePresenter() {
       updateMetadata: vi.fn(),
       updateContentAndStatus: vi.fn(),
       getBySession: vi.fn().mockReturnValue([]),
+      getPendingAssistantBySession: vi.fn().mockReturnValue([]),
       hasBySession: vi.fn().mockReturnValue(false),
       listPageBySession: vi.fn().mockReturnValue([]),
       getByStatus: vi.fn().mockReturnValue([]),
@@ -779,6 +780,27 @@ describe('SessionTranscript', () => {
         think: false
       })
       expect(sqlitePresenter.deepchatUserMessagesTable.get).toHaveBeenCalledWith('m1')
+    })
+  })
+
+  describe('getPendingAssistantMessages', () => {
+    it('materializes only the pending assistant rows selected by the table', () => {
+      sqlitePresenter.deepchatMessagesTable.getPendingAssistantBySession.mockReturnValue([
+        createMessageRow({ role: 'assistant', status: 'pending', content: '[]' })
+      ])
+
+      expect(store.getPendingAssistantMessages('s1')).toEqual([
+        expect.objectContaining({
+          id: 'm1',
+          sessionId: 's1',
+          role: 'assistant',
+          status: 'pending',
+          content: '[]'
+        })
+      ])
+      expect(
+        sqlitePresenter.deepchatMessagesTable.getPendingAssistantBySession
+      ).toHaveBeenCalledWith('s1')
     })
   })
 

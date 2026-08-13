@@ -1,6 +1,7 @@
 import type { ChatMessageRecord } from '@shared/types/agent-interface'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type {
+  DeepChatTapeSkillContext,
   DeepChatTapeViewManifest,
   DeepChatTapeViewManifestRecord
 } from '@shared/types/tape-view-manifest'
@@ -12,6 +13,17 @@ import type {
   TapeToolFactInput
 } from '../domain/facts'
 import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
+import type {
+  TapeSkillMaterializationInput,
+  TapeSkillMaterializationRef,
+  TapeSkillMaterializationReceipt
+} from '../domain/skillMaterialization'
+import type {
+  TapeRuntimeSkillViewContextReceipt,
+  TapeRuntimeSkillViewRecoveryInput,
+  TapeSkillViewResultFactInput,
+  TapeSkillViewResultFactReceipt
+} from '../domain/skillContext'
 import type {
   CommitExecutionDispatchInput,
   CommitExecutionRunStartedInput,
@@ -68,6 +80,42 @@ export interface TapeViewManifestReader {
     messageId: string,
     requestSeq: number
   ): DeepChatTapeViewManifestRecord[]
+}
+
+export interface TapeExecutionViewManifestReader {
+  getViewManifestByExecutionBinding(input: {
+    sessionId: string
+    runId: string
+    requestSeq: number
+  }): DeepChatTapeViewManifestRecord | null
+}
+
+export interface TapeSkillRequestAuthorityBinding {
+  readonly sessionId: string
+  readonly messageId: string
+  readonly runId: string
+  readonly requestSeq: number
+  readonly manifestHash: string
+  readonly tapeIncarnationId: string
+  readonly promptHash: string
+  readonly toolDefinitionsHash: string
+  readonly skillContexts: readonly DeepChatTapeSkillContext[]
+}
+
+export interface TapeSkillRequestAuthorityReader {
+  assertSkillRequestAuthority(input: TapeSkillRequestAuthorityBinding): void
+}
+
+export interface TapeRunViewManifestReader {
+  getLatestViewManifestByRunBinding(input: {
+    sessionId: string
+    messageId: string
+    runId: string
+  }): DeepChatTapeViewManifestRecord | null
+}
+
+export interface TapeEffectiveUserMessageSourceReader {
+  getEffectiveUserMessageSourceEntryId(sessionId: string, messageId: string): number | null
 }
 
 export interface TapeViewManifestWriter {
@@ -142,6 +190,30 @@ export interface TapeToolFactWriter {
   appendToolFact(input: TapeToolFactInput): Promise<TapeToolFactAppendReceipt>
 }
 
+export interface TapeIncarnationReader {
+  getTapeIncarnationId(sessionId: string): string
+}
+
+export interface TapeSkillViewResultFactWriter {
+  appendSkillViewResultFact(input: TapeSkillViewResultFactInput): TapeSkillViewResultFactReceipt
+}
+
+export interface TapeRuntimeSkillViewContextReader {
+  recoverRuntimeSkillViewContexts(
+    input: TapeRuntimeSkillViewRecoveryInput
+  ): TapeRuntimeSkillViewContextReceipt[]
+}
+
+export interface TapeSkillMaterializationWriter {
+  materializeSkillContexts(
+    inputs: readonly TapeSkillMaterializationInput[]
+  ): TapeSkillMaterializationReceipt[]
+}
+
+export interface TapeSkillMaterializationReader {
+  readSkillMaterialization(ref: TapeSkillMaterializationRef): TapeSkillMaterializationReceipt
+}
+
 export interface TapeProviderAttemptWriter {
   appendProviderAttempt(input: TapeProviderAttemptInput): void
 }
@@ -197,9 +269,14 @@ export interface DeepChatLoopTapePort
   extends
     TapeReconciliationPort,
     TapeViewManifestReader,
+    TapeExecutionViewManifestReader,
+    TapeSkillRequestAuthorityReader,
     TapeViewManifestWriter,
     TapeToolSurfaceViewWriter,
     TapeToolFactWriter,
+    TapeIncarnationReader,
+    TapeSkillViewResultFactWriter,
+    TapeRuntimeSkillViewContextReader,
     TapeProviderAttemptWriter,
     TapeProviderAttemptReader,
     ExecutionJournalWriter {}
@@ -213,7 +290,7 @@ export interface TapeMessageFactWriter {
   appendMessageRetraction(record: ChatMessageRecord, reason: string): number
 }
 
-export interface TapeRawEntryReader {
+export interface TapeNonContextEntryReader {
   getBySession(sessionId: string): DeepChatTapeEntryRow[]
 }
 

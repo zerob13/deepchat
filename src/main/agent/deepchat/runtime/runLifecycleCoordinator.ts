@@ -31,7 +31,7 @@ import { revokeToolSurfaceDeferredDispatchesForSession } from './toolSurface'
 import type { ProcessResult } from './types'
 import type { AgentCliTokenAuthority } from '@/cli/agentTokenAuthority'
 
-export type PendingInputWakeReason = 'enqueue' | 'completed'
+export type PendingInputWakeReason = 'enqueue' | 'completed' | 'manual'
 
 type RunLifecycleTranscript = Pick<
   SessionTranscript,

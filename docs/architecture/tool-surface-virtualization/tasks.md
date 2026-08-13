@@ -68,7 +68,7 @@
 - [x] Connect a default-off stable canary owner only to exact versioned model CLI capability
       evidence, without inferring from provider model metadata.
 - [x] Add Agent-only `deepchat tool search|describe|call|batch` routes.
-- [x] Add version-negotiated `CLI_SURFACE_V2` as a strict V1 superset and prove V1 cannot reach the
+- [x] Add version-negotiated `CLI_SURFACE_V3` as a strict V2 superset and prove V2 cannot reach the
       new routes.
 - [x] Mint exact outer-operation invocation tokens only for CLI Programmatic Runs.
 - [x] Construct the per-View capability without `providerToolCallId`, then derive an exact

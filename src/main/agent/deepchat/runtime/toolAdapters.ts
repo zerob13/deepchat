@@ -1,6 +1,7 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
 import type {
   ToolCatalogPort,
+  ToolCatalogRequest,
   ToolExecutionPort,
   ToolExecutionOptions,
   ToolExecutionPreCheckOptions,
@@ -34,17 +35,21 @@ type MainProcessToolExecutionService = Pick<ToolServicePort, 'preCheckToolPermis
 
 export function createToolCatalogPort<TProfile extends string>(input: {
   toolService: ToolServicePort
-  resolveContext(activeSkillNames?: string[]): Promise<{
+  resolveContext(request?: ToolCatalogRequest): Promise<{
     profile: TProfile
     fingerprint: string
     context: ToolDefinitionContext
     cached?: ToolCatalogCacheEntry<TProfile>
   }>
   commitCache(entry: ToolCatalogCacheEntry<TProfile>): void
+  onResolved?(input: {
+    context: ToolDefinitionContext
+    tools: MCPToolDefinition[]
+  }): void
 }): ToolCatalogPort {
   return {
     resolve: async (request) => {
-      const resolved = await input.resolveContext(request?.activeSkillNames)
+      const resolved = await input.resolveContext(request)
       if (
         resolved.cached?.profile === resolved.profile &&
         resolved.cached.fingerprint === resolved.fingerprint
@@ -53,6 +58,7 @@ export function createToolCatalogPort<TProfile extends string>(input: {
           chatMode: resolved.context.chatMode,
           agentWorkspacePath: resolved.context.agentWorkspacePath
         })
+        input.onResolved?.({ context: resolved.context, tools: resolved.cached.tools })
         return resolved.cached.tools
       }
 
@@ -62,6 +68,7 @@ export function createToolCatalogPort<TProfile extends string>(input: {
         fingerprint: resolved.fingerprint,
         tools
       })
+      input.onResolved?.({ context: resolved.context, tools })
       return tools
     }
   }

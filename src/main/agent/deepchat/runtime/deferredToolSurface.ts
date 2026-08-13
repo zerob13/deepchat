@@ -1,7 +1,10 @@
 import type { DeepChatExecutionContract } from '@shared/types/execution-contract'
 import type { ToolExecutionContract } from '@shared/types/core/mcp'
 import { canonicalJsonStringifyData } from '@/tape/domain/canonicalJson'
-import { verifyTapeViewManifestHash } from '@/tape/domain/viewManifest'
+import {
+  getTapeViewManifestExecutionContract,
+  verifyTapeViewManifestHash
+} from '@/tape/domain/viewManifest'
 import type {
   ExecutionJournalRecoveryReader,
   TapeToolSurfaceViewReader,
@@ -122,6 +125,7 @@ function recoverDurableToolSurface(
 
   const fact = surfaceRecords[0].fact
   const manifest = manifestRecords[0].manifest
+  const manifestExecutionContract = getTapeViewManifestExecutionContract(manifest)
   if (
     fact.contractBearing !== binding.contractBearing ||
     !sameRequest(fact.request, binding.request) ||
@@ -131,10 +135,15 @@ function recoverDurableToolSurface(
     manifest.sessionId !== binding.request.sessionId ||
     manifest.messageId !== binding.request.messageId ||
     manifest.requestSeq !== binding.request.requestSeq ||
-    (binding.contractBearing
-      ? manifest.schemaVersion !== 5 ||
-        !sameRequest(manifest.executionContract.request, binding.request)
-      : manifest.schemaVersion !== 4)
+    (manifest.schemaVersion !== 4 &&
+      manifest.schemaVersion !== 5 &&
+      manifest.schemaVersion !== 6 &&
+      manifest.schemaVersion !== 7) ||
+    Boolean(manifestExecutionContract) !== binding.contractBearing ||
+    ((manifest.schemaVersion === 6 || manifest.schemaVersion === 7) &&
+      manifest.runId !== binding.request.runId) ||
+    (manifestExecutionContract !== undefined &&
+      !sameRequest(manifestExecutionContract.request, binding.request))
   ) {
     throw new DeferredToolSurfaceError(
       'Paused tool dispatch durable Tool Surface View failed integrity validation.',

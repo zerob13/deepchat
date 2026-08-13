@@ -61,6 +61,7 @@ import { ExecutionJournalError, isExecutionJournalError } from '@/tape/domain/ex
 import type { InteractionParkingRegistry } from './interactionParkingRegistry'
 import type {
   ExecutionJournalRecoveryReader,
+  TapeExecutionViewManifestReader,
   TapeToolSurfaceViewReader,
   TapeViewManifestReader
 } from '@/tape/ports/capabilities'
@@ -120,7 +121,8 @@ export interface InteractionCoordinatorPorts {
     ExecutionJournalRecoveryReader,
     'hasAnyCommittedDispatchForMessageToolCall'
   >
-  viewManifests: Pick<TapeViewManifestReader, 'listViewManifestsByMessageRequest'>
+  viewManifests: Pick<TapeViewManifestReader, 'listViewManifestsByMessageRequest'> &
+    TapeExecutionViewManifestReader
   toolSurfaces: Pick<
     TapeToolSurfaceViewReader,
     'listToolSurfaceFactsByMessage' | 'listToolSurfaceFactsByMessageRequest'

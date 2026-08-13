@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, provide, reactive, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { WORKSPACE_EVENTS } from '@/events'
@@ -450,6 +450,10 @@ const setup = async (options: SetupOptions = {}) => {
     default: defineComponent({
       name: 'ChatInputBox',
       props: {
+        modelValue: {
+          type: String,
+          default: ''
+        },
         files: {
           type: Array,
           default: () => []
@@ -500,7 +504,7 @@ const setup = async (options: SetupOptions = {}) => {
         })
       },
       template:
-        '<div class="chat-input-box-stub" :data-agent-id="agentId"><slot name="toolbar" /></div>'
+        '<div class="chat-input-box-stub" :data-agent-id="agentId" :data-model-value="modelValue"><slot name="toolbar" /></div>'
     })
   }))
   vi.doMock('@/components/chat/ChatInputToolbar.vue', () => ({
@@ -777,6 +781,10 @@ async function expectSessionRestoreTransactionStopsAfter(
 }
 
 describe('ChatPage', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
   it('exposes trace diagnostics for messages with nested execution audit only', async () => {
     const assistant = {
       ...buildAssistantMessage([{ type: 'content', content: 'done', status: 'success' }]),
@@ -3700,5 +3708,19 @@ describe('ChatPage', () => {
     expect(scrollIntoView).not.toHaveBeenCalled()
     expect(spotlightStore.clearPendingMessageJump).toHaveBeenCalled()
     vi.useRealTimers()
+  })
+
+  it('persists the composer draft through a ChatPage unmount', async () => {
+    // ChatTabView keys ChatPage by sessionId, so switching conversations unmounts the page. The
+    // unmount flush must write the draft to storage so the next keyed mount of the same session
+    // (covered by the useComposerSubmit remount test) can restore it.
+    const first = await setup()
+    const firstInput = first.wrapper.findComponent({ name: 'ChatInputBox' })
+    firstInput.vm.$emit('update:modelValue', 'draft from previous page')
+    await flushPromises()
+    first.wrapper.unmount()
+
+    const stored = JSON.parse(localStorage.getItem('deepchat.composerDraft.v1.s1') ?? 'null')
+    expect(stored?.rawMessage).toBe('draft from previous page')
   })
 })

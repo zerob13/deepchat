@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import logger from '@shared/logger'
 import type { Agent } from '@shared/types/agent-interface'
-import type { SkillInstallOptions } from '@shared/types/skill'
+import { SKILL_NAME_MAX_LENGTH, type SkillInstallOptions } from '@shared/types/skill'
 import type { UnifiedSkillItem } from '@shared/types/skillManagement'
 import type { CanonicalSkill, ScanResult } from '@shared/types/skillSync'
 import {
@@ -159,6 +159,19 @@ describe('AgentSkillImportService', () => {
     expect(dependencies.skills.installImportedSkillForAgent).not.toHaveBeenCalled()
   })
 
+  it('rejects selections beyond the shared Skill name limit', async () => {
+    const skillName = `a${'b'.repeat(SKILL_NAME_MAX_LENGTH)}`
+
+    await expect(
+      service.execute({
+        targetAgentId: 'target',
+        source: { kind: 'internal', agentId: 'source' },
+        items: [{ skillName, strategy: 'skip' }]
+      })
+    ).rejects.toThrow('Invalid Skill name in import request')
+    expect(dependencies.skills.installImportedSkillForAgent).not.toHaveBeenCalled()
+  })
+
   it('materializes external references and scripts before installing the snapshot', async () => {
     const canonicalSkill: CanonicalSkill = {
       name: 'external-skill',
@@ -280,6 +293,36 @@ describe('AgentSkillImportService', () => {
       })
     ).resolves.toEqual({ success: true, imported: [], skipped: ['shared-skill'], failed: [] })
     expect(installImportedSkillForAgent).not.toHaveBeenCalled()
+  })
+
+  it('keeps generated copy names within the shared Skill name limit', async () => {
+    const skillName = `a${'b'.repeat(SKILL_NAME_MAX_LENGTH - 1)}`
+    const skillRoot = path.join(sourceRoot, 'long-skill')
+    await mkdir(skillRoot, { recursive: true })
+    await writeFile(
+      path.join(skillRoot, 'SKILL.md'),
+      `---\nname: ${skillName}\ndescription: Long\n---\n`,
+      'utf-8'
+    )
+    catalogs.set('source', [createCatalogItem(skillName, skillRoot)])
+    catalogs.set('target', [createCatalogItem(skillName, path.join(targetRoot, 'existing-skill'))])
+
+    await service.execute({
+      targetAgentId: 'target',
+      source: { kind: 'internal', agentId: 'source' },
+      items: [{ skillName, strategy: 'rename' }]
+    })
+
+    expect(installImportedSkillForAgent).toHaveBeenCalledWith(
+      'target',
+      expect.any(String),
+      expect.any(Object),
+      expect.objectContaining({
+        overwrite: false,
+        targetName: `${skillName.slice(0, SKILL_NAME_MAX_LENGTH - '-copy'.length)}-copy`
+      }),
+      'deferred'
+    )
   })
 
   it('marks symlinked internal Skill roots unavailable', async () => {

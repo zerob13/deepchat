@@ -101,7 +101,7 @@ export type CliSurfaceEntry = Readonly<{
     caller: Readonly<{ principal: LocalControlPrincipal }>
   ) => JsonValue
   agentInputAllowed?: (input: unknown) => boolean
-  /** Exact V2 operation grants are the sole authority for these Agent-only entries. */
+  /** Exact V3 operation grants are the sole authority for these Agent-only entries. */
   programmaticOnly?: true
   limits: CliRouteLimits
 }>
@@ -437,7 +437,7 @@ const mediaEntry = (contract: RouteContract): CliSurfaceEntry => ({
   }
 })
 
-const CLI_SURFACE_V1_ENTRIES = [
+const CLI_SURFACE_V2_ENTRIES = [
   {
     contract: modelsInvokeRoute,
     effect: 'compute',
@@ -985,7 +985,7 @@ const PROGRAMMATIC_TOOL_LIMITS = Object.freeze({
   timeoutMs: PROGRAMMATIC_TOOL_RPC_TIMEOUT_MS
 })
 
-const CLI_SURFACE_V2_PROGRAMMATIC_ENTRIES = [
+const CLI_SURFACE_V3_PROGRAMMATIC_ENTRIES = [
   {
     contract: toolSearchRoute,
     effect: 'read',
@@ -1072,17 +1072,17 @@ function createSurfaceRegistry(
   return registry
 }
 
-export const CLI_SURFACE_V1 = createSurfaceRegistry(CLI_SURFACE_V1_ENTRIES)
-export const CLI_SURFACE_V2 = createSurfaceRegistry([
-  ...CLI_SURFACE_V1_ENTRIES,
-  ...CLI_SURFACE_V2_PROGRAMMATIC_ENTRIES
+export const CLI_SURFACE_V2 = createSurfaceRegistry(CLI_SURFACE_V2_ENTRIES)
+export const CLI_SURFACE_V3 = createSurfaceRegistry([
+  ...CLI_SURFACE_V2_ENTRIES,
+  ...CLI_SURFACE_V3_PROGRAMMATIC_ENTRIES
 ])
 
 export function getCliSurfaceRegistry(
   surfaceVersion: LocalControlRouteSurfaceVersion
 ): ReadonlyMap<string, CliSurfaceEntry> {
-  if (surfaceVersion === LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION) return CLI_SURFACE_V1
-  if (surfaceVersion === LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION) return CLI_SURFACE_V2
+  if (surfaceVersion === LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION) return CLI_SURFACE_V2
+  if (surfaceVersion === LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION) return CLI_SURFACE_V3
   throw new Error(`Unsupported CLI route surface version: ${String(surfaceVersion)}`)
 }
 

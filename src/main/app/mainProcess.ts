@@ -1,6 +1,5 @@
 import { electronApp } from '@electron-toolkit/utils'
 import { app } from 'electron'
-import { setLoggingEnabled } from '@shared/logger'
 import { createSettingsStore } from '@/config/settingsStore'
 import { SecretStore } from '@/config/secretStore'
 import { DatabaseSecurityService } from './databaseSecurity'
@@ -20,6 +19,7 @@ import { migrateConfigStorage } from '@/config/migration'
 import { ProviderDatabase } from '@/provider/data/database'
 import { McpDatabase } from '@/mcp/data/database'
 import { AgentDatabase } from '@/agent/data/database'
+import { mainLogger, setMainLoggingEnabled } from '@/logging'
 
 export type { MainProcessControl } from './composition'
 
@@ -37,6 +37,7 @@ export async function startMainProcess(
   try {
     electronApp.setAppUserModelId('com.wefonk.deepchat')
     const settingsStore = createSettingsStore()
+    setMainLoggingEnabled(settingsStore.get<boolean>('loggingEnabled') ?? false)
     const secretStore = new SecretStore(settingsStore)
     const privacySettings = new PrivacySettings(settingsStore)
     const proxySettings = new ProxySettings(settingsStore)
@@ -60,7 +61,30 @@ export async function startMainProcess(
       safeStorageAvailable: databaseSecurityService.getStatus().safeStorageAvailable
     })
 
-    const databaseInitializer = new DatabaseInitializer({ password })
+    const databaseInitializer = new DatabaseInitializer({
+      password,
+      observe: (observation) => {
+        const context = {
+          ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs }),
+          repairAttempted: observation.repairAttempted,
+          schemaDiagnosis: observation.schemaDiagnosis,
+          repairableIssueCount: observation.repairableIssueCount,
+          manualIssueCount: observation.manualIssueCount
+        }
+        if (observation.outcome === 'failed') {
+          mainLogger.emit('database.initialization.terminal', {
+            ...context,
+            outcome: 'failed',
+            error: observation.error
+          })
+        } else {
+          mainLogger.emit('database.initialization.terminal', {
+            ...context,
+            outcome: 'completed'
+          })
+        }
+      }
+    })
     database = await databaseInitializer.initialize()
     await databaseInitializer.migrate()
     const settingsDatabase = new SettingsDatabase(database)
@@ -83,7 +107,6 @@ export async function startMainProcess(
     if (configMigration.appVersionChanged) {
       mcpSettings.onUpgrade(configMigration.previousAppVersion)
     }
-    setLoggingEnabled(settingsStore.get<boolean>('loggingEnabled') ?? false)
     proxyConfig.initFromConfig(proxySettings.getMode(), proxySettings.getCustomUrl())
     await registerProtocols(mcpAppSandboxRegistry)
 
@@ -116,7 +139,7 @@ export async function startMainProcess(
   } catch (error) {
     await splashWindow.close()
     if (mainProcess) {
-      await mainProcess.stop()
+      await mainProcess.stopForCleanup()
     } else {
       database?.close()
     }

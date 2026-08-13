@@ -36,7 +36,8 @@ import {
 } from '@/agent/deepchat/loop/deepChatLoopEngine'
 import {
   revokeActiveRequestToolSurface,
-  type LoopRunRequestToolSurfaceBinding
+  type LoopRunRequestToolSurfaceBinding,
+  type LoopRunRequestViewBinding
 } from '@/agent/deepchat/loop/loopRun'
 import { emitDeepChatLoopNotification } from '@/agent/deepchat/loop/notificationObserver'
 import type { OutputSink } from '@/agent/deepchat/loop/ports'
@@ -55,10 +56,6 @@ import {
   type ToolSurfaceDeferredDispatch
 } from '@/agent/deepchat/runtime/toolSurface'
 import { attachProgrammaticToolDeferredResumeCapability } from './programmaticToolSurface'
-import {
-  createOpaquePromptAssembly,
-  reconcilePromptAssembly
-} from '@/agent/deepchat/resources/promptAssembly'
 import { CommandShellProfileSchema } from '@shared/commandShell'
 
 const UNKNOWN_CONTEXT_LIMIT = Number.MAX_SAFE_INTEGER
@@ -114,6 +111,7 @@ type ToolRoundBatch = {
   nextAction: 'continue' | 'terminal'
   requestSeq: number
   executionContract: DeepChatExecutionContract | null
+  requestView?: LoopRunRequestViewBinding
   toolSurface: LoopRunRequestToolSurfaceBinding | null
 }
 type PendingToolSurfaceCandidateRelease = {
@@ -604,19 +602,6 @@ export function appendStreamingProviderPermissionBlock(
       params: toolArgs
     }
   }
-}
-
-function replaceLeadingSystemMessage(messages: ChatMessage[], systemPrompt: string): void {
-  if (!systemPrompt) {
-    return
-  }
-
-  if (messages[0]?.role === 'system') {
-    messages[0] = { ...messages[0], content: systemPrompt }
-    return
-  }
-
-  messages.unshift({ role: 'system', content: systemPrompt })
 }
 
 function commitCorrectedToolMessage(
@@ -1237,6 +1222,10 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
           }
           const executionContract = activeRequestContract?.executionContract ?? null
           const requestSeq = activeRequestContract?.requestSeq ?? run.requestSeq
+          const requestView = run.activeRequestView
+          if (requestView && requestView.requestSeq !== requestSeq) {
+            throw new Error('Provider response does not match its exact ViewManifest request.')
+          }
           const toolSurface = run.activeRequestToolSurface
           if (toolSurface && toolSurface.requestSeq !== requestSeq) {
             throw new Error('Provider response does not match the active Tool Surface request.')
@@ -1291,6 +1280,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 nextAction,
                 requestSeq,
                 executionContract,
+                ...(requestView ? { requestView } : {}),
                 toolSurface
               },
               requestedToolExecutionCount: 0
@@ -1314,6 +1304,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               nextAction: 'continue',
               requestSeq,
               executionContract,
+              ...(requestView ? { requestView } : {}),
               toolSurface
             },
             requestedToolExecutionCount: completedToolCalls.length
@@ -1352,6 +1343,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 runId: run.runId,
                 requestSeq: batch.requestSeq
               },
+              requestView: batch.requestView,
               commandShell: run.resources.commandShell,
               contextLength:
                 providerId === 'acp'
@@ -1447,6 +1439,20 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
             }
           }
 
+          if (executed.toolsChanged) {
+            if (controls?.prepareSkillActivation) {
+              currentTools = run.resources.toolDefinitions
+            } else {
+              const activeSkillNames = controls?.getActiveSkillNames?.()
+              run.resources.toolDefinitions = await toolCatalog.resolve({
+                activeSkillNames,
+                failClosed: true
+              })
+              run.resources.activeSkillNames = [...(activeSkillNames ?? [])]
+              currentTools = run.resources.toolDefinitions
+            }
+          }
+
           if (params.shouldYieldForPendingInput?.()) {
             return {
               type: 'halted',
@@ -1454,51 +1460,6 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
                 status: 'completed',
                 stopReason: 'pending_input',
                 usage: buildUsageSnapshot(state)
-              }
-            }
-          }
-
-          if (executed.toolsChanged) {
-            if (controls?.prepareSkillActivation) {
-              currentTools = run.resources.toolDefinitions
-            } else {
-              const activeSkillNames = controls?.getActiveSkillNames?.()
-              run.resources.activeSkillNames = [...(activeSkillNames ?? [])]
-              try {
-                run.resources.toolDefinitions = await toolCatalog.resolve({ activeSkillNames })
-                currentTools = run.resources.toolDefinitions
-              } catch (error) {
-                console.warn(
-                  '[ProcessStream] failed to refresh tools after skill activation:',
-                  error
-                )
-              }
-              if (params.refreshSystemPrompt) {
-                try {
-                  const refreshedSystemPrompt = await params.refreshSystemPrompt(
-                    activeSkillNames,
-                    currentTools
-                  )
-                  const refreshedAssembly =
-                    typeof refreshedSystemPrompt === 'string'
-                      ? createOpaquePromptAssembly(refreshedSystemPrompt)
-                      : refreshedSystemPrompt
-                  replaceLeadingSystemMessage(conversationMessages, refreshedAssembly.prompt)
-                  const effectiveSystemPrompt =
-                    conversationMessages[0]?.role === 'system' &&
-                    typeof conversationMessages[0].content === 'string'
-                      ? conversationMessages[0].content
-                      : ''
-                  run.resources.promptAssembly = reconcilePromptAssembly(
-                    refreshedAssembly,
-                    effectiveSystemPrompt
-                  )
-                } catch (error) {
-                  console.warn(
-                    '[ProcessStream] failed to refresh system prompt after skill activation:',
-                    error
-                  )
-                }
               }
             }
           }

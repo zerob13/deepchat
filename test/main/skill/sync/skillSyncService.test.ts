@@ -12,7 +12,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { SkillSyncService } from '../../../../src/main/skill/sync'
 import { ConflictStrategy } from '../../../../src/shared/types/skillSync'
-import type { SkillServicePort } from '@shared/types/skill'
+import { SKILL_NAME_MAX_LENGTH, type SkillServicePort } from '@shared/types/skill'
 import type {
   ExternalToolConfig,
   ImportPreview,
@@ -907,6 +907,41 @@ describe('SkillSyncService', () => {
         })
       )
     })
+
+    it('keeps renamed imports within the shared Skill name limit', async () => {
+      const { isValidConflictStrategy } = await import('../../../../src/main/skill/sync/security')
+      const { formatConverter } = await import('../../../../src/main/skill/sync/formatConverter')
+      const skillName = `a${'b'.repeat(SKILL_NAME_MAX_LENGTH - 1)}`
+      vi.mocked(isValidConflictStrategy).mockReturnValue(true)
+      vi.mocked(formatConverter.serializeToSkillMd).mockReturnValue('# Content')
+      vi.mocked(fs.promises.mkdir).mockResolvedValue(undefined)
+      vi.mocked(fs.promises.writeFile).mockResolvedValue(undefined)
+      vi.mocked(fs.promises.rm).mockResolvedValue(undefined)
+      vi.mocked(mockSkillService.getMetadataList).mockResolvedValue([{ name: skillName }] as any)
+      const previews: ImportPreview[] = [
+        {
+          skill: { name: skillName, description: 'Test', instructions: 'Do something' },
+          source: {
+            name: skillName,
+            path: '/path',
+            format: 'claude-code',
+            lastModified: new Date()
+          },
+          conflict: { existingSkillName: skillName, strategy: ConflictStrategy.RENAME },
+          warnings: []
+        }
+      ]
+
+      const result = await presenter.executeImport(previews, {
+        [skillName]: ConflictStrategy.RENAME
+      })
+
+      expect(result.imported).toBe(1)
+      expect(previews[0].skill.name).toHaveLength(SKILL_NAME_MAX_LENGTH)
+      expect(previews[0].skill.name).toBe(
+        `${skillName.slice(0, SKILL_NAME_MAX_LENGTH - '-1'.length)}-1`
+      )
+    })
   })
 
   // ============================================================================
@@ -968,6 +1003,46 @@ describe('SkillSyncService', () => {
 
       expect(result).toHaveLength(1)
       expect(result[0].warnings).toContain('Tool restrictions will be lost')
+    })
+
+    it('reports runtime support incompatibility instead of treating the Skill as missing', async () => {
+      const { isValidToolId } = await import('../../../../src/main/skill/sync/security')
+      const { toolScanner } = await import('../../../../src/main/skill/sync/toolScanner')
+      const { formatConverter } = await import('../../../../src/main/skill/sync/formatConverter')
+      vi.mocked(isValidToolId).mockReturnValue(true)
+      vi.mocked(toolScanner.getTool).mockReturnValue(
+        createFolderTool({
+          id: 'claude-code',
+          name: 'Claude Code',
+          format: 'claude-code',
+          skillsDir: '/external/skills/',
+          isProjectLevel: false
+        })
+      )
+      vi.mocked(mockSkillService.getMetadataList).mockResolvedValue([
+        { name: 'docx', path: '/local/docx/SKILL.md', skillRoot: '/local/docx' }
+      ] as any)
+      vi.mocked(fs.promises.readFile).mockResolvedValue(
+        '---\nname: docx\ndescription: Documents\nexecutionSupportPaths:\n  - ooxml\n---\n# Docx'
+      )
+      vi.mocked(formatConverter.parseExternal).mockRejectedValueOnce(
+        new Error(
+          'Skills with executionSupportPaths cannot be converted until Skill Sync preserves their support files'
+        )
+      )
+
+      const [preview] = await presenter.previewExport(['docx'], 'claude-code')
+
+      expect(preview.targetPath).toBe('')
+      expect(preview.convertedContent).toBe('')
+      expect(preview.warnings).toEqual([
+        expect.stringContaining(
+          'Export error: Failed to load Skill "docx" for export: Skills with executionSupportPaths'
+        )
+      ])
+      const result = await presenter.executeExport([preview], {})
+      expect(result.exported).toBe(0)
+      expect(fs.promises.writeFile).not.toHaveBeenCalled()
     })
   })
 
@@ -1416,6 +1491,58 @@ describe('SkillSyncService', () => {
           agentPath: '/home/user/.codex/skills/agent-only',
           targetPath: '/home/user/.deepchat/skills/agent-only-codex'
         })
+      )
+    })
+
+    it('keeps conflict adoption targets within the shared Skill name limit', async () => {
+      const { toolScanner } = await import('../../../../src/main/skill/sync/toolScanner')
+      const skillName = `a${'b'.repeat(SKILL_NAME_MAX_LENGTH - 1)}`
+      vi.mocked(toolScanner.getTool).mockReturnValue(createFolderTool())
+      vi.mocked(toolScanner.scanTool).mockResolvedValue({
+        toolId: 'codex',
+        toolName: 'OpenAI Codex',
+        available: true,
+        skillsDir: '/home/user/.codex/skills',
+        skills: [
+          {
+            name: skillName,
+            path: `/home/user/.codex/skills/${skillName}`,
+            format: 'codex',
+            lastModified: new Date()
+          }
+        ]
+      })
+      vi.mocked(mockSkillService.getUnifiedSkillCatalog).mockResolvedValue([
+        {
+          name: skillName,
+          description: 'Existing DeepChat skill',
+          path: `/home/user/.deepchat/skills/${skillName}/SKILL.md`,
+          skillRoot: `/home/user/.deepchat/skills/${skillName}`,
+          canonicalPath: `/home/user/.deepchat/skills/${skillName}`,
+          sourceType: 'created',
+          deepchatDisabled: false,
+          agentLinks: {},
+          mutable: true
+        }
+      ] as any)
+      vi.mocked(fs.promises.readdir).mockResolvedValue([
+        createDirent(skillName, { directory: true })
+      ] as any)
+      vi.mocked(fs.promises.readFile).mockResolvedValue(
+        `---\nname: ${skillName}\ndescription: Agent skill\n---\n# Agent`
+      )
+      vi.mocked(fs.promises.access).mockRejectedValue(
+        Object.assign(new Error('missing'), { code: 'ENOENT' })
+      )
+
+      const preview = await presenter.previewAdoptAgentSkill({
+        agentId: 'codex',
+        skillName
+      })
+
+      expect(preview.targetName).toHaveLength(SKILL_NAME_MAX_LENGTH)
+      expect(preview.targetName).toBe(
+        `${skillName.slice(0, SKILL_NAME_MAX_LENGTH - '-codex'.length)}-codex`
       )
     })
 

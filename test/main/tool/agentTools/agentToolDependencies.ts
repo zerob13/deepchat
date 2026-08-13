@@ -83,6 +83,12 @@ export const createAgentToolDependencies = (
         scriptOverrides: {}
       })
     } as any),
+  skillExecutionAuthority:
+    overrides.skillExecutionAuthority ??
+    ({
+      resolve: vi.fn(),
+      assertCurrent: vi.fn()
+    } as any),
   browser:
     overrides.browser ??
     ({

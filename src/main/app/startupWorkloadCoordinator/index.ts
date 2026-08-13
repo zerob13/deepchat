@@ -35,6 +35,19 @@ type StartupWorkloadTaskOptions<T> = {
   run: (context: StartupWorkloadTaskContext) => Promise<T>
 }
 
+export function isStartupWorkloadCancellation(error: unknown): boolean {
+  try {
+    return Boolean(
+      error &&
+      typeof error === 'object' &&
+      'name' in error &&
+      (error as { name?: string }).name === 'AbortError'
+    )
+  } catch {
+    return false
+  }
+}
+
 type StartupWorkloadRunState = {
   runId: string
   visibleTasks: Map<StartupWorkloadTaskId, StartupTaskRecord<unknown>>
@@ -332,7 +345,7 @@ export class StartupWorkloadCoordinator {
       task.resolve(result)
       this.finishTask(task, 'completed')
     } catch (error) {
-      if (task.controller.signal.aborted || this.isAbortError(error)) {
+      if (task.controller.signal.aborted || isStartupWorkloadCancellation(error)) {
         task.reject(this.createAbortError(task.id))
         this.finishTask(task, 'cancelled')
         return
@@ -420,15 +433,23 @@ export class StartupWorkloadCoordinator {
     error.name = 'AbortError'
     return error
   }
+}
 
-  private isAbortError(error: unknown): boolean {
-    return Boolean(
-      error &&
-      typeof error === 'object' &&
-      'name' in error &&
-      (error as { name?: string }).name === 'AbortError'
-    )
-  }
+export function scheduleObservedStartupTask<T>(options: {
+  coordinator: Pick<StartupWorkloadCoordinator, 'scheduleTask'>
+  startupRunId: string
+  task: Omit<StartupWorkloadTaskOptions<T>, 'runId'>
+  onFailure: (startupRunId: string, error: unknown) => void
+}): void {
+  const { coordinator, startupRunId, task, onFailure } = options
+  void coordinator.scheduleTask({ ...task, runId: startupRunId }).catch((error) => {
+    if (isStartupWorkloadCancellation(error)) return
+    try {
+      onFailure(startupRunId, error)
+    } catch {
+      // Diagnostic observers must not create another unhandled startup rejection.
+    }
+  })
 }
 
 export type { StartupWorkloadTaskOptions, StartupWorkloadTaskContext }

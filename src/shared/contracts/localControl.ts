@@ -2,11 +2,11 @@ import { z } from 'zod'
 import { JsonValueSchema, TimestampMsSchema, type JsonValue } from './json'
 
 export const LOCAL_CONTROL_PROTOCOL_VERSION = 1 as const
-// Kept immutable for the V1 descriptor and wire envelopes. Authenticated route-surface
-// negotiation is separate so legacy clients continue to parse this strict shape.
-export const LOCAL_CONTROL_SURFACE_VERSION = 1 as const
+export const LOCAL_CONTROL_SURFACE_VERSION = 2 as const
 export const LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION = LOCAL_CONTROL_SURFACE_VERSION
-export const LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION = 2 as const
+// Authenticated Programmatic grants negotiate a strict superset without advertising that route
+// surface in the public descriptor or accepting it from the wire envelope.
+export const LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION = 3 as const
 export const LOCAL_CONTROL_ROUTE_SURFACE_VERSIONS = [
   LOCAL_CONTROL_PUBLIC_ROUTE_SURFACE_VERSION,
   LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION

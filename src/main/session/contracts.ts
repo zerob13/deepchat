@@ -250,6 +250,9 @@ export type SessionTurnRuntimeSession =
         getState(): Promise<SessionCompactionState>
         compact(): Promise<{ compacted: boolean; state: SessionCompactionState }>
       }
+      isPendingQueueResumeAvailable(): Promise<boolean>
+      resumePendingQueue(): Promise<boolean>
+      retryPendingQueueInput(itemId: string): Promise<{ accepted: boolean; started: boolean }>
     })
   | (SessionTurnRuntimeBase & { readonly kind: 'acp' })
 
@@ -298,6 +301,12 @@ export interface SessionTurnPort {
     options?: { signal?: AbortSignal }
   ): Promise<MessageStartResult>
   listPendingInputs(sessionId: string): Promise<PendingSessionInputRecord[]>
+  isPendingQueueResumeAvailable(sessionId: string): Promise<boolean>
+  resumePendingQueue(sessionId: string): Promise<boolean>
+  retryPendingQueueInput(
+    sessionId: string,
+    itemId: string
+  ): Promise<{ accepted: boolean; started: boolean }>
   queuePendingInput(
     sessionId: string,
     content: string | SendMessageInput
@@ -637,6 +646,7 @@ export interface SessionLifecyclePermissionPort {
 
 export interface SessionDeletionSkillPort {
   clearNewAgentSessionSkills(sessionId: string): Promise<void>
+  completeNewAgentSessionSkillsDeletion(sessionId: string): void
 }
 
 export type SessionAssignmentAcpControlPort = AcpAsLlmProviderSessionControlPort

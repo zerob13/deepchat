@@ -128,10 +128,10 @@ Conventional Commit subject of at most 50 characters.
 
 ## Programmatic Tool Extension Plan
 
-This work follows completed V1 and does not reopen its checkboxes or generic route surface.
+This work follows completed V2 and does not reopen its checkboxes or generic route surface.
 
-1. Add version-negotiated `CLI_SURFACE_V2` as a strict immutable-V1 superset with four Agent-only tool
-   commands; keep V1, human, ACP, and generic raw MCP invocation denied from those routes.
+1. Add version-negotiated `CLI_SURFACE_V3` as a strict immutable-V2 superset with four Agent-only tool
+   commands; keep V2, human, ACP, and generic raw MCP invocation denied from those routes.
 2. Build the immutable per-View `ProgrammaticToolCapabilityV1` without a future provider call ID,
    then accept only a derived exact outer-operation grant/token; enforce surface version, route,
    canonical invocation hash, adapter, identity, hashes, expiry, child/batch/I/O/time quotas, and no

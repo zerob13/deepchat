@@ -40,7 +40,7 @@ import type {
 } from '@shared/types/skillSync'
 import { ConflictStrategy } from '@shared/types/skillSync'
 import type { AgentLinkInfo, UnifiedSkillItem } from '@shared/types/skillManagement'
-import type { SkillServicePort } from '@shared/types/skill'
+import { SKILL_NAME_MAX_LENGTH, type SkillServicePort } from '@shared/types/skill'
 import type { SkillSettingsPort } from '../settings'
 import { toolScanner, resolveSkillsDir } from './toolScanner'
 import { formatConverter } from './formatConverter'
@@ -847,14 +847,15 @@ export class SkillSyncService implements SkillSyncServicePort {
     const hasConflict =
       deepchatNames.has(defaultTargetName) ||
       (await this.pathExists(path.join(skillsDir, defaultTargetName)))
+    const adoptionSuffix = `-${input.agentId}`
+    const adoptionTargetBase = `${defaultTargetName.slice(
+      0,
+      SKILL_NAME_MAX_LENGTH - adoptionSuffix.length
+    )}${adoptionSuffix}`
     const targetName =
       input.targetName ??
       (hasConflict
-        ? await this.generateAdoptionTargetName(
-            `${defaultTargetName}-${input.agentId}`,
-            skillsDir,
-            deepchatNames
-          )
+        ? await this.generateAdoptionTargetName(adoptionTargetBase, skillsDir, deepchatNames)
         : defaultTargetName)
 
     this.assertValidDeepChatSkillName(targetName)
@@ -1256,7 +1257,12 @@ export class SkillSyncService implements SkillSyncServicePort {
   }
 
   private assertValidDeepChatSkillName(name: string): void {
-    if (!SKILL_NAME_PATTERN.test(name) || name.includes('/') || name.includes('\\')) {
+    if (
+      name.length > SKILL_NAME_MAX_LENGTH ||
+      !SKILL_NAME_PATTERN.test(name) ||
+      name.includes('/') ||
+      name.includes('\\')
+    ) {
       throw new Error(`Invalid skill name: ${name}`)
     }
   }
@@ -1266,14 +1272,16 @@ export class SkillSyncService implements SkillSyncServicePort {
     skillsDir: string,
     existingNames: Set<string>
   ): Promise<string> {
-    this.assertValidDeepChatSkillName(baseName)
-    let candidate = baseName
+    const boundedBaseName = baseName.slice(0, SKILL_NAME_MAX_LENGTH)
+    this.assertValidDeepChatSkillName(boundedBaseName)
+    let candidate = boundedBaseName
     let counter = 2
     while (
       existingNames.has(candidate) ||
       (await this.pathExists(path.join(skillsDir, candidate)))
     ) {
-      candidate = `${baseName}-${counter}`
+      const suffix = `-${counter}`
+      candidate = `${boundedBaseName.slice(0, SKILL_NAME_MAX_LENGTH - suffix.length)}${suffix}`
       counter += 1
     }
     return candidate
@@ -1829,14 +1837,17 @@ export class SkillSyncService implements SkillSyncServicePort {
     try {
       const fileContent = await fs.promises.readFile(skillFilePath, 'utf-8')
       logger.info(`[SkillSync] Read skill file, length: ${fileContent.length}`)
-      return formatConverter.parseExternal(
+      return await formatConverter.parseExternal(
         fileContent,
         { toolId: 'claude-code', filePath: skillFilePath, folderPath },
         { includeSubfolders: true }
       )
     } catch (error) {
       console.error(`[SkillSync] Failed to read/parse skill file:`, error)
-      return null
+      throw new Error(
+        `Failed to load Skill "${skillName}" for export: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      )
     }
   }
 
@@ -1891,10 +1902,12 @@ export class SkillSyncService implements SkillSyncServicePort {
     const existingNames = new Set(metadata.map((s) => s.name))
 
     let counter = 1
-    let newName = `${baseName}-${counter}`
+    let suffix = `-${counter}`
+    let newName = `${baseName.slice(0, SKILL_NAME_MAX_LENGTH - suffix.length)}${suffix}`
     while (existingNames.has(newName)) {
       counter++
-      newName = `${baseName}-${counter}`
+      suffix = `-${counter}`
+      newName = `${baseName.slice(0, SKILL_NAME_MAX_LENGTH - suffix.length)}${suffix}`
     }
 
     return newName

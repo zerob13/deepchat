@@ -483,6 +483,9 @@ function createRuntime() {
       }
     }),
     listPendingInputs: vi.fn().mockResolvedValue([]),
+    isPendingQueueResumeAvailable: vi.fn().mockResolvedValue(false),
+    resumePendingQueue: vi.fn().mockResolvedValue(false),
+    retryPendingQueueInput: vi.fn().mockResolvedValue({ accepted: false, started: false }),
     queuePendingInput: vi.fn().mockResolvedValue({}),
     updateQueuedInput: vi.fn().mockResolvedValue({}),
     moveQueuedInput: vi.fn().mockResolvedValue([]),
@@ -1021,7 +1024,8 @@ function createRuntime() {
       environments: [],
       archivedEnvironments: [],
       removedEnvironments: [],
-      defaultProjectPath: null
+      defaultProjectPath: null,
+      defaultChatWorkspacePath: null
     }),
     getRecentProjects: vi.fn().mockResolvedValue([
       {
@@ -1047,12 +1051,15 @@ function createRuntime() {
       }
     ]),
     reorderEnvironments: vi.fn().mockResolvedValue(undefined),
-    archiveEnvironment: vi.fn().mockResolvedValue(undefined),
+    archiveEnvironment: vi.fn().mockResolvedValue(1),
     restoreEnvironment: vi.fn().mockResolvedValue(undefined),
     removeEnvironment: vi.fn().mockResolvedValue({ clearedSessionIds: ['session-1'] }),
     openDirectory: vi.fn().mockResolvedValue(undefined),
     pathExists: vi.fn().mockResolvedValue(true),
-    selectDirectory: vi.fn().mockResolvedValue('C:/selected-workspace')
+    selectDirectory: vi.fn().mockResolvedValue({
+      path: 'C:/selected-workspace',
+      version: 1
+    })
   }
 
   const fileService = {
@@ -1230,7 +1237,9 @@ function createRuntime() {
     })
   } as unknown as IConversationExporter
   const skillService = {
-    readSkillFileForAgent: vi.fn().mockResolvedValue('---\nname: write-tests\n---\nUse tests well')
+    readSkillFileForAgent: vi.fn().mockResolvedValue('---\nname: write-tests\n---\nUse tests well'),
+    setActiveSkills: vi.fn().mockResolvedValue(['write-tests']),
+    removeActiveSkill: vi.fn().mockResolvedValue([])
   } as unknown as SkillServicePort
 
   const workspaceService = {
@@ -1576,12 +1585,14 @@ function createRuntime() {
   })
   const toolRoutes = createToolRoutes(toolService)
   const pluginRoutes = createPluginRoutes(pluginService)
+  const assertSessionActiveSkillsMutable = vi.fn().mockResolvedValue(undefined)
   const skillRoutes = createSkillRoutes({
     skillService,
     skillSyncService,
     skillSettings,
     agentSettings: providerSettings as any,
     ensureInitialized: vi.fn().mockResolvedValue(undefined),
+    assertSessionActiveSkillsMutable,
     recordSettingsActivity: (input) => sqlitePresenter.recordSettingsActivity(input)
   })
   const mcpRoutes = createMcpRoutes({
@@ -1838,6 +1849,7 @@ function createRuntime() {
     memoryService,
     skillService,
     skillSyncService,
+    assertSessionActiveSkillsMutable,
     exporter,
     oauthService,
     mcpService,
@@ -1867,6 +1879,62 @@ function createRuntime() {
 }
 
 describe('dispatchDeepchatRoute', () => {
+  it('does not change Session Skills while an execution is active', async () => {
+    const { runtime, skillService, assertSessionActiveSkillsMutable } = createRuntime()
+    const context = createRendererRouteContext(42, 7)
+    assertSessionActiveSkillsMutable.mockRejectedValueOnce(
+      new Error('Cannot change Session Skills while the session is generating.')
+    )
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'skills.setActive',
+        { conversationId: 'session-1', skills: ['write-tests'] },
+        context
+      )
+    ).rejects.toThrow('Cannot change Session Skills while the session is generating.')
+
+    expect(assertSessionActiveSkillsMutable).toHaveBeenCalledWith('session-1')
+    expect(skillService.setActiveSkills).not.toHaveBeenCalled()
+  })
+
+  it('changes Session Skills only after the execution-state guard passes', async () => {
+    const { runtime, skillService, assertSessionActiveSkillsMutable } = createRuntime()
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'skills.setActive',
+        { conversationId: 'session-1', skills: ['write-tests'] },
+        createRendererRouteContext(42, 7)
+      )
+    ).resolves.toEqual({ skills: ['write-tests'] })
+
+    expect(assertSessionActiveSkillsMutable).toHaveBeenCalledWith('session-1')
+    expect(skillService.setActiveSkills).toHaveBeenCalledWith('session-1', ['write-tests'])
+    expect(assertSessionActiveSkillsMutable.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(skillService.setActiveSkills).mock.invocationCallOrder[0]
+    )
+  })
+
+  it('removes one Session Skill without replacing concurrently added state', async () => {
+    const { runtime, skillService, assertSessionActiveSkillsMutable } = createRuntime()
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'skills.removeActive',
+        { conversationId: 'session-1', skill: 'write-tests' },
+        createRendererRouteContext(42, 7)
+      )
+    ).resolves.toEqual({ skills: [] })
+
+    expect(assertSessionActiveSkillsMutable).toHaveBeenCalledWith('session-1')
+    expect(skillService.removeActiveSkill).toHaveBeenCalledWith('session-1', 'write-tests')
+    expect(skillService.setActiveSkills).not.toHaveBeenCalled()
+  })
+
   it('routes database imports through the App maintenance owner', async () => {
     const { runtime, appDatabaseMaintenance } = createRuntime()
     const context = createRendererRouteContext(42, 7)
@@ -4394,6 +4462,15 @@ describe('dispatchDeepchatRoute', () => {
       })
     })
 
+    const pendingResult = await dispatchDeepchatRoute(
+      runtime,
+      'sessions.listPendingInputs',
+      { sessionId: 'session-1' },
+      createRendererRouteContext(88, 3)
+    )
+    expect(pendingResult).toEqual({ items: [], resumeAvailable: false })
+    expect(sessionTurnPort.isPendingQueueResumeAvailable).toHaveBeenCalledWith('session-1')
+
     await dispatchDeepchatRoute(
       runtime,
       'chat.sendMessage',
@@ -4622,6 +4699,39 @@ describe('dispatchDeepchatRoute', () => {
         createRendererRouteContext(88, 3)
       )
     ).resolves.toEqual({ cancelled: false })
+  })
+
+  it('dispatches pending Queue resume requests', async () => {
+    const { runtime, sessionTurnPort } = createRuntime()
+    sessionTurnPort.resumePendingQueue.mockResolvedValueOnce(true)
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'sessions.resumePendingQueue',
+        { sessionId: 'session-1' },
+        createRendererRouteContext(88, 3)
+      )
+    ).resolves.toEqual({ started: true })
+    expect(sessionTurnPort.resumePendingQueue).toHaveBeenCalledWith('session-1')
+  })
+
+  it('dispatches an item-scoped pending Queue retry request', async () => {
+    const { runtime, sessionTurnPort } = createRuntime()
+    sessionTurnPort.retryPendingQueueInput.mockResolvedValueOnce({
+      accepted: true,
+      started: false
+    })
+
+    await expect(
+      dispatchDeepchatRoute(
+        runtime,
+        'sessions.retryPendingQueueInput',
+        { sessionId: 'session-1', itemId: 'pending-1' },
+        createRendererRouteContext(88, 3)
+      )
+    ).resolves.toEqual({ accepted: true, started: false })
+    expect(sessionTurnPort.retryPendingQueueInput).toHaveBeenCalledWith('session-1', 'pending-1')
   })
 
   it('dispatches session generation settings routes without dropping timeout', async () => {
@@ -5590,7 +5700,7 @@ describe('dispatchDeepchatRoute', () => {
     expect(projectPresenter.reorderEnvironments).toHaveBeenCalledWith(['C:/workspace', 'C:/other'])
     expect(reorderEnvironmentsResult).toEqual({ updated: true })
     expect(projectPresenter.archiveEnvironment).toHaveBeenCalledWith('C:/workspace')
-    expect(archiveEnvironmentResult).toEqual({ updated: true })
+    expect(archiveEnvironmentResult).toEqual({ updated: true, version: 1 })
     expect(projectPresenter.restoreEnvironment).toHaveBeenCalledWith('C:/workspace')
     expect(restoreEnvironmentResult).toEqual({ updated: true })
     expect(projectPresenter.removeEnvironment).toHaveBeenCalledWith('C:/workspace')
@@ -5599,7 +5709,7 @@ describe('dispatchDeepchatRoute', () => {
     expect(openDirectoryResult).toEqual({ opened: true })
     expect(projectPresenter.pathExists).toHaveBeenCalledWith('C:/workspace')
     expect(pathExistsResult).toEqual({ exists: true })
-    expect(selectedDirectory).toEqual({ path: 'C:/selected-workspace' })
+    expect(selectedDirectory).toEqual({ path: 'C:/selected-workspace', version: 1 })
 
     expect(fileService.getMimeType).toHaveBeenCalledWith('/workspace/demo.txt')
     expect(mimeType).toEqual({ mimeType: 'text/plain' })
