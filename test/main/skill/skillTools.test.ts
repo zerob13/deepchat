@@ -47,7 +47,6 @@ describe('SkillTools', () => {
       discoverSkills: vi.fn().mockResolvedValue(mockSkillMetadata),
       resolveSessionAgentId: vi.fn().mockResolvedValue('deepchat'),
       getMetadataList: vi.fn().mockResolvedValue(mockSkillMetadata),
-      getMetadataPrompt: vi.fn().mockResolvedValue('# Skills'),
       loadSkillContent: vi.fn().mockResolvedValue({ name: 'test', content: '# Test' }),
       viewSkillForAgent: vi.fn().mockResolvedValue({
         success: true,

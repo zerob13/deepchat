@@ -1098,34 +1098,6 @@ describe('SkillService', () => {
     })
   })
 
-  describe('getMetadataPrompt', () => {
-    it('should return formatted prompt with no skills', async () => {
-      ;(fs.readdirSync as Mock).mockReturnValue([])
-
-      const prompt = await skillService.getMetadataPrompt()
-
-      expect(prompt).toContain('# Available Skills')
-      expect(prompt).toContain('Skills directory: `')
-      expect(prompt).toContain('No skills are currently installed')
-    })
-
-    it('should return formatted prompt with skills list', async () => {
-      mockSkillTree(['my-skill'])
-      ;(fs.existsSync as Mock).mockReturnValue(true)
-      ;(fs.readFileSync as Mock).mockReturnValue('test')
-      ;(matter as unknown as Mock).mockReturnValue({
-        data: { name: 'my-skill', description: 'My skill description' },
-        content: ''
-      })
-
-      const prompt = await skillService.getMetadataPrompt()
-
-      expect(prompt).toContain('# Available Skills')
-      expect(prompt).toContain('my-skill')
-      expect(prompt).toContain('My skill description')
-    })
-  })
-
   describe('loadSkillContent', () => {
     beforeEach(() => {
       const manifestBytes = Buffer.from('test content')

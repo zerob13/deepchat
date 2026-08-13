@@ -1577,38 +1577,6 @@ export class SkillService implements SkillServicePort {
   }
 
   /**
-   * Get metadata prompt for skill listing (used by skill_list tool)
-   */
-  async getMetadataPrompt(): Promise<string> {
-    const skills = await this.getMetadataList()
-    const header = '# Available Skills'
-    const dirLine = `Skills directory: \`${this.skillsDir}\``
-
-    if (skills.length === 0) {
-      return `${header}\n\n${dirLine}\nNo skills are currently installed.`
-    }
-
-    const lines = skills.map((skill) => {
-      const details: string[] = []
-      if (skill.category) {
-        details.push(`category=${skill.category}`)
-      }
-      if (skill.platforms?.length) {
-        details.push(`platforms=${skill.platforms.join(',')}`)
-      }
-      const suffix = details.length > 0 ? ` (${details.join('; ')})` : ''
-      return `- ${skill.name}: ${skill.description}${suffix}`
-    })
-    return [
-      header,
-      '',
-      dirLine,
-      'Inspect these skills with `skill_view` before relying on them.',
-      ...lines
-    ].join('\n')
-  }
-
-  /**
    * Load full skill content (lazy loading)
    */
   async loadSkillContent(name: string): Promise<SkillContent | null>

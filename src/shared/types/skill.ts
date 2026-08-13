@@ -373,7 +373,6 @@ export interface SkillServicePort {
   getMetadataList(agentId: string): Promise<SkillMetadata[]>
   getUnifiedSkillCatalog(): Promise<UnifiedSkillItem[]>
   getUnifiedSkillCatalog(agentId: string): Promise<UnifiedSkillItem[]>
-  getMetadataPrompt(): Promise<string>
   getSkillManagementState(): Promise<SkillManagementState>
   setSkillDeepChatDisabled(name: string, disabled: boolean): Promise<void>
   setSkillDisabledForAgent(agentId: string, name: string, disabled: boolean): Promise<void>
