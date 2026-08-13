@@ -996,14 +996,21 @@ export class AgentCliTokenAuthority {
   private enforceConversationCapacity(conversationId: string): void {
     const conversationTokens = this.digestsByConversation.get(conversationId)
     if (!conversationTokens || conversationTokens.size < this.maxTokensPerConversation) return
-    const oldest = [...conversationTokens]
+    const oldestReplaceable = [...conversationTokens]
       .map((digest) => this.recordsByDigest.get(digest))
-      .filter((record): record is TokenRecord => Boolean(record))
+      .filter(
+        (record): record is TokenRecord =>
+          record !== undefined &&
+          record.activeRequests === 0 &&
+          record.preparedProgrammaticOperation === undefined &&
+          record.claims.programmaticOperation === undefined
+      )
       .sort(
         (left, right) =>
           left.issuedAt - right.issuedAt || left.claims.tokenId.localeCompare(right.claims.tokenId)
       )[0]
-    if (oldest) this.removeRecord(oldest.digest, 'replaced')
+    if (!oldestReplaceable) throw new AgentCliTokenCapacityError()
+    this.removeRecord(oldestReplaceable.digest, 'replaced')
   }
 
   private pruneRetired(now: number): void {

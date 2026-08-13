@@ -147,6 +147,53 @@ describe('AgentCliTokenAuthority', () => {
     ).toThrow(AgentCliTokenCapacityError)
   })
 
+  it('fails closed instead of replacing an active per-conversation grant', () => {
+    const generatedTokens = [token('a'), token('b')]
+    let tokenId = 0
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => generatedTokens.shift()!,
+      createTokenId: () => `token-id-${String((tokenId += 1)).padStart(8, '0')}`,
+      maxTokensPerConversation: 1
+    })
+    const existing = authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    const active = authority.beginRequest(existing.token)
+    if (active.status !== 'granted') throw new Error('Expected grant')
+    const abort = vi.fn()
+    active.grant.signal.addEventListener('abort', abort)
+
+    expect(() =>
+      authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    ).toThrow(AgentCliTokenCapacityError)
+    expect(abort).not.toHaveBeenCalled()
+
+    active.grant.release()
+    expect(authority.beginRequest(existing.token).status).toBe('granted')
+  })
+
+  it('fails closed instead of replacing an exact Programmatic grant', () => {
+    const generatedTokens = [token('a'), token('b'), token('c')]
+    let tokenId = 0
+    const authority = new AgentCliTokenAuthority({
+      createToken: () => generatedTokens.shift()!,
+      createTokenId: () => `programmatic-token-${String((tokenId += 1)).padStart(4, '0')}`,
+      maxTokensPerConversation: 1
+    })
+    const prepared = authority.prepareProgrammaticOperation({
+      binding: programmaticBinding(),
+      assertAuthorityActive: () => {}
+    })
+
+    expect(() =>
+      authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    ).toThrow(AgentCliTokenCapacityError)
+
+    const armed = prepared.arm(outerDispatchReceipt(prepared.tokenId))
+    expect(() =>
+      authority.issue({ conversationId: 'conversation-1', scopes: TEST_SCOPES })
+    ).toThrow(AgentCliTokenCapacityError)
+    expect(authority.beginRequest(armed.token).status).toBe('granted')
+  })
+
   it('reclaims completed exhausted grants before enforcing global capacity', () => {
     const generatedTokens = [token('a'), token('b')]
     let tokenId = 0
