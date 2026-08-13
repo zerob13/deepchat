@@ -172,7 +172,8 @@ fatal。
 surface hash、policy/canonicalization version、bounded target/definition projection 和 degradation。三个
 fact 都是同 identity 同 payload 幂等、异 payload corruption，并排除 effective View、Memory ingestion 和
 普通 search。strict V5 在 provider admission 前 durable bind 且 fail closed；V4 provenance 可沿既有
-fail-open，但不得冒充 verified。正常 dispatch 不读 Tape。
+fail-open，但不得冒充 verified。durable surface fact 只证明该 View 的 exposure provenance 已提交，不证明
+provider request 已发送或被上游接收。正常 dispatch 不读 Tape。
 
 每个 View 的 Provider Active Surface 与 Programmatic Surface immutable 且 stable-target 互斥；V5
 ExecutionContract ceilings 仍只含 provider-visible tools。Programmatic capability 的完整 canonical value

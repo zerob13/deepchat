@@ -106,28 +106,28 @@
 
 ## Programmatic Tool Extension V2
 
-- [ ] Add version-negotiated `CLI_SURFACE_V2` as a strict immutable-V1 superset with Agent-only
+- [x] Add version-negotiated `CLI_SURFACE_V2` as a strict immutable-V1 superset with Agent-only
       `deepchat tool search|describe|call|batch` entries as the sole raw MCP exception.
-- [ ] Add exact outer-operation tokens with route/adapter/capability/surface identity and separate
+- [x] Add exact outer-operation tokens with route/adapter/capability/surface identity and separate
       RPC, child, batch, I/O, and time quotas.
-- [ ] Build per-View capability before provider response, derive an exact `providerToolCallId` grant
+- [x] Build per-View capability before provider response, derive an exact `providerToolCallId` grant
       after the outer operation exists, prepare its token inert, then arm only after new outer T1.
-- [ ] Add bounded owned stdin and reject background/detached/yielded Programmatic commands before
+- [x] Add bounded owned stdin and reject background/detached/yielded Programmatic commands before
       T1.
-- [ ] Keep search/describe read-only and bind call/batch to the originating frozen Programmatic
+- [x] Keep search/describe read-only and bind call/batch to the originating frozen Programmatic
       Surface without descriptor fallback.
-- [ ] Bound search/describe names, reviewed metadata, signatures/schemas, examples, and aggregate
+- [x] Bound search/describe names, reviewed metadata, signatures/schemas, examples, and aggregate
       output while excluding internal stable IDs, server UUIDs, hashes, MCP metadata, and secrets.
-- [ ] Integrate the process-live parent-operation controller, nested Journal v2 receipts, per-child
+- [x] Integrate the process-live parent-operation controller, nested Journal v2 receipts, per-child
       approval, anti-oracle response, and Run-fatal Journal failures.
-- [ ] Bind settlement receipts to canonical outer-result hashes and reject unarmed/revoked grants.
-- [ ] Bind and atomically consume canonical invocation hashes; reject changed route/body, replay,
+- [x] Bind settlement receipts to canonical outer-result hashes and reject unarmed/revoked grants.
+- [x] Bind and atomically consume canonical invocation hashes; reject changed route/body, replay,
       expiry, wrong principal/conversation, and surface downgrade.
-- [ ] Add bounded sequential Batch v1 and reject dynamic/parallel/retry/resume/recursive/sandbox
+- [x] Add bounded sequential Batch v1 and reject dynamic/parallel/retry/resume/recursive/sandbox
       behavior.
-- [ ] Add focused surface-negotiation, principal, route, token, quota/materialization, approval,
+- [x] Add focused surface-negotiation, principal, route, token, quota/materialization, approval,
       terminal-fence, crash, and shutdown tests.
-- [ ] Perform a severity-ranked review before each commit and do not push.
+- [x] Perform a severity-ranked review before each commit and do not push.
 
 ## Local Validation Evidence
 

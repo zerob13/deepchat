@@ -252,6 +252,8 @@ effect、approval、transport、输入/输出边界、quota 和 audit 语义。
 
 V1 明确不包含：ACP server、远程访问、raw MCP tool invocation、TUI/交互 shell、任意配置或 secret
 读取、server-side OCR batch/layout/model 管理、通用费用预算系统，以及内置 benchmark runner。
+V2 仅为冻结到 CLI Programmatic adapter 的 Agent Run 增加受 originating View capability 约束的
+`tool search|describe|call|batch`；它不是 human raw MCP tunnel，普通 Agent token 和 V1 client 均不可达。
 benchmark 是建立在稳定 JSON/JSONL 合同上的外部 harness。
 
 完整架构与安全不变量见

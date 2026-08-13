@@ -121,21 +121,21 @@
 
 ## 11. Journal v2 Programmatic Extension
 
-- [ ] Add discriminated provider and nested identities without rewriting historical v1 facts.
-- [ ] Reserve bounded contiguous plan-index child ordinals before approval/T1; reject caller-,
+- [x] Add discriminated provider and nested identities without rewriting historical v1 facts.
+- [x] Reserve bounded contiguous plan-index child ordinals before approval/T1; reject caller-,
       materialization-, completion-order, reuse, and payload conflicts.
-- [ ] Bind canonical target, definition, argument, and capability hashes with strict conflict checks.
+- [x] Bind canonical target, definition, argument, and capability hashes with strict conflict checks.
 - [x] Fence the production loop and deferred Run terminal writers with the process-live Programmatic
       parent registry; the fence uses no Tape read and clears registrations only after terminal
       persistence succeeds.
-- [ ] Add process-live parent-operation control and authoritative settlement receipts across CLI.
-- [ ] Derive invocation grants after the outer call exists, arm only after new parent T1, and bind
+- [x] Add process-live parent-operation control and authoritative settlement receipts across CLI.
+- [x] Derive invocation grants after the outer call exists, arm only after new parent T1, and bind
       settlement to the canonical outer-result hash.
-- [ ] Reject unarmed grants and foreground CLI yield/detach paths before they can outlive outer T2.
-- [ ] Enforce outer/child T1/T2/projection causality and reject outer T2/`run_terminal` while any
+- [x] Reject unarmed grants and foreground CLI yield/detach paths before they can outlive outer T2.
+- [x] Enforce outer/child T1/T2/projection causality and reject outer T2/`run_terminal` while any
       Programmatic T1 remains unmatched.
-- [ ] Recheck all child capability, TaskContract, authority, approval, quota, and abort gates.
-- [ ] Persist no raw args/results/errors, MCP envelopes, binary data, or temporary paths.
-- [ ] Add focused failure-matrix, terminal-fence failpoint, corruption, crash, and v1/v2
+- [x] Recheck all child capability, TaskContract, authority, approval, quota, and abort gates.
+- [x] Persist no raw args/results/errors, MCP envelopes, binary data, or temporary paths.
+- [x] Add focused failure-matrix, terminal-fence failpoint, corruption, crash, and v1/v2
       compatibility tests.
-- [ ] Perform a severity-ranked review before each commit and do not push.
+- [x] Perform a severity-ranked review before each commit and do not push.

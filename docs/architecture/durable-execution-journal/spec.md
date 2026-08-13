@@ -288,7 +288,9 @@ recovery until they execute through a journal-aware harness boundary.
 - Exactly-once execution without target-side idempotency support.
 - Automatic retry or automatic reconciliation of indeterminate calls.
 - A separate operations table or mutable journal state machine.
-- Invocation-attempt identities inside one provider tool call.
+- Per-operation invocation-attempt identities or automatic retry under the same provider or nested
+  operation identity. Journal v2 adds independently journaled nested children; `childOrdinal`
+  identifies one child operation, not an attempt.
 - Multi-writer continuation fencing or cross-process Run ownership.
 - A TaskRun envelope, graph scheduler, or replacement of the current harness.
 - Atomic delivery or automatic redelivery of sibling results after a parallel tool batch fails. That
