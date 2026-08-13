@@ -1330,6 +1330,32 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.manifests[0].messages).toEqual(fixture.providerRequests[0].messages)
   })
 
+  it('rebuilds a pressure-recovery View with deferred activation policy', async () => {
+    const tools = [agentTool('read'), agentTool('write')]
+    const surface = createFullToolSurfacePort(tools)
+    const fixture = createAttemptInput({ tools, toolSurface: surface.port })
+    fixture.input.budget.preflight = vi
+      .fn()
+      .mockReturnValueOnce(
+        createPreflight(fixture.run.messages, { requiresContextPressureRecovery: true })
+      )
+      .mockReturnValue(createPreflight(fixture.run.messages))
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(surface.build).toHaveBeenCalledTimes(2)
+    expect(surface.build.mock.calls[0][0]).toMatchObject({ requestSeq: 1 })
+    expect(surface.build.mock.calls[0][0].deferActivationCandidates).toBeUndefined()
+    expect(surface.build.mock.calls[1][0]).toMatchObject({
+      requestSeq: 1,
+      deferActivationCandidates: true
+    })
+    expect(surface.admit).toHaveBeenCalledOnce()
+    expect(surface.admit.mock.calls[0][0].snapshot).toBe(surface.snapshots[1])
+    expect(fixture.manifestToolSurfaceRefs).toEqual([surface.snapshots[1]])
+    expect(fixture.providerToolSurfaceRefs).toEqual([surface.snapshots[1]])
+  })
+
   it('does not start the provider when cancellation lands after rate admission', async () => {
     const fixture = createAttemptInput()
     fixture.input.rateGate.wait = async () => {

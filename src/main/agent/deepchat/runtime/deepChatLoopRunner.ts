@@ -1196,7 +1196,11 @@ export class DeepChatLoopRunner {
             ...(toolSurfaceController
               ? {
                   toolSurface: {
-                    build: ({ requestSeq, tools: eligibleDefinitions }) => {
+                    build: ({
+                      requestSeq,
+                      tools: eligibleDefinitions,
+                      deferActivationCandidates
+                    }) => {
                       const viewEligibleDefinitions = programmaticProviderActiveDefinitions
                         ? [
                             ...programmaticProviderActiveDefinitions,
@@ -1214,7 +1218,12 @@ export class DeepChatLoopRunner {
                         },
                         eligibleDefinitions: viewEligibleDefinitions,
                         ...(toolSurfaceMode === 'native-activation'
-                          ? { toolSearchAvailable: true }
+                          ? {
+                              toolSearchAvailable: true,
+                              ...(deferActivationCandidates
+                                ? { deferActivationCandidates: true }
+                                : {})
+                            }
                           : {})
                       })
                       if (toolSurfaceCanaryEvidence) {

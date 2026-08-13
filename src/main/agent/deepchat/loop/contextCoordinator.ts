@@ -199,7 +199,11 @@ export interface ProviderAttemptExecutionContractPort {
 }
 
 export interface ProviderAttemptToolSurfacePort {
-  build(input: { requestSeq: number; tools: readonly MCPToolDefinition[] }): ToolSurfaceSnapshot
+  build(input: {
+    requestSeq: number
+    tools: readonly MCPToolDefinition[]
+    deferActivationCandidates?: boolean
+  }): ToolSurfaceSnapshot
   buildProgrammaticCapability?(snapshot: ToolSurfaceSnapshot): ProgrammaticToolCapabilityV1
   /** Commits only the prepared in-memory Run ordering; it must not perform I/O or cancel the Run. */
   admit(input: { requestSeq: number; snapshot: ToolSurfaceSnapshot }): void
@@ -572,43 +576,47 @@ export class DeepChatContextCoordinator {
       if (!Number.isSafeInteger(anticipatedRequestSeq) || anticipatedRequestSeq <= 0) {
         throw new Error('Provider request sequence is exhausted.')
       }
-      let toolSurfaceSnapshot: ToolSurfaceSnapshot | null = null
-      let programmaticToolCapability: ProgrammaticToolCapabilityV1 | null = null
-      if (input.toolSurface) {
+      const buildToolSurfaceView = (
+        deferActivationCandidates = false
+      ): {
+        snapshot: ToolSurfaceSnapshot
+        programmaticCapability: ProgrammaticToolCapabilityV1 | null
+      } | null => {
+        if (!input.toolSurface) return null
         input.run.abortController.signal.throwIfAborted()
         const builtSnapshot: unknown = input.toolSurface.build({
           requestSeq: anticipatedRequestSeq,
-          tools: input.tools
+          tools: input.tools,
+          ...(deferActivationCandidates ? { deferActivationCandidates: true } : {})
         })
         assertIssuedToolSurfaceSnapshot(builtSnapshot)
-        toolSurfaceSnapshot = builtSnapshot
-        if (toolSurfaceSnapshot.adapterMode === 'cli-programmatic') {
+        if (
+          builtSnapshot.request.sessionId !== input.run.sessionId ||
+          builtSnapshot.request.messageId !== input.run.messageId ||
+          builtSnapshot.request.runId !== input.run.runId ||
+          builtSnapshot.request.requestSeq !== anticipatedRequestSeq
+        ) {
+          throw new Error('Tool Surface identity does not match the provider View being assembled.')
+        }
+        let programmaticCapability: ProgrammaticToolCapabilityV1 | null = null
+        if (builtSnapshot.adapterMode === 'cli-programmatic') {
           if (!input.toolSurface.buildProgrammaticCapability) {
             throw new Error('CLI Programmatic provider View lost its capability builder.')
           }
-          programmaticToolCapability =
-            input.toolSurface.buildProgrammaticCapability(toolSurfaceSnapshot)
-          assertProgrammaticToolCapabilityViewPrepared(
-            programmaticToolCapability,
-            toolSurfaceSnapshot
-          )
+          programmaticCapability = input.toolSurface.buildProgrammaticCapability(builtSnapshot)
+          assertProgrammaticToolCapabilityViewPrepared(programmaticCapability, builtSnapshot)
         }
+        return { snapshot: builtSnapshot, programmaticCapability }
       }
-      if (
-        toolSurfaceSnapshot &&
-        (toolSurfaceSnapshot.request.sessionId !== input.run.sessionId ||
-          toolSurfaceSnapshot.request.messageId !== input.run.messageId ||
-          toolSurfaceSnapshot.request.runId !== input.run.runId ||
-          toolSurfaceSnapshot.request.requestSeq !== anticipatedRequestSeq)
-      ) {
-        throw new Error('Tool Surface identity does not match the provider View being assembled.')
-      }
+      const initialToolSurfaceView = buildToolSurfaceView()
+      let toolSurfaceSnapshot = initialToolSurfaceView?.snapshot ?? null
+      let programmaticToolCapability = initialToolSurfaceView?.programmaticCapability ?? null
       // Snapshot definitions are deeply frozen. The cast is confined to legacy ports whose
       // mutable array signatures predate Tool Surface Views; every consumer receives this value.
-      const requestTools = toolSurfaceSnapshot
+      let requestTools = toolSurfaceSnapshot
         ? (toolSurfaceSnapshot.toolDefinitions as MCPToolDefinition[])
         : input.tools
-      const effectiveRequestToolReserveTokens = toolSurfaceSnapshot
+      let effectiveRequestToolReserveTokens = toolSurfaceSnapshot
         ? input.budget.estimateToolReserveTokens(requestTools)
         : legacyRequestToolReserveTokens
       let providerMessages = input.requestMessages
@@ -661,6 +669,15 @@ export class DeepChatContextCoordinator {
               manifestSyntheticContributions = recovered.syntheticContributions
             }
             input.requestMessages.splice(0, input.requestMessages.length, ...recovered.messages)
+            const recoveredToolSurfaceView = buildToolSurfaceView(true)
+            toolSurfaceSnapshot = recoveredToolSurfaceView?.snapshot ?? null
+            programmaticToolCapability = recoveredToolSurfaceView?.programmaticCapability ?? null
+            requestTools = toolSurfaceSnapshot
+              ? (toolSurfaceSnapshot.toolDefinitions as MCPToolDefinition[])
+              : input.tools
+            effectiveRequestToolReserveTokens = toolSurfaceSnapshot
+              ? input.budget.estimateToolReserveTokens(requestTools)
+              : legacyRequestToolReserveTokens
             requestPreflight = input.budget.preflight({
               messages: input.requestMessages,
               tools: requestTools,

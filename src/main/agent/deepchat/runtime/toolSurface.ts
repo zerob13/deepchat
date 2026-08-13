@@ -322,6 +322,8 @@ export interface ToolSurfaceRunController {
     readonly request: ToolSurfaceRequestIdentity
     readonly eligibleDefinitions: readonly MCPToolDefinition[]
     readonly toolSearchAvailable?: boolean
+    /** Build a recovery View without consuming pending native activation candidates. */
+    readonly deferActivationCandidates?: boolean
   }): ToolSurfaceSnapshot
   stageActivationBatch(candidates: readonly ToolSurfaceActivationEvidence[]): void
   prepareSkillActivation?(input: {
@@ -3543,6 +3545,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
       readonly nextAcceptedSearchEvidenceByTarget: Map<string, ToolSurfaceActivationEvidence>
       readonly pendingCandidates: readonly ToolSurfaceActivationEvidence[] | null
       readonly pendingFingerprint: string | null
+      readonly consumesPendingCandidates: boolean
       readonly appendedTargets: number
     }
   >()
@@ -3741,7 +3744,12 @@ export function createPolicySelectedToolSurfaceRun(input: {
         }
       })
     },
-    build: ({ request, eligibleDefinitions, toolSearchAvailable }) => {
+    build: ({
+      request,
+      eligibleDefinitions,
+      toolSearchAvailable,
+      deferActivationCandidates = false
+    }) => {
       if (toolSearchAvailable !== true) {
         throw new ToolSurfaceError(
           'Virtualized Tool Surface requires current ToolSearch authority.',
@@ -3814,7 +3822,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
         (sum, entry) => sum + (ceilingEntryByTarget.get(entry.stableTargetKey)?.definitionTokens ?? 0),
         0
       )
-      for (const candidate of pendingCandidates ?? []) {
+      for (const candidate of deferActivationCandidates ? [] : (pendingCandidates ?? [])) {
         let rejectionCode: ToolSurfaceActivationRejectionCode | undefined
         const ceilingEntry = ceilingEntryByTarget.get(candidate.stableTargetKey)!
         const eligibleIdentity = eligibleByTarget.get(candidate.stableTargetKey)
@@ -3891,7 +3899,9 @@ export function createPolicySelectedToolSurfaceRun(input: {
         selectionReasons,
         acceptedSearchEvidence,
         activation: {
-          originRequestSeq: pendingOriginRequest?.requestSeq ?? null,
+          originRequestSeq: deferActivationCandidates
+            ? null
+            : (pendingOriginRequest?.requestSeq ?? null),
           decisions
         }
       })
@@ -3902,6 +3912,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
         nextAcceptedSearchEvidenceByTarget,
         pendingCandidates,
         pendingFingerprint,
+        consumesPendingCandidates: !deferActivationCandidates,
         appendedTargets: additions.length
       })
       return snapshot
@@ -3936,7 +3947,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
       }
       let consumedRelease: { readonly requestSeq: number; readonly fingerprint: string } | null =
         null
-      if (proposal.pendingCandidates) {
+      if (proposal.consumesPendingCandidates && proposal.pendingCandidates) {
         const consumedRequestSeq = snapshot.activation.originRequestSeq
         if (
           consumedRequestSeq === null ||
@@ -3961,7 +3972,7 @@ export function createPolicySelectedToolSurfaceRun(input: {
       admittedLedger = proposal.nextLedger
       acceptedSearchEvidenceByTarget = proposal.nextAcceptedSearchEvidenceByTarget
       latestAdmittedRequest = snapshot.request
-      if (proposal.pendingCandidates && consumedRelease) {
+      if (proposal.consumesPendingCandidates && proposal.pendingCandidates && consumedRelease) {
         consumedReleaseFingerprintByRequestSeq.set(
           consumedRelease.requestSeq,
           consumedRelease.fingerprint

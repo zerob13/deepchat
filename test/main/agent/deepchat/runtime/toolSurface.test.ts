@@ -2744,6 +2744,35 @@ describe('Tool Surface production selection', () => {
     )
   })
 
+  it('keeps pending activation candidates across a preflight recovery View', () => {
+    const harness = createActivationHarness(['hidden'])
+    const candidate = harness.candidate('hidden', 1)
+    harness.selected.controller.stageActivationBatch([candidate])
+
+    const recoveryView = harness.selected.controller.build({
+      request: request(2),
+      eligibleDefinitions: harness.definitions,
+      toolSearchAvailable: true,
+      deferActivationCandidates: true
+    })
+    expect(recoveryView.activation).toEqual({ originRequestSeq: null, decisions: [] })
+    expect(recoveryView.toolDefinitions.map((definition) => definition.function.name)).not.toContain(
+      'hidden'
+    )
+    harness.selected.controller.admit(recoveryView)
+
+    const laterView = harness.build(3)
+    expect(laterView.activation).toEqual({
+      originRequestSeq: 1,
+      decisions: [{ ...candidate, accepted: true }]
+    })
+    expect(laterView.toolDefinitions.map((definition) => definition.function.name)).toContain(
+      'hidden'
+    )
+    harness.selected.controller.admit(laterView)
+    expect(harness.build(4).activation).toEqual({ originRequestSeq: null, decisions: [] })
+  })
+
   it('does not reconstruct an unadmitted activation after its Run controller is recreated', () => {
     const interrupted = createActivationHarness(['hidden'])
     interrupted.selected.controller.stageActivationBatch([interrupted.candidate('hidden', 1)])
