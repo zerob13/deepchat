@@ -88,6 +88,7 @@ export interface ContextPressureRecoveryResult {
 
 export interface RequestContextPreflight {
   messages: ChatMessage[]
+  contextLength: number
   inputTokens: number
   toolReserveTokens: number
   requestedMaxTokens: number
@@ -604,6 +605,7 @@ export class DeepChatContextCoordinator {
     }> => {
       let providerMessages = input.requestMessages
       let providerMaxTokens = input.maxTokens
+      let manifestContextLength = input.modelConfig.contextLength ?? input.fallbackContextLength
       let manifestRequestedMaxTokens = input.maxTokens
       let manifestReserveTokens = input.maxTokens
       let strictExtraReserveTokens = 0
@@ -669,6 +671,7 @@ export class DeepChatContextCoordinator {
         }
         providerMessages = requestPreflight.messages
         providerMaxTokens = requestPreflight.effectiveMaxTokens
+        manifestContextLength = requestPreflight.contextLength
         manifestRequestedMaxTokens = requestPreflight.requestedMaxTokens
         manifestReserveTokens = requestPreflight.requestedMaxTokens + strictExtraReserveTokens
       }
@@ -735,7 +738,7 @@ export class DeepChatContextCoordinator {
             messages: providerMessages,
             tools: input.tools,
             tokenBudget: {
-              contextLength: input.modelConfig.contextLength ?? input.fallbackContextLength,
+              contextLength: manifestContextLength,
               requestedMaxTokens: manifestRequestedMaxTokens,
               effectiveMaxTokens: providerMaxTokens,
               reserveTokens: manifestReserveTokens,

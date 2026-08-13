@@ -55,6 +55,7 @@ function createPreflight(
 ) {
   return {
     messages,
+    contextLength: 1_000,
     inputTokens: 10,
     toolReserveTokens: 0,
     requestedMaxTokens: overrides.requestedMaxTokens ?? 100,
@@ -713,6 +714,22 @@ describe('DeepChatContextCoordinator', () => {
     })
     expect(fixture.manifests[0].selection).toBeUndefined()
     expect(fixture.outcomes).toEqual([expectedAttemptOutcome({ requestOrigin: 'tool_loop' })])
+  })
+
+  it('records the effective preflight context ceiling in the ViewManifest', async () => {
+    const fixture = createAttemptInput()
+    fixture.input.budget.preflight = vi.fn(({ messages, requestedMaxTokens }) => ({
+      ...createPreflight(messages, {
+        requestedMaxTokens,
+        effectiveMaxTokens: requestedMaxTokens
+      }),
+      contextLength: 640
+    }))
+
+    await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+
+    expect(fixture.manifests[0].tokenBudget.contextLength).toBe(640)
+    expect(fixture.input.modelConfig.contextLength).toBe(1_000)
   })
 
   it('records only the final cumulative usage snapshot for a completed attempt', async () => {

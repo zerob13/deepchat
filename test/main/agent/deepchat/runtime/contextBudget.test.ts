@@ -334,4 +334,49 @@ describe('agent request context budget', () => {
       ledger.items.find((item) => item.category === 'History and tool protocol')?.estimatedTokens
     ).toBe(`old quote: ${sharedContent}`.length)
   })
+
+  it('attributes an active runtime Skill tool result to Message Skills', () => {
+    const runtimeSkillResult = JSON.stringify({
+      skillName: 'runtime-skill',
+      content: 'RUNTIME_SKILL_BODY'
+    })
+    const preflight = preflightRequestContext({
+      messages: [
+        { role: 'user', content: 'Use a skill' },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'skill-view-1',
+              type: 'function',
+              function: { name: 'skill_view', arguments: '{"name":"runtime-skill"}' }
+            }
+          ]
+        },
+        { role: 'tool', tool_call_id: 'skill-view-1', content: runtimeSkillResult }
+      ],
+      tools: [],
+      contextLength: 0,
+      requestedMaxTokens: 100
+    })
+
+    const ledger = buildRequestContextLedger({
+      preflight,
+      runtimeSkills: [{ name: 'runtime-skill', toolCallId: 'skill-view-1' }]
+    })
+
+    expect(ledger.items).toContainEqual({
+      category: 'Message Skills',
+      estimatedTokens: runtimeSkillResult.length,
+      contributors: [{ name: 'runtime-skill', estimatedTokens: runtimeSkillResult.length }]
+    })
+    expect(ledger.items).not.toContainEqual(
+      expect.objectContaining({
+        category: 'History and tool protocol',
+        estimatedTokens: runtimeSkillResult.length
+      })
+    )
+    expect(ledger.unattributedInputTokens).toBe(0)
+  })
 })

@@ -27,6 +27,7 @@ export type RequestContextBudget = {
 
 export type RequestContextPreflightResult = {
   messages: ChatMessage[]
+  contextLength: number
   inputTokens: number
   toolReserveTokens: number
   requestedMaxTokens: number
@@ -70,6 +71,11 @@ export interface RequestContextLedgerSkill {
   scope: 'message' | 'session'
   name: string
   effectiveContent: string
+}
+
+export interface RequestContextLedgerRuntimeSkill {
+  name: string
+  toolCallId: string
 }
 
 const MAX_LEDGER_SKILL_CONTRIBUTORS = 8
@@ -251,6 +257,7 @@ export function preflightRequestContext(params: {
 
   return {
     messages: fittedMessages,
+    contextLength: params.contextLength,
     inputTokens,
     toolReserveTokens,
     requestedMaxTokens,
@@ -278,9 +285,11 @@ export function buildRequestContextBudgetDiagnostics(
   }
 }
 
-function addLedgerCost(costs: Map<string, number>, category: string, estimatedTokens: number): void {
-  if (!Number.isFinite(estimatedTokens) || estimatedTokens <= 0) return
-  costs.set(category, (costs.get(category) ?? 0) + Math.floor(estimatedTokens))
+function addLedgerCost(costs: Map<string, number>, category: string, estimatedTokens: number): number {
+  if (!Number.isFinite(estimatedTokens) || estimatedTokens <= 0) return 0
+  const normalizedTokens = Math.floor(estimatedTokens)
+  costs.set(category, (costs.get(category) ?? 0) + normalizedTokens)
+  return normalizedTokens
 }
 
 function estimateStandaloneText(content: string): number {
@@ -310,6 +319,7 @@ export function buildRequestContextLedger(input: {
   promptAssembly?: DeepChatPromptAssembly
   contextContributions?: ContextRuntimeContributions
   skills?: readonly RequestContextLedgerSkill[]
+  runtimeSkills?: readonly RequestContextLedgerRuntimeSkill[]
 }): RequestContextLedger {
   const costs = new Map<string, number>()
   const messages = input.preflight.messages
@@ -321,7 +331,6 @@ export function buildRequestContextLedger(input: {
 
   if (leadingSystem) {
     const systemTokens = estimateMessageTokens(leadingSystem)
-    attributedInputTokens += systemTokens
     if (input.promptAssembly?.prompt === leadingSystemContent) {
       let projectedPrompt = ''
       let previousTokens = 0
@@ -331,7 +340,7 @@ export function buildRequestContextLedger(input: {
           ? `${projectedPrompt}${section.separatorBefore ?? '\n\n'}${section.content}`
           : section.content
         const projectedTokens = estimateStandaloneText(projectedPrompt)
-        addLedgerCost(
+        attributedInputTokens += addLedgerCost(
           costs,
           PROMPT_SECTION_LEDGER_CATEGORIES[section.kind],
           Math.max(0, projectedTokens - previousTokens)
@@ -339,16 +348,28 @@ export function buildRequestContextLedger(input: {
         previousTokens = projectedTokens
       }
       if (previousTokens < systemTokens) {
-        addLedgerCost(costs, 'Unattributed system prompt', systemTokens - previousTokens)
+        attributedInputTokens += addLedgerCost(
+          costs,
+          'Unattributed system prompt',
+          systemTokens - previousTokens
+        )
       }
     } else {
       attribution = 'opaque_system_prompt'
-      addLedgerCost(costs, 'System prompt (attribution unavailable)', systemTokens)
+      attributedInputTokens += addLedgerCost(
+        costs,
+        'System prompt (attribution unavailable)',
+        systemTokens
+      )
     }
   }
 
   const nonSystemMessages = leadingSystem ? messages.slice(1) : messages
   const currentUserIndex = messages.findLastIndex((message) => message.role === 'user')
+  const runtimeSkillByToolCallId = new Map(
+    (input.runtimeSkills ?? []).map((skill) => [skill.toolCallId, skill] as const)
+  )
+  const runtimeSkillContributors: RequestContextLedgerContributor[] = []
   const activeTurnContributions = [
     {
       category: 'Memory',
@@ -373,7 +394,18 @@ export function buildRequestContextLedger(input: {
   for (const [relativeIndex, message] of nonSystemMessages.entries()) {
     const absoluteIndex = relativeIndex + (leadingSystem ? 1 : 0)
     const messageTokens = estimateMessageTokens(message)
-    attributedInputTokens += messageTokens
+    const runtimeSkill =
+      message.role === 'tool' && message.tool_call_id
+        ? runtimeSkillByToolCallId.get(message.tool_call_id)
+        : undefined
+    if (runtimeSkill) {
+      attributedInputTokens += addLedgerCost(costs, 'Message Skills', messageTokens)
+      runtimeSkillContributors.push({
+        name: runtimeSkill.name,
+        estimatedTokens: messageTokens
+      })
+      continue
+    }
     let remainingTokens = messageTokens
     if (absoluteIndex === currentUserIndex) {
       for (const contribution of activeTurnContributions) {
@@ -382,11 +414,15 @@ export function buildRequestContextLedger(input: {
           remainingTokens,
           estimateStandaloneText(contribution.content)
         )
-        addLedgerCost(costs, contribution.category, contributionTokens)
+        attributedInputTokens += addLedgerCost(
+          costs,
+          contribution.category,
+          contributionTokens
+        )
         remainingTokens -= contributionTokens
       }
     }
-    addLedgerCost(
+    attributedInputTokens += addLedgerCost(
       costs,
       absoluteIndex === currentUserIndex ? 'Current input' : 'History and tool protocol',
       remainingTokens
@@ -397,7 +433,17 @@ export function buildRequestContextLedger(input: {
   addLedgerCost(costs, 'Output reserve', input.preflight.effectiveMaxTokens)
   const skills = input.skills ?? []
   const sessionContributors = buildSkillContributors(skills, 'session')
-  const messageContributors = buildSkillContributors(skills, 'message')
+  const combinedMessageContributors = [
+    ...(buildSkillContributors(skills, 'message') ?? []),
+    ...runtimeSkillContributors
+  ]
+    .sort(
+      (left, right) =>
+        right.estimatedTokens - left.estimatedTokens || left.name.localeCompare(right.name)
+    )
+    .slice(0, MAX_LEDGER_SKILL_CONTRIBUTORS)
+  const messageContributors =
+    combinedMessageContributors.length > 0 ? combinedMessageContributors : undefined
   const items = [...costs.entries()].map(([category, estimatedTokens]) => ({
     category,
     estimatedTokens,

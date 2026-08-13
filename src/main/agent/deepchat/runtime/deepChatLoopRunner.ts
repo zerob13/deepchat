@@ -812,6 +812,10 @@ export class DeepChatLoopRunner {
                 scope: binding.context.activationScope === 'session' ? 'session' : 'message',
                 name: binding.context.skillName,
                 effectiveContent: binding.effectiveContent
+              })),
+              runtimeSkills: loopRun.resources.runtimeSkillContexts.map((binding) => ({
+                name: binding.context.skillName,
+                toolCallId: binding.toolCallId
               }))
             })
           let queuedForRateLimit = false
