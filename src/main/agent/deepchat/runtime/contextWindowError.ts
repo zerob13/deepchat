@@ -60,6 +60,14 @@ const CONTEXT_COUNT_COMPARISON_PATTERN = new RegExp(
   `(?:prompt|input|messages?|request)[^\\n]{0,96}?${TOKEN_COUNT_CAPTURE}\\s*tokens?\\s*(?:>|exceeds?)\\s*${TOKEN_COUNT_CAPTURE}(?:\\s*tokens?)?(?:\\s*(?:maximum|max|limit))?`,
   'i'
 )
+const TOTAL_CONTEXT_ARITHMETIC_PATTERN = new RegExp(
+  `${TOKEN_COUNT_CAPTURE}\\s*\\+\\s*${TOKEN_COUNT_CAPTURE}\\s*>\\s*${TOKEN_COUNT_CAPTURE}`,
+  'i'
+)
+const INPUT_TOKEN_COUNT_LIMIT_PATTERN = new RegExp(
+  `input\\s+token\\s+count\\s*\\(\\s*${TOKEN_COUNT_CAPTURE}\\s*\\)\\s+exceeds?\\s+the\\s+maximum\\s+number\\s+of\\s+tokens\\s+allowed\\s*\\(\\s*${TOKEN_COUNT_CAPTURE}\\s*\\)`,
+  'i'
+)
 const EXPLICIT_CONTEXT_LIMIT_PATTERN = new RegExp(
   `(?:maximum\\s+(?:context\\s+)?(?:length|window|tokens?)|context\\s+limit)(?:\\s+(?:is|of))?\\s*[:=]?\\s*${TOKEN_COUNT_CAPTURE}(?:\\s*tokens?)?`,
   'i'
@@ -265,6 +273,38 @@ function parseExplicitContextNumbers(text: string): {
   observedLimitTokens?: number
   limitScope?: 'context' | 'prompt'
 } {
+  const normalized = text.toLowerCase()
+  if (
+    normalized.includes('input') &&
+    normalized.includes('max_tokens') &&
+    normalized.includes('context limit')
+  ) {
+    const arithmetic = TOTAL_CONTEXT_ARITHMETIC_PATTERN.exec(text)
+    if (arithmetic) {
+      const inputTokens = parseTokenCount(arithmetic[1])
+      const outputTokens = parseTokenCount(arithmetic[2])
+      const observedLimitTokens = parseTokenCount(arithmetic[3])
+      const actualTokens =
+        inputTokens !== undefined &&
+        outputTokens !== undefined &&
+        Number.isSafeInteger(inputTokens + outputTokens)
+          ? inputTokens + outputTokens
+          : undefined
+      if (actualTokens !== undefined && observedLimitTokens !== undefined) {
+        return { actualTokens, observedLimitTokens, limitScope: 'context' }
+      }
+    }
+  }
+
+  const inputTokenCountLimit = INPUT_TOKEN_COUNT_LIMIT_PATTERN.exec(text)
+  if (inputTokenCountLimit) {
+    return {
+      actualTokens: parseTokenCount(inputTokenCountLimit[1]),
+      observedLimitTokens: parseTokenCount(inputTokenCountLimit[2]),
+      limitScope: 'prompt'
+    }
+  }
+
   const actualThenLimit = ACTUAL_THEN_LIMIT_PATTERN.exec(text)
   if (actualThenLimit) {
     const scope = resolveContextScope(actualThenLimit[0])
@@ -303,6 +343,13 @@ function parseExplicitContextNumbers(text: string): {
 
 function resolveContextScope(text: string): ContextOverflowFacts['scope'] {
   const normalized = text.toLowerCase()
+  if (
+    normalized.includes('input') &&
+    normalized.includes('max_tokens') &&
+    normalized.includes('context limit')
+  ) {
+    return 'request'
+  }
   if (normalized.includes('prompt')) return 'prompt'
   if (normalized.includes('input')) return 'input'
   if (normalized.includes('message')) return 'messages'

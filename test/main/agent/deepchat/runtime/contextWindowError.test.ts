@@ -211,6 +211,20 @@ describe('isContextWindowErrorLike', () => {
       limitTokens: 200000,
       limitScope: 'prompt',
       scope: 'prompt'
+    },
+    {
+      message: 'input length and max_tokens exceed context limit: 7000 + 4000 > 8192',
+      actualTokens: 11000,
+      limitTokens: 8192,
+      limitScope: 'context',
+      scope: 'request'
+    },
+    {
+      message: 'input token count (9000) exceeds the maximum number of tokens allowed (8192)',
+      actualTokens: 9000,
+      limitTokens: 8192,
+      limitScope: 'prompt',
+      scope: 'input'
     }
   ])('extracts explicit provider context numbers from $message', (fixture) => {
     expect(inspectContextOverflow(fixture.message)).toEqual({
@@ -320,6 +334,15 @@ describe('isContextWindowErrorLike', () => {
 
   it('does not promote a non-overflow token comparison into a context ceiling', () => {
     expect(inspectContextOverflow('Prompt has 4,096 tokens, maximum is 8,192 tokens.')).toEqual({
+      matched: false,
+      confidence: 'none'
+    })
+  })
+
+  it('does not treat unrelated arithmetic as a total-context observation', () => {
+    expect(
+      inspectContextOverflow('context limit warning: cache shards 7000 + 4000 > 8192')
+    ).toEqual({
       matched: false,
       confidence: 'none'
     })

@@ -1043,6 +1043,46 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.input.onContextOverflowFacts).toHaveBeenCalledWith(facts)
   })
 
+  it('retries a total-context overflow when only the effective output cap shrinks', async () => {
+    const fixture = createAttemptInput({
+      providerEvents: [
+        [{ type: 'error', error_message: 'context overflow' }],
+        [
+          { type: 'text', content: 'recovered' },
+          { type: 'stop', stop_reason: 'complete' }
+        ]
+      ]
+    })
+    const facts = {
+      matched: true,
+      actualTokens: 1100,
+      limitTokens: 1000,
+      limitScope: 'context' as const,
+      scope: 'request' as const,
+      confidence: 'explicit' as const
+    }
+    fixture.input.inspectContextOverflow = () => facts
+    fixture.input.onContextOverflowFacts = vi.fn()
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).resolves.toEqual([
+      { type: 'text', content: 'recovered' },
+      { type: 'stop', stop_reason: 'complete' }
+    ])
+
+    expect(fixture.providerRequests).toHaveLength(2)
+    expect(fixture.providerRequests.map(({ messages }) => messages)).toEqual([
+      [{ role: 'user', content: 'hello' }],
+      [{ role: 'user', content: 'hello' }]
+    ])
+    expect(fixture.providerRequests.map(({ maxTokens }) => maxTokens)).toEqual([100, 50])
+    expect(fixture.manifests.map(({ tokenBudget }) => tokenBudget.effectiveMaxTokens)).toEqual([
+      100, 50
+    ])
+    expect(fixture.input.onContextOverflowFacts).toHaveBeenCalledWith(facts)
+  })
+
   it('does not send a retry that fails the calibrated local preflight', async () => {
     const fixture = createAttemptInput({
       providerEvents: [[{ type: 'error', error_message: 'context overflow' }]]

@@ -1119,11 +1119,22 @@ export class DeepChatContextCoordinator {
                   'retry_projection_cannot_fit'
                 )
               }
-              if (isDeepStrictEqual(retryProjection.messages, failedProviderMessages)) {
+              const messagesChanged = !isDeepStrictEqual(
+                retryProjection.messages,
+                failedProviderMessages
+              )
+              const facts = observation.contextOverflowFacts
+              const outputReductionCanRecoverTotalContext =
+                facts?.matched === true &&
+                facts.confidence === 'explicit' &&
+                facts.limitScope === 'context' &&
+                Number.isSafeInteger(facts.limitTokens) &&
+                retryProjection.effectiveMaxTokens < providerMaxTokens
+              if (!messagesChanged && !outputReductionCanRecoverTotalContext) {
                 throw buildProviderOverflowRetryFailure(
                   providerMessages,
                   providerMaxTokens,
-                  observation.contextOverflowFacts ?? undefined,
+                  facts ?? undefined,
                   'retry_projection_unchanged'
                 )
               }
