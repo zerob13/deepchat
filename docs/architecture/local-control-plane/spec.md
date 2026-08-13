@@ -727,7 +727,9 @@ command/route,
 local-control surface version, `canonicalInvocationHash`, adapter mode, capability and surface
 hashes, expiry, and child/batch/I/O/time quotas. The invocation hash covers route plus canonical
 owned stdin or scalar arguments from the outer exec. `maxCalls: 1` limits local-control RPC use, not
-nested children. No grant is issued outside CLI Programmatic Runs.
+nested children. Tool call and batch also enter a bounded Agent compute admission domain separate
+from model, media, and OCR compute; this prevents either workload from consuming the other's
+concurrency or start-rate capacity. No grant is issued outside CLI Programmatic Runs.
 Search and describe are frozen-surface reads and create no target Journal operation; call and batch
 use per-child runtime/permission/approval checks and nested Journal causality. Human callers, ACP,
 Direct Native Runs, and Native Activation Runs cannot access these routes.

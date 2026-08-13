@@ -349,7 +349,9 @@ Only a CLI Programmatic Run receives a token. It carries an exact outer-operatio
 
 `maxCalls: 1` limits the local-control RPC use of the token; it is not a nested-child quota. Tool
 call/batch v1 is Agent-only and does not expose a human raw MCP tunnel. Direct Native, Native
-Activation, ordinary human CLI, and ACP Runs never receive this token.
+Activation, ordinary human CLI, and ACP Runs never receive this token. Call and batch use a bounded
+Agent compute admission domain independent from model, media, and OCR compute, in addition to their
+exact invocation and child/batch quotas; search and describe remain read operations.
 
 Local control compares the exact route and canonical request body to `canonicalInvocationHash`, then
 atomically consumes the one-use token before child ordinal allocation or approval. Changed route,
