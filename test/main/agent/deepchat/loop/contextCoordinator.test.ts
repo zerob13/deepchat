@@ -373,16 +373,16 @@ function createAttemptInput(options?: {
               build: (input: any) => {
                 contractToolRefs.push(input.tools)
                 contractBuildInputs.push(structuredClone(input))
-                return (
-                  options?.buildExecutionContract?.(input) ?? {
-                    request: {
-                      sessionId: run.sessionId,
-                      messageId: run.messageId,
-                      runId: run.runId,
-                      requestSeq: input.requestSeq
+                return options?.buildExecutionContract
+                  ? options.buildExecutionContract(input)
+                  : {
+                      request: {
+                        sessionId: run.sessionId,
+                        messageId: run.messageId,
+                        runId: run.runId,
+                        requestSeq: input.requestSeq
+                      }
                     }
-                  }
-                )
               },
               onBuildError: (error: unknown) => executionContractErrors.push(error)
             }
@@ -990,6 +990,26 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.order).not.toContain('rate')
     expect(fixture.run.activeRequestContract).toBeNull()
     expect(fixture.manifests).toHaveLength(scenario.manifestAttempts)
+  })
+
+  it('fails a strict child View when its builder returns no ExecutionContract', async () => {
+    const fixture = createAttemptInput({
+      strictViewContract: true,
+      buildExecutionContract: () => null
+    })
+
+    await expect(
+      collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))
+    ).rejects.toThrow('ExecutionContract builder did not return a contract.')
+    expect(fixture.providerRequests).toHaveLength(0)
+    expect(fixture.order).not.toContain('rate')
+    expect(fixture.manifests).toHaveLength(0)
+    expect(fixture.run.activeRequestContract).toBeNull()
+    expect(fixture.executionContractErrors).toEqual([
+      expect.objectContaining({
+        message: 'ExecutionContract builder did not return a contract.'
+      })
+    ])
   })
 
   it('does not admit a Tool Surface when strict manifest persistence fails', async () => {

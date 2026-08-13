@@ -727,7 +727,7 @@ export class DeepChatContextCoordinator {
       }
       if (input.executionContract) {
         try {
-          executionContract = input.executionContract.build({
+          const builtExecutionContract = input.executionContract.build({
             requestSeq,
             messages: providerMessages,
             modelId: input.modelId,
@@ -737,6 +737,10 @@ export class DeepChatContextCoordinator {
             tools: requestTools,
             contextBuilderVersion
           })
+          if (!builtExecutionContract) {
+            throw new Error('ExecutionContract builder did not return a contract.')
+          }
+          executionContract = builtExecutionContract
         } catch (error) {
           try {
             input.executionContract.onBuildError(error)
@@ -793,11 +797,11 @@ export class DeepChatContextCoordinator {
         }
         providerViewProvenanceCommitted = true
       } catch (error) {
+        if (input.strictViewContract) {
+          reportManifestError(error)
+          throw error
+        }
         if (executionContract) {
-          if (input.strictViewContract) {
-            reportManifestError(error)
-            throw error
-          }
           executionContract = null
           const reason = error instanceof Error ? error.message : String(error)
           reportManifestError(
