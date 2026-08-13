@@ -326,6 +326,9 @@ async function createTestServer(
     }>
     dispatchStream?: NonNullable<CliServerDependencies['dispatchStream']>
     dispatchProgrammaticTool?: NonNullable<CliServerDependencies['dispatchProgrammaticTool']>
+    completeProgrammaticToolPreDispatchFailure?: NonNullable<
+      CliServerDependencies['completeProgrammaticToolPreDispatchFailure']
+    >
     surface?: ReadonlyMap<string, CliSurfaceEntry>
     dispatchUpload?: (
       method: string,
@@ -342,6 +345,7 @@ async function createTestServer(
   descriptor: LocalControlDescriptor
   dispatch: ReturnType<typeof vi.fn>
   dispatchProgrammaticTool: ReturnType<typeof vi.fn>
+  completeProgrammaticToolPreDispatchFailure: ReturnType<typeof vi.fn>
   dispatchUpload: ReturnType<typeof vi.fn>
   authorize: ReturnType<typeof vi.fn>
 }> {
@@ -362,12 +366,18 @@ async function createTestServer(
   )
   const dispatchUpload = vi.fn(options.dispatchUpload ?? (async () => ({})))
   const dispatchProgrammaticTool = vi.fn(options.dispatchProgrammaticTool ?? (async () => ({})))
+  const completeProgrammaticToolPreDispatchFailure = vi.fn(
+    options.completeProgrammaticToolPreDispatchFailure ?? (() => undefined)
+  )
   const authorize = vi.fn(options.authorize ?? (async () => ({ release: () => undefined })))
   server = new CliServer({
     userDataPath,
     appVersion: '1.2.3',
     dispatch,
     ...(options.dispatchProgrammaticTool ? { dispatchProgrammaticTool } : {}),
+    ...(options.completeProgrammaticToolPreDispatchFailure
+      ? { completeProgrammaticToolPreDispatchFailure }
+      : {}),
     ...(options.dispatchStream
       ? { dispatchStream: options.dispatchStream }
       : options.streamOutput
@@ -405,6 +415,7 @@ async function createTestServer(
     descriptor,
     dispatch,
     dispatchProgrammaticTool,
+    completeProgrammaticToolPreDispatchFailure,
     dispatchUpload,
     authorize
   }
@@ -1098,6 +1109,57 @@ describe('CLI local transport', () => {
     expect(dispatchProgrammaticTool.mock.calls[0]?.[0]).toBe('tool.call')
     expect(dispatchProgrammaticTool.mock.calls[0]?.[1]).toEqual(params)
     expect(dispatchProgrammaticTool.mock.calls[0]?.[3]).toMatchObject({ operation })
+  })
+
+  it('completes an admitted Programmatic policy failure before child dispatch', async () => {
+    const token = 'r'.repeat(43)
+    const params = { target: 'remote_search', arguments: { query: 'weather' } }
+    const { authority, operation } = createArmedProgrammaticAuthority({
+      token,
+      tokenId: 'programmatic-v2-policy-failure',
+      params
+    })
+    const dispatchProgrammaticTool = vi.fn(async () => ({}))
+    const completeProgrammaticToolPreDispatchFailure = vi.fn()
+    const { descriptor } = await createTestServer({
+      beginAgentRequest: (candidate) => authority.beginRequest(candidate),
+      dispatchProgrammaticTool,
+      completeProgrammaticToolPreDispatchFailure,
+      authorize: async () => {
+        throw new CliRequestError('rate_limited', 'Agent compute capacity is full', {
+          httpStatus: 429,
+          retriable: true
+        })
+      }
+    })
+
+    const response = await rpcRequest(descriptor, {
+      token,
+      method: 'tool.call',
+      params
+    })
+
+    expect(response).toMatchObject({
+      status: 429,
+      body: {
+        ok: false,
+        error: {
+          code: 'rate_limited',
+          message: 'Agent compute capacity is full',
+          retriable: true
+        }
+      }
+    })
+    expect(dispatchProgrammaticTool).not.toHaveBeenCalled()
+    expect(completeProgrammaticToolPreDispatchFailure).toHaveBeenCalledWith(
+      'tool.call',
+      expect.objectContaining({ operation }),
+      expect.objectContaining({
+        code: 'rate_limited',
+        message: 'Agent compute capacity is full',
+        retriable: true
+      })
+    )
   })
 
   it('burns a V2 grant before dispatch when the canonical body changes', async () => {

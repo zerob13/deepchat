@@ -738,6 +738,12 @@ Before ordinal allocation or approval, local control compares the canonical requ
 atomically consumes its token. Changed route/body, replay, expiry/revocation, surface downgrade, and
 wrong principal/conversation fail closed under the same bounded shape without target lookup.
 
+After exact admission, a local-control policy, capacity, or timeout failure that occurs before
+Programmatic dispatch completes a bounded typed error in the process-live parent controller. It
+creates no child Journal fact; the outer runtime still obtains that controller result and commits
+outer T2. CLI stdout and stderr remain non-authoritative transport and are never parsed to establish
+settlement.
+
 The shell integration may prepare an environment token before outer T1, but the token is inert until
 a newly created T1 receipt arms the exact process-live grant. Local control rejects unarmed grants;
 T1 failure revokes the token and prevents spawn. Programmatic CLI requests are foreground-only:

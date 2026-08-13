@@ -363,7 +363,9 @@ token is inert: local control rejects it until a newly created outer T1 receipt 
 matching process-live grant. T1 failure revokes the token and prevents process spawn. The bundled
 CLI starts only after the grant is armed. A separate settlement receipt binds the canonical
 outer-result hash; stdout is untrusted transport data and cannot independently prove child or outer
-settlement.
+settlement. After exact local-control admission, a policy, capacity, or timeout failure before
+Programmatic dispatch is recorded as a bounded typed result in that same process-live controller;
+it creates no child T1, and the outer runtime remains the only owner that can commit outer T2.
 
 The ordinary shell permission interaction remains before outer T1. In-process approval may continue
 with the same frozen View capability and a fresh exact invocation grant. A Programmatic CLI command

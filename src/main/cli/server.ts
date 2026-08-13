@@ -117,6 +117,11 @@ export type CliServerDependencies = Readonly<{
     operation: AgentCliProgrammaticOperationGrant,
     signal: AbortSignal
   ): Promise<unknown>
+  completeProgrammaticToolPreDispatchFailure?(
+    method: string,
+    operation: AgentCliProgrammaticOperationGrant,
+    error: CliRequestError
+  ): void
   dispatchStream?(
     method: string,
     input: unknown,
@@ -711,6 +716,8 @@ export class CliServer {
 
     let requestId = UNKNOWN_REQUEST_ID
     let routeMethod = 'unknown'
+    let programmaticInvocationAdmitted = false
+    let programmaticDispatchStarted = false
     try {
       const surface =
         routeSurfaceVersion === LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION
@@ -817,6 +824,7 @@ export class CliServer {
             { httpStatus: 401 }
           )
         }
+        programmaticInvocationAdmitted = true
       } else if (programmaticOperation) {
         throw new CliRequestError(
           'authentication_failed',
@@ -937,6 +945,7 @@ export class CliServer {
                   { httpStatus: 503, retriable: true }
                 )
               }
+              programmaticDispatchStarted = true
               return await this.dependencies.dispatchProgrammaticTool(
                 entry.contract.name,
                 input,
@@ -963,19 +972,36 @@ export class CliServer {
       const result = this.parseRouteOutput(entry, rawOutput, routeMethod)
       this.sendJson(response, 200, createLocalControlSuccess(requestId, result), agentGrant)
     } catch (error) {
-      if (error instanceof CliRequestError) {
-        this.sendFailure(response, error.httpStatus, requestId, error)
-      } else {
-        this.log.warn('[CLI] Route dispatch failed', { method: routeMethod }, error)
-        this.sendFailure(
-          response,
-          500,
-          requestId,
-          new CliRequestError('internal_error', 'Internal local-control error', {
-            httpStatus: 500
-          })
-        )
+      const failure =
+        error instanceof CliRequestError
+          ? error
+          : new CliRequestError('internal_error', 'Internal local-control error', {
+              httpStatus: 500
+            })
+      if (
+        programmaticOperation &&
+        programmaticInvocationAdmitted &&
+        !programmaticDispatchStarted &&
+        this.dependencies.completeProgrammaticToolPreDispatchFailure
+      ) {
+        try {
+          this.dependencies.completeProgrammaticToolPreDispatchFailure(
+            routeMethod,
+            programmaticOperation,
+            failure
+          )
+        } catch (completionError) {
+          this.log.warn(
+            '[CLI] Programmatic pre-dispatch failure could not reach its parent controller',
+            { method: routeMethod },
+            completionError
+          )
+        }
       }
+      if (!(error instanceof CliRequestError)) {
+        this.log.warn('[CLI] Route dispatch failed', { method: routeMethod }, error)
+      }
+      this.sendFailure(response, failure.httpStatus, requestId, failure)
     } finally {
       request.off('aborted', abort)
       agentGrant?.signal.removeEventListener('abort', abortRevokedAgentRequest)

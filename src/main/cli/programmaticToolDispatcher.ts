@@ -408,6 +408,23 @@ function formatFailedOuterResponse(error: CliRequestError): string {
   return `Error: ${error.message}`
 }
 
+function formatPreDispatchOuterFailure(error: CliRequestError): string {
+  return JSON.stringify(
+    {
+      status: 'error',
+      error: {
+        code: error.code,
+        message:
+          normalizeText(error.message, MAX_CHILD_ERROR_CHARACTERS) ||
+          'Programmatic Tool request failed',
+        retriable: error.retriable
+      }
+    },
+    null,
+    2
+  )
+}
+
 function measureOuterResponseBytes(output: unknown): number {
   return Buffer.byteLength(formatSuccessfulOuterResponse(output), 'utf8')
 }
@@ -669,6 +686,35 @@ function boundedChildOutcome(input: {
 
 export class ProgrammaticToolDispatcher {
   constructor(private readonly options: ProgrammaticToolDispatcherOptions) {}
+
+  completePreDispatchFailure(
+    method: string,
+    grant: AgentCliProgrammaticOperationGrant,
+    error: CliRequestError
+  ): void {
+    if (method !== grant.route) {
+      throw new ProgrammaticParentOperationError(
+        'Programmatic pre-dispatch failure does not match its exact route',
+        'identity_mismatch'
+      )
+    }
+    const result = Object.freeze({
+      responseText: formatPreDispatchOuterFailure(error),
+      isError: true
+    })
+    if (method === toolSearchRoute.name || method === toolDescribeRoute.name) {
+      this.options.parents.recordDiscoveryResult(grant, result)
+      return
+    }
+    if (method === toolCallRoute.name || method === toolBatchRoute.name) {
+      this.options.parents.failToolInvocationBeforePlan(grant, result)
+      return
+    }
+    throw new ProgrammaticParentOperationError(
+      'Programmatic pre-dispatch failure has an unsupported route',
+      'identity_mismatch'
+    )
+  }
 
   private async executeReservedChild(input: {
     caller: CliRouteCaller

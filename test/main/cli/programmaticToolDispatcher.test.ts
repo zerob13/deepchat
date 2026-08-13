@@ -234,6 +234,40 @@ async function expectCliError(
 }
 
 describe('ProgrammaticToolDispatcher', () => {
+  it('records typed route failures before creating a child plan', () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+    const grant = operationGrant(context.capability, 'call')
+
+    fixture.dispatcher.completePreDispatchFailure(
+      toolCallRoute.name,
+      grant,
+      new CliRequestError('rate_limited', 'Agent compute capacity is full', {
+        retriable: true
+      })
+    )
+
+    expect(fixture.failToolInvocationBeforePlan).toHaveBeenCalledWith(grant, {
+      responseText: JSON.stringify(
+        {
+          status: 'error',
+          error: {
+            code: 'rate_limited',
+            message: 'Agent compute capacity is full',
+            retriable: true
+          }
+        },
+        null,
+        2
+      ),
+      isError: true
+    })
+    expect(fixture.reserveChildren).not.toHaveBeenCalled()
+    expect(fixture.commitChildDispatch).not.toHaveBeenCalled()
+  })
+
   it('searches only the frozen Programmatic Surface with deterministic bounded summaries', async () => {
     const exec = agentExec()
     const nativePinned = mcpTool({ name: 'calendar_native' })

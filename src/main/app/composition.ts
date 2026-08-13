@@ -457,6 +457,9 @@ export async function createMainProcessControl(dependencies: {
       assertRouteAllowedDuringDatabaseMaintenance(method)
       return await programmaticToolDispatcher.dispatch(method, input, caller, operation, signal)
     },
+    completeProgrammaticToolPreDispatchFailure: (method, operation, error) => {
+      programmaticToolDispatcher.completePreDispatchFailure(method, operation, error)
+    },
     dispatchStream: async (method, input, caller, requestId, signal, emit) => {
       if (cliRunService?.handlesStream(method)) {
         assertRouteAllowedDuringDatabaseMaintenance(method)
