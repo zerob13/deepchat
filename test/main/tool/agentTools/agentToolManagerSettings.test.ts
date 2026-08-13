@@ -511,10 +511,15 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
 
     const manager = buildManager()
     const commitDispatch = vi.fn()
-    const result = (await manager.callTool('skill_view', { name: 'deepchat-settings' }, 'conv-1', {
-      activeSkillNames: [],
-      commitDispatch
-    })) as { content: string; rawData?: { toolResult?: unknown } }
+    const result = (await manager.callTool(
+      'skill_view',
+      { name: ' deepchat-settings ' },
+      'conv-1',
+      {
+        activeSkillNames: [],
+        commitDispatch
+      }
+    )) as { content: string; rawData?: { toolResult?: unknown } }
 
     const content = JSON.parse(result.content) as Record<string, unknown>
     expect(content.isPinned).toBe(false)

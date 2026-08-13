@@ -15,7 +15,11 @@ import { createAgentToolDependencies } from './agentTools/agentToolDependencies'
 import {
   CRON_JOB_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_NAME,
+  SKILL_AGENT_TOOL_NAMES,
   SKILL_LIST_AGENT_TOOL_NAME,
+  SKILL_MANAGE_AGENT_TOOL_NAME,
+  SKILL_RUN_AGENT_TOOL_NAME,
+  SKILL_VIEW_AGENT_TOOL_NAME,
   SUBAGENT_ORCHESTRATOR_TOOL_NAME,
   TOOL_SEARCH_AGENT_TOOL_NAME,
   assertAgentToolExposure,
@@ -1897,6 +1901,57 @@ describe('ToolService', () => {
     expect(defs.some((definition) => tapeToolNames.has(definition.function.name))).toBe(false)
   })
 
+  it('keeps Skill capabilities reserved, enabled, and fail-closed against MCP shadowing', async () => {
+    const skillNames = new Set<string>(SKILL_AGENT_TOOL_NAMES)
+    const toolService = new ToolService({
+      mcpService: {
+        getAllToolDefinitions: vi
+          .fn()
+          .mockResolvedValue(
+            SKILL_AGENT_TOOL_NAMES.map((name) => buildToolDefinition(name, 'untrusted-mcp'))
+          )
+      } as any,
+      skillSettings: { isEnabled: () => true } as any,
+      agentSettings: { resolveDeepChatAgentConfig: vi.fn(async () => ({})) } as any,
+      providerSettings: { getModelConfig: vi.fn() } as any,
+      settings: { get: vi.fn() },
+      commandPermissionHandler: new CommandPermissionService(),
+      agentTools: buildAgentToolRuntimeMock()
+    })
+    const agentToolManager = (toolService as any).ensureAgentToolManager(null)
+    const getAgentDefinitions = vi
+      .spyOn(agentToolManager, 'getAllToolDefinitions')
+      .mockResolvedValue(
+        SKILL_AGENT_TOOL_NAMES.map((name) => buildToolDefinition(name, 'agent-skills'))
+      )
+
+    const definitions = await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: null,
+      conversationId: 'conversation-1',
+      disabledAgentTools: [...SKILL_AGENT_TOOL_NAMES]
+    })
+    const skillDefinitions = definitions.filter((definition) =>
+      skillNames.has(definition.function.name)
+    )
+
+    expect(skillDefinitions).toHaveLength(SKILL_AGENT_TOOL_NAMES.length)
+    expect(skillDefinitions.every((definition) => definition.source === 'agent')).toBe(true)
+    expect(skillDefinitions.every((definition) => definition.server.name === 'agent-skills')).toBe(
+      true
+    )
+
+    getAgentDefinitions.mockRejectedValueOnce(new Error('Agent catalog unavailable'))
+    const fallback = await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      supportsVision: false,
+      agentWorkspacePath: null,
+      conversationId: 'conversation-1'
+    })
+    expect(fallback.some((definition) => skillNames.has(definition.function.name))).toBe(false)
+  })
+
   it('propagates Agent catalog failures only for fail-closed resolutions', async () => {
     const toolService = new ToolService({
       mcpService: {
@@ -2410,6 +2465,9 @@ describe('ToolService', () => {
     expect(getAgentToolExposure(SUBAGENT_ORCHESTRATOR_TOOL_NAME)).toBe('system-model')
     expect(getAgentToolExposure(LIVE_DELEGATION_AGENT_TOOL_NAME)).toBe('system-model')
     expect(getAgentToolExposure(SKILL_LIST_AGENT_TOOL_NAME)).toBe('system-model')
+    expect(getAgentToolExposure(SKILL_VIEW_AGENT_TOOL_NAME)).toBe('system-model')
+    expect(getAgentToolExposure(SKILL_MANAGE_AGENT_TOOL_NAME)).toBe('system-model')
+    expect(getAgentToolExposure(SKILL_RUN_AGENT_TOOL_NAME)).toBe('system-model')
     expect(getAgentToolExposure('read')).toBe('user-configurable')
     expect(getAgentToolExposure('__proto__')).toBe('user-configurable')
     expect(() => assertAgentToolExposure(TAPE_TOOL_NAMES.handoff, 'user-configurable')).toThrow(

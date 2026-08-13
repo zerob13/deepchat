@@ -3808,13 +3808,26 @@ describe('DeepChatAgentHarness', () => {
         metadata: {},
         allowedTools: ['skill_required']
       }
+      const sessionSkillMetadata = {
+        name: 'session-skill',
+        description: 'Session skill',
+        category: 'engineering',
+        platforms: [],
+        metadata: {}
+      }
       const skillService = getSkillServiceMock()
       skillService.snapshotCachedMetadataList.mockReturnValue({
         state: 'ready',
-        skills: [skillMetadata]
+        skills: [skillMetadata, sessionSkillMetadata]
       })
-      skillService.getMetadataList.mockResolvedValue([skillMetadata])
-      skillService.loadSkillContent.mockResolvedValue({ content: '# Review instructions' })
+      skillService.getMetadataList.mockResolvedValue([skillMetadata, sessionSkillMetadata])
+      skillService.getActiveSkills.mockResolvedValue(['session-skill'])
+      skillService.loadSkillContent.mockImplementation(
+        async (_agentId: string, skillName: string) =>
+          skillName === 'session-skill'
+            ? { content: '# Session instructions' }
+            : { content: '# Review instructions' }
+      )
       providerSettings.getModelConfig.mockReturnValue({
         ...providerSettings.getModelConfig(),
         functionCall: true
@@ -3846,7 +3859,7 @@ describe('DeepChatAgentHarness', () => {
 
         const preparation = await params.controls?.prepareSkillActivation?.('review-skill')
         expect(preparation?.kind).toBe('prepared')
-        expect(params.run.resources.activeSkillNames).toEqual([])
+        expect(params.run.resources.activeSkillNames).toEqual(['session-skill'])
         expect(params.run.resources.toolDefinitions.map((tool) => tool.function.name)).toEqual([
           'deepchat_question'
         ])
@@ -3855,13 +3868,15 @@ describe('DeepChatAgentHarness', () => {
         }
         preparation.apply()
 
-        expect(params.run.resources.activeSkillNames).toEqual(['review-skill'])
+        expect(params.run.resources.activeSkillNames).toEqual(['review-skill', 'session-skill'])
         expect(params.run.resources.toolDefinitions.map((tool) => tool.function.name)).toEqual([
           'deepchat_question',
           'skill_required',
           'skill_optional_hidden'
         ])
+        expect(params.run.resources.promptAssembly?.prompt).toContain('# Session instructions')
         expect(params.run.resources.promptAssembly?.prompt).not.toContain('# Review instructions')
+        expect(String(params.run.messages[0]?.content)).toContain('# Session instructions')
         expect(String(params.run.messages[0]?.content)).not.toContain('# Review instructions')
         expect(toolService.buildToolSystemPrompt).toHaveBeenLastCalledWith({
           conversationId: 's1',
@@ -3895,6 +3910,10 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       await agent.processMessage('s1', 'Hello')
 
+      await expect(processStream.mock.results[0]?.value).resolves.toEqual({
+        status: 'completed',
+        stopReason: 'complete'
+      })
       expect(bindings).toHaveLength(2)
       expect(bindings[1].snapshot.toolDefinitions.map((tool) => tool.function.name)).toEqual([
         'deepchat_question',

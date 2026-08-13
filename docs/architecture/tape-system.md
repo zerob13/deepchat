@@ -65,8 +65,10 @@ owner，也不能通过 canonical module 的新增导出隐式扩大旧路径合
 | --- | --- |
 | DeepChat loop runner | `DeepChatLoopTapePort`（manifest、Skill request/runtime-view authority、tool fact、provider attempt 与 Journal 的窄能力组合） |
 | DeepChat Skill materializer | 冻结的 `SkillContextTapePort` adapter（incarnation、materialization、有效 user source 与 Run-manifest 能力） |
+| DeepChat Skill execution authority | 冻结的 `SkillExecutionAuthorityTapePort` adapter（exact execution ViewManifest、incarnation 与 materialization read-only 校验） |
 | DeepChat harness composition | `ExecutionJournalRecoveryReader` |
 | Deferred tool executor | `ExecutionJournalWriter` |
+| Interaction coordinator | deferred approval recovery 所需的 `ExecutionJournalRecoveryReader`、exact execution ViewManifest reader 与 tool-surface fact reader 窄组合 |
 | Live delegation repository | `ParentTaskContractWriter`、`TaskContractWriter`、`TaskEvaluationWriter` |
 | Turn coordinator / ACP compatibility | `TapeReconciliationPort` |
 | Transcript | `TapeMessageFactWriter` |
@@ -191,6 +193,12 @@ fact 都是同 identity 同 payload 幂等、异 payload corruption，并排除 
 普通 search。strict V5 在 provider admission 前 durable bind 且 fail closed；V4 provenance 可沿既有
 fail-open，但不得冒充 verified。durable surface fact 只证明该 View 的 exposure provenance 已提交，不证明
 provider request 已发送或被上游接收。正常 dispatch 不读 Tape。
+
+`skill_run` 是窄化的安全例外：`SkillExecutionAuthorityResolver` 只能通过冻结的
+`SkillExecutionAuthorityTapePort` 读取 exact execution ViewManifest、当前 incarnation 和被 manifest
+引用的 materialization，并在进程 spawn 前再次校验。该读取只验证 provider-request-bound Skill
+authority，不得枚举 dispatch history、从 Tape 重建 process-live authority，或授权其他工具；generic
+tool dispatch 仍不得读取 Tape。
 
 每个 View 的 Provider Active Surface 与 Programmatic Surface immutable 且 stable-target 互斥；V5
 ExecutionContract ceilings 仍只含 provider-visible tools。Programmatic capability 的完整 canonical value
@@ -326,6 +334,11 @@ authority。
 
 `tape_info`、`tape_anchors` 是 diagnostic；`tape_handoff` 是 runtime-only。五个名称全部 reserved，
 MCP 不能 shadow，持久化 disabled-tool 配置也不能关闭 system capability。
+
+Skills 启用时，`skill_list`、`skill_view`、`skill_manage`、`skill_run` 同样是 reserved 的 system-model
+capability；MCP 不能 shadow，持久化 disabled-tool 配置不能逐项关闭。全局 Skills 设置仍是其产品级
+availability gate。`skill_view`/`skill_run` 的 provider-visible 结果和执行权限仍必须遵守上文的
+materialization、ViewManifest、Journal 与 source fence，不因 reserved/exposure 身份获得额外 authority。
 
 ## Fork 和 Subagent lineage
 

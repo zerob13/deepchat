@@ -145,6 +145,7 @@ import {
   registerRuntimeSkillContext,
   type LoopRunToolSurfaceMode
 } from '@/agent/deepchat/loop/loopRun'
+import { inheritProviderProjectionIdentities } from '@/agent/deepchat/loop/providerProjectionIdentity'
 import type {
   MaterializedSkillProjection,
   RuntimeSkillExecutionMaterializer
@@ -1183,6 +1184,12 @@ export class DeepChatLoopRunner {
       runPromptAssembly === initialPromptAssembly
         ? messages
         : projectSystemPrompt(messages, runPromptAssembly.prompt)
+    const sessionSkillBodiesOverride = materializedSkillContexts
+      .filter((projection) => projection.scope === 'session')
+      .map((projection) => ({
+        name: projection.context.skillName,
+        content: projection.effectiveContent
+      }))
     const resolveRefreshedPromptAssembly = async (
       activeSkillNames: string[] | undefined,
       refreshedTools: MCPToolDefinition[]
@@ -1197,7 +1204,8 @@ export class DeepChatLoopRunner {
             activeSkillNames ?? catalogActiveSkillNames,
             resourceInstance
           ),
-          sessionActiveSkillNames: catalogActiveSkillNames,
+          sessionActiveSkillNames: sessionSkillBodiesOverride.map((skill) => skill.name),
+          sessionSkillBodiesOverride,
           contextLength: contextBudgetLength,
           commandShell
         })
@@ -1928,10 +1936,14 @@ export class DeepChatLoopRunner {
                         loopRun.resources.promptAssembly = preparedPromptAssembly
                         if (refreshedAssembly.prompt) {
                           if (loopRun.messages[0]?.role === 'system') {
-                            loopRun.messages[0] = {
-                              ...loopRun.messages[0],
-                              content: refreshedAssembly.prompt
-                            }
+                            const currentSystemMessage = loopRun.messages[0]
+                            loopRun.messages[0] = inheritProviderProjectionIdentities(
+                              currentSystemMessage,
+                              {
+                                ...currentSystemMessage,
+                                content: refreshedAssembly.prompt
+                              }
+                            )
                           } else {
                             loopRun.messages.unshift({
                               role: 'system',

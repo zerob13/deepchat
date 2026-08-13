@@ -1135,9 +1135,20 @@ describe('CLI local transport', () => {
       tokenId: 'programmatic-v3-dispatch',
       params
     })
-    const dispatchProgrammaticTool = vi.fn(async () => ({
-      step: { childOrdinal: 0, status: 'success' as const, result: { found: true } }
-    }))
+    const dispatchHandler: NonNullable<CliServerDependencies['dispatchProgrammaticTool']> = async (
+      _method,
+      _input,
+      _caller,
+      _operation,
+      _signal,
+      markDispatchStarted
+    ) => {
+      markDispatchStarted()
+      return {
+        step: { childOrdinal: 0, status: 'success' as const, result: { found: true } }
+      }
+    }
+    const dispatchProgrammaticTool = vi.fn(dispatchHandler)
     const { descriptor, dispatch } = await createTestServer({
       beginAgentRequest: (candidate) => authority.beginRequest(candidate),
       dispatchProgrammaticTool
@@ -1170,6 +1181,100 @@ describe('CLI local transport', () => {
     expect(dispatchProgrammaticTool.mock.calls[0]?.[0]).toBe('tool.call')
     expect(dispatchProgrammaticTool.mock.calls[0]?.[1]).toEqual(params)
     expect(dispatchProgrammaticTool.mock.calls[0]?.[3]).toMatchObject({ operation })
+  })
+
+  it('settles a typed Programmatic failure thrown before dispatch starts', async () => {
+    const token = 'p'.repeat(43)
+    const params = { target: 'remote_search', arguments: { query: 'weather' } }
+    const { authority, operation } = createArmedProgrammaticAuthority({
+      token,
+      tokenId: 'programmatic-v3-pre-dispatch-failure',
+      params
+    })
+    const dispatchHandler: NonNullable<CliServerDependencies['dispatchProgrammaticTool']> = async (
+      _method,
+      _input,
+      _caller,
+      _operation,
+      _signal,
+      _markDispatchStarted
+    ) => {
+      throw new CliRequestError('unavailable', 'Application is shutting down', {
+        httpStatus: 503,
+        retriable: true
+      })
+    }
+    const completeProgrammaticToolPreDispatchFailure = vi.fn()
+    const { descriptor } = await createTestServer({
+      beginAgentRequest: (candidate) => authority.beginRequest(candidate),
+      dispatchProgrammaticTool: dispatchHandler,
+      completeProgrammaticToolPreDispatchFailure
+    })
+
+    const response = await rpcRequest(descriptor, {
+      token,
+      method: 'tool.call',
+      params
+    })
+
+    expect(response).toMatchObject({
+      status: 503,
+      body: {
+        ok: false,
+        error: {
+          code: 'unavailable',
+          message: 'Application is shutting down',
+          retriable: true
+        }
+      }
+    })
+    expect(completeProgrammaticToolPreDispatchFailure).toHaveBeenCalledWith(
+      'tool.call',
+      expect.objectContaining({ operation }),
+      expect.objectContaining({ code: 'unavailable', message: 'Application is shutting down' })
+    )
+  })
+
+  it('does not synthesize pre-dispatch settlement after dispatch starts', async () => {
+    const token = 'q'.repeat(43)
+    const params = { target: 'remote_search', arguments: { query: 'weather' } }
+    const { authority } = createArmedProgrammaticAuthority({
+      token,
+      tokenId: 'programmatic-v3-post-dispatch-failure',
+      params
+    })
+    const dispatchHandler: NonNullable<CliServerDependencies['dispatchProgrammaticTool']> = async (
+      _method,
+      _input,
+      _caller,
+      _operation,
+      _signal,
+      markDispatchStarted
+    ) => {
+      markDispatchStarted()
+      throw new CliRequestError('unavailable', 'Dispatcher failed after admission', {
+        httpStatus: 503,
+        retriable: true
+      })
+    }
+    const completeProgrammaticToolPreDispatchFailure = vi.fn()
+    const { descriptor } = await createTestServer({
+      beginAgentRequest: (candidate) => authority.beginRequest(candidate),
+      dispatchProgrammaticTool: dispatchHandler,
+      completeProgrammaticToolPreDispatchFailure
+    })
+
+    const response = await rpcRequest(descriptor, {
+      token,
+      method: 'tool.call',
+      params
+    })
+
+    expect(response).toMatchObject({
+      status: 503,
+      body: { ok: false, error: { code: 'unavailable' } }
+    })
+    expect(completeProgrammaticToolPreDispatchFailure).not.toHaveBeenCalled()
   })
 
   it('completes an admitted Programmatic policy failure before child dispatch', async () => {

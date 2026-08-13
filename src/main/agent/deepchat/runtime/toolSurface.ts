@@ -3841,12 +3841,15 @@ export function createPolicySelectedToolSurfaceRun(input: {
         0
       )
       for (const candidate of deferActivationCandidates ? [] : (pendingCandidates ?? [])) {
+        if (ledgerTargets.has(candidate.stableTargetKey)) {
+          continue
+        }
         let rejectionCode: ToolSurfaceActivationRejectionCode | undefined
         const ceilingEntry = ceilingEntryByTarget.get(candidate.stableTargetKey)!
         const eligibleIdentity = eligibleByTarget.get(candidate.stableTargetKey)
         if (driftedTargets.has(candidate.stableTargetKey)) {
           rejectionCode = 'definition-drift'
-        } else if (!eligibleIdentity || ledgerTargets.has(candidate.stableTargetKey)) {
+        } else if (!eligibleIdentity) {
           rejectionCode = 'ineligible'
         } else if (additions.length >= input.policy.maxActivationCandidatesPerBatch) {
           rejectionCode = 'per-batch-count-cap'
@@ -3917,9 +3920,10 @@ export function createPolicySelectedToolSurfaceRun(input: {
         selectionReasons,
         acceptedSearchEvidence,
         activation: {
-          originRequestSeq: deferActivationCandidates
-            ? null
-            : (pendingRelease?.originRequest.requestSeq ?? null),
+          originRequestSeq:
+            deferActivationCandidates || decisions.length === 0
+              ? null
+              : (pendingRelease?.originRequest.requestSeq ?? null),
           decisions
         }
       })
@@ -3965,9 +3969,10 @@ export function createPolicySelectedToolSurfaceRun(input: {
       let consumedRelease: { readonly requestSeq: number; readonly fingerprint: string } | null =
         null
       if (proposal.consumesPendingRelease && proposal.pendingRelease) {
-        const consumedRequestSeq = snapshot.activation.originRequestSeq
+        const consumedRequestSeq = proposal.pendingRelease.originRequest.requestSeq
         if (
-          consumedRequestSeq === null ||
+          !Number.isSafeInteger(consumedRequestSeq) ||
+          consumedRequestSeq <= 0 ||
           consumedReleaseFingerprintByRequestSeq.size >= MAX_TOOL_SURFACE_CANDIDATE_BATCHES
         ) {
           throw new ToolSurfaceError(

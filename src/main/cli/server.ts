@@ -115,7 +115,8 @@ export type CliServerDependencies = Readonly<{
     input: unknown,
     caller: CliRouteCaller,
     operation: AgentCliProgrammaticOperationGrant,
-    signal: AbortSignal
+    signal: AbortSignal,
+    markDispatchStarted: () => void
   ): Promise<unknown>
   completeProgrammaticToolPreDispatchFailure?(
     method: string,
@@ -945,13 +946,15 @@ export class CliServer {
                   { httpStatus: 503, retriable: true }
                 )
               }
-              programmaticDispatchStarted = true
               return await this.dependencies.dispatchProgrammaticTool(
                 entry.contract.name,
                 input,
                 caller,
                 programmaticOperation,
-                controller.signal
+                controller.signal,
+                () => {
+                  programmaticDispatchStarted = true
+                }
               )
             }
             return await this.dependencies.dispatch(

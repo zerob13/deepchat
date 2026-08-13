@@ -643,8 +643,16 @@ export async function createMainProcessControl(dependencies: {
       signal.throwIfAborted()
       return output
     },
-    dispatchProgrammaticTool: async (method, input, caller, operation, signal) => {
+    dispatchProgrammaticTool: async (
+      method,
+      input,
+      caller,
+      operation,
+      signal,
+      markDispatchStarted
+    ) => {
       assertRouteAllowedDuringDatabaseMaintenance(method)
+      markDispatchStarted()
       return await programmaticToolDispatcher.dispatch(method, input, caller, operation, signal)
     },
     completeProgrammaticToolPreDispatchFailure: (method, operation, error) => {

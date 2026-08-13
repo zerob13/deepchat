@@ -2535,9 +2535,10 @@ describe('Tool Surface production selection', () => {
     ).toMatchObject({ reason: 'active-skill', activationOrdinal: 2 })
   })
 
-  it('records a search candidate as ineligible when the same batch activates it through a Skill', () => {
+  it('omits a search candidate when the same batch activates it through a Skill', () => {
     const harness = createActivationHarness(['shared'])
     const shared = harness.byName.get('shared')!
+    const candidate = harness.candidate('shared', 1)
     const preparation = harness.selected.controller.prepareSkillActivation!({
       requiredStableTargetKeys: [shared.stableTargetKey],
       eligibleDefinitions: harness.definitions
@@ -2547,16 +2548,29 @@ describe('Tool Surface production selection', () => {
 
     preparation.apply()
     expect(() =>
-      harness.selected.controller.stageActivationBatch([harness.candidate('shared', 1)])
+      harness.selected.controller.stageActivationBatch([candidate])
     ).not.toThrow()
     const nextView = harness.build(2)
 
-    expect(nextView.activation.decisions).toEqual([
-      expect.objectContaining({ accepted: false, rejectionCode: 'ineligible' })
-    ])
+    expect(nextView.activation.decisions).toEqual([])
     expect(
       nextView.activeEntries.find((entry) => entry.definition.function.name === 'shared')
     ).toMatchObject({ reason: 'active-skill' })
+    const projection = projectToolSurfaceTapeProvenance(nextView, false)
+    expect(projection.surface.candidateRejections).toEqual([])
+    expect(() =>
+      createTapeToolSurfaceFact({
+        ...projection.surface,
+        manifestHash: 'd'.repeat(64),
+        catalog: {
+          sessionId: 's1',
+          tapeIncarnationId: candidate.toolResult.tapeIncarnationId,
+          entryId: 1,
+          fullCatalogHash: projection.catalog.fullCatalogHash,
+          catalogFactHash: 'e'.repeat(64)
+        }
+      })
+    ).not.toThrow()
   })
 
   it('rejects Skill activation before the originating View is admitted', () => {

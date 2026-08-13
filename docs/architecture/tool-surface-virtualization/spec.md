@@ -334,8 +334,9 @@ provider-prefix mechanism.
 Call and batch receive their canonical bounded request body through the exec tool's owned stdin
 channel, not shell redirection or command-line JSON. The outer exec arguments and T1 hash bind that
 stdin value without persisting it. Search/describe may use bounded scalar command arguments. Shell
-control syntax remains forbidden, and Programmatic CLI invocations may not request background,
-detached, or yielded execution. The outer exec stays pending until the local-control request and all
+control syntax remains forbidden, and Programmatic CLI invocations may not request model-owned
+timeout, background, detached, or yielded execution. Ordinary shell commands in the same Run retain
+the normal exec controls. The outer exec stays pending until the local-control request and all
 started children settle or the Run enters a fatal/indeterminate state.
 
 ## Agent CLI Capability Token
@@ -544,12 +545,14 @@ eligible calls. V4 needs no ExecutionContract and its `toolDefinitionsHash` cove
 definitions; V5 ceilings remain provider-only. Existing manifests/contracts/facts/hash recipes do
 not mutate. The canonical Agent `exec` provider schema has no owned-stdin field. A Run frozen to CLI
 Programmatic receives one stable attached-exec projection before its ceiling, snapshot, and hashes
-are constructed: it adds bounded owned stdin and omits ordinary timeout/background/yield controls
-that conflict with capability-owned duration and foreground settlement. Every View in that Run uses
-the same projected definition. Other adapters retain the existing schema and avoid unusable fields
-and their cache-prefix churn. Runtime validation still rejects owned stdin or model-owned duration
-without exact Programmatic authority, and accepted stdin is bound into the invocation grant and
-Journal argument hashing. ACP and disabled configurable tools remain excluded.
+are constructed: it adds bounded owned stdin while retaining ordinary timeout/background/yield
+controls for ordinary shell commands in the same Run. Every View in that Run uses the same
+projected definition; schema selection never parses or branches on model-controlled command text.
+Exact process-live Programmatic parent authority identifies Programmatic invocations, which reject
+model-owned timeout/background/yield before process spawn and outer T1. Runtime validation rejects
+owned stdin without that exact authority, and accepted stdin is bound into the invocation grant and
+Journal argument hashing. Other adapters retain the existing schema and avoid owned stdin and its
+cache-prefix churn. ACP and disabled configurable tools remain excluded.
 Search/selector errors are bounded
 and never expose the full catalog. In a Native Activation canary, initial selector failure degrades
 to bounded core plus native `tool_search`; an individual search failure returns a bounded error.
@@ -641,7 +644,8 @@ match the contracts above.
 11. Strict V5 surface facts bind before admission; V4 fail-open evidence is labeled honestly.
 12. Normal dispatch performs no Tape read, and cache claims remain provider-cost canary claims.
 13. Programmatic call/batch bodies use bounded owned stdin, compound shell syntax is rejected, and
-    background/yield requests fail before outer T1.
+    model-owned timeout/background/yield requests fail before outer T1 without removing those
+    controls from ordinary shell execution.
 14. A prepared token cannot reach local control before a new parent T1 arms its exact grant; failed
     parent T1 prevents process spawn and revokes the grant.
 15. Grant tests reject changed body/route, replay, expiry/revocation, wrong principal/conversation,

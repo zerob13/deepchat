@@ -76,8 +76,12 @@ import {
   CRON_JOB_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME,
-  TOOL_SEARCH_AGENT_TOOL_NAME,
+  SKILL_AGENT_TOOL_NAMES,
   SKILL_LIST_AGENT_TOOL_NAME,
+  SKILL_MANAGE_AGENT_TOOL_NAME,
+  SKILL_RUN_AGENT_TOOL_NAME,
+  SKILL_VIEW_AGENT_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
   assertAgentToolExposure,
   isTapeToolName,
   type AgentToolExposure
@@ -704,14 +708,7 @@ export class AgentToolManager {
     // 3. Skill tools (agent mode only)
     if (isAgentMode && skillsEnabled) {
       const skillDefs = this.getSkillToolDefinitions()
-      appendDefinitions(
-        skillDefs.filter((definition) => definition.function.name === SKILL_LIST_AGENT_TOOL_NAME),
-        'system-model'
-      )
-      appendDefinitions(
-        skillDefs.filter((definition) => definition.function.name !== SKILL_LIST_AGENT_TOOL_NAME),
-        'user-configurable'
-      )
+      appendDefinitions(skillDefs, 'system-model')
 
       if (
         isUniverseCatalog ||
@@ -722,7 +719,7 @@ export class AgentToolManager {
             context.requireCompleteCatalog
           )))
       ) {
-        appendDefinitions([this.getSkillRunToolDefinition()], 'user-configurable')
+        appendDefinitions([this.getSkillRunToolDefinition()], 'system-model')
       }
     }
 
@@ -2446,7 +2443,7 @@ export class AgentToolManager {
         execution: TOOL_EXECUTION.read.sequential,
         type: 'function',
         function: {
-          name: 'skill_list',
+          name: SKILL_LIST_AGENT_TOOL_NAME,
           description:
             'Search or browse available skills as bounded routing cards. Use query to find skills omitted from the system catalog and nextCursor to continue.',
           parameters: toDeepChatJsonSchema(schemas.skill_list) as {
@@ -2465,7 +2462,7 @@ export class AgentToolManager {
         execution: TOOL_EXECUTION.write,
         type: 'function',
         function: {
-          name: 'skill_view',
+          name: SKILL_VIEW_AGENT_TOOL_NAME,
           description:
             'Inspect a specific skill before relying on it. Returns the rendered SKILL.md body or a requested supporting file under the skill root.',
           parameters: toDeepChatJsonSchema(schemas.skill_view) as {
@@ -2484,7 +2481,7 @@ export class AgentToolManager {
         execution: TOOL_EXECUTION.write,
         type: 'function',
         function: {
-          name: 'skill_manage',
+          name: SKILL_MANAGE_AGENT_TOOL_NAME,
           description:
             'Create or edit temporary draft skills in the conversation draft area. Use the returned draftId for follow-up draft operations. This cannot modify installed skills.',
           parameters: toDeepChatJsonSchema(schemas.skill_manage) as {
@@ -2507,7 +2504,7 @@ export class AgentToolManager {
       execution: TOOL_EXECUTION.write,
       type: 'function',
       function: {
-        name: 'skill_run',
+        name: SKILL_RUN_AGENT_TOOL_NAME,
         description:
           'Run a bundled script from a skill active in the current message/tool loop. This is the preferred way to execute skill-local Python, Node, or shell helpers without guessing paths.',
         parameters: toDeepChatJsonSchema(this.skillSchemas.skill_run) as {
@@ -2525,11 +2522,14 @@ export class AgentToolManager {
   }
 
   private isSkillTool(toolName: string): boolean {
-    return toolName === 'skill_list' || toolName === 'skill_view' || toolName === 'skill_manage'
+    return (
+      toolName !== SKILL_RUN_AGENT_TOOL_NAME &&
+      (SKILL_AGENT_TOOL_NAMES as readonly string[]).includes(toolName)
+    )
   }
 
   private isSkillExecutionTool(toolName: string): boolean {
-    return toolName === 'skill_run'
+    return toolName === SKILL_RUN_AGENT_TOOL_NAME
   }
 
   private async hasRunnableSkillScripts(
@@ -2815,7 +2815,7 @@ export class AgentToolManager {
     const skillTools = this.getSkillTools()
     const effectiveActiveSkills = this.normalizeActiveSkillOption(options?.activeSkillNames)
 
-    if (toolName === 'skill_list') {
+    if (toolName === SKILL_LIST_AGENT_TOOL_NAME) {
       const validationResult = this.skillSchemas.skill_list.safeParse(args)
       if (!validationResult.success) {
         throw new Error(`Invalid arguments for skill_list: ${validationResult.error.message}`)
@@ -2828,7 +2828,7 @@ export class AgentToolManager {
       return { content: JSON.stringify(result) }
     }
 
-    if (toolName === 'skill_view') {
+    if (toolName === SKILL_VIEW_AGENT_TOOL_NAME) {
       const schema = this.skillSchemas.skill_view
       const validationResult = schema.safeParse(args)
       if (!validationResult.success) {
@@ -2941,7 +2941,7 @@ export class AgentToolManager {
       }
     }
 
-    if (toolName === 'skill_manage') {
+    if (toolName === SKILL_MANAGE_AGENT_TOOL_NAME) {
       const schema = this.skillSchemas.skill_manage
       const validationResult = schema.safeParse(args)
       if (!validationResult.success) {
@@ -2970,7 +2970,7 @@ export class AgentToolManager {
 
   private buildSkillManageToolResult(result: SkillManageResult): Record<string, unknown> {
     return {
-      toolName: 'skill_manage',
+      toolName: SKILL_MANAGE_AGENT_TOOL_NAME,
       ...result,
       ...(result.success === true &&
       result.action === 'create' &&
@@ -2993,7 +2993,7 @@ export class AgentToolManager {
     conversationId?: string,
     options?: AgentToolExecutionOptions
   ): Promise<AgentToolCallResult> {
-    if (toolName !== 'skill_run') {
+    if (toolName !== SKILL_RUN_AGENT_TOOL_NAME) {
       throw new Error(`Unknown skill execution tool: ${toolName}`)
     }
 
