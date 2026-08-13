@@ -1803,6 +1803,7 @@ async function runToolCall(params: {
   tools: MCPToolDefinition[]
   contextLength: number
   maxTokens: number
+  pendingRuntimeSkillNames?: readonly string[]
   oneShotCommandGrantId?: string
 }): Promise<ToolRunOutcome> {
   const {
@@ -1825,6 +1826,7 @@ async function runToolCall(params: {
     commandShell,
     contextLength,
     maxTokens,
+    pendingRuntimeSkillNames,
     oneShotCommandGrantId
   } = params
   const { completedToolCall, toolCall, toolContext } = execution
@@ -1952,6 +1954,13 @@ async function runToolCall(params: {
         onToolCallStarted?.(completedToolCall.id)
       }
       const enabledMcpServerIds = controls?.getEnabledMcpServerIds?.()
+      const activeSkillNames = controls?.getActiveSkillNames?.()
+      const effectiveActiveSkillNames =
+        execution.toolDef?.source === 'agent' &&
+        completedToolCall.name === 'skill_view' &&
+        pendingRuntimeSkillNames?.length
+          ? Array.from(new Set([...(activeSkillNames ?? []), ...pendingRuntimeSkillNames]))
+          : activeSkillNames
       const result = await toolExecution.execute(toolCall, {
         runId: operationScope.runId,
         messageId: io.messageId,
@@ -1968,7 +1977,7 @@ async function runToolCall(params: {
         onProgress: applyProgressUpdate,
         signal: io.abortSignal,
         permissionMode: toolPermissionMode,
-        activeSkillNames: controls?.getActiveSkillNames?.(),
+        activeSkillNames: effectiveActiveSkillNames,
         agentId: controls?.getAgentId?.(),
         commitDispatch,
         registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection),
@@ -2378,6 +2387,7 @@ export async function settleToolBatch(
   let toolsChanged = false
   const pendingInteractions: ToolBatchInteraction[] = []
   const stagedResults: StagedToolResult[] = []
+  const pendingRuntimeSkillNames = new Set<string>()
 
   if (disposition.kind === 'reject') {
     for (const toolCall of toolCalls) {
@@ -2783,6 +2793,7 @@ export async function settleToolBatch(
           tools,
           contextLength,
           maxTokens,
+          pendingRuntimeSkillNames: [...pendingRuntimeSkillNames],
           oneShotCommandGrantId
         })
       }
@@ -2817,6 +2828,9 @@ export async function settleToolBatch(
       }
 
       stagedResults.push(outcome.stagedResult)
+      if (outcome.stagedResult.runtimeSkillView) {
+        pendingRuntimeSkillNames.add(outcome.stagedResult.runtimeSkillView.skillName)
+      }
       toolsChanged = toolsChanged || outcome.toolsChanged
       executed += 1
     } catch (err) {

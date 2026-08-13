@@ -3459,6 +3459,118 @@ describe('dispatch', () => {
       expect(activationOrder).toEqual(['commit', 'activate'])
     })
 
+    it('returns a confirmation for a repeated root skill_view in the same batch', async () => {
+      const tools = [makeAgentTool('skill_view')]
+      const skillResolution = makeRuntimeSkillResolution()
+      const rootViewText = JSON.stringify({
+        success: true,
+        name: 'deepchat-settings',
+        content: skillResolution.effectiveContent,
+        activatedForMessage: true
+      })
+      const confirmationText = JSON.stringify({
+        success: true,
+        name: 'deepchat-settings',
+        activeForCurrentMessage: true,
+        activatedForMessage: false,
+        message: 'Skill is already active for the current message.'
+      })
+      const toolService = {
+        ...createMockToolService(),
+        callTool: vi.fn().mockImplementation(async (request, options) => {
+          if (options?.activeSkillNames?.includes('deepchat-settings')) {
+            return {
+              content: confirmationText,
+              rawData: {
+                toolCallId: request.id,
+                content: confirmationText,
+                isError: false,
+                toolResult: { activationApplied: false, activationSource: 'none' }
+              }
+            }
+          }
+          options?.commitDispatch?.({
+            toolName: request.function.name,
+            toolSource: 'agent',
+            normalizedArguments: { name: 'deepchat-settings' },
+            target: { serverName: 'agent-skills', originalName: 'skill_view' }
+          })
+          return {
+            content: rootViewText,
+            rawData: {
+              toolCallId: request.id,
+              content: rootViewText,
+              isError: false,
+              toolResult: {
+                activationApplied: true,
+                activationSource: 'skill_md',
+                activatedSkill: 'deepchat-settings',
+                skillContext: {
+                  agentId: 'deepchat',
+                  sourceType: 'created',
+                  sourceId: '/skills/deepchat-settings',
+                  skillName: 'deepchat-settings'
+                },
+                skillResolution
+              }
+            }
+          }
+        })
+      } as unknown as ToolServicePort
+      const commitRuntimeSkillView = vi.fn().mockResolvedValue(undefined)
+      const activateSkill = vi.fn(async (skillName: string) => [skillName])
+      const conversation: Array<{ role: string; content: string }> = []
+
+      for (const toolCallId of ['tc1', 'tc2']) {
+        state.blocks.push({
+          type: 'tool_call',
+          content: '',
+          status: 'pending',
+          timestamp: Date.now(),
+          tool_call: {
+            id: toolCallId,
+            name: 'skill_view',
+            params: '{"name":"deepchat-settings"}',
+            response: ''
+          }
+        })
+      }
+      state.completedToolCalls = ['tc1', 'tc2'].map((id) => ({
+        id,
+        name: 'skill_view',
+        arguments: '{"name":"deepchat-settings"}'
+      }))
+
+      await settleToolBatch(
+        state,
+        conversation,
+        0,
+        tools,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32000,
+        1024,
+        { getActiveSkillNames: () => [], commitRuntimeSkillView, activateSkill }
+      )
+
+      expect(toolService.callTool).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(toolService.callTool).mock.calls[1][1]?.activeSkillNames).toEqual([
+        'deepchat-settings'
+      ])
+      expect(commitRuntimeSkillView).toHaveBeenCalledOnce()
+      expect(commitRuntimeSkillView).toHaveBeenCalledWith(
+        expect.objectContaining({ toolCallId: 'tc1', responseText: rootViewText })
+      )
+      expect(activateSkill).toHaveBeenCalledOnce()
+      expect(state.blocks[0].tool_call?.response).toBe(rootViewText)
+      expect(state.blocks[1].tool_call?.response).toBe(confirmationText)
+      expect(conversation.filter((message) => message.content.includes('# Effective Skill body')))
+        .toHaveLength(1)
+    })
+
     it.each([
       ['missing', undefined],
       [
