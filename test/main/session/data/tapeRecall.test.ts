@@ -723,6 +723,7 @@ describe('SessionTape recall', () => {
     })
 
     expect(service.search('s1', 'private-skill-materialization-needle')).toEqual([])
+    expect(table.search('s1', 'private-skill-materialization-needle')).toEqual([])
     expect(service.getBySession('s1').some((entry) => entry.kind === 'context')).toBe(false)
     expect(service.getContext('s1', [hidden.entry_id])).toMatchObject({
       requestedEntryIds: [hidden.entry_id],

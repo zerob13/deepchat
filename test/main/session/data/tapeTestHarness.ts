@@ -383,7 +383,7 @@ function createTapeTableMock() {
       }
       const limit = Number.isFinite(options.limit) ? Math.floor(options.limit) : 20
       return entries
-        .filter((entry) => entry.session_id === sessionId)
+        .filter((entry) => entry.session_id === sessionId && entry.kind !== 'context')
         .filter(
           (entry) =>
             entry.payload_json.includes(normalizedQuery) ||
