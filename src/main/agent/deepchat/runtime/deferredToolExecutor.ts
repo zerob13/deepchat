@@ -702,11 +702,12 @@ export class DeferredToolExecutor {
         dispatchCommitted &&
         isProgrammaticCommandLaunchError(error)
       ) {
-        const responseText = 'Error: Programmatic CLI launch failed before child execution.'
+        const responseText =
+          'Error: Programmatic CLI process exited before authoritative completion.'
         try {
-          programmaticToolParent.settleLaunchFailure({ responseText })
+          const processResult = programmaticToolParent.settleProcessFailure({ responseText }).result
           outcomeCommitted = true
-          committedOutcomeProjection = { responseText, isError: true, invoked }
+          committedOutcomeProjection = { ...processResult, invoked }
           commitRunTerminal({
             outcome: 'completed',
             stopReason: 'tool_result'

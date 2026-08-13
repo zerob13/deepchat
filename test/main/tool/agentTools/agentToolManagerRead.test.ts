@@ -471,7 +471,7 @@ describe('AgentToolManager read routing', () => {
     }
   })
 
-  it('rejects owned exec timeouts above the Programmatic Tool duration quota', async () => {
+  it('rejects model-owned timeouts for a capability-timed Programmatic exec', async () => {
     const executeCommand = vi.spyOn(AgentBashHandler.prototype, 'executeCommand')
 
     try {
@@ -481,7 +481,7 @@ describe('AgentToolManager read routing', () => {
           {
             command: 'deepchat tool call',
             stdin: '{}',
-            timeoutMs: 45_001,
+            timeoutMs: 1_000,
             description: 'Call programmatic tool'
           },
           'conv1',
@@ -492,7 +492,7 @@ describe('AgentToolManager read routing', () => {
             programmaticToolParent: { takeArmedToken: vi.fn() } as never
           }
         )
-      ).rejects.toThrow(/exceeds the active Programmatic Tool duration quota/)
+      ).rejects.toThrow(/duration is owned by its active capability/)
       expect(executeCommand).not.toHaveBeenCalled()
     } finally {
       executeCommand.mockRestore()

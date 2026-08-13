@@ -14,7 +14,7 @@ import {
   buildProgrammaticToolCapabilityV1,
   buildProgrammaticToolSurfaceV1,
   createProgrammaticToolSurfaceRunControllerV1,
-  exposeProgrammaticExecStdin,
+  projectProgrammaticExecDefinition,
   markProgrammaticToolCapabilityProvenanceCommitted,
   preflightProgrammaticToolRunCeilingV1,
   projectProgrammaticToolTapeProvenanceV1,
@@ -203,24 +203,44 @@ function expectSurfaceError(run: () => unknown, code: ToolSurfaceError['code']):
 }
 
 describe('Programmatic Tool Surface', () => {
-  it('projects owned exec stdin only onto the Programmatic provider surface', () => {
-    const exec = agentTool('exec')
+  it('projects the attached exec contract only onto the Programmatic provider surface', () => {
+    const exec = {
+      ...agentTool('exec'),
+      function: {
+        ...agentTool('exec').function,
+        parameters: {
+          type: 'object',
+          properties: {
+            command: { type: 'string' },
+            timeoutMs: { type: 'number' },
+            background: { type: 'boolean' },
+            yieldMs: { type: 'number' }
+          },
+          required: ['command']
+        }
+      }
+    } satisfies MCPToolDefinition
     const remote = mcpTool('remote_read')
-    const exposed = exposeProgrammaticExecStdin([exec, remote])
+    const exposed = projectProgrammaticExecDefinition([exec, remote])
     const exposedExec = exposed[0]
 
     expect(exec.function.parameters.properties.stdin).toBeUndefined()
     expect(exposedExec).not.toBe(exec)
+    expect(exposedExec.function.description).toContain('attached DeepChat Programmatic Tool')
     expect(exposedExec.function.parameters.properties.stdin).toMatchObject({
       type: 'string',
       minLength: 1,
       maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES
     })
+    expect(exposedExec.function.parameters.properties.timeoutMs).toBeUndefined()
+    expect(exposedExec.function.parameters.properties.background).toBeUndefined()
+    expect(exposedExec.function.parameters.properties.yieldMs).toBeUndefined()
+    expect(exposedExec.function.parameters.required).toEqual(['command'])
     expect(exposed[1]).toBe(remote)
 
     expectSurfaceError(
       () =>
-        exposeProgrammaticExecStdin([
+        projectProgrammaticExecDefinition([
           {
             ...exec,
             function: {

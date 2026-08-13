@@ -2354,21 +2354,29 @@ async function runToolCall(params: {
       dispatchedOperation &&
       isProgrammaticCommandLaunchError(err)
     ) {
-      const responseText = 'Error: Programmatic CLI launch failed before child execution.'
+      const responseText = 'Error: Programmatic CLI process exited before authoritative completion.'
+      let processResult: Readonly<{ responseText: string; isError: boolean }>
       try {
-        programmaticToolParent.settleLaunchFailure({ responseText })
+        processResult = programmaticToolParent.settleProcessFailure({ responseText }).result
       } catch (settlementError) {
         if (isExecutionJournalError(settlementError)) {
           throw settlementError
         }
         throw new ExecutionJournalError(
-          'Programmatic CLI failure could not settle its outer operation before child execution.',
+          'Programmatic CLI process failure could not settle its outer operation.',
           'invalid_fact',
           { cause: settlementError }
         )
       }
-      const settled = buildToolErrorOutcome(execution, new Error(responseText), dispatchedOperation)
-      settled.stagedResult.responseText = responseText
+      const settled = buildReturnedToolResultOutcome(
+        execution,
+        {
+          toolCallId: completedToolCall.id,
+          content: processResult.responseText,
+          isError: processResult.isError
+        },
+        dispatchedOperation
+      )
       settled.stagedResult.outcomeCommitted = true
       committedOutcome = settled.stagedResult
       return settled

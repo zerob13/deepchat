@@ -33,6 +33,7 @@ import {
 
 const COMMAND_DEFAULT_TIMEOUT_MS = 120000
 const COMMAND_KILL_GRACE_MS = 5000
+const PROGRAMMATIC_SETTLEMENT_GRACE_MS = 5000
 const COMMAND_OFFLOAD_THRESHOLD = 10000
 const COMMAND_PREVIEW_CHARS = 12000
 
@@ -186,10 +187,15 @@ export class AgentBashHandler {
       options.commandShell,
       options.allowExternalCwd
     )
-    const resolvedTimeout = Math.min(
-      timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
-      options.maxTimeoutMs ?? Number.MAX_SAFE_INTEGER
-    )
+    const executionTimeout = isProgrammaticInvocation
+      ? (options.maxTimeoutMs ?? COMMAND_DEFAULT_TIMEOUT_MS)
+      : Math.min(
+          timeout ?? COMMAND_DEFAULT_TIMEOUT_MS,
+          options.maxTimeoutMs ?? Number.MAX_SAFE_INTEGER
+        )
+    const resolvedTimeout = isProgrammaticInvocation
+      ? Math.min(Number.MAX_SAFE_INTEGER, executionTimeout + PROGRAMMATIC_SETTLEMENT_GRACE_MS)
+      : executionTimeout
 
     // Handle background execution
     if (background) {

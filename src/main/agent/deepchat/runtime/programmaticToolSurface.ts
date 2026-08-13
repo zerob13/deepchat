@@ -62,6 +62,8 @@ export const MAX_PROGRAMMATIC_TOOL_OUTPUT_BYTES = MAX_TAPE_PROGRAMMATIC_TOOL_OUT
 export const MAX_PROGRAMMATIC_TOOL_DURATION_MS = MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS
 export const PROGRAMMATIC_EXEC_STDIN_DESCRIPTION =
   'Owned request body for DeepChat Programmatic Tool call or batch commands'
+const PROGRAMMATIC_EXEC_DESCRIPTION =
+  'Run one attached DeepChat Programmatic Tool command. Use deepchat tool search, describe, call, or batch. Pass call and batch JSON through stdin; background execution, yielding, process polling, and shell redirection are unavailable.'
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_WORKSPACE_PATH_BYTES = 32 * 1024
@@ -80,7 +82,7 @@ function isAgentExecDefinition(definition: MCPToolDefinition): boolean {
   )
 }
 
-export function exposeProgrammaticExecStdin(
+export function projectProgrammaticExecDefinition(
   definitions: readonly MCPToolDefinition[]
 ): MCPToolDefinition[] {
   return definitions.map((definition) => {
@@ -99,18 +101,30 @@ export function exposeProgrammaticExecStdin(
           'conflicting_tool'
         )
       }
-      return definition
     }
+    const { required: existingRequired, ...parameterContract } =
+      definition.function.parameters
+    const {
+      timeoutMs: _timeoutMs,
+      background: _background,
+      yieldMs: _yieldMs,
+      ...programmaticProperties
+    } = parameterContract.properties
+    const required = existingRequired?.filter(
+      (name) => name !== 'timeoutMs' && name !== 'background' && name !== 'yieldMs'
+    )
     return {
       ...definition,
       function: {
         ...definition.function,
+        description: PROGRAMMATIC_EXEC_DESCRIPTION,
         parameters: {
-          ...definition.function.parameters,
+          ...parameterContract,
           properties: {
-            ...definition.function.parameters.properties,
+            ...programmaticProperties,
             stdin: PROGRAMMATIC_EXEC_STDIN_SCHEMA
-          }
+          },
+          ...(required?.length ? { required } : {})
         }
       }
     }

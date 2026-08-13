@@ -1350,13 +1350,8 @@ export class AgentToolManager {
             'Programmatic exec input exceeds the active Programmatic Tool input quota.'
           )
         }
-        if (
-          execArgs.timeoutMs !== undefined &&
-          execArgs.timeoutMs > options.programmaticToolCapability.quotas.maxDurationMs
-        ) {
-          throw new Error(
-            'Programmatic exec timeout exceeds the active Programmatic Tool duration quota.'
-          )
+        if (execArgs.timeoutMs !== undefined) {
+          throw new Error('Programmatic exec duration is owned by its active capability.')
         }
       } else if (execArgs.stdin !== undefined) {
         if (!options.programmaticToolCapability) {

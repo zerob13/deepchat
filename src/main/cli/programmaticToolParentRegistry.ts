@@ -39,7 +39,10 @@ export type ProgrammaticToolParentRegistration = Readonly<{
   takeArmedToken(): ArmedAgentCliProgrammaticToken
   takeCompletedInvocationResult(): ProgrammaticCompletedInvocationResult
   cancelBeforeOuterDispatch(): void
-  settleLaunchFailure(input: { responseText: string }): ExecutionJournalCommitReceipt
+  settleProcessFailure(input: { responseText: string }): Readonly<{
+    result: ProgrammaticCompletedInvocationResult
+    receipt: ExecutionJournalCommitReceipt
+  }>
   settleOuterOutcome(input: {
     responseText: string
     isError: boolean
@@ -191,23 +194,16 @@ export class ProgrammaticToolParentRegistry {
         armedToken = null
         this.parents.delete(key)
       },
-      settleLaunchFailure: (input) => {
+      settleProcessFailure: (input) => {
         requireRegistered()
-        const verb = controller.binding.command.verb
-        if (verb === 'search' || verb === 'describe') {
-          controller.failBeforeDiscoveryResult()
-        } else {
-          controller.failBeforeChildPlan()
-        }
+        const result = controller.resolveProcessFailureResult({
+          responseText: input.responseText,
+          isError: true
+        })
         armedToken = null
-        const settlement = controller.issueSettlementReceipt({
-          responseText: input.responseText,
-          isError: true
-        })
-        return controller.commitOuterOutcome(settlement, {
-          responseText: input.responseText,
-          isError: true
-        })
+        const settlement = controller.issueSettlementReceipt(result)
+        const receipt = controller.commitOuterOutcome(settlement, result)
+        return Object.freeze({ result, receipt })
       },
       settleOuterOutcome: (input) => {
         requireRegistered()

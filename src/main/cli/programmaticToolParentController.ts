@@ -306,6 +306,48 @@ export class ProgrammaticToolParentController {
     this.preparedGrant.revoke()
   }
 
+  resolveProcessFailureResult(
+    fallback: ProgrammaticCompletedInvocationResult
+  ): ProgrammaticCompletedInvocationResult {
+    this.requireState('armed')
+    if (this.completedInvocationResult) {
+      return this.takeCompletedInvocationResult()
+    }
+
+    const verb = this.preparedGrant.binding.command.verb
+    if (verb === 'search' || verb === 'describe') {
+      this.failBeforeDiscoveryResult()
+    } else if (!this.children) {
+      this.failBeforeChildPlan()
+    } else {
+      const hasUnknownChild = [...this.children.values()].some(
+        (child) => child.state === 'dispatched'
+      )
+      if (hasUnknownChild) {
+        throw new ProgrammaticParentOperationError(
+          'Programmatic process failed with an unsettled child outcome',
+          'unsettled_child'
+        )
+      }
+      this.childFailed = true
+      this.preparedGrant.revoke()
+    }
+
+    if (fallback.isError !== true) {
+      this.markFatal()
+      throw new ProgrammaticParentOperationError(
+        'Programmatic process failure requires an outer error result',
+        'identity_mismatch'
+      )
+    }
+    this.requireOutputWithinQuota(
+      fallback.responseText,
+      0,
+      'Programmatic process failure result exceeds the output quota'
+    )
+    return Object.freeze({ responseText: fallback.responseText, isError: true })
+  }
+
   failBeforeDiscoveryResult(): void {
     this.requireState('armed')
     const verb = this.preparedGrant.binding.command.verb

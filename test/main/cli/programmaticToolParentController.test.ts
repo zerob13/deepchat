@@ -326,6 +326,46 @@ describe('ProgrammaticToolParentController', () => {
     expect(entries.some((entry) => JSON.parse(entry.meta_json).protocolVersion === 2)).toBe(false)
   })
 
+  it('settles a process failure after plan reservation when no child outcome is unknown', () => {
+    const { controller, entries } = setup()
+    controller.reserveChildren([child(0)])
+
+    const result = controller.resolveProcessFailureResult({
+      responseText: 'CLI process exited before dispatch',
+      isError: true
+    })
+    const settlement = controller.issueSettlementReceipt(result)
+    controller.commitOuterOutcome(settlement, result)
+
+    expect(result).toEqual({
+      responseText: 'CLI process exited before dispatch',
+      isError: true
+    })
+    expect(settlement).toMatchObject({ startedChildren: 0, settledChildren: 0 })
+    expect(controller.state).toBe('settled')
+    expect(entries.some((entry) => JSON.parse(entry.meta_json).protocolVersion === 2)).toBe(false)
+  })
+
+  it('recovers the process-live result when the CLI exits after every child settles', () => {
+    const { controller } = setup()
+    controller.reserveChildren([child(0)])
+    materializeChild(controller, 0)
+    controller.commitChildDispatch(0, childDispatch(0))
+    controller.commitChildOutcome({ childOrdinal: 0, responseText: 'child result', isError: false })
+    controller.completeToolInvocation({ responseText: 'authoritative result', isError: false })
+
+    const result = controller.resolveProcessFailureResult({
+      responseText: 'CLI process exited',
+      isError: true
+    })
+    const settlement = controller.issueSettlementReceipt(result)
+    controller.commitOuterOutcome(settlement, result)
+
+    expect(result).toEqual({ responseText: 'authoritative result', isError: false })
+    expect(settlement).toMatchObject({ startedChildren: 1, settledChildren: 1, isError: false })
+    expect(controller.state).toBe('settled')
+  })
+
   it('binds discovery settlement to one process-live authoritative result', () => {
     const searchBinding = binding({
       command: { domain: 'tool', verb: 'search' },

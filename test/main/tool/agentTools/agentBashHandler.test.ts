@@ -855,11 +855,18 @@ describe('AgentBashHandler', () => {
         conversationId: 'conv-1',
         stdin: '{"target":"remote"}',
         programmatic: true,
+        maxTimeoutMs: 30_000,
         beforeExecute: () => armedProgrammaticToken
       }
     )
 
     expect(writeSpy).toHaveBeenCalledWith('conv-1', 'bg_programmatic', '{"target":"remote"}', true)
+    expect(backgroundExecSessionManager.start).toHaveBeenCalledWith(
+      'conv-1',
+      'deepchat tool call',
+      workspaceRoot,
+      expect.objectContaining({ timeout: 35_000 })
+    )
     expect(waitSpy).not.toHaveBeenCalled()
     expect(completionSpy).toHaveBeenCalledWith('conv-1', 'bg_programmatic', 12_000)
     expect(removeSpy).toHaveBeenCalledWith('conv-1', 'bg_programmatic')

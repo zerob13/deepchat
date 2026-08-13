@@ -740,9 +740,18 @@ The shell integration may prepare an environment token before outer T1, but the 
 a newly created T1 receipt arms the exact process-live grant. Local control rejects unarmed grants;
 T1 failure revokes the token and prevents spawn. Programmatic CLI requests are foreground-only:
 background, detach, ordinary exec yielding, and later process polling are rejected before T1. Call
-and batch bodies use a bounded owned stdin field, never shell redirection or command-line JSON. The
-settlement receipt binds the canonical outer-result hash; stdout transports untrusted data but does
-not authorize outer T2.
+and batch bodies use a bounded owned stdin field, never shell redirection or command-line JSON.
+Programmatic exec projection omits ordinary `timeoutMs`, `background`, and `yieldMs`; the capability
+owns its duration. The settlement receipt binds the canonical outer-result hash; stdout transports
+untrusted data but does not authorize outer T2. The attached shell deadline starts before
+local-control admission and therefore exceeds the capability duration by a small bounded settlement
+grace. That grace expands no child authority: token expiry and the dispatcher duration still enforce
+the capability deadline.
+
+If the CLI process exits after outer T1, the process-live controller first reuses an authoritative
+result already recorded by local control. Otherwise it may commit a bounded outer process error only
+when no child is in the dispatched-without-T2 state. Reservation, materialization, and fully settled
+children are deterministic; any child T1 without T2 keeps the parent and Run parked.
 
 An in-process outer shell approval may continue before T1 with the same frozen View capability and a
 fresh grant. A Programmatic command pending at that shell gate is not resumed after restart. Once

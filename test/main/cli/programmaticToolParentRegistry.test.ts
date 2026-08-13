@@ -192,8 +192,11 @@ describe('ProgrammaticToolParentRegistry', () => {
     expect(armed.token).toBe('r'.repeat(43))
     expect(() => registration.takeArmedToken()).toThrow(/no armed invocation token/)
     expect(
-      registration.settleLaunchFailure({ responseText: 'launcher unavailable' })
-    ).toMatchObject({ created: true })
+      registration.settleProcessFailure({ responseText: 'launcher unavailable' })
+    ).toMatchObject({
+      result: { responseText: 'launcher unavailable', isError: true },
+      receipt: { created: true }
+    })
     expect(authority.beginRequest(armed.token)).toEqual({ status: 'invalid' })
     expect(() => registry.assertRunTerminalAllowed(RUN)).not.toThrow()
   })
@@ -316,8 +319,9 @@ describe('ProgrammaticToolParentRegistry', () => {
       })
     ).toThrow('View revoked')
     expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
-    expect(registration.settleLaunchFailure({ responseText: 'View revoked' })).toMatchObject({
-      created: true
+    expect(registration.settleProcessFailure({ responseText: 'View revoked' })).toMatchObject({
+      result: { responseText: 'View revoked', isError: true },
+      receipt: { created: true }
     })
     expect(() => registry.assertRunTerminalAllowed(RUN)).not.toThrow()
   })
@@ -376,8 +380,8 @@ describe('ProgrammaticToolParentRegistry', () => {
     expect(() => registry.commitRunTerminal(RUN, commit)).toThrow(
       /has not settled its outer outcome/
     )
-    expect(() => registration.settleLaunchFailure({ responseText: 'cancelled' })).toThrow(
-      /child plan is already reserved/
+    expect(() => registration.settleProcessFailure({ responseText: 'cancelled' })).toThrow(
+      /unsettled child outcome/
     )
     expect(commit).not.toHaveBeenCalled()
 
@@ -386,11 +390,10 @@ describe('ProgrammaticToolParentRegistry', () => {
       /has not settled its outer outcome/
     )
     controller.completeToolInvocation({ responseText: 'written', isError: false })
-    expect(registration.takeCompletedInvocationResult()).toEqual({
-      responseText: 'written',
-      isError: false
+    expect(registration.settleProcessFailure({ responseText: 'cancelled' })).toMatchObject({
+      result: { responseText: 'written', isError: false },
+      receipt: { created: true }
     })
-    registration.settleOuterOutcome({ responseText: 'written', isError: false })
 
     expect(registry.commitRunTerminal(RUN, commit)).toMatchObject({ created: true })
     expect(commit).toHaveBeenCalledOnce()

@@ -316,7 +316,10 @@ function createProgrammaticResumeHarness(input: {
       isError: false
     })),
     cancelBeforeOuterDispatch: vi.fn(),
-    settleLaunchFailure: vi.fn(),
+    settleProcessFailure: vi.fn(({ responseText }) => ({
+      result: { responseText, isError: true },
+      receipt: { sessionId: SESSION_ID, entryId: 3, created: true }
+    })),
     settleOuterOutcome: vi.fn(() => ({
       sessionId: SESSION_ID,
       entryId: 3,

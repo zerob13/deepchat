@@ -171,7 +171,7 @@ import {
   assertProgrammaticToolCapabilityViewPrepared,
   buildProgrammaticToolCapabilityV1,
   createProgrammaticToolSurfaceRunControllerV1,
-  exposeProgrammaticExecStdin,
+  projectProgrammaticExecDefinition,
   projectProgrammaticToolTapeProvenanceV1,
   type ProgrammaticToolCapabilityV1
 } from './programmaticToolSurface'
@@ -856,7 +856,7 @@ export class DeepChatLoopRunner {
         ) {
           try {
             const programmaticProviderDefinitions =
-              exposeProgrammaticExecStdin(initialProviderActiveDefinitions)
+              projectProgrammaticExecDefinition(initialProviderActiveDefinitions)
             programmaticController = createProgrammaticToolSurfaceRunControllerV1({
               ceilingDefinitions: [
                 ...programmaticProviderDefinitions,
@@ -974,7 +974,7 @@ export class DeepChatLoopRunner {
           (definition) => definition.source === 'agent'
         )
         const programmaticProviderDefinitions =
-          exposeProgrammaticExecStdin(initialProviderActiveDefinitions)
+          projectProgrammaticExecDefinition(initialProviderActiveDefinitions)
         toolSurfaceController = createProgrammaticToolSurfaceRunControllerV1({
           ceilingDefinitions: [
             ...programmaticProviderDefinitions,
@@ -1028,7 +1028,7 @@ export class DeepChatLoopRunner {
         : initialPromptAssembly
     const runToolDefinitions =
       toolSurfaceMode === 'cli-programmatic'
-        ? exposeProgrammaticExecStdin(tools)
+        ? projectProgrammaticExecDefinition(tools)
         : tools
     const runMessages =
       runPromptAssembly === initialPromptAssembly

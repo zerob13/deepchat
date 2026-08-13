@@ -435,6 +435,8 @@ copies raw arguments, result/error text, MCP envelopes, binary data, or temporar
 | cancel before child T1 | no child fact |
 | cancel after child T1 with known outcome | child T2 |
 | cancel after child T1 without known outcome | T1-only, `indeterminate` |
+| CLI exit after reserve/materialize with no unknown child | known outer process error; no invented child fact |
+| CLI exit after local control records the complete result | reuse that exact process-live result for outer T2 |
 | Journal failure/corruption | Run-fatal |
 | every child has T2 but outer T2 is missing | incomplete; no automatic projection |
 | explicit model retry | new provider operation and new identities |
@@ -513,11 +515,13 @@ Native identity, approval, permission, Journal, and results remain native. Small
 eligible calls. V4 needs no ExecutionContract and its `toolDefinitionsHash` covers exact active
 definitions; V5 ceilings remain provider-only. Existing manifests/contracts/facts/hash recipes do
 not mutate. The canonical Agent `exec` provider schema has no owned-stdin field. A Run frozen to CLI
-Programmatic receives one stable bounded owned-stdin field before its ceiling, snapshot, and hashes
-are constructed; every View in that Run uses the same projected definition. Other adapters retain
-the existing schema and avoid an unusable field and its cache-prefix churn. Runtime validation still
-rejects owned stdin without exact Programmatic authority, and accepted stdin is bound into the
-invocation grant and Journal argument hashing. ACP and disabled configurable tools remain excluded.
+Programmatic receives one stable attached-exec projection before its ceiling, snapshot, and hashes
+are constructed: it adds bounded owned stdin and omits ordinary timeout/background/yield controls
+that conflict with capability-owned duration and foreground settlement. Every View in that Run uses
+the same projected definition. Other adapters retain the existing schema and avoid unusable fields
+and their cache-prefix churn. Runtime validation still rejects owned stdin or model-owned duration
+without exact Programmatic authority, and accepted stdin is bound into the invocation grant and
+Journal argument hashing. ACP and disabled configurable tools remain excluded.
 Search/selector errors are bounded
 and never expose the full catalog. In a Native Activation canary, initial selector failure degrades
 to bounded core plus native `tool_search`; an individual search failure returns a bounded error.

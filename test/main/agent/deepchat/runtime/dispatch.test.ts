@@ -326,7 +326,7 @@ function createProgrammaticParentStub(
   takeArmedToken: ReturnType<typeof vi.fn>
   takeCompletedInvocationResult: ReturnType<typeof vi.fn>
   cancelBeforeOuterDispatch: ReturnType<typeof vi.fn>
-  settleLaunchFailure: ReturnType<typeof vi.fn>
+  settleProcessFailure: ReturnType<typeof vi.fn>
   settleOuterOutcome: ReturnType<typeof vi.fn>
 }> {
   let armed = false
@@ -356,9 +356,12 @@ function createProgrammaticParentStub(
     return options.completedResult
   })
   const cancelBeforeOuterDispatch = vi.fn(() => order.push('cancel'))
-  const settleLaunchFailure = vi.fn(() => {
+  const settleProcessFailure = vi.fn((input: { responseText: string }) => {
     order.push('parent-t2')
-    return { sessionId: 's1', entryId: 2, created: true }
+    return {
+      result: options.completedResult ?? { responseText: input.responseText, isError: true },
+      receipt: { sessionId: 's1', entryId: 2, created: true }
+    }
   })
   const settleOuterOutcome = vi.fn(() => {
     if (options.settleError) throw options.settleError
@@ -377,7 +380,7 @@ function createProgrammaticParentStub(
         takeArmedToken,
         takeCompletedInvocationResult,
         cancelBeforeOuterDispatch,
-        settleLaunchFailure,
+        settleProcessFailure,
         settleOuterOutcome
       }
     }
@@ -388,7 +391,7 @@ function createProgrammaticParentStub(
     takeArmedToken,
     takeCompletedInvocationResult,
     cancelBeforeOuterDispatch,
-    settleLaunchFailure,
+    settleProcessFailure,
     settleOuterOutcome
   }
 }
@@ -1319,13 +1322,13 @@ describe('dispatch', () => {
         'parent-t2'
       ])
       expect(result.executed).toBe(1)
-      expect(parent.settleLaunchFailure).toHaveBeenCalledWith({
-        responseText: 'Error: Programmatic CLI launch failed before child execution.'
+      expect(parent.settleProcessFailure).toHaveBeenCalledWith({
+        responseText: 'Error: Programmatic CLI process exited before authoritative completion.'
       })
       expect(conversation.at(-1)).toEqual({
         role: 'tool',
         tool_call_id: 'tc-exec',
-        content: 'Error: Programmatic CLI launch failed before child execution.'
+        content: 'Error: Programmatic CLI process exited before authoritative completion.'
       })
     })
 
@@ -1562,7 +1565,7 @@ describe('dispatch', () => {
 
       expect(conversation).not.toContainEqual(expect.objectContaining({ role: 'tool' }))
       expect(state.blocks[0].status).toBe('pending')
-      expect(parent.settleLaunchFailure).not.toHaveBeenCalled()
+      expect(parent.settleProcessFailure).not.toHaveBeenCalled()
     })
 
     it('settles a trusted discovery error instead of the CLI process output', async () => {
@@ -1712,7 +1715,7 @@ describe('dispatch', () => {
       })
       expect(order).toEqual(['prepare', 'cancel'])
       expect(parent.takeCompletedInvocationResult).not.toHaveBeenCalled()
-      expect(parent.settleLaunchFailure).not.toHaveBeenCalled()
+      expect(parent.settleProcessFailure).not.toHaveBeenCalled()
     })
 
     it('does not arm or invoke Programmatic exec when outer T1 is not newly created', async () => {
