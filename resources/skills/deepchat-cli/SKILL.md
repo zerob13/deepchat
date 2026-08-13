@@ -28,10 +28,6 @@ artifacts, Agent runs, and approvals.
   renderer approval; wait for that decision and never attempt to manufacture confirmation data.
 - Use `deepchat help` or `deepchat <domain> <verb> --help` only when the options below are
   insufficient. Do not probe undocumented routes.
-- For `deepchat tool search|describe|call|batch`, copy the Programmatic adapter's exact command
-  forms. Pass `tool describe --target <name>` with the returned canonical name unquoted, and omit
-  the `timeoutMs`, `background`, and `yieldMs` exec fields entirely. Pass `tool call` and `tool batch`
-  JSON through the exec `stdin` field.
 
 ## Agent file and recursion boundaries
 

@@ -40,6 +40,8 @@ describe('DeepChat system prompt builder', () => {
     expect(first.prompt).toContain('Discovery does not authorize a target.')
     expect(first.prompt).toContain('rechecks current authority and policy before execution')
     expect(first.prompt).toContain('Pass call and batch JSON through the `exec` stdin field')
+    expect(first.prompt).toContain('--target <unquoted-name>')
+    expect(first.prompt).toContain('Omit the `timeoutMs`, `background`, and `yieldMs` exec fields')
   })
 
   it('rejects an invalid command shell before optional prompt contributors can mask it', async () => {
