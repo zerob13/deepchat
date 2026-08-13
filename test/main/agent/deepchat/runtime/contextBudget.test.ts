@@ -5,7 +5,8 @@ import {
   buildRequestContextBudgetDiagnostics,
   buildRequestContextOverflowErrorMessage,
   getUsableContextLength,
-  preflightRequestContext
+  preflightRequestContext,
+  resolveEffectiveContextBudget
 } from '@/agent/deepchat/runtime/contextBudget'
 import {
   assemblePromptSections,
@@ -117,6 +118,37 @@ describe('agent request context budget', () => {
     expect(result.messages).toEqual(messages)
     expect(result.effectiveMaxTokens).toBe(4096)
     expect(result.fitsWithinContext).toBe(true)
+  })
+
+  it('preserves output capacity when applying a provider prompt limit', () => {
+    expect(
+      resolveEffectiveContextBudget({
+        configuredContextLength: 8192,
+        requestedMaxTokens: 1024,
+        providerPromptLimitTokens: 4096
+      })
+    ).toEqual({ contextLength: 5120, outputCapContextLength: 8192 })
+    expect(
+      resolveEffectiveContextBudget({
+        configuredContextLength: 8192,
+        requestedMaxTokens: 1024,
+        providerContextLimitTokens: 4096
+      })
+    ).toEqual({ contextLength: 4096, outputCapContextLength: 4096 })
+
+    const largeOutputBudget = resolveEffectiveContextBudget({
+      configuredContextLength: 128_000,
+      requestedMaxTokens: 32_000,
+      providerPromptLimitTokens: 4096
+    })
+    const preflight = preflightRequestContext({
+      messages: [{ role: 'user', content: 'x'.repeat(3800) }],
+      tools: [],
+      ...largeOutputBudget,
+      requestedMaxTokens: 32_000
+    })
+    expect(preflight.effectiveMaxTokens).toBe(32_000)
+    expect(preflight.inputTokens).toBe(3800)
   })
 
   it('drops orphaned tool result messages after request fitting', () => {

@@ -211,13 +211,14 @@ describe('DeepChatAgentRuntime', () => {
     expect(instance.getContextWindowObservation('new-api', 'custom-model')).toEqual({
       providerId: 'new-api',
       modelId: 'custom-model',
-      providerLimitTokens: 131072,
+      providerContextLimitTokens: 262144,
+      providerPromptLimitTokens: 131072,
       metadataSuspect: true
     })
     expect(instance.getContextWindowObservation('openai', 'other-model')).toEqual({
       providerId: 'openai',
       modelId: 'other-model',
-      providerLimitTokens: 8192,
+      providerContextLimitTokens: 8192,
       metadataSuspect: false
     })
     expect(instance.getContextWindowObservation('new-api', 'field-scoped-model')).toEqual({
@@ -225,8 +226,9 @@ describe('DeepChatAgentRuntime', () => {
       modelId: 'field-scoped-model',
       metadataSuspect: true
     })
-    instance.clearOwnedState()
+    instance.clearContextWindowObservation('new-api', 'custom-model')
     expect(instance.getContextWindowObservation('new-api', 'custom-model')).toBeUndefined()
+    instance.clearOwnedState()
     expect(instance.getContextWindowObservation('openai', 'other-model')).toBeUndefined()
   })
 

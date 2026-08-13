@@ -137,6 +137,50 @@ export function capAgentDefaultMaxTokens(maxTokens: number, contextLength: numbe
   )
 }
 
+export function resolveEffectiveContextBudget(input: {
+  configuredContextLength: number
+  requestedMaxTokens: number
+  providerContextLimitTokens?: number
+  providerPromptLimitTokens?: number
+}): { contextLength: number; outputCapContextLength: number } {
+  const configuredContextLength = input.configuredContextLength
+  const totalContextLimits: number[] = []
+  if (Number.isFinite(configuredContextLength) && configuredContextLength > 0) {
+    totalContextLimits.push(configuredContextLength)
+  }
+  const providerContextLimitTokens = input.providerContextLimitTokens
+  if (
+    typeof providerContextLimitTokens === 'number' &&
+    Number.isSafeInteger(providerContextLimitTokens) &&
+    providerContextLimitTokens > 0
+  ) {
+    totalContextLimits.push(providerContextLimitTokens)
+  }
+  const outputCapContextLength =
+    totalContextLimits.length > 0 ? Math.min(...totalContextLimits) : configuredContextLength
+  let contextLength = outputCapContextLength
+  const providerPromptLimitTokens = input.providerPromptLimitTokens
+  if (
+    typeof providerPromptLimitTokens === 'number' &&
+    Number.isSafeInteger(providerPromptLimitTokens) &&
+    providerPromptLimitTokens > 0
+  ) {
+    const outputReserve = capAgentRequestMaxTokens(
+      input.requestedMaxTokens,
+      outputCapContextLength
+    )
+    const promptBudgetLength = Math.min(
+      Number.MAX_SAFE_INTEGER,
+      providerPromptLimitTokens + outputReserve
+    )
+    contextLength =
+      Number.isFinite(contextLength) && contextLength > 0
+        ? Math.min(contextLength, promptBudgetLength)
+        : promptBudgetLength
+  }
+  return { contextLength, outputCapContextLength }
+}
+
 export function buildRequestContextBudget(
   maxTokens: number,
   contextLength: number,
@@ -210,13 +254,14 @@ export function preflightRequestContext(params: {
   messages: ChatMessage[]
   tools: MCPToolDefinition[]
   contextLength: number
+  outputCapContextLength?: number
   requestedMaxTokens: number
   minimumProtectedTailCount?: number
   contextContributions?: ContextRuntimeContributions
 }): RequestContextPreflightResult {
   const requestedMaxTokens = capAgentRequestMaxTokens(
     params.requestedMaxTokens,
-    params.contextLength
+    params.outputCapContextLength ?? params.contextLength
   )
   const toolReserveTokens = estimateToolReserveTokens(params.tools)
   const fittedMessages = sanitizeToolContinuationMessages(

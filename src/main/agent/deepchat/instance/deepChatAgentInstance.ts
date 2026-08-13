@@ -42,7 +42,8 @@ export interface DeepChatToolProfileCacheEntry {
 export interface DeepChatContextWindowObservation {
   readonly providerId: string
   readonly modelId: string
-  readonly providerLimitTokens?: number
+  readonly providerContextLimitTokens?: number
+  readonly providerPromptLimitTokens?: number
   readonly metadataSuspect: boolean
 }
 
@@ -90,6 +91,13 @@ export class DeepChatAgentInstance {
   }
 
   setGenerationSettings(settings: SessionGenerationSettings): void {
+    if (
+      this.generationSettings &&
+      this.generationSettings.contextLength !== settings.contextLength &&
+      this.runtimeState
+    ) {
+      this.clearContextWindowObservation(this.runtimeState.providerId, this.runtimeState.modelId)
+    }
     this.generationSettings = settings
   }
 
@@ -101,6 +109,10 @@ export class DeepChatAgentInstance {
       this.contextWindowObservationKey(providerId, modelId)
     )
     return observation ? { ...observation } : undefined
+  }
+
+  clearContextWindowObservation(providerId: string, modelId: string): void {
+    this.contextWindowObservations.delete(this.contextWindowObservationKey(providerId, modelId))
   }
 
   recordContextWindowObservation(input: {
@@ -119,12 +131,18 @@ export class DeepChatAgentInstance {
         ? input.limitTokens
         : undefined
     const current = this.getContextWindowObservation(input.providerId, input.modelId)
-    const providerLimitTokens =
-      limitTokens === undefined
-        ? current?.providerLimitTokens
-        : current?.providerLimitTokens === undefined
+    const providerContextLimitTokens =
+      limitTokens !== undefined && input.limitScope === 'context'
+        ? current?.providerContextLimitTokens === undefined
           ? limitTokens
-          : Math.min(current.providerLimitTokens, limitTokens)
+          : Math.min(current.providerContextLimitTokens, limitTokens)
+        : current?.providerContextLimitTokens
+    const providerPromptLimitTokens =
+      limitTokens !== undefined && input.limitScope === 'prompt'
+        ? current?.providerPromptLimitTokens === undefined
+          ? limitTokens
+          : Math.min(current.providerPromptLimitTokens, limitTokens)
+        : current?.providerPromptLimitTokens
     const key = this.contextWindowObservationKey(input.providerId, input.modelId)
     if (!current && this.contextWindowObservations.size >= MAX_CONTEXT_WINDOW_OBSERVATIONS) {
       const oldestKey = this.contextWindowObservations.keys().next().value
@@ -135,7 +153,8 @@ export class DeepChatAgentInstance {
       Object.freeze({
         providerId: input.providerId,
         modelId: input.modelId,
-        ...(providerLimitTokens !== undefined ? { providerLimitTokens } : {}),
+        ...(providerContextLimitTokens !== undefined ? { providerContextLimitTokens } : {}),
+        ...(providerPromptLimitTokens !== undefined ? { providerPromptLimitTokens } : {}),
         metadataSuspect:
           current?.metadataSuspect === true ||
           input.confidence === 'qualitative' ||

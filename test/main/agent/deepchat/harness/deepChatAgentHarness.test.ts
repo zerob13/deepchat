@@ -9907,7 +9907,7 @@ describe('DeepChatAgentHarness', () => {
       expect(observation).toEqual({
         providerId: 'new-api',
         modelId: 'custom-model',
-        providerLimitTokens: 4096,
+        providerPromptLimitTokens: 4096,
         metadataSuspect: false
       })
       expect(errorMessage).toContain('Provider observation: actual 4100 tokens, limit 4096 tokens')

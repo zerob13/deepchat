@@ -108,7 +108,11 @@ export interface ProviderAttemptBudgetPort {
     tools: MCPToolDefinition[]
     requestedMaxTokens: number
   }): RequestContextPreflight
-  fitStrictRetry(input: { messages: ChatMessage[]; reserveTokens: number }): ChatMessage[]
+  fitStrictRetry(input: {
+    messages: ChatMessage[]
+    reserveTokens: number
+    requestedMaxTokens: number
+  }): ChatMessage[]
   getStrictRetryMaxTokens(maxTokens: number): number
   getStrictRetryExtraReserve(): number
   buildOverflowError(preflight: RequestContextPreflight): Error
@@ -623,6 +627,7 @@ export class DeepChatContextCoordinator {
             input.requestMessages.length,
             ...input.budget.fitStrictRetry({
               messages: input.requestMessages,
+              requestedMaxTokens,
               reserveTokens:
                 requestedMaxTokens + effectiveRequestToolReserveTokens + strictExtraReserveTokens
             })
@@ -852,6 +857,7 @@ export class DeepChatContextCoordinator {
         candidateMaxTokens = input.budget.getStrictRetryMaxTokens(input.maxTokens)
         candidateMessages = input.budget.fitStrictRetry({
           messages: candidateMessages,
+          requestedMaxTokens: candidateMaxTokens,
           reserveTokens:
             candidateMaxTokens +
             effectiveRequestToolReserveTokens +
