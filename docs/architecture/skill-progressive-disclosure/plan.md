@@ -199,6 +199,9 @@ second Provider call and return actionable category diagnostics.
 
 - Existing Skill files, Agent scopes, Plugin contributions, settings, and management APIs remain
   unchanged.
+- Direct ACP compatibility keeps bounded local routing cards but does not project full local Skill
+  bodies because that path has no Skill materialization authority. Do not reintroduce mutable disk
+  reads in prompt assembly as an ACP fallback.
 - Existing `skill_list({})` calls remain valid but receive a bounded first page.
 - Arbitrary metadata remains available to trusted management UI paths, not provider tool results.
 - Existing Session active Skill rows remain valid and removable.

@@ -5482,7 +5482,6 @@ describe('DeepChatAgentHarness', () => {
         'RUNTIME_CAPABILITIES',
         'ENV_BLOCK',
         '## Skills',
-        '## Active Skills',
         'DIRECT_TOOLING',
         '## Permission Rules',
         '## Verification Policy'
@@ -5492,6 +5491,10 @@ describe('DeepChatAgentHarness', () => {
           systemPrompt.indexOf(orderedSections[index - 1])
         )
       }
+      expect(systemPrompt).toContain('- skill-a')
+      expect(systemPrompt).not.toContain('## Active Skills')
+      expect(systemPrompt).not.toContain('DIRECT_SKILL_BODY')
+      expect(skillService.loadSkillContent).not.toHaveBeenCalled()
       expect(userPrompt).toContain('[Attached File 1]')
       expect(userPrompt).toContain('path: /tmp/notes.txt')
       expect(userPrompt).not.toContain('do-not-inline')

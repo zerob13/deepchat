@@ -198,7 +198,7 @@ describe('DeepChat system prompt builder', () => {
     expect(assertCurrent).toHaveBeenCalled()
   })
 
-  it('uses every active Skill from the scoped catalog', async () => {
+  it('does not project active Skill bodies without Tape-materialized overrides', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
     vi.mocked(fs.promises.readFile).mockRejectedValue(
       Object.assign(new Error('missing'), { code: 'ENOENT' })
@@ -254,14 +254,14 @@ describe('DeepChat system prompt builder', () => {
       }
     )
 
-    expect(prompt).toContain('### skill-a')
-    expect(prompt).toContain('### skill-b')
+    expect(prompt).not.toContain('### skill-a')
+    expect(prompt).not.toContain('### skill-b')
     expect(prompt).toContain('- skill-a: Skill A')
     expect(prompt).toContain('- skill-b: Skill B')
     expect(prompt).toContain('use `skill_list` with a query')
     expect(prompt).not.toContain('call `skill_view` first')
     expect(prompt).not.toContain('Viewing a skill root')
-    expect(loadSkillContent).toHaveBeenCalledWith('writer', 'skill-b')
+    expect(loadSkillContent).not.toHaveBeenCalled()
   })
 
   it('keeps routing catalog bytes stable across message-scoped activation changes', async () => {
@@ -340,7 +340,7 @@ describe('DeepChat system prompt builder', () => {
     ).toContain('skill_catalog_omitted')
   })
 
-  it('loads requested Skills when catalog metadata is temporarily unavailable', async () => {
+  it('does not bypass materialization when catalog metadata is temporarily unavailable', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
     vi.mocked(fs.promises.readFile).mockRejectedValue(
       Object.assign(new Error('missing'), { code: 'ENOENT' })
@@ -389,14 +389,14 @@ describe('DeepChat system prompt builder', () => {
         }
       )
 
-      expect(loadSkillContent).toHaveBeenCalledWith('writer', 'skill-a')
-      expect(assembly.prompt).toContain('### skill-a\nskill-a instructions')
+      expect(loadSkillContent).not.toHaveBeenCalled()
+      expect(assembly.prompt).not.toContain('### skill-a\nskill-a instructions')
       expect(assembly.sections.find((section) => section.kind === 'skills_metadata')).toMatchObject({
         inclusion: 'omitted',
         degradationCodes: ['skill_metadata_unavailable']
       })
       const pinnedSkills = assembly.sections.find((section) => section.kind === 'pinned_skills')
-      expect(pinnedSkills).toMatchObject({ inclusion: 'included' })
+      expect(pinnedSkills).toMatchObject({ inclusion: 'omitted' })
       expect(pinnedSkills).not.toHaveProperty('degradationCodes')
     } finally {
       consoleWarn.mockRestore()
@@ -545,7 +545,7 @@ describe('DeepChat system prompt builder', () => {
     expect(fs.readFileSync).toHaveBeenCalledTimes(2)
   })
 
-  it('records pinned-skill and tooling degradation without blocking assembly', async () => {
+  it('does not load unmaterialized Skill bodies when tooling degrades', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
     vi.mocked(fs.promises.readFile).mockRejectedValue(
       Object.assign(new Error('missing'), { code: 'ENOENT' })
@@ -576,10 +576,7 @@ describe('DeepChat system prompt builder', () => {
               { name: 'skill-b', description: 'Skill B' }
             ]),
             getActiveSkills: vi.fn().mockResolvedValue([]),
-            loadSkillContent: vi.fn(async (_agentId: string, skillName: string) => {
-              if (skillName === 'skill-b') throw new Error('unavailable')
-              return { name: skillName, content: `${skillName} instructions` }
-            })
+            loadSkillContent: vi.fn()
           },
           toolService: {
             buildToolSystemPrompt: vi.fn(() => {
@@ -601,12 +598,11 @@ describe('DeepChat system prompt builder', () => {
         }
       )
 
-      expect(assembly.prompt).toContain('### skill-a')
+      expect(assembly.prompt).not.toContain('### skill-a')
       expect(assembly.prompt).not.toContain('### skill-b')
-      expect(assembly.sections.find((section) => section.kind === 'pinned_skills')).toMatchObject({
-        inclusion: 'degraded',
-        degradationCodes: ['pinned_skill_load_failed']
-      })
+      const pinnedSkills = assembly.sections.find((section) => section.kind === 'pinned_skills')
+      expect(pinnedSkills).toMatchObject({ inclusion: 'omitted' })
+      expect(pinnedSkills).not.toHaveProperty('degradationCodes')
       expect(assembly.sections.find((section) => section.kind === 'tooling')).toMatchObject({
         inclusion: 'omitted',
         degradationCodes: ['tooling_build_failed']

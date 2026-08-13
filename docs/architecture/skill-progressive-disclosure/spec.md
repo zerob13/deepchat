@@ -59,6 +59,11 @@ the stable Active Skills system section for every new execution, from Tape-mater
 They must be visible and removable to the user, but this increment does not add a new Pin action or
 another way to create persistent selections.
 
+Direct ACP compatibility requests retain bounded Route metadata but never project local full
+Skill bodies. ACP bypasses DeepChat's materialization and authoritative context-admission path, so
+injecting mutable local bodies there would create provider-visible instructions without Tape
+authority. ACP-backed subagents retain their existing configured-prompt-only behavior.
+
 ## Route Contract
 
 ### Canonical Routing Card
@@ -458,6 +463,8 @@ overwrite provider configuration or become Tape facts.
 19. No generic Tape writer, Skill sidecar store, embedding/LLM router, silent body truncation, or
     user-input summarization is added.
 20. No remote Git operation is performed.
+21. Direct ACP compatibility never projects a local full Skill body without DeepChat Tape
+    materialization authority.
 
 ## Constraints
 

@@ -39,7 +39,6 @@ export const DEEPCHAT_PROMPT_DEGRADATION_CODES = [
   'skill_catalog_omitted',
   'active_skills_unavailable',
   'pinned_skill_unavailable',
-  'pinned_skill_load_failed',
   'environment_build_failed',
   'tooling_build_failed',
   'prompt_projection_mismatch',

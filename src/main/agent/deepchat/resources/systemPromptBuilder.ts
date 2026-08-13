@@ -36,7 +36,7 @@ export type AgentExtensionPolicy = {
 
 type SystemPromptSkillPort = Pick<
   SkillServicePort,
-  'getMetadataList' | 'getActiveSkills' | 'loadSkillContent' | 'resolveSessionAgentId'
+  'getMetadataList' | 'getActiveSkills' | 'resolveSessionAgentId'
 >
 type ToolPromptPort = Pick<ToolServicePort, 'buildToolSystemPrompt'>
 
@@ -288,30 +288,6 @@ export async function buildSystemPromptAssemblyWithSkills(
       throw new Error('Session Skill body projection does not match the active Skill set.')
     }
     skillsPrompt = renderSessionActiveSkillsContext(input.sessionSkillBodiesOverride)
-  } else if (skillsEnabled && normalizedActiveSkills.length > 0) {
-    stepStartedAt = Date.now()
-    const skillSections: string[] = []
-    for (const skillName of normalizedActiveSkills) {
-      try {
-        const skill = sessionAgentId
-          ? await skillService.loadSkillContent(sessionAgentId, skillName)
-          : null
-        const content = skill?.content?.trim()
-        if (content) {
-          skillSections.push(renderSessionSkillBody({ name: skillName, content }))
-        } else {
-          pinnedSkillsDegradations.push('pinned_skill_unavailable')
-        }
-      } catch (error) {
-        console.warn(
-          `[DeepChatAgent] Failed to load skill content for "${skillName}" in session ${sessionId}:`,
-          error
-        )
-        pinnedSkillsDegradations.push('pinned_skill_load_failed')
-      }
-    }
-    skillsPrompt = buildPinnedSkillsPrompt(skillSections)
-    dependencies.logSlowStep(sessionId, 'system-prompt.pinned-skills-load', stepStartedAt)
   }
 
   let envSections: readonly DeepChatPromptAssemblySection[] = []
