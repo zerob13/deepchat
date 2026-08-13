@@ -36,6 +36,7 @@ const DEFAULT_MAX_TOKENS_PER_CONVERSATION = 8
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/
 const MAX_OPERATION_IDENTITY_CHARACTERS = 1_024
 const PROGRAMMATIC_TOOL_SAFE_SCALAR_PATTERN = /^[\p{L}\p{N}_.:@/,+-]+$/u
+const PROGRAMMATIC_TOOL_SAFE_QUERY_PATTERN = /^[\p{L}\p{N}_.:@/,+-]+(?: [\p{L}\p{N}_.:@/,+-]+)*$/u
 const PROGRAMMATIC_TOOL_CANONICAL_LIMIT_PATTERN = /^[1-9][0-9]*$/
 const AgentCliProgrammaticRouteSchema = z.enum([
   'tool.search',
@@ -245,6 +246,31 @@ function requireCanonicalInvocationParams(value: unknown): Readonly<Record<strin
   return value as Readonly<Record<string, unknown>>
 }
 
+function parseCanonicalProgrammaticSearchCommand(
+  command: string
+): Readonly<{ query: string; limit?: number }> | null {
+  const prefix = 'deepchat tool search --query '
+  if (!command.startsWith(prefix)) return null
+  const argumentsText = command.slice(prefix.length)
+  let query: string
+  let remainder: string
+  if (argumentsText.startsWith('"')) {
+    const closingQuote = argumentsText.indexOf('"', 1)
+    if (closingQuote < 0) return null
+    query = argumentsText.slice(1, closingQuote)
+    remainder = argumentsText.slice(closingQuote + 1)
+  } else {
+    const separator = argumentsText.indexOf(' ')
+    query = separator < 0 ? argumentsText : argumentsText.slice(0, separator)
+    remainder = separator < 0 ? '' : argumentsText.slice(separator)
+  }
+  if (!PROGRAMMATIC_TOOL_SAFE_QUERY_PATTERN.test(query) || query.startsWith('-')) return null
+  if (!remainder) return Object.freeze({ query })
+  const limitMatch = /^ --limit ([1-9][0-9]*)$/.exec(remainder)
+  if (!limitMatch || !PROGRAMMATIC_TOOL_CANONICAL_LIMIT_PATTERN.test(limitMatch[1])) return null
+  return Object.freeze({ query, limit: Number(limitMatch[1]) })
+}
+
 export function buildAgentCliProgrammaticInvocationHash(input: {
   command: Readonly<{ domain: 'tool'; verb: AgentCliProgrammaticToolVerb }>
   route: `tool.${AgentCliProgrammaticToolVerb}`
@@ -278,21 +304,11 @@ export function parseAgentCliProgrammaticExecInvocation(input: {
   const verb = tokens[2]
   let parsed: Readonly<Record<string, unknown>>
   if (verb === 'search') {
-    if (
-      input.stdin !== undefined ||
-      (tokens.length !== 5 && tokens.length !== 7) ||
-      tokens[3] !== '--query' ||
-      !PROGRAMMATIC_TOOL_SAFE_SCALAR_PATTERN.test(tokens[4]) ||
-      tokens[4].startsWith('-') ||
-      (tokens.length === 7 &&
-        (tokens[5] !== '--limit' || !PROGRAMMATIC_TOOL_CANONICAL_LIMIT_PATTERN.test(tokens[6])))
-    ) {
+    const search = parseCanonicalProgrammaticSearchCommand(command)
+    if (input.stdin !== undefined || !search) {
       throw new Error('Programmatic Tool search requires canonical bounded scalar arguments')
     }
-    parsed = toolSearchRoute.input.parse({
-      query: tokens[4],
-      ...(tokens.length === 7 ? { limit: Number(tokens[6]) } : {})
-    })
+    parsed = toolSearchRoute.input.parse(search)
   } else if (verb === 'describe') {
     if (
       input.stdin !== undefined ||

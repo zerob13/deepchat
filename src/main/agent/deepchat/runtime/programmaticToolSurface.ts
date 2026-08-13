@@ -63,7 +63,7 @@ export const MAX_PROGRAMMATIC_TOOL_DURATION_MS = MAX_TAPE_PROGRAMMATIC_TOOL_DURA
 export const PROGRAMMATIC_EXEC_STDIN_DESCRIPTION =
   'Owned request body for DeepChat Programmatic Tool call or batch commands'
 const PROGRAMMATIC_EXEC_DESCRIPTION =
-  'Run one attached DeepChat Programmatic Tool command. Use deepchat tool search, describe, call, or batch. Pass call and batch JSON through stdin; background execution, yielding, process polling, and shell redirection are unavailable.'
+  'Run one attached DeepChat Programmatic Tool command. Use deepchat tool search --query "<terms>" [--limit <n>], deepchat tool describe --target <name>, call, or batch. Pass call and batch JSON through stdin; background execution, yielding, process polling, and shell redirection are unavailable.'
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_WORKSPACE_PATH_BYTES = 32 * 1024

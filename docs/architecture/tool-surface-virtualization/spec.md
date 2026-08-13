@@ -262,11 +262,16 @@ is separate and creates no candidate.
 The Agent-only commands are:
 
 ```text
-deepchat tool search
-deepchat tool describe
+deepchat tool search --query "<terms>" [--limit <1-32>]
+deepchat tool describe --target <name>
 deepchat tool call
 deepchat tool batch
 ```
+
+Search accepts either one unquoted safe term or multiple safe terms enclosed in double quotes.
+Quoted queries contain no escapes, use one ASCII space between terms, and exclude shell expansion
+and control characters in POSIX, PowerShell, and cmd. The authority parser binds the decoded query,
+not its quoted command spelling, into the exact invocation hash.
 
 `search` and `describe` read only the originating View's frozen Programmatic Surface. They do not
 authorize, activate, create target Journal facts, or create a “seen” ledger. A target in that frozen
