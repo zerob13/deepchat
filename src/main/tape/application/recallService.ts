@@ -149,7 +149,7 @@ export class TapeRecallService {
 
     if (projectionTable) {
       try {
-        const maxEntryId = table.getMaxEntryId(sessionId)
+        const maxEntryId = table.getMaxEntryIdExcludingContext(sessionId)
         if (projectionTable.isCurrent(sessionId, maxEntryId)) {
           return projectionTable
             .search(sessionId, query, searchInput)

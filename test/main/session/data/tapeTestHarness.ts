@@ -305,6 +305,14 @@ function createTapeTableMock() {
         ...entries.filter((entry) => entry.session_id === sessionId).map((entry) => entry.entry_id)
       )
     ),
+    getMaxEntryIdExcludingContext: vi.fn((sessionId: string) =>
+      Math.max(
+        0,
+        ...entries
+          .filter((entry) => entry.session_id === sessionId && entry.kind !== 'context')
+          .map((entry) => entry.entry_id)
+      )
+    ),
     getMaxEntryIdsBySessions: vi.fn(
       (sessionIds: string[]) =>
         new Map(

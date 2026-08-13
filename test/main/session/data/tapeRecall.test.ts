@@ -734,6 +734,24 @@ describe('SessionTape recall', () => {
     expect(service.getEffectiveMessageSourceSpan('s1', [hidden.entry_id])).toEqual([])
   })
 
+  it('keeps ViewManifest audit payloads out of fallback search', () => {
+    const { table } = createTapeTableMock()
+    const service = createTapeService(table)
+    table.appendEvent({
+      sessionId: 's1',
+      name: 'view/assembled',
+      source: { type: 'runtime_event', id: 'm1', seq: 1 },
+      data: {
+        manifest: {
+          executionContract: { workspace: { path: '/private/workspace/manifest-secret' } }
+        }
+      },
+      meta: { viewId: 'view-1' }
+    })
+
+    expect(service.search('s1', 'manifest-secret')).toEqual([])
+  })
+
   it('projects user message attachment metadata into search text and refs', () => {
     const { table } = createTapeTableMock()
     const projectionTable = {
@@ -1327,7 +1345,7 @@ describe('SessionTape recall', () => {
 
     const hits = service.search('s1', 'Redis compact', { limit: 5 })
 
-    expect(table.getMaxEntryId).toHaveBeenCalledWith('s1')
+    expect(table.getMaxEntryIdExcludingContext).toHaveBeenCalledWith('s1')
     expect(table.getBySession).not.toHaveBeenCalled()
     expect(projectionTable.search).toHaveBeenCalledWith(
       's1',
@@ -2971,6 +2989,20 @@ describe('SessionTape recall', () => {
         expect(service.search('s1', 'Redis TTL', { limit: 5 }).map((hit) => hit.entryId)).toContain(
           pathHits[0].entryId
         )
+        const replaceProjection = vi.spyOn(projectionTable, 'replaceSession')
+        const contextFact = table.append({
+          sessionId: 's1',
+          kind: 'context',
+          name: 'skill/materialized',
+          source: { type: 'runtime_event', id: 'skill-source', seq: 0 },
+          payload: { effectiveContent: 'private-skill-materialization-needle' },
+          meta: {}
+        })
+        expect(table.getMaxEntryId('s1')).toBe(contextFact.entry_id)
+        expect(table.getMaxEntryIdExcludingContext('s1')).toBeLessThan(contextFact.entry_id)
+        expect(service.search('s1', 'Redis TTL', { limit: 5 })).toHaveLength(1)
+        expect(replaceProjection).not.toHaveBeenCalled()
+        replaceProjection.mockRestore()
         const errorHits = service.search('s1', '42', { kinds: ['tool_result'], limit: 5 })
         expect(errorHits[0]).toMatchObject({
           refs: {

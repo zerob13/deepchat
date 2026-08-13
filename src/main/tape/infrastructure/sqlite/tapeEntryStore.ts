@@ -1090,6 +1090,17 @@ export class DeepChatTapeEntriesTable
     return row?.max_entry_id ?? 0
   }
 
+  getMaxEntryIdExcludingContext(sessionId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT MAX(entry_id) AS max_entry_id
+         FROM deepchat_tape_entries
+         WHERE session_id = ? AND kind != 'context'`
+      )
+      .get(sessionId) as { max_entry_id: number | null } | undefined
+    return row?.max_entry_id ?? 0
+  }
+
   getMaxEntryIdsBySessions(sessionIds: string[]): Map<string, number> {
     const ids = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))]
     const maxEntryIdBySession = new Map(ids.map((id) => [id, 0]))

@@ -16,6 +16,7 @@ import {
   toTapeProviderAttemptCacheMetrics,
   type TapeProviderAttemptCacheMetrics
 } from './providerAttempt'
+import { TAPE_VIEW_MANIFEST_EVENT_NAME } from './viewManifest'
 
 export interface EffectiveMessageEntry {
   entryId: number
@@ -43,6 +44,7 @@ export const DEFAULT_EXCLUDED_TAPE_EVENT_NAMES = [
   'message/retracted',
   'message/compaction_indicator',
   'migration/backfill',
+  TAPE_VIEW_MANIFEST_EVENT_NAME,
   ...CONTRACT_TAPE_EVENT_NAMES,
   ...EXECUTION_JOURNAL_EVENT_NAMES
 ] as const

@@ -49,6 +49,7 @@ export interface TapeEntryStore {
   getLatestReconstructionAnchor(sessionId: string): DeepChatTapeEntryRow | undefined
   getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
   getMaxEntryId(sessionId: string): number
+  getMaxEntryIdExcludingContext(sessionId: string): number
   getMaxEntryIdsBySessions(sessionIds: string[]): Map<string, number>
   countAnchorsBySession(sessionId: string): number
   countEntriesAfter(sessionId: string, entryId: number): number
