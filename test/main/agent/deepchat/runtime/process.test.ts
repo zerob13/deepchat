@@ -48,7 +48,8 @@ import {
 import {
   buildProgrammaticToolCapabilityV1,
   createProgrammaticToolSurfaceRunControllerV1,
-  markProgrammaticToolCapabilityProvenanceCommitted
+  markProgrammaticToolCapabilityProvenanceCommitted,
+  projectProgrammaticExecDefinition
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
@@ -3498,6 +3499,151 @@ describe('processStream', () => {
     expect(coreStream).toHaveBeenCalledTimes(3)
     expect(toolService.callTool).toHaveBeenCalledTimes(2)
     expect(params.run.resources.promptAssembly).toBe(initialPromptAssembly)
+  })
+
+  it('preserves the Programmatic exec projection after skill_view refreshes tools', async () => {
+    let callCount = 0
+    const skillResolution = makeRuntimeSkillResolution()
+    const skillView = makeAgentSkillViewTool()
+    const exec = {
+      ...makeTool('exec'),
+      source: 'agent' as const,
+      server: {
+        name: 'agent-filesystem',
+        icons: '',
+        description: 'Agent FileSystem tools'
+      },
+      function: {
+        ...makeTool('exec').function,
+        parameters: {
+          type: 'object' as const,
+          properties: { command: { type: 'string' } },
+          required: ['command']
+        }
+      }
+    } satisfies MCPToolDefinition
+    const initialTools = projectProgrammaticExecDefinition([skillView, exec])
+    const toolService = {
+      ...createMockToolService(),
+      callTool: vi.fn().mockImplementation(async (request, options) => {
+        options?.commitDispatch?.({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: { name: 'deepchat-settings' },
+          target: { serverName: 'agent-skills', originalName: 'skill_view' }
+        })
+        return {
+          content:
+            '{"success":true,"name":"deepchat-settings","isPinned":false,"activeForCurrentMessage":true,"activatedForMessage":true,"activationScope":"message"}',
+          rawData: {
+            toolCallId: request.id,
+            content:
+              '{"success":true,"name":"deepchat-settings","isPinned":false,"activeForCurrentMessage":true,"activatedForMessage":true,"activationScope":"message"}',
+            isError: false,
+            toolResult: {
+              activationApplied: true,
+              activationSource: 'skill_md',
+              activatedSkill: 'deepchat-settings',
+              skillContext: {
+                agentId: 'deepchat',
+                sourceType: 'created',
+                sourceId: '/skills/deepchat-settings',
+                skillName: 'deepchat-settings'
+              },
+              skillResolution
+            }
+          }
+        }
+      })
+    } as unknown as ToolServicePort
+    const activeSkillNames: string[] = []
+    const resolveTools = vi.fn().mockResolvedValue([skillView, exec])
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: initialTools,
+      providerActiveDefinitions: initialTools,
+      policyVersion: 'process-skill-refresh-programmatic-v1'
+    })
+    const run = createLoopRun({
+      runId: RUN_ID,
+      sessionId: toAppSessionId('s1'),
+      messageId: 'm1',
+      abortController: new AbortController(),
+      messages: [{ role: 'user', content: 'Use a Skill, then run a command' }],
+      streamState: createState(),
+      resources: {
+        toolDefinitions: initialTools,
+        activeSkillNames: [],
+        commandShell: POSIX_COMMAND_SHELL,
+        toolSurfaceMode: 'cli-programmatic'
+      },
+      initialRequestSeq: 1
+    })
+    const coreStream = vi.fn(
+      function (_messages, _modelId, _modelConfig, _temperature, _maxTokens, tools) {
+        callCount++
+        run.requestSeq = callCount
+        const projectedExec = tools.find((tool) => tool.function.name === 'exec')
+        expect(projectedExec?.function.parameters.properties.stdin).toMatchObject({
+          type: 'string',
+          minLength: 1
+        })
+        const snapshot = controller.build({
+          request: {
+            sessionId: 's1',
+            messageId: 'm1',
+            runId: RUN_ID,
+            requestSeq: run.requestSeq
+          },
+          eligibleDefinitions: tools
+        })
+        controller.admit(snapshot)
+        bindActiveRequestToolSurface(run, run.requestSeq, snapshot, vi.fn())
+        expect(snapshot.toolDefinitions.map((tool) => tool.function.name)).toContain('exec')
+        if (callCount === 1) {
+          return (async function* () {
+            yield {
+              type: 'tool_call_start',
+              tool_call_id: 'tc1',
+              tool_call_name: 'skill_view'
+            } as LLMCoreStreamEvent
+            yield {
+              type: 'tool_call_end',
+              tool_call_id: 'tc1',
+              tool_call_arguments_complete: '{"name":"deepchat-settings"}'
+            } as LLMCoreStreamEvent
+            yield { type: 'stop', stop_reason: 'tool_use' } as LLMCoreStreamEvent
+          })()
+        }
+        return (async function* () {
+          yield { type: 'text', content: 'Done' } as LLMCoreStreamEvent
+          yield { type: 'stop', stop_reason: 'complete' } as LLMCoreStreamEvent
+        })()
+      }
+    ) as unknown as ProcessParams['coreStream']
+    const params = createParams({
+      run,
+      coreStream,
+      toolExecution: createToolExecutionPort(toolService),
+      toolCatalog: { resolve: resolveTools },
+      controls: {
+        activateSkill: vi.fn(async (skillName: string) => {
+          activeSkillNames.push(skillName)
+          return [...activeSkillNames]
+        }),
+        getActiveSkillNames: () => [...activeSkillNames],
+        commitRuntimeSkillView: vi.fn().mockResolvedValue(undefined)
+      }
+    })
+
+    const promise = processStream(params)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toMatchObject({ status: 'completed' })
+
+    expect(resolveTools).toHaveBeenCalledWith({
+      activeSkillNames: ['deepchat-settings'],
+      failClosed: true
+    })
+    expect(coreStream).toHaveBeenCalledTimes(2)
   })
 
   it('does not start another provider request when post-activation tool refresh fails', async () => {

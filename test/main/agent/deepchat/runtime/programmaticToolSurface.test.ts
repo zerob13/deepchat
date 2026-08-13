@@ -227,6 +227,10 @@ describe('Programmatic Tool Surface', () => {
     expect(exec.function.parameters.properties.stdin).toBeUndefined()
     expect(exposedExec).not.toBe(exec)
     expect(exposedExec.function.description).toContain('DeepChat Programmatic Tool commands')
+    expect(exposedExec.function.description).toContain(
+      'Omit timeoutMs, background, and yieldMs entirely'
+    )
+    expect(exposedExec.function.description).toContain('--target <unquoted-name>')
     expect(exposedExec.function.parameters.properties.stdin).toMatchObject({
       type: 'string',
       minLength: 1,
@@ -237,6 +241,9 @@ describe('Programmatic Tool Surface', () => {
     expect(exposedExec.function.parameters.properties.yieldMs).toEqual({ type: 'number' })
     expect(exposedExec.function.parameters.required).toEqual(['command'])
     expect(exposed[1]).toBe(remote)
+    const reprojected = projectProgrammaticExecDefinition(exposed)
+    expect(reprojected[0]).toBe(exposedExec)
+    expect(reprojected[1]).toBe(remote)
 
     expectSurfaceError(
       () =>

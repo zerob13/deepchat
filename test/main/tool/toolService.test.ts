@@ -45,7 +45,8 @@ import {
   buildProgrammaticToolCapabilityV1,
   createProgrammaticToolSurfaceRunControllerV1,
   assertProgrammaticToolCapabilityViewCommitted,
-  markProgrammaticToolCapabilityProvenanceCommitted
+  markProgrammaticToolCapabilityProvenanceCommitted,
+  projectProgrammaticExecDefinition
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import {
   AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
@@ -291,10 +292,11 @@ describe('ToolService', () => {
     })
     const exec = definitions.find((definition) => definition.function.name === 'exec')
     if (!exec) throw new Error('Expected native exec definition')
+    const projectedExec = projectProgrammaticExecDefinition([exec])[0]
     const remote = buildContractMcpDefinition()
     const controller = createProgrammaticToolSurfaceRunControllerV1({
-      ceilingDefinitions: [exec, remote],
-      providerActiveDefinitions: [exec],
+      ceilingDefinitions: [projectedExec, remote],
+      providerActiveDefinitions: [projectedExec],
       policyVersion: 'tool-service-programmatic-v1'
     })
     const request = {
@@ -305,7 +307,7 @@ describe('ToolService', () => {
     }
     const snapshot = controller.build({
       request,
-      eligibleDefinitions: [exec, remote]
+      eligibleDefinitions: [projectedExec, remote]
     })
     controller.admit(snapshot)
     const capability = buildProgrammaticToolCapabilityV1({

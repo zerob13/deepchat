@@ -63,7 +63,7 @@ export const MAX_PROGRAMMATIC_TOOL_DURATION_MS = MAX_TAPE_PROGRAMMATIC_TOOL_DURA
 export const PROGRAMMATIC_EXEC_STDIN_DESCRIPTION =
   'Owned request body for DeepChat Programmatic Tool call or batch commands'
 const PROGRAMMATIC_EXEC_DESCRIPTION =
-  'For DeepChat Programmatic Tool commands, use deepchat tool search --query "<terms>" [--limit <n>], deepchat tool describe --target <name>, call, or batch. Pass call and batch JSON through stdin. Programmatic commands must remain attached and foreground; ordinary shell commands retain the normal exec controls.'
+  'For DeepChat Programmatic Tool commands, use deepchat tool search --query "<terms>" [--limit <n>], deepchat tool describe --target <unquoted-name>, call, or batch. Pass call and batch JSON through stdin. Omit timeoutMs, background, and yieldMs entirely for Programmatic commands; ordinary shell commands retain these exec controls.'
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_WORKSPACE_PATH_BYTES = 32 * 1024
@@ -103,9 +103,14 @@ export function projectProgrammaticExecDefinition(
       }
     }
     const parameterContract = definition.function.parameters
-    const description = [definition.function.description.trim(), PROGRAMMATIC_EXEC_DESCRIPTION]
-      .filter(Boolean)
-      .join('\n\n')
+    const currentDescription = definition.function.description.trim()
+    const hasProgrammaticDescription =
+      currentDescription === PROGRAMMATIC_EXEC_DESCRIPTION ||
+      currentDescription.endsWith(`\n\n${PROGRAMMATIC_EXEC_DESCRIPTION}`)
+    if (existing !== undefined && hasProgrammaticDescription) {
+      return definition
+    }
+    const description = [currentDescription, PROGRAMMATIC_EXEC_DESCRIPTION].filter(Boolean).join('\n\n')
     return {
       ...definition,
       function: {

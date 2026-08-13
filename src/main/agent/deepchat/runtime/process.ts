@@ -55,7 +55,10 @@ import {
   type ToolSurfaceActivationEvidence,
   type ToolSurfaceDeferredDispatch
 } from '@/agent/deepchat/runtime/toolSurface'
-import { attachProgrammaticToolDeferredResumeCapability } from './programmaticToolSurface'
+import {
+  attachProgrammaticToolDeferredResumeCapability,
+  projectProgrammaticExecDefinition
+} from './programmaticToolSurface'
 import { CommandShellProfileSchema } from '@shared/commandShell'
 
 const UNKNOWN_CONTEXT_LIMIT = Number.MAX_SAFE_INTEGER
@@ -1444,10 +1447,14 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               currentTools = run.resources.toolDefinitions
             } else {
               const activeSkillNames = controls?.getActiveSkillNames?.()
-              run.resources.toolDefinitions = await toolCatalog.resolve({
+              const refreshedTools = await toolCatalog.resolve({
                 activeSkillNames,
                 failClosed: true
               })
+              run.resources.toolDefinitions =
+                run.resources.toolSurfaceMode === 'cli-programmatic'
+                  ? projectProgrammaticExecDefinition(refreshedTools)
+                  : refreshedTools
               run.resources.activeSkillNames = [...(activeSkillNames ?? [])]
               currentTools = run.resources.toolDefinitions
             }
