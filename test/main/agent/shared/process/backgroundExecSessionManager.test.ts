@@ -304,6 +304,34 @@ describe('BackgroundExecSessionManager', () => {
     })
   })
 
+  it('does not report completion before a running process closes', async () => {
+    const child = new MockChildProcess()
+    vi.mocked(spawn).mockReturnValue(child as never)
+
+    const started = await manager.start('conv-1', 'echo test', '/workspace', {
+      commandShell: PLATFORM_COMMAND_SHELL,
+      timeout: 0
+    })
+    const onCompleted = vi.fn()
+    const resultPromise = manager.getCompletionResult('conv-1', started.sessionId)
+    void resultPromise.then(onCompleted)
+
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(onCompleted).not.toHaveBeenCalled()
+
+    child.stdout.emit('data', 'complete')
+    child.stdout.emit('end')
+    child.stderr.emit('end')
+    child.emit('close', 0, null)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      status: 'done',
+      output: 'complete',
+      exitCode: 0,
+      timedOut: false
+    })
+  })
+
   it('clears the yield timer when the session closes before the yield window elapses', async () => {
     vi.useFakeTimers()
 

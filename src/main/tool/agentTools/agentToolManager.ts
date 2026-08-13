@@ -2902,9 +2902,6 @@ export class AgentToolManager {
         })
         return { content, rawData: { content, isError: true } }
       }
-      if (activationApplied) {
-        this.createAgentDispatchCommit(toolName, 'agent-skills', validationResult.data, options)?.()
-      }
       const content = JSON.stringify({
         ...publicResult,
         isPinned: result.isPinned === true,

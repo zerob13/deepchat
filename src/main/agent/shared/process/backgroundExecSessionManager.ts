@@ -495,7 +495,7 @@ export class BackgroundExecSessionManager {
   ): Promise<SessionCompletionResult> {
     const session = this.getSession(conversationId, sessionId)
     session.lastAccessedAt = Date.now()
-    await this.waitForSessionDrain(session)
+    await session.closePromise
     return this.buildCompletionResult(session, previewChars)
   }
 
