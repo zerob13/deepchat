@@ -455,6 +455,27 @@ function isFirstProviderContextOverflowEvent(event: LLMCoreStreamEvent): boolean
   return event.type === 'error' && isContextWindowErrorLike(event.error_message)
 }
 
+function isProviderOutputEvent(event: LLMCoreStreamEvent): boolean {
+  switch (event.type) {
+    case 'text':
+    case 'reasoning':
+    case 'tool_call_start':
+    case 'tool_call_chunk':
+    case 'tool_call_end':
+    case 'image_data':
+    case 'provider_search':
+    case 'provider_url_source':
+    case 'plan':
+      return true
+    case 'permission':
+    case 'error':
+    case 'usage':
+    case 'stop':
+    case 'rate_limit':
+      return false
+  }
+}
+
 function buildProviderContextOverflowAfterRecoveryErrorMessage(
   preflight: ReturnType<typeof preflightRequestContext>
 ): string {
@@ -1072,7 +1093,7 @@ export class DeepChatLoopRunner {
 
     const toolSurfaceProviderAttempts: ToolSurfaceProviderAttemptDiagnostic[] = []
     let toolSurfaceProviderAttemptsTruncated = false
-    let toolSurfaceFirstProviderEventAt: number | null = null
+    let toolSurfaceFirstProviderOutputAt: number | null = null
 
     let terminalCommitAttempted = false
     let committedTerminal: ProcessTerminalSelection | null = null
@@ -1560,7 +1581,9 @@ export class DeepChatLoopRunner {
             isContextOverflowError: isContextWindowErrorLike,
             createAbortError
           })) {
-            toolSurfaceFirstProviderEventAt ??= Date.now()
+            if (isProviderOutputEvent(event)) {
+              toolSurfaceFirstProviderOutputAt ??= Date.now()
+            }
             yield event
           }
         },
@@ -1794,9 +1817,9 @@ export class DeepChatLoopRunner {
             outcome: readCommittedTerminal()?.outcome ?? 'unsettled',
             durationMs: Math.max(0, Date.now() - toolSurfaceCanaryStartedAt),
             ttftMs:
-              toolSurfaceFirstProviderEventAt === null
+              toolSurfaceFirstProviderOutputAt === null
                 ? null
-                : Math.max(0, toolSurfaceFirstProviderEventAt - loopRun.streamState.startTime),
+                : Math.max(0, toolSurfaceFirstProviderOutputAt - loopRun.streamState.startTime),
             providerRounds: loopRun.logicalRound,
             providerAttempts: toolSurfaceProviderAttempts,
             providerAttemptsTruncated: toolSurfaceProviderAttemptsTruncated,

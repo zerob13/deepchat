@@ -3060,6 +3060,46 @@ describe('DeepChatAgentHarness', () => {
       expect((await agent.getSessionState('s1'))?.status).toBe('idle')
     })
 
+    it('does not report provider metadata or terminal events as TTFT', async () => {
+      const definitions = createAutomaticAdapterDefinitions(1)
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue(definitions)
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions,
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'full')
+      llmProvider.providerInstance.coreStream.mockImplementationOnce(async function* () {
+        yield {
+          type: 'usage',
+          usage: { prompt_tokens: 10, completion_tokens: 0, total_tokens: 10 }
+        }
+        yield { type: 'stop', stop_reason: 'complete' }
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        return { status: 'completed', stopReason: 'complete' }
+      })
+      const recordRun = vi.spyOn(ToolSurfaceCanaryDiagnosticsRegistry.prototype, 'recordRun')
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Hello')
+
+      expect(recordRun).toHaveBeenCalledWith(expect.objectContaining({ ttftMs: null }))
+    })
+
     it('keeps automatic virtualization sticky through the exit hysteresis band', async () => {
       const definitionsByRun = [
         createAutomaticAdapterDefinitions(39),
