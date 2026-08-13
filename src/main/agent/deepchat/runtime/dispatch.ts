@@ -2672,6 +2672,9 @@ export async function settleToolBatch(
     const settledOutcomes = await Promise.allSettled(
       executions.map(async (execution, toolCallOrdinalWithinBatch) => {
         try {
+          // Reject stale or inactive definitions before permission policy observes the call. The
+          // post-precheck assertion below still closes revocation races while policy is awaiting.
+          assertToolSurfaceAuthority(execution.toolCall)
           let permissionToAutoGrant: NonNullable<PendingToolInteraction['permission']> | null = null
           if (
             execution.completedToolCall.name !== TOOL_SEARCH_AGENT_TOOL_NAME &&
@@ -2876,6 +2879,9 @@ export async function settleToolBatch(
     }
 
     try {
+      // Questions and permission prechecks are effects of accepting this call, so the frozen View
+      // must admit it first. Later assertions retain the race checks around asynchronous policy.
+      assertToolSurfaceAuthority(toolCall)
       if (toolCall.function.name === QUESTION_TOOL_NAME) {
         const parsedQuestion = parseQuestionToolArgs(tc.arguments)
         if (!parsedQuestion.success) {

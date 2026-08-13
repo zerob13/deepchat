@@ -2768,33 +2768,44 @@ describe('Tool Surface production selection', () => {
     )
   })
 
-  it('keeps pending activation candidates across a preflight recovery View', () => {
-    const harness = createActivationHarness(['hidden'])
-    const candidate = harness.candidate('hidden', 1)
-    harness.selected.controller.stageActivationBatch([candidate])
+  it('keeps active targets and pending candidates across a preflight recovery View', () => {
+    const harness = createActivationHarness(['active', 'pending'])
+    const activeCandidate = harness.candidate('active', 1)
+    harness.selected.controller.stageActivationBatch([activeCandidate])
+    const activeView = harness.build(2)
+    harness.selected.controller.admit(activeView)
+    const pendingCandidate = harness.candidate('pending', 2)
+    harness.selected.controller.stageActivationBatch([pendingCandidate])
 
     const recoveryView = harness.selected.controller.build({
-      request: request(2),
+      request: request(3),
       eligibleDefinitions: harness.definitions,
       toolSearchAvailable: true,
       deferActivationCandidates: true
     })
     expect(recoveryView.activation).toEqual({ originRequestSeq: null, decisions: [] })
-    expect(recoveryView.toolDefinitions.map((definition) => definition.function.name)).not.toContain(
-      'hidden'
-    )
+    expect(recoveryView.toolDefinitions.map((definition) => definition.function.name)).toContain('active')
+    expect(recoveryView.toolDefinitions.map((definition) => definition.function.name)).not.toContain('pending')
     harness.selected.controller.admit(recoveryView)
+    expect(() =>
+      assertToolSurfaceAllowsDispatch(
+        recoveryView,
+        request(3),
+        'active',
+        harness.definitions.find((definition) => definition.function.name === 'active')
+      )
+    ).not.toThrow()
 
-    const laterView = harness.build(3)
+    const laterView = harness.build(4)
     expect(laterView.activation).toEqual({
-      originRequestSeq: 1,
-      decisions: [{ ...candidate, accepted: true }]
+      originRequestSeq: 2,
+      decisions: [{ ...pendingCandidate, accepted: true }]
     })
-    expect(laterView.toolDefinitions.map((definition) => definition.function.name)).toContain(
-      'hidden'
+    expect(laterView.toolDefinitions.map((definition) => definition.function.name)).toEqual(
+      expect.arrayContaining(['active', 'pending'])
     )
     harness.selected.controller.admit(laterView)
-    expect(harness.build(4).activation).toEqual({ originRequestSeq: null, decisions: [] })
+    expect(harness.build(5).activation).toEqual({ originRequestSeq: null, decisions: [] })
   })
 
   it('queues a later search release behind candidates deferred by recovery', () => {

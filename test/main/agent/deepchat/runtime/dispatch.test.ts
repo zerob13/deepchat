@@ -51,6 +51,7 @@ import {
 import {
   MAX_TOOL_SURFACE_SEARCH_CALLS_PER_BATCH,
   assertIssuedToolSurfaceExecutionContext,
+  assertToolSurfaceAllowsDispatch,
   buildCanonicalToolCatalog,
   buildToolSurfaceDeferredDispatchBinding,
   createPolicySelectedToolSurfaceRun,
@@ -787,6 +788,99 @@ describe('dispatch', () => {
       expect(settled.toolSurfaceActivationCandidates).toEqual([
         expect.objectContaining({ toolCallOrdinalWithinBatch: 0, resultRank: 0 })
       ])
+    })
+
+    it('rejects a same-batch guessed ToolSearch target before permission policy', async () => {
+      const hidden = makeAgentTool('hidden', TOOL_EXECUTION.read.parallel)
+      const { tools, binding, catalog } = createDispatchToolSurfaceBinding([hidden], [])
+      const hiddenEntry = catalog.entries.find(
+        (entry) => entry.target.providerVisibleName === hidden.function.name
+      )!
+      const toolService = createMockToolService()
+      const staleDefinitions = [...tools, hidden]
+      vi.mocked(toolService.assertToolSurfaceAuthority).mockImplementation((request) => {
+        assertToolSurfaceAllowsDispatch(
+          binding.snapshot,
+          binding.snapshot.request,
+          request.function.name,
+          staleDefinitions.find(
+            (definition) => definition.function.name === request.function.name
+          )
+        )
+      })
+      vi.mocked(toolService.callTool).mockImplementation(async (request, options) => {
+        const executionOptions = options as ToolExecutionOptions
+        const context = executionOptions.toolSurfaceContext!
+        executionOptions.commitDispatch({
+          toolName: request.function.name,
+          toolSource: 'agent',
+          normalizedArguments: {},
+          target: { serverName: 'test-server', originalName: request.function.name }
+        })
+        executionOptions.registerOutcomeProjection?.(() =>
+          context.submitActivationCandidates([
+            {
+              ...binding.snapshot.request,
+              stableTargetKey: hiddenEntry.stableTargetKey,
+              canonicalToolDefinitionHash: hiddenEntry.canonicalToolDefinitionHash,
+              toolCallOrdinalWithinBatch: context.toolCallOrdinalWithinBatch,
+              resultRank: 0
+            }
+          ])
+        )
+        return {
+          content: 'found',
+          rawData: { toolCallId: request.id, content: 'found', isError: false }
+        }
+      })
+      for (const [id, name] of [
+        ['search', TOOL_SEARCH_AGENT_TOOL_NAME],
+        ['guess', hidden.function.name]
+      ] as const) {
+        state.blocks.push({
+          type: 'tool_call',
+          content: '',
+          status: 'pending',
+          timestamp: Date.now(),
+          tool_call: { id, name, params: '{}', response: '' }
+        })
+        state.completedToolCalls.push({ id, name, arguments: '{}' })
+      }
+
+      const settled = await settleToolBatch(
+        state,
+        [{ role: 'user', content: 'Find and use a tool' }],
+        0,
+        // Exercise the authority boundary even if a stale caller accidentally retains the hidden
+        // definition beside the exact snapshot definitions.
+        staleDefinitions,
+        toolService,
+        'gpt-4',
+        io,
+        'full_access',
+        new ToolOutputGuard(),
+        32_000,
+        1_024,
+        { toolSurface: binding },
+        'openai'
+      )
+
+      expect(toolService.preCheckToolPermission).not.toHaveBeenCalled()
+      expect(toolService.callTool).toHaveBeenCalledOnce()
+      expect(toolService.callTool).toHaveBeenCalledWith(
+        expect.objectContaining({ function: expect.objectContaining({ name: TOOL_SEARCH_AGENT_TOOL_NAME }) }),
+        expect.anything()
+      )
+      expect(settled.toolSurfaceActivationCandidates).toEqual([
+        expect.objectContaining({
+          stableTargetKey: hiddenEntry.stableTargetKey,
+          toolCallOrdinalWithinBatch: 0
+        })
+      ])
+      expect(state.blocks.find((block) => block.tool_call?.id === 'guess')).toMatchObject({
+        status: 'error',
+        tool_call: { response: 'Error: Tool is not available in the current session: hidden' }
+      })
     })
 
     it('revokes ToolSearch contexts and discards candidates when settlement fails', async () => {
