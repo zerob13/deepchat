@@ -2,6 +2,7 @@ import path from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createDeepChatLoopTapePort,
   createSkillContextTapePort,
   createSkillExecutionAuthorityTapePort
 } from '@/tape/application/capabilityAdapters'
@@ -569,6 +570,51 @@ describe('Tape layer boundaries', () => {
     ])
     expect('appendMessageRecord' in contextPort).toBe(false)
     expect('appendMessageRecord' in authorityPort).toBe(false)
+  })
+
+  it('gives the provider loop only its declared runtime Tape capabilities', () => {
+    const source = {
+      ensureSessionTapeReady: vi.fn(),
+      getViewManifestSourceMaps: vi.fn(),
+      listViewManifestsByMessage: vi.fn(),
+      assertSkillRequestAuthority: vi.fn(),
+      appendViewManifest: vi.fn(),
+      appendToolFact: vi.fn(),
+      getTapeIncarnationId: vi.fn(),
+      appendSkillViewResultFact: vi.fn(),
+      recoverRuntimeSkillViewContexts: vi.fn(),
+      appendProviderAttempt: vi.fn(),
+      getMaxProviderAttemptRequestSeq: vi.fn(),
+      commitRunStarted: vi.fn(),
+      commitDispatch: vi.fn(),
+      commitToolOutcome: vi.fn(),
+      commitRunTerminal: vi.fn(),
+      materializeSkillContexts: vi.fn(),
+      appendMessageRecord: vi.fn()
+    }
+
+    const loopPort = createDeepChatLoopTapePort(source)
+
+    expect(Object.isFrozen(loopPort)).toBe(true)
+    expect(Object.keys(loopPort).sort()).toEqual([
+      'appendProviderAttempt',
+      'appendSkillViewResultFact',
+      'appendToolFact',
+      'appendViewManifest',
+      'assertSkillRequestAuthority',
+      'commitDispatch',
+      'commitRunStarted',
+      'commitRunTerminal',
+      'commitToolOutcome',
+      'ensureSessionTapeReady',
+      'getMaxProviderAttemptRequestSeq',
+      'getTapeIncarnationId',
+      'getViewManifestSourceMaps',
+      'listViewManifestsByMessage',
+      'recoverRuntimeSkillViewContexts'
+    ])
+    expect('materializeSkillContexts' in loopPort).toBe(false)
+    expect('appendMessageRecord' in loopPort).toBe(false)
   })
 
   it.each([

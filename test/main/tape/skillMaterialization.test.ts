@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { Database, nativeSqliteDescribeIf } from '../nativeSqliteHarness'
 import {
   buildTapeSkillMaterializationPayloadHash,
   buildTapeSkillMaterializationRef,
@@ -791,23 +792,12 @@ describe('Tape runtime Skill-view result capability', () => {
   })
 })
 
-const sqliteModule = await import('better-sqlite3-multiple-ciphers').catch(() => null)
-const tableModule = sqliteModule
-  ? await import('@/tape/infrastructure/sqlite/tapeEntryStore')
-  : null
-const Database = sqliteModule?.default
+const tableModule = Database ? await import('@/tape/infrastructure/sqlite/tapeEntryStore') : null
 const Table = tableModule?.DeepChatTapeEntriesTable
-let sqliteAvailable = false
-if (Database && Table) {
-  try {
-    const smoke = new Database(':memory:')
-    smoke.close()
-    sqliteAvailable = true
-  } catch {
-    sqliteAvailable = false
-  }
-}
-const describeSqlite = sqliteAvailable ? describe : describe.skip
+const describeSqlite = nativeSqliteDescribeIf(
+  Boolean(Table),
+  'Tape Skill materialization SQLite store is unavailable'
+)
 
 describeSqlite('Tape Skill materialization SQLite capability', () => {
   it('appends once, strictly reuses, rejects forgery, and fails after reset identity drift', () => {

@@ -47,7 +47,10 @@ import type {
   ExecutionRecoveryReport
 } from '@/tape/domain/executionJournal'
 import type { ExecutionJournalRecoveryReader } from '@/tape/ports/capabilities'
-import { createSkillContextTapePort } from '@/tape/application/capabilityAdapters'
+import {
+  createDeepChatLoopTapePort,
+  createSkillContextTapePort
+} from '@/tape/application/capabilityAdapters'
 
 const MAX_STARTUP_RECOVERY_DETAILS = 100
 const MAX_STARTUP_RECOVERY_DIAGNOSTIC_CHARS = 2_048
@@ -355,7 +358,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     traceSettings,
     sessionStore,
     messageStore,
-    tape: tapeService,
+    tape: createDeepChatLoopTapePort(tapeService),
     pendingInputCoordinator,
     toolResolver,
     providerPermissionCoordinator,
