@@ -1272,9 +1272,12 @@ function createTapeToolSurfaceFactFromData(
   validateToolSearchPresence(input.adapterMode, allActiveEntries)
   if (
     input.adapterMode === 'cli-programmatic' &&
-    !allActiveEntries.some(isCanonicalAgentExecToolSurfaceEntry)
+    allActiveEntries.some(
+      (entry) =>
+        entry.target.providerVisibleName === 'exec' && !isCanonicalAgentExecToolSurfaceEntry(entry)
+    )
   ) {
-    throw new TypeError('A CLI Programmatic provider surface requires the canonical Agent exec.')
+    throw new TypeError('A CLI Programmatic provider surface contains a non-canonical Agent exec.')
   }
   if (input.contractBearing && allActiveEntries.length > MAX_TAPE_TOOL_SURFACE_ACTIVE_ENTRIES) {
     throw new TypeError('Contract-bearing Tool surface exceeds its complete active-entry limit.')
@@ -1508,7 +1511,11 @@ function isSurfaceFactShape(value: unknown): value is TapeToolSurfaceFact {
     }
     if (
       adapterMode === 'cli-programmatic' &&
-      (!value.activeEntries.some(isCanonicalAgentExecToolSurfaceEntry) ||
+      (value.activeEntries.some(
+        (entry) =>
+          entry.target.providerVisibleName === 'exec' &&
+          !isCanonicalAgentExecToolSurfaceEntry(entry)
+      ) ||
         value.activeEntries.some(
           (entry) => entry.reason === 'tool-search' || entry.reason === 'search-result'
         ) ||

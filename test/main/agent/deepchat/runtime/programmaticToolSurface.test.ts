@@ -664,7 +664,7 @@ describe('Programmatic Tool Surface', () => {
 
     const secondSnapshot = controller.build({
       request: request(2),
-      eligibleDefinitions: [exec]
+      eligibleDefinitions: [hidden]
     })
     const secondCapability = buildProgrammaticToolCapabilityV1({
       snapshot: secondSnapshot,
@@ -682,10 +682,50 @@ describe('Programmatic Tool Surface', () => {
     expect(() =>
       assertProgrammaticToolCapabilityViewActive(secondCapability, secondSnapshot)
     ).not.toThrow()
-    expect(secondCapability.entries).toEqual([])
+    expect(secondSnapshot.toolDefinitions).toEqual([])
+    expect(secondCapability.entries.map((entry) => entry.target.providerVisibleName)).toEqual([
+      'remote_search'
+    ])
+
+    const driftedExec = {
+      ...exec,
+      function: {
+        ...exec.function,
+        description: 'A drifted exec contract',
+        parameters: {
+          ...exec.function.parameters,
+          properties: { ...exec.function.parameters.properties, stdin: { type: 'number' } }
+        }
+      }
+    }
+    const spoofedExec = {
+      ...exec,
+      server: { ...exec.server, name: 'agent-tools' }
+    }
+    const driftedSnapshot = controller.build({
+      request: request(3),
+      eligibleDefinitions: [hidden, driftedExec, spoofedExec]
+    })
+    const driftedCapability = buildProgrammaticToolCapabilityV1({
+      snapshot: driftedSnapshot,
+      taskContractContext: null,
+      ceilings,
+      quotas
+    })
+    markProgrammaticToolCapabilityProvenanceCommitted(driftedCapability, driftedSnapshot)
+    controller.admit(driftedSnapshot)
+
+    expect(driftedSnapshot.toolDefinitions).toEqual([])
+    expect(driftedCapability.entries.map((entry) => entry.target.providerVisibleName)).toEqual([
+      'remote_search'
+    ])
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(secondCapability, secondSnapshot),
+      'invalid_definition'
+    )
 
     const restoredSnapshot = controller.build({
-      request: request(3),
+      request: request(4),
       eligibleDefinitions: [hidden, pinned, exec]
     })
     const restoredCapability = buildProgrammaticToolCapabilityV1({

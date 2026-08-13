@@ -539,8 +539,16 @@ export function createProgrammaticToolSurfaceRunControllerV1(
       'invalid_definition'
     )
   }
-  const delegate = createCliProgrammaticToolSurfaceRunControllerDelegate(input)
-  const providerActiveCatalog = buildCanonicalToolCatalog(input.providerActiveDefinitions)
+  const ceilingDefinitions = projectProgrammaticExecDefinition(input.ceilingDefinitions)
+  const providerActiveDefinitions = projectProgrammaticExecDefinition(
+    input.providerActiveDefinitions
+  )
+  const delegate = createCliProgrammaticToolSurfaceRunControllerDelegate({
+    ...input,
+    ceilingDefinitions,
+    providerActiveDefinitions
+  })
+  const providerActiveCatalog = buildCanonicalToolCatalog(providerActiveDefinitions)
   const providerActiveTargets = new Set(
     providerActiveCatalog.entries.map((entry) => entry.stableTargetKey)
   )
@@ -555,7 +563,19 @@ export function createProgrammaticToolSurfaceRunControllerV1(
     virtualizationTriggered: delegate.virtualizationTriggered,
     stageActivationBatch: (candidates) => delegate.stageActivationBatch(candidates),
     build: (buildInput) => {
-      const snapshot = delegate.build(buildInput)
+      const currentDefinitions: MCPToolDefinition[] = []
+      for (const definition of buildInput.eligibleDefinitions) {
+        try {
+          currentDefinitions.push(...projectProgrammaticExecDefinition([definition]))
+        } catch (error) {
+          if (error instanceof ToolSurfaceError && error.code === 'conflicting_tool') continue
+          throw error
+        }
+      }
+      const snapshot = delegate.build({
+        ...buildInput,
+        eligibleDefinitions: currentDefinitions
+      })
       programmaticToolSnapshotRunBindings.set(snapshot, { maximumEntries })
       return snapshot
     },

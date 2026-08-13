@@ -3882,13 +3882,19 @@ describe('DeepChatAgentHarness', () => {
           1
         )
         for (let view = 0; view < 2; view += 1) {
+          const currentDefinitions =
+            view === 0
+              ? params.run.resources.toolDefinitions
+              : params.run.resources.toolDefinitions.filter(
+                  (definition) => definition.source === 'mcp'
+                )
           for await (const _event of params.coreStream(
             params.run.messages,
             params.modelId,
             params.modelConfig,
             params.temperature,
             params.maxTokens,
-            params.run.resources.toolDefinitions
+            currentDefinitions
           )) {
           }
           const binding = params.run.activeRequestToolSurface
@@ -3905,17 +3911,14 @@ describe('DeepChatAgentHarness', () => {
 
       expect(providerToolNamesAtEntry).toEqual([
         ['exec', 'deepchat_question'],
-        ['exec', 'deepchat_question']
+        []
       ])
       expect(providerExecStdinSchemas).toEqual([
         expect.objectContaining({
           type: 'string',
           maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES
         }),
-        expect.objectContaining({
-          type: 'string',
-          maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES
-        })
+        undefined
       ])
       expect(providerEntryFactNames).toEqual([
         [
@@ -3930,6 +3933,7 @@ describe('DeepChatAgentHarness', () => {
           TAPE_TOOL_SURFACE_EVENT_NAME,
           TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME,
           'view/assembled',
+          TAPE_TOOL_CATALOG_EVENT_NAME,
           TAPE_TOOL_SURFACE_EVENT_NAME,
           TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME
         ]
@@ -3993,7 +3997,7 @@ describe('DeepChatAgentHarness', () => {
         )
       ).toEqual([
         ['deepchat_question', 'exec'],
-        ['deepchat_question', 'exec']
+        []
       ])
       for (let index = 0; index < providerFacts.length; index += 1) {
         const activeTargets = new Set(

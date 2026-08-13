@@ -794,7 +794,6 @@ export class DeepChatLoopRunner {
       )
     }
     let toolSurfaceController: ToolSurfaceRunController | null = null
-    let programmaticProviderActiveDefinitions: readonly MCPToolDefinition[] | null = null
     let frozenSkillRequirementByName: ReadonlyMap<string, RunSkillToolRequirements> | null = null
     try {
       if (toolSurfaceMode !== 'legacy') {
@@ -900,11 +899,6 @@ export class DeepChatLoopRunner {
             throw new Error('CLI Programmatic selection requires a preflighted Run controller.')
           }
           toolSurfaceController = programmaticController
-          programmaticProviderActiveDefinitions = Object.freeze(
-            toolSurfaceController.ceiling.entries
-              .filter((entry) => entry.catalogEntry.target.source === 'agent')
-              .map((entry) => entry.definition)
-          )
         } else if (toolSurfaceMode === 'native-activation') {
           const eligibleCatalog = buildCanonicalToolCatalog(tools)
           const activeSkillRequiredStableTargetKeys = universe.skillRequirements
@@ -995,11 +989,6 @@ export class DeepChatLoopRunner {
           providerActiveDefinitions: programmaticProviderDefinitions,
           policyVersion: PROGRAMMATIC_TOOL_SURFACE_POLICY_VERSION
         })
-        programmaticProviderActiveDefinitions = Object.freeze(
-          toolSurfaceController.ceiling.entries
-            .filter((entry) => entry.catalogEntry.target.source === 'agent')
-            .map((entry) => entry.definition)
-        )
       }
       }
       }
@@ -1244,14 +1233,6 @@ export class DeepChatLoopRunner {
                       tools: eligibleDefinitions,
                       deferActivationCandidates
                     }) => {
-                      const viewEligibleDefinitions = programmaticProviderActiveDefinitions
-                        ? [
-                            ...programmaticProviderActiveDefinitions,
-                            ...eligibleDefinitions.filter(
-                              (definition) => definition.source === 'mcp'
-                            )
-                          ]
-                        : eligibleDefinitions
                       const snapshot = toolSurfaceController.build({
                         request: {
                           sessionId: loopRun.sessionId,
@@ -1259,7 +1240,7 @@ export class DeepChatLoopRunner {
                           runId: loopRun.runId,
                           requestSeq
                         },
-                        eligibleDefinitions: viewEligibleDefinitions,
+                        eligibleDefinitions,
                         ...(toolSurfaceMode === 'native-activation'
                           ? {
                               toolSearchAvailable: true,

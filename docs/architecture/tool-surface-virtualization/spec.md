@@ -221,6 +221,9 @@ below both stays full. Cross-Run exit thresholds are lower, and hysteresis is a 
 recomputed against the new ceiling. Initial order is mandatory system-model tools, Agent core,
 initially active Skill requirements, bounded eligible recent-use, then native `tool_search`. CLI
 routing additionally requires Agent exec and proven provider/model capability.
+That Agent exec requirement applies to Run admission. If current authority later revokes exec, the
+Run remains assigned to the CLI adapter but the next Provider Active Surface and its durable View
+fact omit exec; no new invocation grant can be reached from that View.
 
 The recent-use hint affects deterministic initial selection only. It cannot make a target eligible,
 survive definition drift, or act as cross-Run authority. `deepchat_question` remains user-configurable

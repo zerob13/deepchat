@@ -3361,10 +3361,24 @@ export function createCliProgrammaticToolSurfaceRunControllerDelegate(input: {
           'invalid_definition'
         )
       }
-      const eligibleCatalog = buildCanonicalToolCatalog(eligibleDefinitions)
-      const eligibleTargets = new Set(
-        eligibleCatalog.entries.map((entry) => entry.stableTargetKey)
-      )
+      const liveEligible = buildCanonicalToolCatalogArtifacts(eligibleDefinitions, {
+        freezeDefinitions: true
+      })
+      const eligibleTargets = new Set<string>()
+      const currentEligibleDefinitions: MCPToolDefinition[] = []
+      for (const liveEntry of liveEligible.catalog.entries) {
+        const ceilingEntry = ceilingEntryByTarget.get(liveEntry.stableTargetKey)
+        if (!ceilingEntry || !catalogEntryMatches(ceilingEntry, liveEntry)) continue
+        const definition = liveEligible.definitionByStableTarget.get(liveEntry.stableTargetKey)
+        if (!definition) {
+          throw new ToolSurfaceError(
+            'CLI Programmatic current eligibility lost a canonical definition.',
+            'invalid_definition'
+          )
+        }
+        eligibleTargets.add(liveEntry.stableTargetKey)
+        currentEligibleDefinitions.push(definition)
+      }
       if (
         !latestAdmittedRequest &&
         [...providerActiveTargets].some((target) => !eligibleTargets.has(target))
@@ -3380,7 +3394,7 @@ export function createCliProgrammaticToolSurfaceRunControllerDelegate(input: {
         adapterMode: 'cli-programmatic',
         virtualizationTriggered: true,
         ceiling,
-        eligibleDefinitions,
+        eligibleDefinitions: currentEligibleDefinitions,
         activationLedger,
         selectionReasons: selectionReasons.filter((reason) =>
           eligibleTargets.has(reason.stableTargetKey)

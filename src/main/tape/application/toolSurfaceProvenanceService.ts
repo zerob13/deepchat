@@ -16,7 +16,6 @@ import {
   createTapeProgrammaticToolSurfaceFact,
   createTapeToolCatalogFact,
   createTapeToolSurfaceFact,
-  isCanonicalAgentExecToolSurfaceEntry,
   type CreateTapeProgrammaticToolSurfaceFactInput,
   type CreateTapeToolCatalogFactInput,
   type CreateTapeToolSurfaceFactInput,
@@ -298,9 +297,6 @@ function assertProgrammaticSurfaceMatchesView(
   }
 
   const activeTargets = new Set(surface.activeEntries.map((entry) => entry.stableTargetKey))
-  if (!surface.activeEntries.some(isCanonicalAgentExecToolSurfaceEntry)) {
-    throw new TypeError('CLI Programmatic provider surface does not include Agent exec.')
-  }
   if (
     catalog.entries.some(
       (entry) => entry.target.source === 'agent' && !activeTargets.has(entry.stableTargetKey)

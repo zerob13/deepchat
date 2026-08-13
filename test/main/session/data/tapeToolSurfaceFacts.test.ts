@@ -698,6 +698,26 @@ describe('Tape Tool Surface facts', () => {
       'invalid'
     )
     expect(verifyTapeToolSurfaceFact({ ...fact, adapterMode: 'native-activation' })).toBe(false)
+
+    const revokedCatalog = createCatalog([hidden])
+    const revoked = createTapeToolSurfaceFact({
+      ...input,
+      request: { ...input.request, requestSeq: 2 },
+      catalog: {
+        ...input.catalog,
+        fullCatalogHash: revokedCatalog.fullCatalogHash,
+        catalogFactHash: revokedCatalog.catalogFactHash
+      },
+      activeEntries: [],
+      budget: {
+        eligibleToolCount: 1,
+        activeToolCount: 0,
+        eligibleDefinitionTokens: 10,
+        activeDefinitionTokens: 0
+      }
+    })
+    expect(revoked.activeEntries).toEqual([])
+    expect(verifyTapeToolSurfaceFact(revoked)).toBe(true)
   })
 
   it('retains the historical Tool Surface V1 hash recipe', () => {
