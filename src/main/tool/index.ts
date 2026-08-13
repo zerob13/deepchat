@@ -72,11 +72,16 @@ import {
 import {
   assertProgrammaticToolChildDefinitionAllowsDispatch,
   assertProgrammaticToolChildRuntimeAllowsDispatch,
+  assertProgrammaticToolCapabilityDeferredDispatch,
   assertProgrammaticToolCapabilityViewActive,
+  assertProgrammaticToolCapabilityViewCommitted,
   type ProgrammaticToolCapabilityV1,
   type ProgrammaticToolSurfaceEntryV1
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
-import type { ProgrammaticToolParentRegistration } from '@/cli/programmaticToolParentRegistry'
+import {
+  assertIssuedProgrammaticToolAuthorityAssertion,
+  type ProgrammaticToolParentRegistration
+} from '@/cli/programmaticToolParentRegistry'
 import { buildToolSearchDefinition } from './agentTools/toolSearchTool'
 
 type MainProcessToolCallOptions = ToolCallOptions & {
@@ -89,6 +94,7 @@ type MainProcessToolCallOptions = ToolCallOptions & {
     capability: ProgrammaticToolCapabilityV1
     snapshot: ToolSurfaceSnapshot
     entry: ProgrammaticToolSurfaceEntryV1
+    assertAuthorityActive?: () => void
   }>
 }
 type MainProcessToolPreCheckOptions = Pick<
@@ -503,8 +509,8 @@ export class ToolService implements ToolServicePort {
       if (
         toolName !== 'exec' ||
         programmaticToolChild ||
-        !toolSurfaceSnapshot ||
-        toolSurfaceDeferredDispatch ||
+        (!toolSurfaceSnapshot && !toolSurfaceDeferredDispatch) ||
+        (toolSurfaceSnapshot && toolSurfaceDeferredDispatch) ||
         !commitDispatch ||
         !programmaticToolParent
       ) {
@@ -512,7 +518,14 @@ export class ToolService implements ToolServicePort {
           'Programmatic Tool capability requires active request-scoped exec dispatch with durable parent authority.'
         )
       }
-      assertProgrammaticToolCapabilityViewActive(programmaticToolCapability, toolSurfaceSnapshot)
+      if (toolSurfaceDeferredDispatch) {
+        assertProgrammaticToolCapabilityDeferredDispatch(
+          programmaticToolCapability,
+          toolSurfaceDeferredDispatch
+        )
+      } else {
+        assertProgrammaticToolCapabilityViewActive(programmaticToolCapability, toolSurfaceSnapshot)
+      }
     } else if (programmaticToolParent) {
       throw new Error('Programmatic Tool parent authority requires its exact View capability.')
     }
@@ -529,10 +542,19 @@ export class ToolService implements ToolServicePort {
           'Programmatic child requires one exact frozen capability and durable child dispatch.'
         )
       }
-      assertProgrammaticToolCapabilityViewActive(
-        programmaticToolChild.capability,
-        programmaticToolChild.snapshot
-      )
+      if (programmaticToolChild.assertAuthorityActive) {
+        assertIssuedProgrammaticToolAuthorityAssertion(programmaticToolChild.assertAuthorityActive)
+        programmaticToolChild.assertAuthorityActive()
+        assertProgrammaticToolCapabilityViewCommitted(
+          programmaticToolChild.capability,
+          programmaticToolChild.snapshot
+        )
+      } else {
+        assertProgrammaticToolCapabilityViewActive(
+          programmaticToolChild.capability,
+          programmaticToolChild.snapshot
+        )
+      }
     }
     const assertToolSurfaceContextActive = (): void => {
       if (!toolSurfaceContext) return
@@ -853,6 +875,7 @@ export class ToolService implements ToolServicePort {
     capability: ProgrammaticToolCapabilityV1
     snapshot: ToolSurfaceSnapshot
     entry: ProgrammaticToolSurfaceEntryV1
+    assertAuthorityActive?: () => void
     permissionMode: PermissionMode
     signal: AbortSignal
     commitDispatch: ToolDispatchCommit
@@ -869,7 +892,10 @@ export class ToolService implements ToolServicePort {
       programmaticToolChild: {
         capability: input.capability,
         snapshot: input.snapshot,
-        entry: input.entry
+        entry: input.entry,
+        ...(input.assertAuthorityActive
+          ? { assertAuthorityActive: input.assertAuthorityActive }
+          : {})
       }
     })
   }

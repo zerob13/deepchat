@@ -37,8 +37,11 @@ import {
   assertActiveToolSurfaceSnapshot,
   assertIssuedToolSurfaceRunCeiling,
   assertIssuedToolSurfaceSnapshot,
+  assertToolSurfaceDeferredDispatchMembership,
   buildCanonicalToolCatalog,
   createCliProgrammaticToolSurfaceRunControllerDelegate,
+  type ProcessLiveToolSurfaceDeferredDispatch,
+  type ToolSurfaceDeferredDispatch,
   type ToolSurfaceRunController,
   type ToolSurfaceRequestIdentity,
   type ToolSurfaceRunCeiling,
@@ -142,6 +145,10 @@ const programmaticToolRunPreflights = new WeakMap<
 const programmaticToolCapabilitySnapshots = new WeakMap<
   ProgrammaticToolCapabilityV1,
   ToolSurfaceSnapshot
+>()
+const programmaticToolDeferredResumeCapabilities = new WeakMap<
+  ProcessLiveToolSurfaceDeferredDispatch,
+  ProgrammaticToolCapabilityV1
 >()
 const programmaticToolSnapshotRunBindings = new WeakMap<
   ToolSurfaceSnapshot,
@@ -673,6 +680,20 @@ export function assertProgrammaticToolCapabilityViewPrepared(
   }
 }
 
+/** Proves immutable View provenance without granting ordinary active-View dispatch authority. */
+export function assertProgrammaticToolCapabilityViewCommitted(
+  capability: unknown,
+  expectedSnapshot: unknown
+): asserts capability is ProgrammaticToolCapabilityV1 {
+  assertProgrammaticToolCapabilityViewPrepared(capability, expectedSnapshot)
+  if (!persistedProgrammaticToolCapabilities.has(capability)) {
+    throw new ToolSurfaceError(
+      'Programmatic capability has no committed provider View provenance.',
+      'invalid_definition'
+    )
+  }
+}
+
 /** Marks the exact capability only after its atomic provider-View transaction has committed. */
 export function markProgrammaticToolCapabilityProvenanceCommitted(
   capability: unknown,
@@ -690,24 +711,93 @@ export function assertProgrammaticToolCapabilityViewActive(
   capability: unknown,
   expectedSnapshot: unknown
 ): asserts capability is ProgrammaticToolCapabilityV1 {
-  assertProgrammaticToolCapabilityViewPrepared(capability, expectedSnapshot)
-  if (!persistedProgrammaticToolCapabilities.has(capability)) {
+  assertProgrammaticToolCapabilityViewCommitted(capability, expectedSnapshot)
+  assertActiveToolSurfaceSnapshot(expectedSnapshot)
+}
+
+export function attachProgrammaticToolDeferredResumeCapability(
+  deferredDispatch: ProcessLiveToolSurfaceDeferredDispatch,
+  capability: ProgrammaticToolCapabilityV1
+): void {
+  if (deferredDispatch.binding.toolName !== 'exec') {
     throw new ToolSurfaceError(
-      'Programmatic capability has no committed provider View provenance.',
-      'invalid_definition'
+      'Programmatic deferred authority is reserved for the native exec target.',
+      'ineligible_exposure'
     )
   }
-  assertActiveToolSurfaceSnapshot(expectedSnapshot)
+  assertProgrammaticToolCapabilityViewActive(capability, deferredDispatch.snapshot)
+  assertToolSurfaceDeferredDispatchMembership(deferredDispatch, {
+    sessionId: deferredDispatch.binding.request.sessionId,
+    messageId: deferredDispatch.binding.request.messageId,
+    toolCallId: deferredDispatch.binding.toolCallId,
+    toolName: deferredDispatch.binding.toolName
+  })
+  const existing = programmaticToolDeferredResumeCapabilities.get(deferredDispatch)
+  if (existing && existing !== capability) {
+    throw new ToolSurfaceError(
+      'Programmatic deferred authority conflicts with its frozen provider View.',
+      'conflicting_tool'
+    )
+  }
+  programmaticToolDeferredResumeCapabilities.set(deferredDispatch, capability)
+}
+
+export function requireProgrammaticToolDeferredResumeCapability(
+  deferredDispatch: ToolSurfaceDeferredDispatch
+): ProgrammaticToolCapabilityV1 {
+  if (deferredDispatch.authorityKind !== 'process-live') {
+    throw new ToolSurfaceError(
+      'Programmatic Tool approval cannot resume after process restart.',
+      'ineligible_exposure'
+    )
+  }
+  const capability = programmaticToolDeferredResumeCapabilities.get(deferredDispatch)
+  if (!capability) {
+    throw new ToolSurfaceError(
+      'Programmatic Tool deferred authority is unavailable.',
+      'ineligible_exposure'
+    )
+  }
+  assertProgrammaticToolCapabilityDeferredDispatch(capability, deferredDispatch)
+  return capability
+}
+
+export function assertProgrammaticToolCapabilityDeferredDispatch(
+  capability: unknown,
+  deferredDispatch: ToolSurfaceDeferredDispatch
+): asserts capability is ProgrammaticToolCapabilityV1 {
+  if (
+    deferredDispatch.authorityKind !== 'process-live' ||
+    programmaticToolDeferredResumeCapabilities.get(deferredDispatch) !== capability
+  ) {
+    throw new ToolSurfaceError(
+      'Programmatic Tool deferred authority is unavailable.',
+      'ineligible_exposure'
+    )
+  }
+  assertProgrammaticToolCapabilityViewCommitted(capability, deferredDispatch.snapshot)
+  assertToolSurfaceDeferredDispatchMembership(deferredDispatch, {
+    sessionId: deferredDispatch.binding.request.sessionId,
+    messageId: deferredDispatch.binding.request.messageId,
+    toolCallId: deferredDispatch.binding.toolCallId,
+    toolName: deferredDispatch.binding.toolName
+  })
 }
 
 export function assertProgrammaticToolChildDefinitionAllowsDispatch(input: {
   readonly capability: ProgrammaticToolCapabilityV1
   readonly snapshot: ToolSurfaceSnapshot
   readonly entry: ProgrammaticToolSurfaceEntryV1
+  readonly assertAuthorityActive?: () => void
   readonly request: ToolSurfaceRequestIdentity
   readonly currentDefinition: MCPToolDefinition
 }): void {
-  assertProgrammaticToolCapabilityViewActive(input.capability, input.snapshot)
+  if (input.assertAuthorityActive) {
+    input.assertAuthorityActive()
+    assertProgrammaticToolCapabilityViewCommitted(input.capability, input.snapshot)
+  } else {
+    assertProgrammaticToolCapabilityViewActive(input.capability, input.snapshot)
+  }
   if (
     input.capability.request.sessionId !== input.request.sessionId ||
     input.capability.request.messageId !== input.request.messageId ||
@@ -749,6 +839,7 @@ export function assertProgrammaticToolChildRuntimeAllowsDispatch(input: {
   readonly capability: ProgrammaticToolCapabilityV1
   readonly snapshot: ToolSurfaceSnapshot
   readonly entry: ProgrammaticToolSurfaceEntryV1
+  readonly assertAuthorityActive?: () => void
   readonly request: ToolSurfaceRequestIdentity
   readonly currentDefinition: MCPToolDefinition
   readonly currentWorkspace: DeepChatExecutionWorkspaceCeiling

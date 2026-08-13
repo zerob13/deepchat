@@ -6,6 +6,7 @@ import {
   MAX_PROGRAMMATIC_TOOL_BATCH_STEPS,
   MAX_PROGRAMMATIC_TOOL_CHILDREN,
   PROGRAMMATIC_TOOL_ADAPTER_MODE,
+  attachProgrammaticToolDeferredResumeCapability,
   assertIssuedProgrammaticToolCapability,
   assertIssuedProgrammaticToolSurface,
   assertProgrammaticToolCapabilityViewActive,
@@ -15,14 +16,20 @@ import {
   markProgrammaticToolCapabilityProvenanceCommitted,
   preflightProgrammaticToolRunCeilingV1,
   projectProgrammaticToolTapeProvenanceV1,
+  requireProgrammaticToolDeferredResumeCapability,
   type ProgrammaticToolCapabilityCeilingsV1,
   type ProgrammaticToolCapabilityQuotasV1
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import {
   ToolSurfaceError,
+  buildToolSurfaceDeferredDispatchBinding,
   buildToolSurfaceRunCeiling,
+  consumeToolSurfaceDeferredDispatch,
   createToolSurfaceActivationLedger,
   createToolSurfaceSnapshot,
+  issueRecoveredToolSurfaceDeferredDispatch,
+  registerToolSurfaceDeferredDispatch,
+  revokeToolSurfaceDeferredDispatchesForSession,
   revokeToolSurfaceExecutionEligibility
 } from '@/agent/deepchat/runtime/toolSurface'
 import { buildTaskContract } from '@/tape/domain/taskContract'
@@ -654,6 +661,66 @@ describe('Programmatic Tool Surface', () => {
       () => assertProgrammaticToolCapabilityViewActive(restoredCapability, restoredSnapshot),
       'invalid_definition'
     )
+  })
+
+  it('bridges a revoked View only through its exact process-live deferred approval', () => {
+    const exec = agentTool('exec')
+    const hidden = mcpTool('remote_search')
+    const controller = createProgrammaticToolSurfaceRunControllerV1({
+      ceilingDefinitions: [exec, hidden],
+      providerActiveDefinitions: [exec],
+      policyVersion: 'programmatic-test-v1'
+    })
+    const snapshot = controller.build({
+      request: { sessionId: 'session-1', messageId: 'message-1', runId: 'run-1', requestSeq: 1 },
+      eligibleDefinitions: [exec, hidden]
+    })
+    const capability = buildProgrammaticToolCapabilityV1({
+      snapshot,
+      taskContractContext: null,
+      ceilings,
+      quotas
+    })
+    markProgrammaticToolCapabilityProvenanceCommitted(capability, snapshot)
+    controller.admit(snapshot)
+    const binding = buildToolSurfaceDeferredDispatchBinding({
+      snapshot,
+      toolCallId: 'exec-call-1',
+      toolName: 'exec',
+      contractBearing: false
+    })
+    const deferred = registerToolSurfaceDeferredDispatch({
+      snapshot,
+      toolCallId: 'exec-call-1',
+      toolName: 'exec',
+      binding
+    })
+    attachProgrammaticToolDeferredResumeCapability(deferred, capability)
+    revokeToolSurfaceExecutionEligibility(snapshot)
+
+    expectSurfaceError(
+      () => assertProgrammaticToolCapabilityViewActive(capability, snapshot),
+      'invalid_definition'
+    )
+    expect(requireProgrammaticToolDeferredResumeCapability(deferred)).toBe(capability)
+
+    consumeToolSurfaceDeferredDispatch(deferred, {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      toolCallId: 'exec-call-1',
+      toolName: 'exec'
+    })
+    expectSurfaceError(
+      () => requireProgrammaticToolDeferredResumeCapability(deferred),
+      'invalid_definition'
+    )
+
+    const recovered = issueRecoveredToolSurfaceDeferredDispatch(binding, exec.execution)
+    expectSurfaceError(
+      () => requireProgrammaticToolDeferredResumeCapability(recovered),
+      'ineligible_exposure'
+    )
+    revokeToolSurfaceDeferredDispatchesForSession('session-1')
   })
 
   it('rejects a live capability outside its exact current provider View', () => {

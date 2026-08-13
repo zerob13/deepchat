@@ -11,6 +11,18 @@ import {
   GIT_BASH_COMMAND_SHELL,
   POSIX_COMMAND_SHELL
 } from '../../../../helpers/commandShell'
+import {
+  attachProgrammaticToolDeferredResumeCapability,
+  buildProgrammaticToolCapabilityV1,
+  createProgrammaticToolSurfaceRunControllerV1,
+  markProgrammaticToolCapabilityProvenanceCommitted
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
+import {
+  buildToolSurfaceDeferredDispatchBinding,
+  registerToolSurfaceDeferredDispatch,
+  revokeToolSurfaceDeferredDispatchesForSession,
+  revokeToolSurfaceExecutionEligibility
+} from '@/agent/deepchat/runtime/toolSurface'
 
 const SESSION_ID = 'session-1'
 const MESSAGE_ID = 'message-1'
@@ -83,10 +95,18 @@ function createHarness(
     options: NonNullable<ToolExecutionOptions>
     abortController: AbortController
     order: string[]
-  }) => Promise<unknown>
+  }) => Promise<unknown>,
+  fixture: {
+    toolCall?: typeof TOOL_CALL
+    toolDefinition?: MCPToolDefinition
+    permissionMode?: 'default' | 'full_access'
+    programmaticToolParents?: DeferredToolExecutorDependencies['programmaticToolParents']
+  } = {}
 ) {
   const order: string[] = []
   const abortController = new AbortController()
+  const toolCall = fixture.toolCall ?? TOOL_CALL
+  const toolDefinition = fixture.toolDefinition ?? TOOL_DEFINITION
   let nextEntryId = 1
   const receipt = () => ({ sessionId: SESSION_ID, entryId: nextEntryId++, created: true })
   const executionJournal = {
@@ -140,7 +160,7 @@ function createHarness(
       fitBatch: vi.fn()
     },
     toolResolver: {
-      loadToolDefinitionsForSession: vi.fn(async () => [TOOL_DEFINITION]),
+      loadToolDefinitionsForSession: vi.fn(async () => [toolDefinition]),
       getDisabledAgentTools: vi.fn(() => []),
       resolveAgentExtensionPolicy: vi.fn(async () => ({ enabledMcpServerIds: [] })),
       resolveActiveSkillNamesForToolProfile: vi.fn(async () => []),
@@ -157,7 +177,7 @@ function createHarness(
       get: vi.fn(async () => ({
         providerId: 'openai',
         modelId: 'gpt-5',
-        permissionMode: 'full_access'
+        permissionMode: fixture.permissionMode ?? 'full_access'
       }))
     },
     identity: { getAgentId: vi.fn(() => 'deepchat') },
@@ -169,11 +189,16 @@ function createHarness(
       )
     },
     executionJournal,
-    programmaticToolParents: {
-      commitRunTerminal: vi.fn(
-        (_run: { sessionId: string; runId: string }, commit: () => unknown) => commit()
-      )
-    }
+    programmaticToolParents:
+      fixture.programmaticToolParents ??
+      ({
+        prepare: vi.fn(() => {
+          throw new Error('Unexpected Programmatic parent preparation')
+        }),
+        commitRunTerminal: vi.fn(
+          (_run: { sessionId: string; runId: string }, commit: () => unknown) => commit()
+        )
+      } as unknown as DeferredToolExecutorDependencies['programmaticToolParents'])
   } as unknown as DeferredToolExecutorDependencies
 
   const executor = new DeferredToolExecutor(dependencies)
@@ -184,7 +209,7 @@ function createHarness(
       executor.execute(
         SESSION_ID,
         MESSAGE_ID,
-        TOOL_CALL,
+        toolCall,
         onToolCallStarted,
         undefined,
         'posix'
@@ -193,6 +218,147 @@ function createHarness(
     executor,
     order
   }
+}
+
+function createProgrammaticResumeHarness(input: {
+  kind: string
+  execArguments: Readonly<{ command: string; stdin?: string }>
+}) {
+  const execDefinition: MCPToolDefinition = {
+    type: 'function',
+    source: 'agent',
+    execution: TOOL_EXECUTION.write,
+    function: {
+      name: 'exec',
+      description: 'Execute a shell command',
+      parameters: { type: 'object', properties: {} }
+    },
+    server: { name: 'agent-filesystem', icons: '', description: 'Agent filesystem' }
+  }
+  const hiddenDefinition: MCPToolDefinition = {
+    type: 'function',
+    source: 'mcp',
+    execution: TOOL_EXECUTION.read.parallel,
+    function: {
+      name: 'remote_search',
+      description: 'Search remotely',
+      parameters: { type: 'object', properties: {} }
+    },
+    server: {
+      id: '22222222-2222-4222-8222-222222222222',
+      name: 'remote',
+      icons: '',
+      description: 'Remote',
+      configGeneration: 1,
+      bindingHash: 'a'.repeat(64)
+    },
+    raw: { name: 'remote_search', inputSchema: { type: 'object', properties: {} } }
+  }
+  const controller = createProgrammaticToolSurfaceRunControllerV1({
+    ceilingDefinitions: [execDefinition, hiddenDefinition],
+    providerActiveDefinitions: [execDefinition],
+    policyVersion: 'programmatic-deferred-test-v1'
+  })
+  const snapshot = controller.build({
+    request: {
+      sessionId: SESSION_ID,
+      messageId: MESSAGE_ID,
+      runId: CONTRACT_RUN_ID,
+      requestSeq: 3
+    },
+    eligibleDefinitions: [execDefinition, hiddenDefinition]
+  })
+  const capability = buildProgrammaticToolCapabilityV1({
+    snapshot,
+    taskContractContext: null,
+    ceilings: {
+      maxToolEffect: 'read',
+      workspace: { kind: 'runtime_default' },
+      maxSubagentDepth: 0
+    },
+    quotas: {
+      maxChildren: 4,
+      maxBatchSteps: 4,
+      maxInputBytes: 16_384,
+      maxOutputBytes: 16_384,
+      maxDurationMs: 30_000
+    }
+  })
+  markProgrammaticToolCapabilityProvenanceCommitted(capability, snapshot)
+  controller.admit(snapshot)
+  const toolCall = {
+    ...TOOL_CALL,
+    id: `exec-${input.kind.replace(' ', '-')}-1`,
+    name: 'exec',
+    params: JSON.stringify(input.execArguments)
+  }
+  const deferredDispatch = registerToolSurfaceDeferredDispatch({
+    snapshot,
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    binding: buildToolSurfaceDeferredDispatchBinding({
+      snapshot,
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      contractBearing: false
+    })
+  })
+  attachProgrammaticToolDeferredResumeCapability(deferredDispatch, capability)
+  revokeToolSurfaceExecutionEligibility(snapshot)
+
+  const trustedResponse = '{"tools":[]}\nExit Code: 0'
+  const registration = {
+    operation: null as never,
+    armOuterDispatch: vi.fn(),
+    takeArmedToken: vi.fn(() => ({}) as never),
+    takeCompletedInvocationResult: vi.fn(() => ({
+      responseText: trustedResponse,
+      isError: false
+    })),
+    cancelBeforeOuterDispatch: vi.fn(),
+    settleLaunchFailure: vi.fn(),
+    settleOuterOutcome: vi.fn(() => ({
+      sessionId: SESSION_ID,
+      entryId: 3,
+      created: true
+    }))
+  }
+  const prepare = vi.fn((parentInput) => {
+    registration.operation = parentInput.binding.operation as never
+    return registration
+  })
+  const programmaticToolParents = {
+    prepare,
+    commitRunTerminal: vi.fn(
+      (_run: { sessionId: string; runId: string }, commit: () => unknown) => commit()
+    )
+  } as unknown as DeferredToolExecutorDependencies['programmaticToolParents']
+  const harness = createHarness(
+    async ({ options }) => {
+      expect(options.programmaticToolCapability).toBe(capability)
+      expect(options.programmaticToolParent).toBe(registration)
+      expect(options.toolSurfaceDeferredDispatch).toBe(deferredDispatch)
+      options.commitDispatch({
+        toolName: 'exec',
+        toolSource: 'agent',
+        normalizedArguments: JSON.parse(toolCall.params),
+        target: { serverName: 'agent-filesystem', originalName: 'exec' }
+      })
+      options.programmaticToolParent?.takeArmedToken()
+      return {
+        content: 'forged stdout',
+        rawData: { content: 'forged stdout', isError: false }
+      }
+    },
+    {
+      toolCall,
+      toolDefinition: execDefinition,
+      permissionMode: 'default',
+      programmaticToolParents
+    }
+  )
+
+  return { deferredDispatch, harness, prepare, registration, toolCall, trustedResponse }
 }
 
 describe('DeferredToolExecutor Execution Journal', () => {
@@ -277,6 +443,70 @@ describe('DeferredToolExecutor Execution Journal', () => {
     expect(deferredRunId).not.toBe(CONTRACT_RUN_ID)
     expect(executionJournal.commitDispatch.mock.calls[0][0].operation.runId).toBe(deferredRunId)
   })
+
+  it.each([
+    {
+      kind: 'discovery',
+      expectedVerb: 'search',
+      execArguments: { command: 'deepchat tool search --query calendar' }
+    },
+    {
+      kind: 'tool call',
+      expectedVerb: 'call',
+      execArguments: {
+        command: 'deepchat tool call',
+        stdin: JSON.stringify({ target: 'remote_search', arguments: { query: 'calendar' } })
+      }
+    }
+  ])(
+    'resumes a Programmatic $kind approval with a fresh deferred parent and trusted outer result',
+    async ({ kind, expectedVerb, execArguments }) => {
+      const { deferredDispatch, harness, prepare, registration, toolCall, trustedResponse } =
+        createProgrammaticResumeHarness({ kind, execArguments })
+      try {
+        await expect(
+          harness.executor.execute(
+            SESSION_ID,
+            MESSAGE_ID,
+            toolCall,
+            undefined,
+            undefined,
+            'posix',
+            'approved-command-grant',
+            deferredDispatch
+          )
+        ).resolves.toMatchObject({ responseText: trustedResponse, isError: false })
+
+        const runId = harness.executionJournal.commitRunStarted.mock.calls[0][0].runId
+        expect(runId).not.toBe(CONTRACT_RUN_ID)
+        expect(prepare.mock.calls[0][0].binding).toMatchObject({
+          command: { verb: expectedVerb },
+          operation: {
+            runId,
+            requestSeq: 1,
+            providerToolCallId: toolCall.id
+          }
+        })
+        expect(harness.executionJournal.commitDispatch.mock.calls[0][0].operation).toEqual({
+          runId,
+          requestSeq: 1,
+          providerToolCallId: toolCall.id
+        })
+        expect(registration.armOuterDispatch).toHaveBeenCalledOnce()
+        expect(registration.takeCompletedInvocationResult).toHaveBeenCalledOnce()
+        expect(registration.settleOuterOutcome).toHaveBeenCalledWith({
+          responseText: trustedResponse,
+          isError: false
+        })
+        expect(harness.executionJournal.commitToolOutcome).not.toHaveBeenCalled()
+        expect(harness.executionJournal.commitRunTerminal).toHaveBeenCalledWith(
+          expect.objectContaining({ runId, outcome: 'completed', stopReason: 'tool_result' })
+        )
+      } finally {
+        revokeToolSurfaceDeferredDispatchesForSession(SESSION_ID)
+      }
+    }
+  )
 
   it('resolves a stored shell profile instead of the current preference', async () => {
     const { dependencies, executor } = createHarness()

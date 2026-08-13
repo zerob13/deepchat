@@ -39,8 +39,17 @@ import {
 import {
   buildProgrammaticToolCapabilityV1,
   createProgrammaticToolSurfaceRunControllerV1,
+  assertProgrammaticToolCapabilityViewCommitted,
   markProgrammaticToolCapabilityProvenanceCommitted
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
+import {
+  AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+  AgentCliTokenAuthority
+} from '@/cli/agentTokenAuthority'
+import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
+import { LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION } from '@shared/contracts/localControl'
+import { ExecutionJournalService } from '@/tape/application/executionJournalService'
+import { createTapeTableMock } from '../session/data/tapeTestHarness'
 import { buildToolSearchDefinition } from '@/tool/agentTools/toolSearchTool'
 import {
   bindToolSurfaceCanaryRunEvidence,
@@ -592,6 +601,86 @@ describe('ToolService', () => {
       })
     ).rejects.toThrow(/definition changed after provider View assembly/)
     expect(mcpCallTool).toHaveBeenCalledOnce()
+
+    currentDefinition = remote
+    await toolService.getAllToolDefinitions({
+      chatMode: 'agent',
+      conversationId: requestIdentity.sessionId,
+      sessionKind: 'regular',
+      agentWorkspacePath: null
+    })
+    const { table } = createTapeTableMock()
+    const executionJournal = new ExecutionJournalService(() => table)
+    const tokenAuthority = new AgentCliTokenAuthority({
+      createToken: () => 'd'.repeat(43),
+      createTokenId: () => 'deferred-child-authority'
+    })
+    const parentRegistry = new ProgrammaticToolParentRegistry({
+      tokenAuthority,
+      executionJournal
+    })
+    executionJournal.commitRunStarted({
+      sessionId: requestIdentity.sessionId,
+      runId: requestIdentity.runId,
+      messageId: requestIdentity.messageId,
+      runKind: 'deferred_tool'
+    })
+    const parent = parentRegistry.prepare({
+      binding: {
+        schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+        surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+        operation: {
+          ...requestIdentity,
+          providerToolCallId: 'exec-deferred-1'
+        },
+        command: { domain: 'tool', verb: 'call' },
+        route: 'tool.call',
+        canonicalInvocationHash: 'd'.repeat(64),
+        adapterMode: capability.adapterMode,
+        capabilityHash: capability.capabilityHash,
+        programmaticSurfaceHash: capability.programmaticSurfaceHash,
+        quotas: capability.quotas
+      },
+      invocationAuthority: { capability, snapshot, permissionMode: 'full_access' },
+      assertAuthorityActive: () =>
+        assertProgrammaticToolCapabilityViewCommitted(capability, snapshot)
+    })
+    const outerDispatch = executionJournal.commitDispatch({
+      sessionId: requestIdentity.sessionId,
+      messageId: requestIdentity.messageId,
+      operation: {
+        runId: requestIdentity.runId,
+        requestSeq: requestIdentity.requestSeq,
+        providerToolCallId: 'exec-deferred-1'
+      },
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool call', stdin: '{}' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' }
+    })
+    parent.armOuterDispatch({
+      ...outerDispatch,
+      operation: parent.operation
+    })
+    const invocation = parentRegistry.resolveInvocation(
+      parent.takeArmedToken().programmaticOperation
+    )
+    revokeToolSurfaceExecutionEligibility(snapshot)
+    await expect(
+      toolService.callProgrammaticToolChild({
+        ...childAccess,
+        assertAuthorityActive: invocation.assertAuthorityActive,
+        permissionMode: 'full_access'
+      })
+    ).resolves.toMatchObject({ content: 'written' })
+
+    await expect(
+      toolService.callProgrammaticToolChild({
+        ...childAccess,
+        permissionMode: 'full_access'
+      })
+    ).rejects.toThrow(/not bound to an active provider View/)
+    parentRegistry.releaseSession(requestIdentity.sessionId)
   })
 
   it('dispatches an unchanged MCP definition through the exact Tool Surface boundary', async () => {

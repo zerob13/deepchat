@@ -83,6 +83,9 @@ export type ProgrammaticToolDispatcherOptions = Readonly<{
     capability: ProgrammaticToolCapabilityV1
     snapshot: ReturnType<ProgrammaticToolParentRegistry['resolveInvocation']>['snapshot']
     entry: ProgrammaticToolEntry
+    assertAuthorityActive: ReturnType<
+      ProgrammaticToolParentRegistry['resolveInvocation']
+    >['assertAuthorityActive']
     permissionMode: ReturnType<
       ProgrammaticToolParentRegistry['resolveInvocation']
     >['permissionMode']
@@ -615,6 +618,7 @@ export class ProgrammaticToolDispatcher {
         capability: input.capability,
         snapshot: input.invocation.snapshot,
         entry: input.entry,
+        assertAuthorityActive: input.invocation.assertAuthorityActive,
         permissionMode: input.invocation.permissionMode,
         signal: input.signal,
         commitDispatch: (dispatch) => {

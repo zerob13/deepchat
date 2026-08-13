@@ -5,7 +5,10 @@ import {
   type AgentCliProgrammaticOperationBinding
 } from '@/cli/agentTokenAuthority'
 import { ProgrammaticToolParentController } from '@/cli/programmaticToolParentController'
-import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
+import {
+  ProgrammaticToolParentRegistry,
+  assertIssuedProgrammaticToolAuthorityAssertion
+} from '@/cli/programmaticToolParentRegistry'
 import { LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION } from '@shared/contracts/localControl'
 import { ExecutionJournalService } from '@/tape/application/executionJournalService'
 import { createTapeTableMock } from '../session/data/tapeTestHarness'
@@ -115,12 +118,20 @@ describe('ProgrammaticToolParentRegistry', () => {
     registration.armOuterDispatch({ ...outerDispatch, operation: operationBinding.operation })
     const grant = registration.takeArmedToken().programmaticOperation
 
-    expect(registry.resolveInvocation(grant)).toEqual({
+    const invocation = registry.resolveInvocation(grant)
+    expect(invocation).toMatchObject({
       capability,
       snapshot,
       permissionMode: 'default'
     })
-    expect(assertAuthorityActive).toHaveBeenCalledTimes(3)
+    expect(() =>
+      assertIssuedProgrammaticToolAuthorityAssertion(invocation.assertAuthorityActive)
+    ).not.toThrow()
+    expect(() => assertIssuedProgrammaticToolAuthorityAssertion(() => undefined)).toThrow(
+      /was not issued by its parent registry/
+    )
+    expect(() => invocation.assertAuthorityActive()).not.toThrow()
+    expect(assertAuthorityActive).toHaveBeenCalledTimes(4)
     expect(() => registry.resolveInvocation({ ...grant, capabilityHash: '9'.repeat(64) })).toThrow(
       /does not match its registered parent authority/
     )

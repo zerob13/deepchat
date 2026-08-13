@@ -34,7 +34,19 @@ import { CommandShellProfileSchema, type CommandShellProfile } from '@shared/com
 import type { CommandShellService } from '@/agent/shared/process/commandShellService'
 import type { ToolSurfaceDeferredDispatch } from './toolSurface'
 import type { ToolPermissionLeaseCapability } from '@shared/types/tool'
-import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
+import type {
+  ProgrammaticToolParentRegistration,
+  ProgrammaticToolParentRegistry
+} from '@/cli/programmaticToolParentRegistry'
+import {
+  isProgrammaticCommandLaunchError,
+  ProgrammaticCommandLaunchError
+} from '@/tool/agentTools/agentBashHandler'
+import { prepareProgrammaticExecParent } from './programmaticExecParent'
+import {
+  requireProgrammaticToolDeferredResumeCapability,
+  type ProgrammaticToolCapabilityV1
+} from './programmaticToolSurface'
 
 export type DeferredToolExecutionResult = {
   responseText: string
@@ -72,7 +84,7 @@ export interface DeferredToolExecutorDependencies {
   identity: Pick<SessionIdentityService, 'getAgentId'>
   messageProjection: Pick<MessageProjectionService, 'updateSubagentToolCallProgress'>
   executionJournal: ExecutionJournalWriter
-  programmaticToolParents: Pick<ProgrammaticToolParentRegistry, 'commitRunTerminal'>
+  programmaticToolParents: Pick<ProgrammaticToolParentRegistry, 'commitRunTerminal' | 'prepare'>
   commandShell: Pick<CommandShellService, 'resolveForTurn' | 'resolveProfile'>
 }
 
@@ -141,6 +153,13 @@ export class DeferredToolExecutor {
     let terminalCommitAttempted = false
     let dispatchCommitted = false
     let outcomeCommitted = false
+    let programmaticToolParent: ProgrammaticToolParentRegistration | undefined
+    let programmaticToolParentCancelled = false
+    let programmaticCompletedResult:
+      | ReturnType<ProgrammaticToolParentRegistration['takeCompletedInvocationResult']>
+      | undefined
+    let programmaticToolCapability: ProgrammaticToolCapabilityV1 | undefined
+    let programmaticOuterOutcomeCommitted = false
     let returnedToolResponse: MCPToolResponse | null = null
     let committedOutcomeProjection: DeferredToolExecutionResult | null = null
     const pendingOutcomeProjections: ToolOutcomeProjection[] = []
@@ -153,6 +172,17 @@ export class DeferredToolExecutor {
         )
       }
       return { runId, requestSeq: 1, providerToolCallId: toolCallId }
+    }
+    const cancelProgrammaticParentBeforeDispatch = (): void => {
+      if (
+        !programmaticToolParent ||
+        programmaticToolParentCancelled ||
+        dispatchCommitted
+      ) {
+        return
+      }
+      programmaticToolParent.cancelBeforeOuterDispatch()
+      programmaticToolParentCancelled = true
     }
     const commitRunTerminal = (input: {
       outcome: ExecutionRunOutcome
@@ -210,6 +240,28 @@ export class DeferredToolExecutor {
       isError: boolean
       offloadPath?: string
     }): void => {
+      if (programmaticToolParent) {
+        if (
+          !programmaticOuterOutcomeCommitted ||
+          !programmaticCompletedResult ||
+          programmaticCompletedResult.responseText !== input.responseText ||
+          programmaticCompletedResult.isError !== input.isError
+        ) {
+          throw new ExecutionJournalError(
+            'Deferred Programmatic outer projection does not match its committed process-live result.',
+            'projection_failed'
+          )
+        }
+        outcomeCommitted = true
+        committedOutcomeProjection = {
+          responseText: input.responseText,
+          isError: input.isError,
+          invoked,
+          ...(input.offloadPath === undefined ? {} : { offloadPath: input.offloadPath })
+        }
+        releaseOutcomeProjections()
+        return
+      }
       if (!dispatchCommitted) {
         releaseOutcomeProjections()
         return
@@ -385,6 +437,21 @@ export class DeferredToolExecutor {
 
       const deferredRunId = randomUUID()
       runId = deferredRunId
+      programmaticToolParent = prepareProgrammaticExecParent({
+        toolName,
+        argumentsJson: toolCall.params || '{}',
+        operation: operation(),
+        sessionId,
+        messageId,
+        permissionMode: sessionState.permissionMode,
+        deferredDispatch: toolSurfaceDeferredDispatch,
+        parents: this.dependencies.programmaticToolParents
+      })
+      if (programmaticToolParent && toolSurfaceDeferredDispatch) {
+        programmaticToolCapability = requireProgrammaticToolDeferredResumeCapability(
+          toolSurfaceDeferredDispatch
+        )
+      }
       const runStarted = commitExecutionJournalFact('run_started', () =>
         this.dependencies.executionJournal.commitRunStarted({
           sessionId,
@@ -419,6 +486,12 @@ export class DeferredToolExecutor {
               }
             : {}),
         ...(executionContract ? { executionContract } : {}),
+        ...(programmaticToolParent && programmaticToolCapability
+          ? {
+              programmaticToolCapability,
+              programmaticToolParent
+            }
+          : {}),
         agentId: this.dependencies.identity.getAgentId(sessionId) ?? 'deepchat',
         permissionMode: sessionState.permissionMode,
         activeSkillNames: deferredActiveSkillNames,
@@ -451,6 +524,10 @@ export class DeferredToolExecutor {
             throw new ExecutionJournalDuplicateDispatchError(operation())
           }
           dispatchCommitted = true
+          programmaticToolParent?.armOuterDispatch({
+            ...receipt,
+            operation: programmaticToolParent.operation
+          })
           onDispatchCommitted?.()
         },
         registerOutcomeProjection: (projection) => pendingOutcomeProjections.push(projection),
@@ -459,8 +536,14 @@ export class DeferredToolExecutor {
         permissionLease,
         signal: deferredAbortSignal
       })
-      const rawData = result.rawData as MCPToolResponse
+      let rawData = result.rawData as MCPToolResponse
       if (rawData.requiresPermission && dispatchCommitted) {
+        if (programmaticToolParent) {
+          throw new ExecutionJournalError(
+            `Tool ${toolName} requested permission after Programmatic outer dispatch.`,
+            'invalid_fact'
+          )
+        }
         const terminalError = `Tool ${toolName} requested permission after dispatch.`
         commitToolOutcome({ responseText: `Error: ${terminalError}`, isError: true })
         committedOutcomeProjection = {
@@ -483,6 +566,7 @@ export class DeferredToolExecutor {
       returnedToolResponse = rawData.requiresPermission ? null : rawData
       throwIfAbortRequested(deferredAbortSignal)
       if (rawData.requiresPermission) {
+        cancelProgrammaticParentBeforeDispatch()
         commitRunTerminal({ outcome: 'paused', stopReason: 'interaction' })
         return {
           responseText: toolContentToText(rawData.content),
@@ -491,6 +575,24 @@ export class DeferredToolExecutor {
           requiresPermission: true,
           permissionRequest: rawData.permissionRequest as PendingToolInteraction['permission']
         }
+      }
+      if (programmaticToolParent) {
+        try {
+          programmaticCompletedResult = programmaticToolParent.takeCompletedInvocationResult()
+        } catch (cause) {
+          throw new ProgrammaticCommandLaunchError({ cause })
+        }
+        rawData = {
+          toolCallId,
+          content: programmaticCompletedResult.responseText,
+          isError: programmaticCompletedResult.isError
+        }
+        returnedToolResponse = rawData
+        programmaticToolParent.settleOuterOutcome({
+          responseText: programmaticCompletedResult.responseText,
+          isError: programmaticCompletedResult.isError
+        })
+        programmaticOuterOutcomeCommitted = true
       }
       const subagentToolResult =
         rawData.toolResult && typeof rawData.toolResult === 'object'
@@ -589,6 +691,39 @@ export class DeferredToolExecutor {
       commitRunTerminal({ outcome: 'completed', stopReason: 'tool_result' })
       return committedOutcomeProjection
     } catch (error) {
+      if (programmaticToolParent && !dispatchCommitted) {
+        cancelProgrammaticParentBeforeDispatch()
+      }
+      if (isProgrammaticCommandLaunchError(error) && isExecutionJournalError(error.cause)) {
+        return settleFailClosed(error.cause)
+      }
+      if (
+        programmaticToolParent &&
+        dispatchCommitted &&
+        isProgrammaticCommandLaunchError(error)
+      ) {
+        const responseText = 'Error: Programmatic CLI launch failed before child execution.'
+        try {
+          programmaticToolParent.settleLaunchFailure({ responseText })
+          outcomeCommitted = true
+          committedOutcomeProjection = { responseText, isError: true, invoked }
+          commitRunTerminal({
+            outcome: 'completed',
+            stopReason: 'tool_result'
+          })
+          return committedOutcomeProjection
+        } catch (settlementError) {
+          return settleFailClosed(
+            isExecutionJournalError(settlementError)
+              ? settlementError
+              : new ExecutionJournalError(
+                  'Deferred Programmatic CLI failure could not settle its outer operation.',
+                  'invalid_fact',
+                  { cause: settlementError }
+                )
+          )
+        }
+      }
       if (isExecutionJournalError(error)) {
         return settleFailClosed(error)
       }

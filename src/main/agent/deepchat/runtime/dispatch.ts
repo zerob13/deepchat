@@ -46,10 +46,7 @@ import type {
   ToolExecutionPort,
   ToolResultPort
 } from '@/agent/deepchat/loop/ports'
-import {
-  assertProgrammaticToolCapabilityViewActive,
-  type ProgrammaticToolCapabilityV1
-} from '@/agent/deepchat/runtime/programmaticToolSurface'
+import type { ProgrammaticToolCapabilityV1 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import {
   CommandShellProfileSchema,
   type CommandShellProfile,
@@ -94,11 +91,6 @@ import type {
   ProgrammaticToolParentRegistry
 } from '@/cli/programmaticToolParentRegistry'
 import {
-  AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-  parseAgentCliProgrammaticExecInvocation
-} from '@/cli/agentTokenAuthority'
-import { LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION } from '@shared/contracts/localControl'
-import {
   ProgrammaticCommandLaunchError,
   isProgrammaticCommandLaunchError
 } from '@/tool/agentTools/agentBashHandler'
@@ -111,6 +103,7 @@ import {
   type ToolSurfaceSnapshot
 } from './toolSurface'
 import { recordToolSurfaceCanarySettledToolResult } from './toolSurfaceCanaryDiagnostics'
+import { prepareProgrammaticExecParent } from './programmaticExecParent'
 
 type PermissionType = 'read' | 'write' | 'all' | 'command'
 
@@ -1776,64 +1769,6 @@ function flushBlocksToRenderer(io: IoParams, blocks: AssistantMessageBlock[]): v
   })
 }
 
-function prepareProgrammaticExecParent(input: {
-  execution: ToolExecutionContext
-  operation: ExecutionOperationIdentity
-  io: Pick<IoParams, 'sessionId' | 'messageId'>
-  permissionMode: PermissionMode
-  toolSurfaceSnapshot?: ToolSurfaceSnapshot
-  capability?: ProgrammaticToolCapabilityV1
-  parents?: Pick<ProgrammaticToolParentRegistry, 'prepare'>
-}): ProgrammaticToolParentRegistration | undefined {
-  if (input.execution.completedToolCall.name !== 'exec') return undefined
-  let args: Record<string, unknown>
-  try {
-    const parsed = JSON.parse(input.execution.completedToolCall.arguments)
-    args = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-  } catch {
-    return undefined
-  }
-  const command = typeof args.command === 'string' ? args.command : ''
-  const stdin = typeof args.stdin === 'string' ? args.stdin : undefined
-  const attemptsProgrammaticInvocation =
-    stdin !== undefined || /^deepchat tool (?:search|describe|call|batch)(?:\s|$)/.test(command)
-  if (!attemptsProgrammaticInvocation) return undefined
-  if (!input.capability || !input.toolSurfaceSnapshot || !input.parents) {
-    throw new Error('Programmatic Tool exec requires its exact active View capability')
-  }
-  if (args.background === true || args.yieldMs !== undefined) {
-    throw new Error('Programmatic Tool exec must remain attached and foreground')
-  }
-  assertProgrammaticToolCapabilityViewActive(input.capability, input.toolSurfaceSnapshot)
-  const invocation = parseAgentCliProgrammaticExecInvocation({ command, stdin })
-  const operation = Object.freeze({
-    sessionId: input.io.sessionId,
-    messageId: input.io.messageId,
-    ...input.operation
-  })
-  return input.parents.prepare({
-    binding: {
-      schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-      surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
-      operation,
-      command: invocation.command,
-      route: invocation.route,
-      canonicalInvocationHash: invocation.canonicalInvocationHash,
-      adapterMode: input.capability.adapterMode,
-      capabilityHash: input.capability.capabilityHash,
-      programmaticSurfaceHash: input.capability.programmaticSurfaceHash,
-      quotas: input.capability.quotas
-    },
-    invocationAuthority: {
-      capability: input.capability,
-      snapshot: input.toolSurfaceSnapshot,
-      permissionMode: input.permissionMode
-    },
-    assertAuthorityActive: () =>
-      assertProgrammaticToolCapabilityViewActive(input.capability, input.toolSurfaceSnapshot)
-  })
-}
-
 async function runToolCall(params: {
   execution: ToolExecutionContext
   toolExecution: ToolExecutionPort
@@ -2022,9 +1957,11 @@ async function runToolCall(params: {
     })
     io.abortSignal.throwIfAborted()
     programmaticToolParent = prepareProgrammaticExecParent({
-      execution,
+      toolName: completedToolCall.name,
+      argumentsJson: completedToolCall.arguments,
       operation,
-      io,
+      sessionId: io.sessionId,
+      messageId: io.messageId,
       permissionMode: toolPermissionMode,
       toolSurfaceSnapshot,
       capability: programmaticToolCapability,

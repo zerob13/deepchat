@@ -54,6 +54,7 @@ import {
   type ToolSurfaceActivationEvidence,
   type ToolSurfaceDeferredDispatch
 } from '@/agent/deepchat/runtime/toolSurface'
+import { attachProgrammaticToolDeferredResumeCapability } from './programmaticToolSurface'
 import {
   createOpaquePromptAssembly,
   reconcilePromptAssembly
@@ -1045,6 +1046,10 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               toolName: interaction.toolName,
               binding: interaction.toolSurfaceBinding
             })
+            const programmaticCapability = run.activeRequestToolSurface.programmaticCapability
+            if (programmaticCapability && interaction.toolName === 'exec') {
+              attachProgrammaticToolDeferredResumeCapability(registered, programmaticCapability)
+            }
             registeredDeferredDispatches.push({
               sessionId: run.sessionId,
               messageId: run.messageId,

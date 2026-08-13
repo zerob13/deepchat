@@ -57,7 +57,25 @@ export type ProgrammaticToolInvocationContext = Readonly<{
   capability: ProgrammaticToolCapabilityV1
   snapshot: ToolSurfaceSnapshot
   permissionMode: PermissionMode
+  assertAuthorityActive(): void
 }>
+
+type ProgrammaticToolAuthorityAssertion = ProgrammaticToolInvocationContext['assertAuthorityActive']
+const issuedProgrammaticToolAuthorityAssertions = new WeakSet<ProgrammaticToolAuthorityAssertion>()
+
+export function assertIssuedProgrammaticToolAuthorityAssertion(
+  assertion: unknown
+): asserts assertion is ProgrammaticToolAuthorityAssertion {
+  if (
+    typeof assertion !== 'function' ||
+    !issuedProgrammaticToolAuthorityAssertions.has(assertion as ProgrammaticToolAuthorityAssertion)
+  ) {
+    throw new ProgrammaticParentOperationError(
+      'Programmatic invocation authority assertion was not issued by its parent registry',
+      'invalid_state'
+    )
+  }
+}
 
 export type ProgrammaticToolParentRunIdentity = Readonly<{
   sessionId: string
@@ -210,20 +228,25 @@ export class ProgrammaticToolParentRegistry {
         'invalid_state'
       )
     }
-    authority.assertAuthorityActive()
-    if (
-      this.parents.get(registered.key) !== registered ||
-      registered.controller.state !== 'armed'
-    ) {
-      throw new ProgrammaticParentOperationError(
-        'Programmatic invocation authority is no longer active',
-        'invalid_state'
-      )
+    const assertAuthorityActive = (): void => {
+      if (
+        this.parents.get(registered.key) !== registered ||
+        registered.controller.state !== 'armed'
+      ) {
+        throw new ProgrammaticParentOperationError(
+          'Programmatic invocation authority is no longer active',
+          'invalid_state'
+        )
+      }
+      authority.assertAuthorityActive()
     }
+    assertAuthorityActive()
+    issuedProgrammaticToolAuthorityAssertions.add(assertAuthorityActive)
     return Object.freeze({
       capability: authority.capability,
       snapshot: authority.snapshot,
-      permissionMode: authority.permissionMode
+      permissionMode: authority.permissionMode,
+      assertAuthorityActive
     })
   }
 
