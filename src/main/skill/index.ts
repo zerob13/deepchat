@@ -5067,6 +5067,12 @@ export class SkillService implements SkillServicePort {
    * Get active skills for a conversation
    */
   async getActiveSkills(conversationId: string): Promise<string[]> {
+    return await this.runActiveSkillMutation(conversationId, () =>
+      this.getActiveSkillsUnlocked(conversationId)
+    )
+  }
+
+  private async getActiveSkillsUnlocked(conversationId: string): Promise<string[]> {
     if (this.retiredSessionSkillScopes.has(conversationId)) return []
     if (await this.isNewAgentSession(conversationId)) {
       const agentId = await this.resolveSessionAgentId(conversationId)
@@ -5094,7 +5100,7 @@ export class SkillService implements SkillServicePort {
 
   async removeActiveSkill(conversationId: string, skill: string): Promise<string[]> {
     return await this.runActiveSkillMutation(conversationId, async () => {
-      const activeSkills = await this.getActiveSkills(conversationId)
+      const activeSkills = await this.getActiveSkillsUnlocked(conversationId)
       if (!activeSkills.includes(skill)) return activeSkills
       return await this.setActiveSkillsUnlocked(
         conversationId,
@@ -5138,10 +5144,10 @@ export class SkillService implements SkillServicePort {
       if (this.retiredSessionSkillScopes.has(conversationId)) return []
       if (!isNewSession || !agentId) {
         this.warnLegacySkillRetired(conversationId)
-        return await this.getActiveSkills(conversationId)
+        return await this.getActiveSkillsUnlocked(conversationId)
       }
 
-      const previousSkills = await this.getActiveSkills(conversationId)
+      const previousSkills = await this.getActiveSkillsUnlocked(conversationId)
       const previousSet = new Set(previousSkills)
       const validSet = new Set(validSkills)
 
@@ -5192,14 +5198,16 @@ export class SkillService implements SkillServicePort {
   }
 
   async revalidateActiveSkillsForAgent(conversationId: string, agentId: string): Promise<string[]> {
-    if (this.retiredSessionSkillScopes.has(conversationId)) return []
-    const persisted = this.getPersistedNewSessionSkills(conversationId)
-    const valid = await this.validateSkillNames(agentId, persisted)
-    if (this.retiredSessionSkillScopes.has(conversationId)) return []
-    if (!this.areSkillListsEqual(persisted, valid)) {
-      this.setPersistedNewSessionSkills(conversationId, valid)
-    }
-    return valid
+    return await this.runActiveSkillMutation(conversationId, async () => {
+      if (this.retiredSessionSkillScopes.has(conversationId)) return []
+      const persisted = this.getPersistedNewSessionSkills(conversationId)
+      const valid = await this.validateSkillNames(agentId, persisted)
+      if (this.retiredSessionSkillScopes.has(conversationId)) return []
+      if (!this.areSkillListsEqual(persisted, valid)) {
+        this.setPersistedNewSessionSkills(conversationId, valid)
+      }
+      return valid
+    })
   }
 
   /**

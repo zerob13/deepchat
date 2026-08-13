@@ -816,6 +816,52 @@ describe('SkillService Agent scopes', () => {
     ])
   })
 
+  it('serializes Agent revalidation with concurrent active Skill removal', async () => {
+    agents.push({ id: 'writer' })
+    sessionAgentIds.set('conversation-1', 'writer')
+    let persisted = ['writer-skill', 'builtin-only']
+    sessionState.getPersistedNewSessionSkills.mockImplementation(() => [...persisted])
+    sessionState.setPersistedNewSessionSkills.mockImplementation((_conversationId, skills) => {
+      persisted = [...skills]
+    })
+
+    let releaseFirstCatalogRead!: () => void
+    const firstCatalogRead = new Promise<void>((resolve) => {
+      releaseFirstCatalogRead = resolve
+    })
+    let catalogReadStarted!: () => void
+    const catalogReadWasStarted = new Promise<void>((resolve) => {
+      catalogReadStarted = resolve
+    })
+    let catalogReadCount = 0
+    vi.spyOn(service, 'getMetadataList').mockImplementation(async (agentId?: string) => {
+      expect(agentId).toBe('writer')
+      catalogReadCount += 1
+      if (catalogReadCount === 1) {
+        catalogReadStarted()
+        await firstCatalogRead
+      }
+      return [
+        {
+          name: 'writer-skill',
+          description: 'writer',
+          path: '/writer/writer-skill/SKILL.md',
+          skillRoot: '/writer/writer-skill'
+        }
+      ]
+    })
+
+    const revalidation = service.revalidateActiveSkillsForAgent('conversation-1', 'writer')
+    await catalogReadWasStarted
+    const removal = service.removeActiveSkill('conversation-1', 'writer-skill')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    releaseFirstCatalogRead()
+
+    await expect(revalidation).resolves.toEqual(['writer-skill'])
+    await expect(removal).resolves.toEqual([])
+    expect(persisted).toEqual([])
+  })
+
   it('removes an Agent private root, cache, management state, and migration references', async () => {
     agents.push({ id: 'writer' })
     const writerRoot = resolveAgentSkillsRoot(skillsRoot, 'writer')
