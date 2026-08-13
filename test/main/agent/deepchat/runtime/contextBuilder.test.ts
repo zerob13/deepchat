@@ -233,6 +233,42 @@ function makeAssistantWithToolRecord(
   }
 }
 
+function makeAssistantWithRootSkillViewRecord(orderSeq: number, skillName: string) {
+  const effectiveContent = `# ${skillName}\n\nFULL_EFFECTIVE_SKILL_BODY`
+  return {
+    id: `asst-${orderSeq}`,
+    sessionId: 's1',
+    orderSeq,
+    role: 'assistant' as const,
+    content: JSON.stringify([
+      {
+        type: 'tool_call',
+        status: 'success',
+        timestamp: Date.now(),
+        tool_call: {
+          id: `tc-${orderSeq}`,
+          name: 'skill_view',
+          params: JSON.stringify({ name: skillName }),
+          response: JSON.stringify({
+            success: true,
+            name: skillName,
+            content: effectiveContent,
+            activatedForMessage: true,
+            activationScope: 'message',
+            activationEvidenceVersion: 1
+          }),
+          server_name: 'agent-skills'
+        }
+      }
+    ]),
+    status: 'sent' as const,
+    isContextEdge: 0,
+    metadata: '{}',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+}
+
 function makeAssistantWithReasoningAndToolRecord(
   orderSeq: number,
   text: string,
@@ -2157,6 +2193,95 @@ function createCacheAwareContributions(input?: {
 }
 
 describe('cache-aware context assembly', () => {
+  it('projects historical root Skill views as markers while preserving active resume bodies', () => {
+    const record = makeAssistantWithRootSkillViewRecord(2, 'database-migration')
+    const originalContent = record.content
+
+    expect(recordToChatMessages(record, false)).toEqual([
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: [
+          {
+            id: 'tc-2',
+            type: 'function',
+            function: {
+              name: 'skill_view',
+              arguments: '{"name":"database-migration"}'
+            }
+          }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'tc-2', content: '[Viewed skill: database-migration]' }
+    ])
+
+    const activeProjection = recordToChatMessages(
+      record,
+      false,
+      false,
+      false,
+      false,
+      undefined,
+      undefined,
+      true
+    )
+    expect(String(activeProjection[1]?.content)).toContain('FULL_EFFECTIVE_SKILL_BODY')
+    expect(record.content).toBe(originalContent)
+  })
+
+  it('keeps supporting-file and unrelated MCP skill_view results in history', () => {
+    const supportingFile = makeAssistantWithRootSkillViewRecord(2, 'database-migration')
+    const [supportingBlock] = JSON.parse(supportingFile.content)
+    supportingBlock.tool_call.params = JSON.stringify({
+      name: 'database-migration',
+      file_path: 'references/schema.md'
+    })
+    supportingBlock.tool_call.response = JSON.stringify({
+      success: true,
+      name: 'database-migration',
+      content: 'SUPPORTING_FILE_BODY'
+    })
+    supportingFile.content = JSON.stringify([supportingBlock])
+
+    const unrelatedMcp = makeAssistantWithRootSkillViewRecord(3, 'database-migration')
+    const [mcpBlock] = JSON.parse(unrelatedMcp.content)
+    mcpBlock.tool_call.server_name = 'third-party'
+    unrelatedMcp.content = JSON.stringify([mcpBlock])
+
+    expect(String(recordToChatMessages(supportingFile, false)[1]?.content)).toContain(
+      'SUPPORTING_FILE_BODY'
+    )
+    expect(String(recordToChatMessages(unrelatedMcp, false)[1]?.content)).toContain(
+      'FULL_EFFECTIVE_SKILL_BODY'
+    )
+  })
+
+  it('does not duplicate a historical root view when the same Skill is active again', () => {
+    const records = [
+      makeUserRecord(1, 'view the skill'),
+      makeAssistantWithRootSkillViewRecord(2, 'database-migration')
+    ]
+    const contextContributions = setMessageSkillActiveTurnContext(
+      createCacheAwareContributions(),
+      '<message-skill-context>FULL_EFFECTIVE_SKILL_BODY</message-skill-context>'
+    )
+
+    const result = buildCacheAwareContextWithMetadata(
+      's1',
+      { text: 'use it again', files: [], activeSkills: ['database-migration'] },
+      'System',
+      10_000,
+      100,
+      createMockMessageStore(records),
+      false,
+      { historyRecords: records, contextContributions }
+    )
+    const projection = result.messages.map((message) => String(message.content)).join('\n')
+
+    expect(projection).toContain('[Viewed skill: database-migration]')
+    expect(projection.match(/FULL_EFFECTIVE_SKILL_BODY/g)).toHaveLength(1)
+  })
+
   it('expands message Skill context only for the active turn and leaves a bounded history marker', () => {
     const historical = {
       ...makeUserRecord(1, 'old request'),

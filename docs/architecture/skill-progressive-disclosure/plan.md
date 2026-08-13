@@ -129,6 +129,10 @@ root result does not activate the Skill and stops that run from issuing a provid
 unrecorded behavior contract. Expose this behavior only after strict executable Skill-bearing
 manifests are active in the same commit.
 
+For later executions only, project persisted successful root-view results as bounded markers while
+leaving exact `tool_result` facts untouched. Preserve the exact result for permission resume of the
+owning assistant message, and preserve supporting-file and unrelated MCP results in all views.
+
 ## Message And Session Projection
 
 Split runtime names conceptually and in local APIs into message Skill references and Session active

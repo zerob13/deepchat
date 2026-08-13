@@ -54,6 +54,8 @@
 - [x] Refresh only tools/allow-list after successful activation.
 - [x] Remove the duplicate leading-system body projection.
 - [x] Preserve supporting-file view and bound repeated root views.
+- [x] Replace completed historical root-view bodies with markers without mutating exact Tape facts
+      or permission-resume projections.
 - [x] Add settlement ordering, manifest failure, all activation-source overlaps, repeat-view, and
       supporting-file tests.
 - [x] Review and commit the runtime-view slice.

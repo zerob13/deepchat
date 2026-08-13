@@ -225,6 +225,11 @@ root view of a Skill already projected from Session, message, or an earlier root
 bounded confirmation instead of the body. A supporting-file view remains available because
 supporting files are not part of the root effective body.
 
+After the owning execution, historical provider projection replaces a successful root-view result
+with a bounded `[Viewed skill: ...]` marker. Permission resume for that assistant-message execution
+continues to project the exact result. The ordinary `tool_result` Tape entry remains unchanged and
+authoritative; supporting-file and unrelated MCP results are never collapsed by this rule.
+
 ## Tape Semantics
 
 ### Authority

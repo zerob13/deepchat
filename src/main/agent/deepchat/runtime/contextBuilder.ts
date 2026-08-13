@@ -43,6 +43,7 @@ const UNKNOWN_ASSISTANT_ERROR = 'Unknown error'
 const MAX_HISTORICAL_SKILL_MARKER_INPUT_NAMES = 64
 const MAX_HISTORICAL_SKILL_MARKER_NAMES = 8
 const MAX_HISTORICAL_SKILL_NAME_CHARACTERS = 48
+const MAX_HISTORICAL_SKILL_VIEW_PARSE_BYTES = 64 * 1024
 const HISTORICAL_SKILL_MARKER_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
 const KNOWN_ERROR_REASON_TEXT: Record<string, string> = {
   'common.error.userCanceledGeneration': 'User canceled generation',
@@ -269,9 +270,11 @@ function parseUserRecordContent(content: string): SendMessageInput {
   }
 }
 
-function buildHistoricalSkillMarker(activeSkills: readonly string[] | undefined): string | null {
-  if (!activeSkills?.length) return null
-  const names = Array.from(
+function normalizeHistoricalSkillMarkerNames(
+  activeSkills: readonly string[] | undefined
+): string[] {
+  if (!activeSkills?.length) return []
+  return Array.from(
     new Set(
       activeSkills
         .slice(0, MAX_HISTORICAL_SKILL_MARKER_INPUT_NAMES)
@@ -291,7 +294,66 @@ function buildHistoricalSkillMarker(activeSkills: readonly string[] | undefined)
   )
     .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
     .slice(0, MAX_HISTORICAL_SKILL_MARKER_NAMES)
+}
+
+function buildHistoricalSkillMarker(activeSkills: readonly string[] | undefined): string | null {
+  const names = normalizeHistoricalSkillMarkerNames(activeSkills)
   return names.length > 0 ? `[Used skill: ${names.join(', ')}]` : null
+}
+
+function buildHistoricalRootSkillViewMarker(block: AssistantMessageBlock): string | null {
+  if (
+    block.type !== 'tool_call' ||
+    block.status !== 'success' ||
+    block.tool_call?.name !== 'skill_view' ||
+    (block.tool_call.server_name && block.tool_call.server_name !== 'agent-skills')
+  ) {
+    return null
+  }
+
+  let request: Record<string, unknown>
+  try {
+    const parsedRequest = JSON.parse(block.tool_call.params ?? '{}') as unknown
+    if (
+      !parsedRequest ||
+      typeof parsedRequest !== 'object' ||
+      Array.isArray(parsedRequest)
+    ) {
+      return null
+    }
+    request = parsedRequest as Record<string, unknown>
+  } catch {
+    return null
+  }
+
+  const requestedName = typeof request.name === 'string' ? request.name.trim() : ''
+  const filePath = typeof request.file_path === 'string' ? request.file_path.trim() : ''
+  if (!requestedName || filePath) {
+    return null
+  }
+
+  const [safeName] = normalizeHistoricalSkillMarkerNames([requestedName])
+  const marker = safeName ? `[Viewed skill: ${safeName}]` : '[Viewed skill]'
+  const responseText = block.tool_call.response ?? ''
+  if (Buffer.byteLength(responseText, 'utf8') > MAX_HISTORICAL_SKILL_VIEW_PARSE_BYTES) {
+    return marker
+  }
+
+  try {
+    const parsedResponse = JSON.parse(responseText) as unknown
+    if (!parsedResponse || typeof parsedResponse !== 'object' || Array.isArray(parsedResponse)) {
+      return null
+    }
+    const response = parsedResponse as Record<string, unknown>
+    return response.success === true &&
+      response.name === requestedName &&
+      typeof response.content === 'string' &&
+      response.content
+      ? marker
+      : null
+  } catch {
+    return null
+  }
 }
 
 export function isContextHistoryRecord(record: ChatMessageRecord): boolean {
@@ -926,7 +988,8 @@ function recordToChatMessagesWithoutProviderReplay(
   preserveInterleavedReasoning: boolean = false,
   preserveEmptyInterleavedReasoning: boolean = false,
   supportsAudioInput: boolean = false,
-  userLeadingContext?: string | null
+  userLeadingContext?: string | null,
+  preserveRuntimeSkillViewBodies: boolean = false
 ): ChatMessage[] {
   if (isCompactionRecord(record) || isRetiredWorkflowResultRecord(record)) {
     return []
@@ -1069,8 +1132,11 @@ function recordToChatMessagesWithoutProviderReplay(
   const result: ChatMessage[] = [assistantMessage]
   for (const block of toolCallBlocks) {
     const approvedAppContext = formatApprovedMcpAppModelContext(block)
+    const historicalSkillViewMarker = preserveRuntimeSkillViewBodies
+      ? null
+      : buildHistoricalRootSkillViewMarker(block)
     const toolContent = [
-      block.tool_call!.response || '',
+      historicalSkillViewMarker ?? block.tool_call!.response ?? '',
       approvedAppContext ? `[MCP App approved context]\n${approvedAppContext}` : ''
     ]
       .filter(Boolean)
@@ -1095,7 +1161,8 @@ export function recordToChatMessages(
   preserveEmptyInterleavedReasoning: boolean = false,
   supportsAudioInput: boolean = false,
   userLeadingContext?: string | null,
-  providerReplayProjector?: ChatMessageProviderReplayProjector
+  providerReplayProjector?: ChatMessageProviderReplayProjector,
+  preserveRuntimeSkillViewBodies: boolean = false
 ): ChatMessage[] {
   if (record.role !== 'assistant' || !providerReplayProjector) {
     return recordToChatMessagesWithoutProviderReplay(
@@ -1104,7 +1171,8 @@ export function recordToChatMessages(
       preserveInterleavedReasoning,
       preserveEmptyInterleavedReasoning,
       supportsAudioInput,
-      userLeadingContext
+      userLeadingContext,
+      preserveRuntimeSkillViewBodies
     )
   }
 
@@ -1125,7 +1193,8 @@ export function recordToChatMessages(
       preserveInterleavedReasoning,
       preserveEmptyInterleavedReasoning,
       supportsAudioInput,
-      userLeadingContext
+      userLeadingContext,
+      preserveRuntimeSkillViewBodies
     )
   }
 
@@ -1142,7 +1211,8 @@ export function recordToChatMessages(
         preserveInterleavedReasoning,
         preserveEmptyInterleavedReasoning,
         supportsAudioInput,
-        userLeadingContext
+        userLeadingContext,
+        preserveRuntimeSkillViewBodies
       )
     )
     if (segment.replayAfter) {
@@ -1163,7 +1233,8 @@ export function buildHistoryTurns(
   preserveEmptyInterleavedReasoning: boolean = false,
   supportsAudioInput: boolean = false,
   userLeadingContextByRecordId?: ReadonlyMap<string, string>,
-  providerReplayProjector?: ChatMessageProviderReplayProjector
+  providerReplayProjector?: ChatMessageProviderReplayProjector,
+  preserveRuntimeSkillViewBodyRecordIds?: ReadonlySet<string>
 ): HistoryTurn[] {
   const sortedRecords = [...records].sort((a, b) => a.orderSeq - b.orderSeq)
   const turns: ChatMessageRecord[][] = []
@@ -1198,7 +1269,8 @@ export function buildHistoryTurns(
           preserveEmptyInterleavedReasoning,
           supportsAudioInput,
           userLeadingContextByRecordId?.get(record.id),
-          providerReplayProjector
+          providerReplayProjector,
+          preserveRuntimeSkillViewBodyRecordIds?.has(record.id) === true
         )
       )
       return {
@@ -1781,7 +1853,8 @@ export function buildCacheAwareResumeContextWithMetadata(
     options.preserveEmptyInterleavedReasoning ?? false,
     supportsAudioInput,
     leadingContextByOwnerId,
-    options.providerReplayProjector
+    options.providerReplayProjector,
+    new Set([assistantMessageId])
   )
   let activeTurnIndex = historyTurns.findIndex((turn) =>
     turn.records.some((record) => record.id === assistantMessageId)
@@ -2196,7 +2269,8 @@ export function buildResumeContextWithMetadata(
     options.preserveEmptyInterleavedReasoning ?? false,
     supportsAudioInput,
     undefined,
-    options.providerReplayProjector
+    options.providerReplayProjector,
+    new Set([assistantMessageId])
   )
   const systemPromptTokens = systemPrompt ? approximateTokenSize(systemPrompt) : 0
   const available =
