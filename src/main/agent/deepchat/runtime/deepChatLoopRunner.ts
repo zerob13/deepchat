@@ -477,6 +477,12 @@ function isProviderOutputEvent(event: LLMCoreStreamEvent): boolean {
   }
 }
 
+function boundedElapsedMs(startedAt: number, endedAt: number): number {
+  const elapsed = endedAt - startedAt
+  if (!Number.isFinite(elapsed)) return Number.MAX_SAFE_INTEGER
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(elapsed)))
+}
+
 function buildProviderContextOverflowAfterRecoveryErrorMessage(
   preflight: ReturnType<typeof preflightRequestContext>
 ): string {
@@ -1818,11 +1824,14 @@ export class DeepChatLoopRunner {
             adapterMode: toolSurfaceMode,
             ...toolSurfaceCanaryIdentity,
             outcome: readCommittedTerminal()?.outcome ?? 'unsettled',
-            durationMs: Math.max(0, Date.now() - toolSurfaceCanaryStartedAt),
+            durationMs: boundedElapsedMs(toolSurfaceCanaryStartedAt, Date.now()),
             ttftMs:
               toolSurfaceFirstProviderOutputAt === null
                 ? null
-                : Math.max(0, toolSurfaceFirstProviderOutputAt - loopRun.streamState.startTime),
+                : boundedElapsedMs(
+                    toolSurfaceCanaryStartedAt,
+                    toolSurfaceFirstProviderOutputAt
+                  ),
             providerRounds: loopRun.logicalRound,
             providerAttempts: toolSurfaceProviderAttempts,
             providerAttemptsTruncated: toolSurfaceProviderAttemptsTruncated,

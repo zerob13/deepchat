@@ -3112,6 +3112,49 @@ describe('DeepChatAgentHarness', () => {
       expect(recordRun).toHaveBeenCalledWith(expect.objectContaining({ ttftMs: null }))
     })
 
+    it('measures TTFT from Run entry across adapter setup and resumed accounting', async () => {
+      vi.useFakeTimers()
+      const definitions = createAutomaticAdapterDefinitions(1)
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue(definitions)
+      toolService.getToolDefinitionUniverse.mockImplementationOnce(async () => {
+        vi.setSystemTime(2_000)
+        return { definitions, complete: true, unavailableSourceCount: 0 }
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'full')
+      llmProvider.providerInstance.coreStream.mockImplementationOnce(async function* () {
+        vi.setSystemTime(5_000)
+        yield { type: 'text', content: 'Ready' }
+        vi.setSystemTime(6_000)
+        yield { type: 'stop', stop_reason: 'complete' }
+      })
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        params.run.streamState.startTime -= 100_000
+        for await (const _event of params.coreStream(
+          params.run.messages,
+          params.modelId,
+          params.modelConfig,
+          params.temperature,
+          params.maxTokens,
+          params.run.resources.toolDefinitions
+        )) {
+        }
+        return { status: 'completed', stopReason: 'complete' }
+      })
+      const recordRun = vi.spyOn(ToolSurfaceCanaryDiagnosticsRegistry.prototype, 'recordRun')
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      vi.setSystemTime(1_000)
+      await agent.processMessage('s1', 'Hello')
+
+      expect(recordRun).toHaveBeenCalledWith(
+        expect.objectContaining({ durationMs: 5_000, ttftMs: 4_000 })
+      )
+    })
+
     it('keeps automatic virtualization sticky through the exit hysteresis band', async () => {
       const definitionsByRun = [
         createAutomaticAdapterDefinitions(39),

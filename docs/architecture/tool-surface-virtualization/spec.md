@@ -529,7 +529,9 @@ ceiling construction from a privacy-preserving seed/bucket; raw keys are not per
 cannot reassign. Cohorts include provider, model, policy, catalog band, and adapter. Metrics include
 cache-read/write and uncached tokens, schema tokens, requests/rounds, discovery/repeated discovery,
 TTFT/end-to-end latency, categorized success/failure, and billed effective input cost under
-versioned pricing. Providers lacking comparable cache/pricing remain separate cohorts.
+versioned pricing. TTFT runs from entry into the Run through adapter setup to the first provider
+output event; resumed transcript accounting cannot move that baseline. Providers lacking comparable
+cache/pricing remain separate cohorts.
 
 ## Compatibility, Security/Privacy, and Performance Bounds
 
