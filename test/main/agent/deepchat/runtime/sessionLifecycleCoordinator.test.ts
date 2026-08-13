@@ -44,6 +44,9 @@ function createHarness() {
     },
     interactionParking: { clearSession: vi.fn(record('interactionParking.clearSession')) },
     toolSurfaceDiagnostics: { clear: vi.fn(record('toolSurfaceDiagnostics.clear')) },
+    toolSurfaceCanaryDiagnostics: {
+      clearSession: vi.fn(record('toolSurfaceCanaryDiagnostics.clearSession'))
+    },
     programmaticToolParents: {
       releaseSession: vi.fn(record('programmaticToolParents.releaseSession'))
     }
@@ -122,6 +125,7 @@ describe('SessionLifecycleCoordinator', () => {
       'transcript.deleteBySession',
       'sessionStore.delete',
       'programmaticToolParents.releaseSession',
+      'toolSurfaceCanaryDiagnostics.clearSession',
       'interactionParking.clearSession',
       'toolSurfaceDiagnostics.clear',
       'memory.finishSessionDestroy',
@@ -143,6 +147,7 @@ describe('SessionLifecycleCoordinator', () => {
       'transcript.deleteBySession',
       'sessionStore.delete',
       'programmaticToolParents.releaseSession',
+      'toolSurfaceCanaryDiagnostics.clearSession',
       'interactionParking.clearSession',
       'memory.finishSessionDestroy',
       'toolService.clearConversationToolMapping'
@@ -158,5 +163,6 @@ describe('SessionLifecycleCoordinator', () => {
     await expect(coordinator.destroy(SESSION_ID)).rejects.toThrow('tape deletion failed')
 
     expect(deps.programmaticToolParents.releaseSession).not.toHaveBeenCalled()
+    expect(deps.toolSurfaceCanaryDiagnostics.clearSession).not.toHaveBeenCalled()
   })
 })

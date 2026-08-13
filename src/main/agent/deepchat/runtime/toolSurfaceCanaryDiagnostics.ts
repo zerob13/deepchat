@@ -10,7 +10,7 @@ import {
   type ToolSurfaceProviderPricingPolicyV1
 } from './toolSurfaceCanaryPricing'
 
-export const TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION = 3
+export const TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION = 4
 export const MAX_TOOL_SURFACE_PROVIDER_ATTEMPTS_PER_RUN = 64
 
 const DEFAULT_SAMPLE_CAPACITY = 256
@@ -158,6 +158,9 @@ export interface ToolSurfaceCanaryAssignmentSnapshot {
 
 export interface ToolSurfaceCanaryDiagnosticsSnapshot {
   readonly schemaVersion: typeof TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION
+  readonly recording: Readonly<{
+    globalRejectedRuns: number
+  }>
   readonly assignments: readonly ToolSurfaceCanaryAssignmentSnapshot[]
   readonly cohorts: readonly ToolSurfaceCanaryCohortSnapshot[]
 }
@@ -356,6 +359,10 @@ function isBoundedField(value: string): boolean {
     !value.includes('\0') &&
     Buffer.byteLength(value, 'utf8') <= MAX_SCOPE_FIELD_BYTES
   )
+}
+
+function sessionKey(sessionId: string): string {
+  return hashJsonData({ domain: 'tool-surface-canary-session-v1', sessionId })
 }
 
 function isToolProfile(value: string): value is DeepChatToolProfileKind {
@@ -678,11 +685,17 @@ type AssignmentEntry = {
   readonly selectedByAdapter: Record<Exclude<LoopRunToolSurfaceMode, 'legacy'>, number>
 }
 
+type PriorCatalogEntry = Readonly<{
+  sessionKey: string
+  catalogHash: string
+}>
+
 /** Bounded process-live canary metrics. This registry never reads Tape or participates in routing. */
 export class ToolSurfaceCanaryDiagnosticsRegistry {
   private readonly cohorts = new Map<string, CohortEntry>()
   private readonly assignments = new Map<string, AssignmentEntry>()
-  private readonly priorCatalogs = new Map<string, string>()
+  private readonly priorCatalogs = new Map<string, PriorCatalogEntry>()
+  private globalRejectedRuns = 0
   private readonly sampleCapacity: number
   private readonly cohortCapacity: number
   private readonly lineageCapacity: number
@@ -814,6 +827,7 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
         typeof input.providerAttemptsTruncated !== 'boolean' ||
         !this.validEvidence(input.evidence)
       ) {
+        this.globalRejectedRuns = increment(this.globalRejectedRuns)
         return
       }
       const providerModelKey = hashJsonData({
@@ -839,7 +853,7 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
         policyVersion: input.policyVersion,
         toolProfile: input.scope.toolProfile
       })
-      const previousCatalogHash = this.priorCatalogs.get(lineageKey)
+      const previousCatalogHash = this.priorCatalogs.get(lineageKey)?.catalogHash
       const catalogRelation =
         previousCatalogHash === undefined
           ? 'first'
@@ -847,7 +861,13 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
             ? 'unchanged'
             : 'changed'
       this.priorCatalogs.delete(lineageKey)
-      this.priorCatalogs.set(lineageKey, input.catalogHash)
+      this.priorCatalogs.set(
+        lineageKey,
+        Object.freeze({
+          sessionKey: sessionKey(input.scope.sessionId),
+          catalogHash: input.catalogHash
+        })
+      )
       this.trimMap(this.priorCatalogs, this.lineageCapacity)
 
       let entry = this.cohorts.get(cohortKey)
@@ -886,7 +906,17 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
           attemptsTruncated: input.providerAttemptsTruncated
         })
       })
-    } catch {}
+    } catch {
+      this.globalRejectedRuns = increment(this.globalRejectedRuns)
+    }
+  }
+
+  clearSession(sessionId: string): void {
+    if (!isBoundedField(sessionId)) return
+    const deletedSessionKey = sessionKey(sessionId)
+    for (const [lineageKey, entry] of this.priorCatalogs) {
+      if (entry.sessionKey === deletedSessionKey) this.priorCatalogs.delete(lineageKey)
+    }
   }
 
   snapshot(input: {
@@ -928,9 +958,14 @@ export class ToolSurfaceCanaryDiagnosticsRegistry {
           `${right.adapterMode}\0${right.policyVersion}\0${right.pricingVersion}\0${right.catalogBand}\0${right.toolProfile}`
         )
       )
-    return assignments.length === 0 && cohorts.length === 0
+    return assignments.length === 0 && cohorts.length === 0 && this.globalRejectedRuns === 0
       ? null
-      : { schemaVersion: TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION, assignments, cohorts }
+      : {
+          schemaVersion: TOOL_SURFACE_CANARY_DIAGNOSTICS_SCHEMA_VERSION,
+          recording: { globalRejectedRuns: this.globalRejectedRuns },
+          assignments,
+          cohorts
+        }
   }
 
   private validScope(scope: ToolSurfaceCanaryDiagnosticsScope): boolean {

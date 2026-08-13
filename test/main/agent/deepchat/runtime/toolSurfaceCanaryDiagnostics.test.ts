@@ -88,7 +88,8 @@ describe('Tool Surface canary diagnostics', () => {
     record('catalog-b', 'error')
 
     expect(registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 4,
+      recording: { globalRejectedRuns: 0 },
       assignments: [],
       cohorts: [
         expect.objectContaining({
@@ -249,7 +250,8 @@ describe('Tool Surface canary diagnostics', () => {
     expect(
       registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })
     ).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
+      recording: { globalRejectedRuns: 0 },
       assignments: [
         {
           toolProfile: 'code',
@@ -269,6 +271,64 @@ describe('Tool Surface canary diagnostics', () => {
       ],
       cohorts: []
     })
+  })
+
+  it('counts rejected run records without retaining their invalid content', () => {
+    const registry = new ToolSurfaceCanaryDiagnosticsRegistry()
+
+    registry.recordRun({
+      scope,
+      adapterMode: 'full',
+      policyVersion: 'full-v1',
+      catalogHash: 'catalog-a',
+      catalogToolCount: 4,
+      catalogDefinitionTokens: 100,
+      outcome: 'completed',
+      durationMs: Number.MAX_SAFE_INTEGER + 1,
+      ttftMs: null,
+      providerRounds: 1,
+      providerAttempts: [],
+      providerAttemptsTruncated: false,
+      evidence: emptyEvidence()
+    })
+
+    expect(registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })).toEqual({
+      schemaVersion: 4,
+      recording: { globalRejectedRuns: 1 },
+      assignments: [],
+      cohorts: []
+    })
+  })
+
+  it('forgets only the deleted Session catalog lineage', () => {
+    const registry = new ToolSurfaceCanaryDiagnosticsRegistry()
+    const record = (sessionId: string, catalogHash: string) =>
+      registry.recordRun({
+        scope: { ...scope, sessionId },
+        adapterMode: 'full',
+        policyVersion: 'full-v1',
+        catalogHash,
+        catalogToolCount: 4,
+        catalogDefinitionTokens: 100,
+        outcome: 'completed',
+        durationMs: 10,
+        ttftMs: null,
+        providerRounds: 1,
+        providerAttempts: [],
+        providerAttemptsTruncated: false,
+        evidence: emptyEvidence()
+      })
+
+    record('session-1', 'catalog-a')
+    record('session-1', 'catalog-b')
+    registry.clearSession('another-session')
+    record('session-1', 'catalog-c')
+    registry.clearSession('session-1')
+    record('session-1', 'catalog-d')
+
+    expect(
+      registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })?.cohorts[0].runs
+    ).toMatchObject({ observed: 4, catalogComparisons: 2, catalogChanges: 2 })
   })
 
   it('does not aggregate partial provider usage as a complete Run token sample', () => {
@@ -330,7 +390,10 @@ describe('Tool Surface canary diagnostics', () => {
       providerAttempts: []
     })
 
-    expect(registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })).toBeNull()
+    expect(
+      registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })?.recording
+        .globalRejectedRuns
+    ).toBe(1)
 
     registry.recordRun({
       scope,
@@ -354,7 +417,10 @@ describe('Tool Surface canary diagnostics', () => {
       ]
     })
 
-    expect(registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })).toBeNull()
+    expect(
+      registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })?.recording
+        .globalRejectedRuns
+    ).toBe(2)
   })
 
   it('rejects legacy adapters and attempt arrays beyond the bounded Run sample', () => {
@@ -388,7 +454,10 @@ describe('Tool Surface canary diagnostics', () => {
       }))
     })
 
-    expect(registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })).toBeNull()
+    expect(
+      registry.snapshot({ providerId: 'provider-1', modelId: 'model-1' })?.recording
+        .globalRejectedRuns
+    ).toBe(2)
   })
 
   it('keeps missing pricing and cache metrics out of billed cost samples', () => {

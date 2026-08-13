@@ -321,6 +321,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     runLifecycle,
     interactionParking,
     toolSurfaceDiagnostics,
+    toolSurfaceCanaryDiagnostics,
     programmaticToolParents
   })
   const toolRuntimeBindings: ToolRuntimeBindingDependencies = {
