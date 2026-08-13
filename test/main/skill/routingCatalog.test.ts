@@ -280,16 +280,21 @@ describe('skill routing catalog', () => {
     )
   })
 
-  it('invalidates cursors when execution-active discovery decoration changes', () => {
+  it('keeps cursors valid when execution-active discovery decoration changes', () => {
     const skills = [metadata('first', 'first'), metadata('second', 'second')]
     const firstPage = buildSkillListResult(skills, [], ['first'], { limit: 1 })
 
-    expect(() =>
+    expect(
       buildSkillListResult(skills, [], ['second'], {
         cursor: firstPage.nextCursor,
         limit: 1
+      }).skills
+    ).toEqual([
+      expect.objectContaining({
+        name: 'second',
+        activeForExecution: true
       })
-    ).toThrow('does not match the current query and catalog')
+    ])
   })
 
   it('rejects non-canonical and offset-tampered cursors', () => {

@@ -543,10 +543,7 @@ function hashText(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex')
 }
 
-function buildCatalogFingerprint(
-  records: readonly SkillSearchRecord[],
-  activeSkillNames: ReadonlySet<string>
-): string {
+function buildCatalogFingerprint(records: readonly SkillSearchRecord[]): string {
   const hash = createHash('sha256')
   const updateField = (value: string): void => {
     const bytes = Buffer.from(value, 'utf8')
@@ -563,7 +560,6 @@ function buildCatalogFingerprint(
     updateField(String(record.card.platforms?.length ?? 0))
     for (const platform of record.card.platforms ?? []) updateField(platform)
     updateField(record.card.sessionActive ? '1' : '0')
-    updateField(record.card.sessionActive || activeSkillNames.has(record.card.name) ? '1' : '0')
     updateField(String(record.normalizedAliases.length))
     for (const alias of record.normalizedAliases) updateField(alias)
   }
@@ -696,7 +692,7 @@ export function buildSkillListResult(
   const limit = normalizeSkillListLimit(input.limit)
   const activeSet = new Set(activeSkillNames.map(normalizeIdentity).filter(Boolean))
   const records = buildSearchRecords(skills, sessionActiveSkillNames, query)
-  const fingerprint = buildCatalogFingerprint(records, activeSet)
+  const fingerprint = buildCatalogFingerprint(records)
   const queryHash = hashText(query)
   const offset = decodeCursor(input.cursor, queryHash, fingerprint)
   const ranked = query
