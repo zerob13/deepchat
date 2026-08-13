@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { app } from 'electron'
-import log from 'electron-log'
 import fs from 'fs'
 import type {
   HookCommandItem,
@@ -264,7 +263,7 @@ export class HookService implements HookObserver {
         accepted
       })
     } catch (error) {
-      log.warn('[Hook] Notification observer failed:', error)
+      console.warn('[Hook] Notification observer failed:', error)
     }
   }
 
@@ -321,7 +320,7 @@ export class HookService implements HookObserver {
       try {
         await this.deliver(delivery)
       } catch (error) {
-        log.warn('[Hook] Dispatch failed:', error)
+        console.warn('[Hook] Dispatch failed:', error)
       }
     })
 
@@ -353,7 +352,7 @@ export class HookService implements HookObserver {
     for (const hook of this.runnableHooks(projection.event, accepted)) {
       // Per-command isolation: one failing hook must not affect its siblings or the next event.
       void this.runHookCommand(hook, payload).catch((error) => {
-        log.warn(`[HooksNotifications] Hook "${hook.name}" failed:`, error)
+        console.warn(`[HooksNotifications] Hook "${hook.name}" failed:`, error)
       })
     }
   }
@@ -397,7 +396,7 @@ export class HookService implements HookObserver {
           }
         }
       } catch (error) {
-        log.warn('[HooksNotifications] Failed to load session info:', error)
+        console.warn('[HooksNotifications] Failed to load session info:', error)
       }
     }
 

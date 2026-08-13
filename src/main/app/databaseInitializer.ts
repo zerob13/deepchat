@@ -1,5 +1,6 @@
 import logger from '@shared/logger'
 import type { DatabaseSchemaDiagnosis, DatabaseSchemaIssue } from '@shared/types/databaseSchema'
+import type { DatabaseRepairReason } from '@shared/notifications'
 import { app } from 'electron'
 import path from 'path'
 import {
@@ -10,11 +11,41 @@ import {
 import { getStartupSchemaCatalog } from '@/data/schemaCatalog'
 import { classifySchemaError } from '@/data/schemaErrorClassifier'
 import type { SchemaTableSpec } from '@/data/schemaTypes'
+import { MAX_MAIN_LOG_DURATION_MS } from '@/logging/mainLogEvents'
+import { elapsedMonotonicMs, readMonotonicNow, type MonotonicClock } from '@/lib/monotonicTime'
 
 type DatabaseInitializerOptions = {
   password?: string
   dbPath?: string
+  observe?: (observation: DatabaseInitializationObservation) => void | Promise<void>
+  now?: MonotonicClock
 }
+
+export type DatabaseSchemaDiagnosisOutcome = 'completed' | 'unavailable' | 'not_completed'
+
+export type DatabaseInitializationObservation = {
+  durationMs?: number
+  repairAttempted: boolean
+  schemaDiagnosis: DatabaseSchemaDiagnosisOutcome
+  repairableIssueCount: number
+  manualIssueCount: number
+} & (
+  | { outcome: 'completed' }
+  | {
+      outcome: 'failed'
+      error:
+        | { category: 'integrity' | 'persistence' }
+        | { category: 'schema'; reason: DatabaseRepairReason }
+    }
+)
+
+type StartupSchemaDiagnosisResult =
+  | {
+      outcome: 'completed'
+      catalog: SchemaTableSpec[]
+      diagnosis: DatabaseSchemaDiagnosis
+    }
+  | { outcome: 'unavailable' }
 
 /**
  * Database initialization interface
@@ -32,24 +63,35 @@ export class DatabaseInitializer implements IDatabaseInitializer {
   private dbPath: string
   private password?: string
   private database?: MainDatabase
+  private readonly observe: (observation: DatabaseInitializationObservation) => void | Promise<void>
+  private readonly now?: MonotonicClock
 
   constructor(options?: DatabaseInitializerOptions) {
     // Initialize database path
     const dbDir = path.join(app.getPath('userData'), 'app_db')
     this.dbPath = options?.dbPath ?? path.join(dbDir, 'agent.db')
     this.password = options?.password
+    this.observe = options?.observe ?? (() => undefined)
+    this.now = options?.now
   }
 
   /**
    * Initialize the database connection and perform setup
    */
   async initialize(): Promise<MainDatabase> {
+    const startedAt = readMonotonicNow(this.now)
     let repairAttempted = false
+    let schemaDiagnosis: DatabaseSchemaDiagnosisOutcome = 'not_completed'
+    let repairableIssueCount = 0
+    let manualIssueCount = 0
 
     try {
       logger.info('DatabaseInitializer: Starting database initialization')
 
       while (true) {
+        schemaDiagnosis = 'not_completed'
+        repairableIssueCount = 0
+        manualIssueCount = 0
         try {
           this.database = new MainDatabase(this.dbPath, this.password)
 
@@ -61,12 +103,26 @@ export class DatabaseInitializer implements IDatabaseInitializer {
           // Startup checks use the fresh-install catalog so automatic repair does not create
           // retired legacy conversation tables. Manual settings repair still uses the full catalog.
           const startupDiagnosis = await this.diagnoseStartupSchema()
-          if (!startupDiagnosis) {
+          if (startupDiagnosis.outcome === 'unavailable') {
+            schemaDiagnosis = 'unavailable'
+            repairableIssueCount = 0
+            manualIssueCount = 0
             logger.info('DatabaseInitializer: Database initialization completed successfully')
+            this.notifyInitializationObserver({
+              outcome: 'completed',
+              ...this.durationContext(startedAt),
+              repairAttempted,
+              schemaDiagnosis,
+              repairableIssueCount,
+              manualIssueCount
+            })
             return this.database
           }
 
           const { catalog, diagnosis } = startupDiagnosis
+          schemaDiagnosis = 'completed'
+          repairableIssueCount = diagnosis.repairableIssues.length
+          manualIssueCount = diagnosis.manualIssues.length
           if (diagnosis.repairableIssues.length > 0) {
             if (repairAttempted) {
               console.warn(
@@ -78,6 +134,14 @@ export class DatabaseInitializer implements IDatabaseInitializer {
               logger.info(
                 'DatabaseInitializer: Database initialization continued with residual startup schema issues'
               )
+              this.notifyInitializationObserver({
+                outcome: 'completed',
+                ...this.durationContext(startedAt),
+                repairAttempted,
+                schemaDiagnosis,
+                repairableIssueCount,
+                manualIssueCount
+              })
               return this.database
             }
 
@@ -96,6 +160,14 @@ export class DatabaseInitializer implements IDatabaseInitializer {
           this.warnManualSchemaIssues(diagnosis)
 
           logger.info('DatabaseInitializer: Database initialization completed successfully')
+          this.notifyInitializationObserver({
+            outcome: 'completed',
+            ...this.durationContext(startedAt),
+            repairAttempted,
+            schemaDiagnosis,
+            repairableIssueCount,
+            manualIssueCount
+          })
           return this.database
         } catch (error) {
           this.database?.close()
@@ -120,6 +192,15 @@ export class DatabaseInitializer implements IDatabaseInitializer {
       }
     } catch (error) {
       console.error('DatabaseInitializer: Database initialization failed:', error)
+      this.notifyInitializationObserver({
+        outcome: 'failed',
+        ...this.durationContext(startedAt),
+        repairAttempted,
+        schemaDiagnosis,
+        repairableIssueCount,
+        manualIssueCount,
+        error: this.classifyInitializationFailure(error)
+      })
       throw error
     }
   }
@@ -168,18 +249,16 @@ export class DatabaseInitializer implements IDatabaseInitializer {
       .join(', ')
   }
 
-  private async diagnoseStartupSchema(): Promise<{
-    catalog: SchemaTableSpec[]
-    diagnosis: DatabaseSchemaDiagnosis
-  } | null> {
+  private async diagnoseStartupSchema(): Promise<StartupSchemaDiagnosisResult> {
     if (!this.database) {
-      return null
+      return { outcome: 'unavailable' }
     }
 
-    const start = performance.now()
+    const start = readMonotonicNow()
     try {
       const catalog = getStartupSchemaCatalog()
       return {
+        outcome: 'completed',
         catalog,
         diagnosis: await this.database.diagnoseSchema(catalog)
       }
@@ -188,22 +267,18 @@ export class DatabaseInitializer implements IDatabaseInitializer {
         'DatabaseInitializer: Startup schema diagnosis failed; continuing startup:',
         error
       )
-      return null
+      return { outcome: 'unavailable' }
     } finally {
-      logger.info(
-        `DatabaseInitializer: phase=diagnose duration=${(performance.now() - start).toFixed(2)}ms`
-      )
+      this.logPhaseDuration('diagnose', start)
     }
   }
 
   private repairStartupSchema(catalog: SchemaTableSpec[]): void {
-    const start = performance.now()
+    const start = readMonotonicNow()
     try {
       repairSQLiteDatabaseFile(this.dbPath, this.password, { catalog })
     } finally {
-      logger.info(
-        `DatabaseInitializer: phase=repair duration=${(performance.now() - start).toFixed(2)}ms`
-      )
+      this.logPhaseDuration('repair', start)
     }
   }
 
@@ -217,5 +292,43 @@ export class DatabaseInitializer implements IDatabaseInitializer {
         diagnosis.manualIssues
       )}`
     )
+  }
+
+  private durationContext(startedAt: number | undefined): { durationMs?: number } {
+    const elapsed = elapsedMonotonicMs(startedAt, this.now)
+    return elapsed === undefined ? {} : { durationMs: Math.min(elapsed, MAX_MAIN_LOG_DURATION_MS) }
+  }
+
+  private logPhaseDuration(phase: 'diagnose' | 'repair', startedAt: number | undefined): void {
+    const elapsed = elapsedMonotonicMs(startedAt)
+    logger.info(
+      elapsed === undefined
+        ? `DatabaseInitializer: phase=${phase} completed`
+        : `DatabaseInitializer: phase=${phase} duration=${elapsed.toFixed(2)}ms`
+    )
+  }
+
+  private notifyInitializationObserver(observation: DatabaseInitializationObservation): void {
+    try {
+      void Promise.resolve(this.observe(observation)).catch(() => undefined)
+    } catch {
+      // Diagnostics must not alter database initialization or recovery behavior.
+    }
+  }
+
+  private classifyInitializationFailure(
+    error: unknown
+  ):
+    | { category: 'integrity' | 'persistence' }
+    | { category: 'schema'; reason: DatabaseRepairReason } {
+    try {
+      if (isDestructiveDatabaseError(error)) return { category: 'integrity' }
+      const schemaError = classifySchemaError(error)
+      return schemaError
+        ? { category: 'schema', reason: schemaError.reason }
+        : { category: 'persistence' }
+    } catch {
+      return { category: 'persistence' }
+    }
   }
 }

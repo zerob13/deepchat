@@ -73,6 +73,10 @@
   "pendingInput": {
     "resume": "Wznów kolejkę",
     "resumeFailed": "Nie udało się wznowić kolejki",
+    "retry": "Ponów",
+    "retryRequired": "Wymagane ponowienie",
+    "retryRequiredDescription": "Ta wiadomość nie została wysłana. Ponów ją, aby kontynuować kolejkę.",
+    "retryFailed": "Nie udało się ponowić wiadomości w kolejce",
     "steer": "Steruj",
     "queueCount": "W kolejce {count}/{max}",
     "toSteer": "Przerwij i wyślij",
@@ -366,6 +370,9 @@
     "searchCommand": "Search",
     "chatSection": "Chat",
     "workspace": "Workspace",
+    "addWorkspace": "Dodaj obszar roboczy",
+    "emptyWorkspace": "Pusty",
+    "addWorkspaceFailed": "Nie udało się dodać obszaru roboczego",
     "searchLoadedRangeDescription": "Wyświetlanie wyników z załadowanych rozmów. Przewiń, aby załadować więcej historii."
   },
   "spotlight": {

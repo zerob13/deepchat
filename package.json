@@ -1,6 +1,6 @@
 {
   "name": "DeepChat",
-  "version": "1.1.0-beta.12",
+  "version": "1.1.0",
   "description": "DeepChat，一个简单易用的 Agent 客户端",
   "main": "./out/main/index.js",
   "author": "ThinkInAIXYZ",
@@ -133,7 +133,6 @@
     "cron-parser": "^5.6.1",
     "cross-spawn": "^7.0.6",
     "diff": "^8.0.4",
-    "electron-log": "^5.4.4",
     "electron-store": "^8.2.0",
     "electron-updater": "6.8.9",
     "electron-window-state": "^5.0.3",
@@ -252,7 +251,8 @@
   },
   "pnpm": {
     "overrides": {
-      "monaco-editor>dompurify": "3.4.12",
+      "monaco-editor>dompurify": "3.4.13",
+      "postcss>nanoid": "3.3.17",
       "typescript": "npm:typescript-native-bridge@6.0.3-bridge.7.tsgo.7.0.2"
     },
     "onlyBuiltDependencies": [

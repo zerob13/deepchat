@@ -1,3 +1,4 @@
+import { afterEach } from 'vitest'
 import {
   performance,
   describe,
@@ -22,6 +23,8 @@ import {
 } from './tapeTestHarness'
 import { TapeSkillMaterializationService } from '@/tape/application/skillMaterializationService'
 import { hashSkillEffectiveContent } from '@/tape/domain/skillMaterialization'
+
+afterEach(() => vi.restoreAllMocks())
 
 function providerAttemptProvenance(overrides: Record<string, unknown> = {}) {
   return {
@@ -1366,11 +1369,13 @@ describe('SessionTape recall', () => {
   })
 
   it('falls back to effective tape search when projection search throws', () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const projectionError = new Error('projection failed')
     const { table } = createTapeTableMock()
     const projectionTable = {
       isCurrent: vi.fn().mockReturnValue(true),
       search: vi.fn(() => {
-        throw new Error('projection failed')
+        throw projectionError
       })
     }
     const service = new SessionTape({
@@ -1403,6 +1408,10 @@ describe('SessionTape recall', () => {
     })
     expect(hits[0]).not.toHaveProperty('payload')
     expect(hits[0]).not.toHaveProperty('meta')
+    expect(warning).toHaveBeenCalledWith(
+      '[Tape] Projection search failed; using effective search:',
+      projectionError
+    )
   })
 
   it('appends tape projection rows when the previous projection is an effective prefix', () => {

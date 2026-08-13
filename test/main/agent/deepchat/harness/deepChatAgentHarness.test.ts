@@ -224,6 +224,7 @@ function createMockSqlitePresenter() {
         message_ids_json: input.messageIdsJson ?? input.message_ids_json ?? '[]',
         assistant_message_id: input.assistantMessageId ?? input.assistant_message_id ?? null,
         blocking_json: input.blockingJson ?? input.blocking_json ?? null,
+        retry_required_at: input.retryRequiredAt ?? input.retry_required_at ?? null,
         queue_order: input.queueOrder ?? input.queue_order ?? null,
         claimed_at: input.claimedAt ?? input.claimed_at ?? null,
         consumed_at: input.consumedAt ?? input.consumed_at ?? null,
@@ -1064,6 +1065,8 @@ describe('DeepChatAgentHarness', () => {
   }
   let agent: DeepChatAgentHarness
   let runtimeDependencies: ReturnType<typeof createRuntimeDependencies>
+  let runJournalObserver: ReturnType<typeof vi.fn>
+  let diagnosticNow: ReturnType<typeof vi.fn<() => number>>
   let transcriptMutations: SessionTranscriptMutations
   let sessionData: ReturnType<typeof createSessionData>
   let hookDispatcher: { dispatchEvent: ReturnType<typeof vi.fn> }
@@ -1389,6 +1392,8 @@ describe('DeepChatAgentHarness', () => {
       promptSettings: providerSettings,
       memoryPort: createDelegatingMemoryRuntimePort(() => installedMemoryPort)
     })
+    runJournalObserver = vi.fn()
+    diagnosticNow = vi.fn(() => 100)
     agent = createDeepChatAgentHarness({
       ...runtimeDependencies,
       providerRuntime: llmProvider,
@@ -1397,7 +1402,9 @@ describe('DeepChatAgentHarness', () => {
       database: sqlitePresenter,
       sessionData: sessionData,
       toolService: toolService,
-      hookObserver: createHookObserver(hookDispatcher)
+      hookObserver: createHookObserver(hookDispatcher),
+      runJournalObserver,
+      diagnosticNow
     })
     transcriptMutations = new SessionTranscriptMutations({
       transcript: sessionData.transcript,
@@ -3136,6 +3143,9 @@ describe('DeepChatAgentHarness', () => {
         order.push('journal:terminal')
         return commitRunTerminal(input)
       })
+      runJournalObserver.mockImplementation((observation) => {
+        order.push(`observer:${observation.type}`)
+      })
       ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
         order.push('process:entered')
         return { status: 'completed', stopReason: 'complete' }
@@ -3145,9 +3155,11 @@ describe('DeepChatAgentHarness', () => {
 
       expect(order).toEqual([
         'journal:started',
+        'observer:started',
         'runtime:registered',
         'process:entered',
-        'journal:terminal'
+        'journal:terminal',
+        'observer:terminal'
       ])
       const journalRows = sqlitePresenter.deepchatTapeEntriesTable
         .getBySession('s1')
@@ -3162,6 +3174,50 @@ describe('DeepChatAgentHarness', () => {
         outcome: 'completed',
         stopReason: 'complete'
       })
+      expect(runJournalObserver).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          type: 'started',
+          runKind: 'loop',
+          runId: started.runId,
+          sessionId: 's1',
+          messageId: started.messageId,
+          initialRequestSeq: 0
+        })
+      )
+      expect(runJournalObserver).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          type: 'terminal',
+          runKind: 'loop',
+          runId: started.runId,
+          outcome: 'completed',
+          stopReason: 'complete',
+          durationMs: expect.any(Number),
+          logicalRounds: 0,
+          toolCalls: 0
+        })
+      )
+    })
+
+    it('keeps the durable Run lifecycle intact when the diagnostic clock throws', async () => {
+      diagnosticNow.mockImplementation(() => {
+        throw new Error('clock unavailable')
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).resolves.toMatchObject({
+        requestId: 'mock-msg-id'
+      })
+
+      const journalRows = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .filter((row: any) => row.name?.startsWith('execution/'))
+      expect(journalRows).toHaveLength(2)
+      expect(runJournalObserver).toHaveBeenCalledTimes(2)
+      const terminalObservation = runJournalObserver.mock.calls[1][0]
+      expect(terminalObservation).toMatchObject({ type: 'terminal', outcome: 'completed' })
+      expect(terminalObservation).not.toHaveProperty('durationMs')
     })
 
     it('does not register or terminally project a Run when its start commit fails', async () => {
@@ -3177,6 +3233,22 @@ describe('DeepChatAgentHarness', () => {
       expect((await agent.getSessionState('s1'))?.status).toBe('idle')
       expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).not.toHaveBeenCalled()
       expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
+      expect(runJournalObserver).not.toHaveBeenCalled()
+    })
+
+    it('does not observe or execute a Run when its start receipt already exists', async () => {
+      vi.spyOn(sessionData.tapeStore, 'commitRunStarted').mockReturnValue({
+        sessionId: 's1',
+        entryId: 1,
+        created: false
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).rejects.toThrow('was already committed')
+
+      expect(processStream).not.toHaveBeenCalled()
+      expect(runJournalObserver).not.toHaveBeenCalled()
+      expect(agent.getActiveGeneration('s1')).toBeNull()
     })
 
     it('does not terminally project a Run when its terminal commit fails', async () => {
@@ -3192,6 +3264,43 @@ describe('DeepChatAgentHarness', () => {
       expect((await agent.getSessionState('s1'))?.status).toBe('idle')
       expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).not.toHaveBeenCalled()
       expect(getPublishedPayloads('chat.stream.failed')).toEqual([])
+      expect(runJournalObserver).toHaveBeenCalledOnce()
+      expect(runJournalObserver).toHaveBeenCalledWith(expect.objectContaining({ type: 'started' }))
+    })
+
+    it('does not observe a terminal when its receipt already exists', async () => {
+      vi.spyOn(sessionData.tapeStore, 'commitRunTerminal').mockReturnValue({
+        sessionId: 's1',
+        entryId: 2,
+        created: false
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).rejects.toThrow('already existed')
+
+      expect(runJournalObserver).toHaveBeenCalledOnce()
+      expect(runJournalObserver).toHaveBeenCalledWith(expect.objectContaining({ type: 'started' }))
+    })
+
+    it('observes one durable fallback terminal after Loop execution fails', async () => {
+      ;(processStream as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('SECRET_PROVIDER_FAILURE')
+      )
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+
+      await expect(agent.processMessage('s1', 'Hello')).resolves.toMatchObject({
+        requestId: 'mock-msg-id'
+      })
+
+      expect(runJournalObserver).toHaveBeenCalledTimes(2)
+      expect(runJournalObserver).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          type: 'terminal',
+          outcome: 'error',
+          stopReason: 'pre_stream_error'
+        })
+      )
+      expect(JSON.stringify(runJournalObserver.mock.calls)).not.toContain('SECRET_PROVIDER_FAILURE')
     })
 
     it('preserves execution and persistence causes when fallback terminal commit fails', async () => {
@@ -7946,7 +8055,7 @@ describe('DeepChatAgentHarness', () => {
   })
 
   describe('queuePendingInput', () => {
-    it('releases a claimed queue item when its Run start fact cannot commit', async () => {
+    it('marks a claimed queue item retry-required when its Run start fact cannot commit', async () => {
       const commitRunStarted = vi
         .spyOn(sessionData.tapeStore, 'commitRunStarted')
         .mockImplementation(() => {
@@ -7961,7 +8070,7 @@ describe('DeepChatAgentHarness', () => {
       await vi.waitFor(() => expect(commitRunStarted).toHaveBeenCalledOnce())
       await vi.waitFor(async () => {
         expect(await agent.listPendingInputs('s1')).toEqual([
-          expect.objectContaining({ id: pending.id, state: 'pending' })
+          expect.objectContaining({ id: pending.id, state: 'retry_required' })
         ])
       })
       expect(processStream).not.toHaveBeenCalled()
@@ -8241,7 +8350,7 @@ describe('DeepChatAgentHarness', () => {
       await vi.waitFor(() => expect(processStream).toHaveBeenCalledTimes(2))
     })
 
-    it('releases an accepted send when stop cancels attachment recheck before its user fact', async () => {
+    it('marks an accepted send retry-required when stop cancels attachment recheck', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const dispatchPreflightStarted = deferred<void>()
       const ready = { status: 'ready' as const, issues: [], suggestedActions: [] }
@@ -8281,7 +8390,7 @@ describe('DeepChatAgentHarness', () => {
       await vi.waitFor(async () => {
         expect(await agent.listPendingInputs('s1')).toEqual([
           expect.objectContaining({
-            state: 'pending',
+            state: 'retry_required',
             payload: expect.objectContaining({ text: '' })
           })
         ])
@@ -8304,8 +8413,15 @@ describe('DeepChatAgentHarness', () => {
       })
     })
 
-    it('releases an immediately claimed input when entry validation rejects it', async () => {
+    it('retries a rejected question follow-up behind an older Queue draft', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      vi.mocked(nanoid)
+        .mockReturnValueOnce('older-queue-draft')
+        .mockReturnValueOnce('question-follow-up')
+      const older = sessionData.pendingInputs.queuePendingInput('s1', {
+        text: 'Older Queue draft',
+        files: []
+      })
       const interactionRow = {
         ...makeDeepchatAssistantRow(1, '', 'interaction-message', 'pending'),
         content: JSON.stringify([
@@ -8347,7 +8463,8 @@ describe('DeepChatAgentHarness', () => {
 
         await vi.waitFor(async () => {
           expect(await agent.listPendingInputs('s1')).toEqual([
-            expect.objectContaining({ id: claimed.id, state: 'pending' })
+            expect.objectContaining({ id: older.id, state: 'pending' }),
+            expect.objectContaining({ id: claimed.id, state: 'retry_required' })
           ])
         })
         expect(getRuntimeState(agent, 's1').status).toBe('generating')
@@ -8356,12 +8473,20 @@ describe('DeepChatAgentHarness', () => {
         sqlitePresenter.deepchatMessagesTable.getBySession.mockReturnValue([])
         agent.deepChatRuntime.getHydrated(toAppSessionId('s1'))?.replacePendingInteractions([])
         setRuntimeStatus(agent, 's1', 'idle')
-        await agent.updateQueuedInput('s1', claimed.id, claimed.payload)
+        sqlitePresenter.deepchatPendingInputsTable.update.mockClear()
+        await expect(agent.retryPendingQueueInput('s1', claimed.id)).resolves.toMatchObject({
+          accepted: true
+        })
 
         await vi.waitFor(async () => {
-          expect(processStream).toHaveBeenCalledOnce()
+          expect(processStream).toHaveBeenCalledTimes(2)
           expect(await agent.listPendingInputs('s1')).toEqual([])
         })
+        expect(
+          sqlitePresenter.deepchatPendingInputsTable.update.mock.calls
+            .filter(([, fields]: [string, { state?: string }]) => fields.state === 'claimed')
+            .map(([itemId]: [string]) => itemId)
+        ).toEqual([older.id, claimed.id])
       } finally {
         errorSpy.mockRestore()
       }
@@ -8489,7 +8614,7 @@ describe('DeepChatAgentHarness', () => {
       const applyCompaction = vi
         .spyOn(CompactionService.prototype, 'applyCompaction')
         .mockRejectedValue(new Error('compaction failed after append'))
-      const releaseClaim = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
+      const releaseClaim = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInputForRetry')
       let persistedUserRow: any
       sqlitePresenter.deepchatMessagesTable.insert.mockImplementation((row: any) => {
         if (row.role !== 'user') return
@@ -8519,7 +8644,7 @@ describe('DeepChatAgentHarness', () => {
 
         await vi.waitFor(async () => {
           expect(await agent.listPendingInputs('s1')).toEqual([
-            expect.objectContaining({ id: claimed.id, state: 'pending' })
+            expect.objectContaining({ id: claimed.id, state: 'retry_required' })
           ])
         })
 
@@ -8567,7 +8692,7 @@ describe('DeepChatAgentHarness', () => {
       sqlitePresenter.deepchatMessagesTable.get.mockImplementation((id: string) =>
         persistedUserRow?.id === id ? persistedUserRow : undefined
       )
-      const releaseSpy = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
+      const releaseSpy = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInputForRetry')
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
       try {
@@ -8578,7 +8703,7 @@ describe('DeepChatAgentHarness', () => {
 
         await vi.waitFor(async () => {
           expect(await agent.listPendingInputs('s1')).toEqual([
-            expect.objectContaining({ id: claimed.id, state: 'pending' })
+            expect.objectContaining({ id: claimed.id, state: 'retry_required' })
           ])
         })
 
@@ -8623,7 +8748,7 @@ describe('DeepChatAgentHarness', () => {
         status: 'error',
         stopReason: 'provider_error'
       })
-      const releaseClaim = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInput')
+      const releaseClaim = vi.spyOn(sessionData.pendingInputs, 'releaseClaimedQueueInputForRetry')
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
@@ -8870,7 +8995,7 @@ describe('DeepChatAgentHarness', () => {
       }
     )
 
-    it('releases a partially claimed queue item when claim publication throws', async () => {
+    it('marks a partially claimed queue item retry-required when claim publication throws', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const pendingInputCoordinator = sessionData.pendingInputs
       const pending = pendingInputCoordinator.queuePendingInput('s1', {
@@ -8891,7 +9016,7 @@ describe('DeepChatAgentHarness', () => {
         await vi.waitFor(async () => {
           expect(claimQueuedInput).toHaveBeenCalledOnce()
           expect(await agent.listPendingInputs('s1')).toEqual([
-            expect.objectContaining({ id: pending.id, state: 'pending' })
+            expect.objectContaining({ id: pending.id, state: 'retry_required' })
           ])
         })
         expect(
@@ -11274,6 +11399,45 @@ describe('DeepChatAgentHarness', () => {
         expect(lastStatusProjectionOrder).toBeLessThan(afterTurnSettled.mock.invocationCallOrder[0])
       }
     )
+
+    it('observes resume counters relative to the current Run', async () => {
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        params.run.logicalRound = 5
+        params.run.streamState.toolCallCount = 7
+        return { status: 'completed', stopReason: 'complete' }
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const assistantRow = installPendingQuestion()
+      assistantRow.metadata = JSON.stringify({ providerRounds: 3, toolCalls: 4 })
+
+      await expect(answerPendingQuestion()).resolves.toEqual({ resumed: true })
+
+      expect(runJournalObserver).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          type: 'terminal',
+          runKind: 'loop',
+          logicalRounds: 2,
+          toolCalls: 3
+        })
+      )
+    })
+
+    it('subtracts the finite tool-call baseline accepted by stream accounting', async () => {
+      const historicalToolCalls = Number.MAX_SAFE_INTEGER + 1
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        params.run.streamState.toolCallCount = historicalToolCalls
+        return { status: 'completed', stopReason: 'complete' }
+      })
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const assistantRow = installPendingQuestion()
+      assistantRow.metadata = JSON.stringify({ providerRounds: 0, toolCalls: historicalToolCalls })
+
+      await expect(answerPendingQuestion()).resolves.toEqual({ resumed: true })
+
+      expect(runJournalObserver).toHaveBeenLastCalledWith(
+        expect.objectContaining({ type: 'terminal', runKind: 'loop', toolCalls: 0 })
+      )
+    })
 
     it('preserves a resume Journal failure when rejected-turn observation also fails', async () => {
       const journalError = new ExecutionJournalError(

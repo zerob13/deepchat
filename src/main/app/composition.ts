@@ -1,4 +1,19 @@
 import logger from '@shared/logger'
+import {
+  mainLogger,
+  reportMainStartupComponentFailure,
+  reportNativeMainError,
+  setMainLoggingEnabled
+} from '@/logging'
+import {
+  classifyMainLogError,
+  normalizeMainLogRunStopReason,
+  type MainLogRunStopReason,
+  type MainLogShutdownReason,
+  type MainLogStartupComponent,
+  type MainLogStartupComponentFailureCategory,
+  type SafeLogError
+} from '@/logging/mainLogEvents'
 import { projectEnvironmentsChangedEvent } from '@shared/contracts/events/project.events'
 import {
   approvalClosedEvent,
@@ -6,7 +21,6 @@ import {
   liveDelegationChangedEvent,
   sessionsUpdatedEvent
 } from '@shared/contracts/events'
-import { performance } from 'node:perf_hooks'
 import path from 'path'
 import { DialogService } from '../desktop/dialog'
 import { app, ipcMain } from 'electron'
@@ -147,6 +161,7 @@ import { SessionTranscriptMutations } from '@/session/transcriptMutations'
 import { SessionTurn } from '@/session/turn'
 import { SessionLifecycle } from '@/session/lifecycle'
 import { createDeepChatAgentHarness, type DeepChatAgentHarness } from '@/agent/deepchat/harness'
+import type { RunJournalObservation } from '@/agent/deepchat/runtime/types'
 import { AcpAgentRuntime } from '@/agent/acp/instance'
 import { createAcpRuntimeOwner } from '@/agent/acp/createRuntimeOwner'
 import { createAcpRoutes } from '@/agent/acp/routes'
@@ -166,7 +181,10 @@ import { createOrchestrationRoutes } from '@/orchestration/routes'
 import { OrchestrationCapabilityResolver } from '@/orchestration/capability'
 import { LiveDelegationDatabase } from '@/orchestration/data/database'
 import { LiveDelegationRepository } from '@/orchestration/liveDelegationRepository'
-import { LiveDelegationService } from '@/orchestration/liveDelegationService'
+import {
+  LiveDelegationService,
+  type LiveDelegationLifecycleObservation
+} from '@/orchestration/liveDelegationService'
 import { LiveDelegationSafetyCoordinator } from '@/orchestration/liveDelegationSafety'
 import { LiveDelegationConsentAuthority } from '@/orchestration/liveDelegationConsent'
 import { TaskContractService } from '@/tape/application/taskContractService'
@@ -199,7 +217,11 @@ import type {
   ProviderCatalogPort
 } from '../provider/ports'
 import type { SessionPermissionPort, SessionUiPort } from '../session/contracts'
-import { StartupWorkloadCoordinator } from '../app/startupWorkloadCoordinator'
+import {
+  isStartupWorkloadCancellation,
+  scheduleObservedStartupTask,
+  StartupWorkloadCoordinator
+} from '../app/startupWorkloadCoordinator'
 import type { StartupWorkloadTaskContext } from '../app/startupWorkloadCoordinator'
 import { LegacyChatImportService } from './startupMigrations/legacyChatImportService'
 import { UsageStatsService } from '../session/usageStatsService'
@@ -256,6 +278,8 @@ import { TypedEventHub } from '@/events/typedEventHub'
 import { SessionEventRouter } from '@/events/sessionEventRouter'
 import { createMemoryProviderBindings } from './memoryProviderBindings'
 import { createSessionPermissionPort } from './sessionPermissionAdapter'
+import { MainShutdownCoordinator, type MainShutdownActionClaim } from './mainShutdownCoordinator'
+import { elapsedMonotonicMs, readMonotonicNow } from '@/lib/monotonicTime'
 import {
   EpisodeRegistry,
   TimeoutNotificationScheduler,
@@ -272,7 +296,171 @@ export interface MainProcessControl {
   confirmShutdown(): Promise<boolean>
   cancelShutdown(): void
   hasMainWindows(): boolean
-  stop(): Promise<void>
+  stop(reason: MainLogShutdownReason): Promise<MainShutdownActionClaim | undefined>
+  stopForCleanup(): Promise<void>
+}
+
+function classifyRunError(stopReason: MainLogRunStopReason): SafeLogError {
+  switch (stopReason) {
+    case 'journal_error':
+      return { category: 'persistence' }
+    case 'provider_error':
+      return { category: 'provider' }
+    case 'post_dispatch_permission':
+      return { category: 'permission' }
+    case 'context_window':
+    case 'max_tokens':
+    case 'max_tool_calls':
+    case 'max_turn_requests':
+    case 'max_turns':
+      return { category: 'resource' }
+    default:
+      return { category: 'unknown' }
+  }
+}
+
+function emitRunJournalObservation(observation: RunJournalObservation): void {
+  if (observation.type === 'started') {
+    if (observation.runKind === 'loop') {
+      mainLogger.emit('agent.run.started', {
+        runId: observation.runId,
+        sessionId: observation.sessionId,
+        messageId: observation.messageId,
+        runKind: 'loop',
+        initialRequestSeq: observation.initialRequestSeq
+      })
+    } else {
+      mainLogger.emit('agent.run.started', {
+        runId: observation.runId,
+        sessionId: observation.sessionId,
+        messageId: observation.messageId,
+        runKind: 'deferred_tool'
+      })
+    }
+    return
+  }
+
+  const stopReason = normalizeMainLogRunStopReason(observation.stopReason, observation.outcome)
+  if (observation.runKind === 'loop') {
+    if (observation.outcome === 'error') {
+      mainLogger.emit('agent.run.terminal', {
+        runId: observation.runId,
+        sessionId: observation.sessionId,
+        messageId: observation.messageId,
+        runKind: 'loop',
+        outcome: 'error',
+        stopReason,
+        ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs }),
+        logicalRounds: observation.logicalRounds,
+        toolCalls: observation.toolCalls,
+        error: classifyRunError(stopReason)
+      })
+      return
+    }
+    mainLogger.emit('agent.run.terminal', {
+      runId: observation.runId,
+      sessionId: observation.sessionId,
+      messageId: observation.messageId,
+      runKind: 'loop',
+      outcome: observation.outcome,
+      stopReason,
+      ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs }),
+      logicalRounds: observation.logicalRounds,
+      toolCalls: observation.toolCalls
+    })
+    return
+  }
+
+  if (observation.outcome === 'error') {
+    mainLogger.emit('agent.run.terminal', {
+      runId: observation.runId,
+      sessionId: observation.sessionId,
+      messageId: observation.messageId,
+      runKind: 'deferred_tool',
+      outcome: 'error',
+      stopReason,
+      ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs }),
+      error: classifyRunError(stopReason)
+    })
+    return
+  }
+  mainLogger.emit('agent.run.terminal', {
+    runId: observation.runId,
+    sessionId: observation.sessionId,
+    messageId: observation.messageId,
+    runKind: 'deferred_tool',
+    outcome: observation.outcome,
+    stopReason,
+    ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs })
+  })
+}
+
+function emitLiveDelegationObservation(observation: LiveDelegationLifecycleObservation): void {
+  switch (observation.type) {
+    case 'turn_queued':
+      mainLogger.emit('orchestration.delegation.turn.queued', observation)
+      break
+    case 'child_bound':
+      mainLogger.emit('orchestration.delegation.child.bound', observation)
+      break
+    case 'turn_started':
+      mainLogger.emit('orchestration.delegation.turn.started', observation)
+      break
+    case 'turn_suspended':
+      mainLogger.emit('orchestration.delegation.turn.suspended', observation)
+      break
+    case 'turn_resumed':
+      mainLogger.emit('orchestration.delegation.turn.resumed', observation)
+      break
+    case 'turn_terminal':
+      if (observation.status === 'failed') {
+        mainLogger.emit('orchestration.delegation.turn.terminal', {
+          parentSessionId: observation.parentSessionId,
+          ...(observation.childSessionId ? { childSessionId: observation.childSessionId } : {}),
+          delegationId: observation.delegationId,
+          turnId: observation.turnId,
+          status: observation.status,
+          ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs }),
+          error: { category: observation.errorCategory }
+        })
+      } else {
+        mainLogger.emit('orchestration.delegation.turn.terminal', {
+          parentSessionId: observation.parentSessionId,
+          ...(observation.childSessionId ? { childSessionId: observation.childSessionId } : {}),
+          delegationId: observation.delegationId,
+          turnId: observation.turnId,
+          status: observation.status,
+          ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs })
+        })
+      }
+      break
+    case 'reconciliation_terminal':
+      if (observation.outcome === 'failed' || observation.outcome === 'quarantined') {
+        mainLogger.emit('orchestration.delegation.reconciliation.terminal', {
+          parentSessionId: observation.parentSessionId,
+          ...(observation.childSessionId ? { childSessionId: observation.childSessionId } : {}),
+          delegationId: observation.delegationId,
+          turnId: observation.turnId,
+          outcome: observation.outcome,
+          error: { category: observation.errorCategory }
+        })
+      } else {
+        mainLogger.emit('orchestration.delegation.reconciliation.terminal', {
+          parentSessionId: observation.parentSessionId,
+          ...(observation.childSessionId ? { childSessionId: observation.childSessionId } : {}),
+          delegationId: observation.delegationId,
+          turnId: observation.turnId,
+          outcome: observation.outcome
+        })
+      }
+      break
+    case 'stale_result_rejected':
+      mainLogger.emit('orchestration.delegation.stale_result.rejected', observation)
+      break
+    case 'observations_dropped':
+      mainLogger.emit('orchestration.delegation.observations.dropped', observation)
+      break
+  }
 }
 
 function createLivePort<T extends object>(resolve: () => T): T {
@@ -381,7 +569,7 @@ export async function createMainProcessControl(dependencies: {
   let hasInitialized = false
   let databaseMaintenanceState: 'running' | 'maintenance' | 'failed' = 'running'
   let appLifecycleState: 'starting' | 'running' | 'stopping' | 'stopped' = 'starting'
-  let stopPromise: Promise<void> | null = null
+  let shutdownStepFailures = 0
   let pluginInitializationPromise: Promise<void> | null = null
   let skillInitializationPromise: Promise<void> | null = null
   let skillSyncScanPromise: Promise<void> | null = null
@@ -865,7 +1053,8 @@ export async function createMainProcessControl(dependencies: {
     () => {
       restartApplication().catch((error) => logger.error('Application restart failed:', error))
     },
-    publishDeepchatEvent
+    publishDeepchatEvent,
+    setMainLoggingEnabled
   )
   const rendererPerformanceLogService = new RendererPerformanceLogService(
     dependencies.settingsStore
@@ -896,7 +1085,12 @@ export async function createMainProcessControl(dependencies: {
     updateSettings,
     () => dependencies.privacySettings.isEnabled(),
     dependencies.requestUpdateInstall,
-    publishDeepchatEvent
+    publishDeepchatEvent,
+    (observation) =>
+      mainLogger.emit('app.update.operation.failed', {
+        operation: observation.operation,
+        error: { category: observation.errorCategory }
+      })
   )
   shortcutPresenter = new ShortcutPresenter(desktopSettings, windowPresenter, publishDeepchatEvent)
   fileService = new FileService(dependencies.settingsStore)
@@ -1026,7 +1220,8 @@ export async function createMainProcessControl(dependencies: {
           toolInput,
           context
         )
-    }
+    },
+    () => reportMainStartupComponentFailure(dependencies.startupRunId, 'mcp', 'unknown')
   )
   const deeplinkActions = createDeeplinkActions({
     window: windowPresenter,
@@ -1096,7 +1291,28 @@ export async function createMainProcessControl(dependencies: {
     log: logger
   })
 
-  const agentInvocationAdmission = new AgentInvocationAdmission()
+  const agentInvocationAdmission = new AgentInvocationAdmission(undefined, undefined, {
+    observationsEnabled: () => mainLogger.isOutputEnabled(),
+    observe: (observation) => {
+      switch (observation.type) {
+        case 'queued':
+          mainLogger.emit('agent.admission.queued', observation)
+          break
+        case 'granted':
+          mainLogger.emit('agent.admission.granted', observation)
+          break
+        case 'released':
+          mainLogger.emit('agent.admission.released', observation)
+          break
+        case 'rejected':
+          mainLogger.emit('agent.admission.rejected', observation)
+          break
+        case 'closed':
+          mainLogger.emit('agent.admission.closed', observation)
+          break
+      }
+    }
+  })
   const agentToolDependencies: AgentToolDependencies = {
     agentInvocationAdmission,
     sessions: {
@@ -1470,6 +1686,7 @@ export async function createMainProcessControl(dependencies: {
     memoryPort: memoryService,
     getMemoryIngestionProjection: () => memoryDatabase.ingestionProjectionTable,
     cacheImage: (data) => deviceService.cacheImage(data),
+    runJournalObserver: emitRunJournalObservation,
     skillService: skillService,
     skillSettings,
     traceSettings,
@@ -1671,7 +1888,8 @@ export async function createMainProcessControl(dependencies: {
                 compact: () => handle.deepchat.compact()
               },
               isPendingQueueResumeAvailable: () => handle.deepchat.isPendingQueueResumeAvailable(),
-              resumePendingQueue: () => handle.deepchat.resumePendingQueue()
+              resumePendingQueue: () => handle.deepchat.resumePendingQueue(),
+              retryPendingQueueInput: (itemId) => handle.deepchat.retryPendingQueueInput(itemId)
             }
           : { ...turn, kind: handle.kind }
       }
@@ -1736,6 +1954,16 @@ export async function createMainProcessControl(dependencies: {
     turn: sessionTurn,
     projection: sessionQuery,
     sessions: appSessionService,
+    getPendingAssistantMessages: (runId) =>
+      sessionData.transcript.getPendingAssistantMessages(runId),
+    hasWaitingDescendantInteraction: (runId) =>
+      liveDelegationRepository
+        .listActiveTurns()
+        .some(
+          ({ delegation, turn }) =>
+            (turn.status === 'waiting_permission' || turn.status === 'waiting_question') &&
+            resolveSessionRunId(delegation.parentSessionId) === runId
+        ),
     eventHub: typedEventHub,
     log: logger
   })
@@ -1836,6 +2064,8 @@ export async function createMainProcessControl(dependencies: {
           }
         }
       },
+      observe: emitLiveDelegationObservation,
+      observationsEnabled: () => mainLogger.isOutputEnabled(),
       onChanged: (parentSessionId, delegationId) => {
         sessionQuery.notify({ sessionIds: [parentSessionId], reason: 'updated' })
         try {
@@ -1919,6 +2149,26 @@ export async function createMainProcessControl(dependencies: {
     trayPresenter.init()
   }
 
+  function scheduleMainStartupTask(
+    startupRunId: string,
+    task: Omit<Parameters<StartupWorkloadCoordinator['scheduleTask']>[0], 'runId'>,
+    errorMessage: string,
+    failure: {
+      component: MainLogStartupComponent
+      category: MainLogStartupComponentFailureCategory
+    }
+  ): void {
+    scheduleObservedStartupTask({
+      coordinator: startupWorkloadCoordinator,
+      startupRunId,
+      task,
+      onFailure: (failedStartupRunId, error) => {
+        reportMainStartupComponentFailure(failedStartupRunId, failure.component, failure.category)
+        reportNativeMainError(errorMessage, error)
+      }
+    })
+  }
+
   function init(mainRunId: string) {
     if (hasInitialized) {
       console.info('[Startup][Main] Main startup skipped because startup already ran')
@@ -1930,56 +2180,72 @@ export async function createMainProcessControl(dependencies: {
 
     const providers = providerSettings.getProviders()
     console.info(`[Startup][Main] Main startup begin providers=${providers.length}`)
-    void startupWorkloadCoordinator.scheduleTask({
-      id: 'main:floating-button',
-      target: 'main',
-      phase: 'deferred',
-      resource: 'io',
-      labelKey: 'startup.main.floatingButton',
-      runId: mainRunId,
-      run: async () => {
-        await initializeFloatingButton()
-      }
-    })
+    scheduleMainStartupTask(
+      mainRunId,
+      {
+        id: 'main:floating-button',
+        target: 'main',
+        phase: 'deferred',
+        resource: 'io',
+        labelKey: 'startup.main.floatingButton',
+        run: async () => {
+          await initializeFloatingButton()
+        }
+      },
+      'Failed to schedule floating button initialization:',
+      { component: 'floating_widget', category: 'resource' }
+    )
 
-    void startupWorkloadCoordinator.scheduleTask({
-      id: 'main:skills-sync-scan',
-      target: 'main',
-      phase: 'background',
-      resource: 'cpu',
-      labelKey: 'startup.main.skillsSyncScan',
-      runId: mainRunId,
-      run: async (taskContext) => {
-        await taskContext.yield()
-        await initializeSkillSyncScan(taskContext.signal)
-      }
-    })
+    scheduleMainStartupTask(
+      mainRunId,
+      {
+        id: 'main:skills-sync-scan',
+        target: 'main',
+        phase: 'background',
+        resource: 'cpu',
+        labelKey: 'startup.main.skillsSyncScan',
+        run: async (taskContext) => {
+          await taskContext.yield()
+          await initializeSkillSyncScan(taskContext.signal)
+        }
+      },
+      'Failed to schedule SkillSyncService background scan:',
+      { component: 'skill_sync', category: 'unknown' }
+    )
 
-    void startupWorkloadCoordinator.scheduleTask({
-      id: 'main:mcp-init',
-      target: 'main',
-      phase: 'background',
-      resource: 'io',
-      labelKey: 'startup.main.mcpInit',
-      runId: mainRunId,
-      run: async (taskContext) => {
-        await taskContext.yield()
-        await initializeMcp()
-      }
-    })
+    scheduleMainStartupTask(
+      mainRunId,
+      {
+        id: 'main:mcp-init',
+        target: 'main',
+        phase: 'background',
+        resource: 'io',
+        labelKey: 'startup.main.mcpInit',
+        run: async (taskContext) => {
+          await taskContext.yield()
+          await initializeMcp()
+        }
+      },
+      'Failed to schedule MCP initialization:',
+      { component: 'mcp', category: 'unknown' }
+    )
 
-    void startupWorkloadCoordinator.scheduleTask({
-      id: 'main:remote-runtime',
-      target: 'main',
-      phase: 'background',
-      resource: 'io',
-      labelKey: 'startup.main.remoteRuntime',
-      runId: mainRunId,
-      run: async (taskContext) => {
-        await taskContext.yield()
-        await initializeRemoteControl()
-      }
-    })
+    scheduleMainStartupTask(
+      mainRunId,
+      {
+        id: 'main:remote-runtime',
+        target: 'main',
+        phase: 'background',
+        resource: 'io',
+        labelKey: 'startup.main.remoteRuntime',
+        run: async (taskContext) => {
+          await taskContext.yield()
+          await initializeRemoteControl()
+        }
+      },
+      'Failed to schedule remote runtime initialization:',
+      { component: 'remote_runtime', category: 'unknown' }
+    )
 
     void startupWorkloadCoordinator
       .whenIdle('main', async () => {
@@ -1998,6 +2264,7 @@ export async function createMainProcessControl(dependencies: {
         })
       })
       .catch((error) => {
+        if (isStartupWorkloadCancellation(error)) return
         console.error('Failed to schedule idle provider warmup:', error)
       })
   }
@@ -2007,6 +2274,7 @@ export async function createMainProcessControl(dependencies: {
       await floatingButtonPresenter.initialize()
       logger.info('FloatingButtonPresenter initialized successfully')
     } catch (error) {
+      reportMainStartupComponentFailure(dependencies.startupRunId, 'floating_widget', 'resource')
       console.error('Failed to initialize FloatingButtonPresenter:', error)
     }
   }
@@ -2066,6 +2334,7 @@ export async function createMainProcessControl(dependencies: {
           await skillSyncService.scanAndDetectNewDiscoveries()
           logger.info('SkillSyncService background scan completed')
         } catch (error) {
+          reportMainStartupComponentFailure(dependencies.startupRunId, 'skill_sync', 'unknown')
           console.error('Failed to run SkillSyncService background scan:', error)
         }
       })()
@@ -2083,20 +2352,30 @@ export async function createMainProcessControl(dependencies: {
     try {
       await initializePlugins()
     } catch (error) {
+      reportMainStartupComponentFailure(dependencies.startupRunId, 'plugin_host', 'unknown')
       console.error('[PluginHost] Failed to initialize plugins:', error)
     }
 
     try {
       await mcpService.initialize()
-      try {
-        await pluginRuntimeSupervisor.reconcileAll()
-      } catch (error) {
-        console.error('[PluginHost] Failed to reconcile eager plugin runtimes:', error)
-      }
+    } catch (error) {
+      reportMainStartupComponentFailure(dependencies.startupRunId, 'mcp', 'unknown')
+      console.error('Failed to initialize McpService:', error)
+      return
+    }
+    try {
+      await pluginRuntimeSupervisor.reconcileAll()
+    } catch (error) {
+      reportMainStartupComponentFailure(dependencies.startupRunId, 'plugin_runtime', 'unknown')
+      console.error('[PluginHost] Failed to reconcile eager plugin runtimes:', error)
+    }
+
+    try {
       deepChatAgentHarness.refreshToolRegistry()
       deeplinkService.processPendingMcpInstall()
     } catch (error) {
-      console.error('Failed to initialize McpService:', error)
+      reportMainStartupComponentFailure(dependencies.startupRunId, 'mcp_integration', 'unknown')
+      console.error('Failed to finish MCP startup integration:', error)
     }
   }
 
@@ -2104,6 +2383,7 @@ export async function createMainProcessControl(dependencies: {
     try {
       await remoteService.initialize()
     } catch (error) {
+      reportMainStartupComponentFailure(dependencies.startupRunId, 'remote_runtime', 'unknown')
       console.error('RemoteService.initialize failed:', error)
     }
   }
@@ -2156,6 +2436,10 @@ export async function createMainProcessControl(dependencies: {
     await runDestroyStep('artifactSpool.close', () => artifactSpool.close())
     await runDestroyStep('providerCatalog.unsubscribe', () => unsubscribeProviderDbCatalog())
     await runDestroyStep('liveDelegationService.stop', () => liveDelegationService.stop())
+    await runDestroyStep('agentInvocationAdmission.close', () => agentInvocationAdmission.close())
+    await runDestroyStep('agentInvocationAdmission.flushObservations', () =>
+      agentInvocationAdmission.flushObservations()
+    )
     await runDestroyStep('cronJobs.destroy', () => cronJobs.destroy())
     await runDestroyStep('remoteService.destroy', () => remoteService.destroy())
     await runDestroyStep('hookService.stop', () => hookService.stop())
@@ -2255,16 +2539,23 @@ export async function createMainProcessControl(dependencies: {
   }
 
   async function runDestroyStep(stepName: string, step: () => void | Promise<void>): Promise<void> {
-    const startedAt = performance.now()
+    const startedAt = readMonotonicNow()
     logger.info(`[Main] destroy.${stepName} begin`)
     try {
       await step()
+      const durationMs = elapsedMonotonicMs(startedAt)
       logger.info(
-        `[Main] destroy.${stepName} done durationMs=${(performance.now() - startedAt).toFixed(1)}`
+        durationMs === undefined
+          ? `[Main] destroy.${stepName} done`
+          : `[Main] destroy.${stepName} done durationMs=${durationMs.toFixed(1)}`
       )
     } catch (error) {
+      shutdownStepFailures += 1
+      const durationMs = elapsedMonotonicMs(startedAt)
       logger.warn(
-        `[Main] destroy.${stepName} failed durationMs=${(performance.now() - startedAt).toFixed(1)}`,
+        durationMs === undefined
+          ? `[Main] destroy.${stepName} failed`
+          : `[Main] destroy.${stepName} failed durationMs=${durationMs.toFixed(1)}`,
         error
       )
     }
@@ -2658,27 +2949,29 @@ export async function createMainProcessControl(dependencies: {
     try {
       await service.runIfNeeded()
     } catch (error) {
+      reportMainStartupComponentFailure(
+        dependencies.startupRunId,
+        'acp_registry_migration',
+        'persistence'
+      )
       console.error('Failed to migrate ACP registry references:', error)
     }
 
     try {
       await service.compensateEnabledRegistryAgentInstalls()
     } catch (error) {
+      reportMainStartupComponentFailure(
+        dependencies.startupRunId,
+        'acp_install_compensation',
+        'persistence'
+      )
       console.error('Failed to compensate ACP install states:', error)
     }
   }
 
-  function scheduleBackgroundWork(): void {
-    const schedule = (
-      task: Parameters<StartupWorkloadCoordinator['scheduleTask']>[0],
-      errorMessage: string
-    ) => {
-      void startupWorkloadCoordinator.scheduleTask(task).catch((error) => {
-        console.error(errorMessage, error)
-      })
-    }
-
-    schedule(
+  function scheduleBackgroundWork(startupRunId: string): void {
+    scheduleMainStartupTask(
+      startupRunId,
       {
         id: 'main:legacy-import',
         target: 'main',
@@ -2687,10 +2980,12 @@ export async function createMainProcessControl(dependencies: {
         labelKey: 'startup.main.legacyImport',
         run: async () => legacyChatImportService.start(false)
       },
-      'Failed to start legacy import task:'
+      'Failed to start legacy import task:',
+      { component: 'legacy_import', category: 'persistence' }
     )
 
-    schedule(
+    scheduleMainStartupTask(
+      startupRunId,
       {
         id: 'main:rtk-health-check',
         target: 'main',
@@ -2704,10 +2999,12 @@ export async function createMainProcessControl(dependencies: {
           taskContext.reportProgress(1)
         }
       },
-      'Failed to start RTK health check:'
+      'Failed to start RTK health check:',
+      { component: 'rtk_health_check', category: 'resource' }
     )
 
-    schedule(
+    scheduleMainStartupTask(
+      startupRunId,
       {
         id: 'main:usage-stats-backfill',
         target: 'main',
@@ -2716,10 +3013,12 @@ export async function createMainProcessControl(dependencies: {
         labelKey: 'startup.main.usageStatsBackfill',
         run: async (taskContext) => usageStatsService.startBackfill(taskContext)
       },
-      'Failed to start usage stats backfill:'
+      'Failed to start usage stats backfill:',
+      { component: 'usage_stats_backfill', category: 'persistence' }
     )
 
-    schedule(
+    scheduleMainStartupTask(
+      startupRunId,
       {
         id: 'main:sqlite-mainline-normalization',
         target: 'main',
@@ -2732,10 +3031,12 @@ export async function createMainProcessControl(dependencies: {
             taskContext
           )
       },
-      'Failed to start normalization backfill:'
+      'Failed to start normalization backfill:',
+      { component: 'sqlite_mainline_normalization', category: 'persistence' }
     )
 
-    schedule(
+    scheduleMainStartupTask(
+      startupRunId,
       {
         id: 'main:disabled-agent-tool-capability-cleanup',
         target: 'main',
@@ -2751,15 +3052,15 @@ export async function createMainProcessControl(dependencies: {
             taskContext
           )
       },
-      'Failed to start disabled agent tool capability cleanup:'
+      'Failed to start disabled agent tool capability cleanup:',
+      { component: 'disabled_agent_tool_capability_cleanup', category: 'persistence' }
     )
   }
 
-  function stop(): Promise<void> {
-    if (stopPromise) return stopPromise
-
-    appLifecycleState = 'stopping'
-    stopPromise = (async () => {
+  const shutdownCoordinator = new MainShutdownCoordinator(
+    async () => {
+      shutdownStepFailures = 0
+      appLifecycleState = 'stopping'
       windowPresenter.setApplicationQuitting(true)
       startupWorkloadCoordinator.cancelTarget('main')
       await runDestroyStep('acpInitTerminal.kill', () => killTerminal())
@@ -2769,8 +3070,40 @@ export async function createMainProcessControl(dependencies: {
         unsubscribeStartupWorkload()
         appLifecycleState = 'stopped'
       }
-    })()
-    return stopPromise
+      return shutdownStepFailures === 0 ? 'completed' : 'failed'
+    },
+    {
+      started: (reason) => mainLogger.emit('app.shutdown.started', { reason }),
+      terminal: (observation) => {
+        if (observation.outcome === 'completed') {
+          mainLogger.emit('app.shutdown.terminal', {
+            outcome: 'completed',
+            ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs })
+          })
+          return
+        }
+        mainLogger.emit('app.shutdown.terminal', {
+          outcome: 'failed',
+          ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs }),
+          error: { category: 'unknown' }
+        })
+      },
+      actionFailed: (observation) => {
+        mainLogger.emit('app.shutdown.action.failed', {
+          reason: observation.reason,
+          ...(observation.durationMs === undefined ? {} : { durationMs: observation.durationMs }),
+          error: classifyMainLogError(observation.error)
+        })
+      }
+    }
+  )
+
+  function stop(reason: MainLogShutdownReason): Promise<MainShutdownActionClaim | undefined> {
+    return shutdownCoordinator.request(reason)
+  }
+
+  function stopForCleanup(): Promise<void> {
+    return shutdownCoordinator.cleanup()
   }
 
   function assertRouteAllowedDuringDatabaseMaintenance(routeName: string): void {
@@ -2846,12 +3179,12 @@ export async function createMainProcessControl(dependencies: {
       await remoteService.initialize()
       liveDelegationService = createLiveDelegationService()
       liveDelegationService.start()
-      startupWorkloadCoordinator.createRun('main')
-      scheduleBackgroundWork()
+      const startupRunId = startupWorkloadCoordinator.createRun('main')
+      scheduleBackgroundWork(startupRunId)
       databaseMaintenanceState = 'running'
     } catch (error) {
       databaseMaintenanceState = 'failed'
-      await stop()
+      await stopForCleanup()
       throw error
     }
 
@@ -2894,17 +3227,30 @@ export async function createMainProcessControl(dependencies: {
   async function resetApplicationData(
     resetType: 'chat' | 'knowledge' | 'config' | 'all'
   ): Promise<void> {
-    await coordinateApplicationDataReset(resetType, {
-      cliLauncher: cliLauncherService,
-      logger,
-      stop,
-      resetDataByType: (type) => deviceService.resetDataByType(type)
-    })
+    let actionClaim: MainShutdownActionClaim | undefined
+    try {
+      await coordinateApplicationDataReset(resetType, {
+        cliLauncher: cliLauncherService,
+        logger,
+        stop: async () => {
+          actionClaim = await stop('data_reset')
+          if (!actionClaim) throw new Error('Application shutdown is already owned')
+        },
+        resetDataByType: (type) => {
+          if (!actionClaim) throw new Error('Application shutdown claim is unavailable')
+          return actionClaim.run(() => deviceService.resetDataByType(type))
+        }
+      })
+    } catch (error) {
+      actionClaim?.abandon()
+      throw error
+    }
   }
 
   async function restartApplication(): Promise<void> {
-    await stop()
-    await deviceService.restartApp()
+    const actionClaim = await stop('restart')
+    if (!actionClaim) throw new Error('Application shutdown is already owned')
+    await actionClaim.run(() => deviceService.restartApp())
   }
 
   async function openRemoteSession(sessionId: string): Promise<boolean> {
@@ -2959,7 +3305,8 @@ export async function createMainProcessControl(dependencies: {
     confirmShutdown: async () => await knowledgeService.confirmShutdown(),
     cancelShutdown: () => windowPresenter.setApplicationQuitting(false),
     hasMainWindows: () => windowPresenter.getAllWindows().length > 0,
-    stop
+    stop,
+    stopForCleanup
   }
 
   dependencies.bindControl(control)
@@ -2992,16 +3339,18 @@ export async function createMainProcessControl(dependencies: {
     await artifactSpool.initialize()
     await cliServer.start()
   } catch (error) {
+    reportMainStartupComponentFailure(dependencies.startupRunId, 'cli_control', 'unknown')
     logger.error('[CLI] Failed to start local control server', error)
   }
   if (cliServer.getStatus().running) {
     try {
       await cliLauncherService.ensureInstalled()
     } catch (error) {
+      reportMainStartupComponentFailure(dependencies.startupRunId, 'cli_launcher', 'unknown')
       logger.warn('[CLI] Failed to install or refresh the command launcher', error)
     }
   }
   init(dependencies.startupRunId)
-  scheduleBackgroundWork()
+  scheduleBackgroundWork(dependencies.startupRunId)
   return control
 }

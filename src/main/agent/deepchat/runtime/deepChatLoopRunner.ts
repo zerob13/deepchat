@@ -97,13 +97,15 @@ import type {
   InterleavedReasoningConfig,
   ProcessResult,
   ProcessTerminalSelection,
+  RunJournalObserver,
   StreamState
 } from '@/agent/deepchat/runtime/types'
-import { createState } from '@/agent/deepchat/runtime/types'
+import { createState, notifyRunJournalObserver } from '@/agent/deepchat/runtime/types'
 import type {
   ProviderRequestTraceContext,
   ProviderRequestTracePayload
 } from '@/provider/requestTrace'
+import { elapsedMonotonicMs, readMonotonicNow, type MonotonicClock } from '@/lib/monotonicTime'
 import type { InputPreparationCoordinator } from '@/agent/deepchat/loop/inputPreparationCoordinator'
 import type {
   DeepChatContextCoordinator,
@@ -296,6 +298,8 @@ export interface DeepChatLoopRunnerPorts {
   reviewToolPermission: ToolPermissionReviewer
   hookSink: Pick<RuntimeHookSink, 'scope'>
   compaction: Pick<CompactionRuntimeCoordinator, 'apply'>
+  runJournalObserver?: RunJournalObserver
+  diagnosticNow?: MonotonicClock
 }
 
 function createAbortError(): Error {
@@ -325,6 +329,18 @@ function getProviderOverflowRetryMaxTokens(maxTokens: number): number {
 
 function isFirstProviderContextOverflowEvent(event: LLMCoreStreamEvent): boolean {
   return event.type === 'error' && isContextWindowErrorLike(event.error_message)
+}
+
+function normalizeObservedLogicalRound(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return 0
+  const normalized = Math.floor(value)
+  return Number.isSafeInteger(normalized) ? normalized : 0
+}
+
+function normalizeObservedToolCalls(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0
 }
 
 function buildProviderContextOverflowAfterRecoveryErrorMessage(
@@ -703,6 +719,20 @@ export class DeepChatLoopRunner {
         `Execution Journal run identity ${loopRun.runId} was already committed.`
       )
     }
+    const observedRunStartedAt = readMonotonicNow(this.ports.diagnosticNow)
+    const observedLogicalRoundBaseline = normalizeObservedLogicalRound(
+      initialAccounting?.providerRounds
+    )
+    const observedToolCallBaseline = normalizeObservedToolCalls(initialAccounting?.toolCalls)
+    notifyRunJournalObserver(this.ports.runJournalObserver, {
+      type: 'started',
+      runKind: 'loop',
+      runId: loopRun.runId,
+      sessionId,
+      messageId,
+      initialRequestSeq: loopRun.initialRequestSeq
+    })
+
     let terminalCommitAttempted = false
     let committedTerminal: ProcessTerminalSelection | null = null
     const commitRunTerminal = (selection: ProcessTerminalSelection): void => {
@@ -742,6 +772,19 @@ export class DeepChatLoopRunner {
         )
       }
       committedTerminal = { ...selection }
+      const durationMs = elapsedMonotonicMs(observedRunStartedAt, this.ports.diagnosticNow)
+      notifyRunJournalObserver(this.ports.runJournalObserver, {
+        type: 'terminal',
+        runKind: 'loop',
+        runId: loopRun.runId,
+        sessionId,
+        messageId,
+        outcome: selection.outcome,
+        stopReason: selection.stopReason,
+        ...(durationMs === undefined ? {} : { durationMs }),
+        logicalRounds: Math.max(0, loopRun.logicalRound - observedLogicalRoundBaseline),
+        toolCalls: Math.max(0, loopRun.streamState.toolCallCount - observedToolCallBaseline)
+      })
     }
 
     try {

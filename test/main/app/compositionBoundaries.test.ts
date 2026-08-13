@@ -96,6 +96,20 @@ describe('session boundary composition', () => {
     expect(mainProcessSource).not.toContain('providerSettings.attachDatabase(')
   })
 
+  it('applies the persisted logging gate before database initialization can fail', async () => {
+    const { readFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const mainProcessSource = readFileSync(
+      path.resolve(process.cwd(), 'src/main/app/mainProcess.ts'),
+      'utf8'
+    )
+    const loggingGate = mainProcessSource.indexOf('setMainLoggingEnabled(')
+    const databaseInitialization = mainProcessSource.indexOf('new DatabaseInitializer(')
+
+    expect(loggingGate).toBeGreaterThanOrEqual(0)
+    expect(loggingGate).toBeLessThan(databaseInitialization)
+    expect(mainProcessSource.match(/setMainLoggingEnabled\(/g)).toHaveLength(1)
+  })
+
   it('has no late Provider runtime connection or ready fallback', async () => {
     const { readFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs')
     const compositionSource = readFileSync(
@@ -217,8 +231,13 @@ describe('session boundary composition', () => {
       path.resolve(process.cwd(), 'src/main/app/composition.ts'),
       'utf8'
     )
+    const shutdownSource = readFileSync(
+      path.resolve(process.cwd(), 'src/main/app/mainShutdownCoordinator.ts'),
+      'utf8'
+    )
 
-    expect(compositionSource).toContain('if (stopPromise) return stopPromise')
+    expect(shutdownSource).toContain('if (!this.teardownPromise)')
+    expect(shutdownSource).toContain('if (this.actionClaim)')
     expect(compositionSource).toContain("appLifecycleState = 'stopping'")
     expect(compositionSource).toContain("appLifecycleState = 'stopped'")
     expect(compositionSource).toContain('throw new Error(`App lifecycle is ${appLifecycleState}`)')
@@ -232,26 +251,52 @@ describe('session boundary composition', () => {
     )
     const destroyStart = compositionSource.indexOf('async function destroy(): Promise<void>')
     const destroyEnd = compositionSource.indexOf('async function runDestroyStep', destroyStart)
+    expect(destroyStart).toBeGreaterThanOrEqual(0)
+    expect(destroyEnd).toBeGreaterThan(destroyStart)
     const destroySource = compositionSource.slice(destroyStart, destroyEnd)
+    const destroyStepIndex = (step: string): number => {
+      const index = destroySource.indexOf(`'${step}'`)
+      expect(index, `Missing destroy step: ${step}`).toBeGreaterThanOrEqual(0)
+      return index
+    }
 
-    expect(destroySource.indexOf("'remoteService.destroy'")).toBeLessThan(
-      destroySource.indexOf("'sessionRuntimes.suspend'")
+    expect(destroyStepIndex('remoteService.destroy')).toBeLessThan(
+      destroyStepIndex('sessionRuntimes.suspend')
     )
-    expect(destroySource.indexOf("'sessionRuntimes.suspend'")).toBeLessThan(
-      destroySource.indexOf("'skillInitialization.drain'")
+    expect(destroyStepIndex('liveDelegationService.stop')).toBeLessThan(
+      destroyStepIndex('agentInvocationAdmission.close')
     )
-    expect(destroySource.indexOf("'skillInitialization.drain'")).toBeLessThan(
-      destroySource.indexOf("'pluginService.shutdown'")
+    expect(destroyStepIndex('agentInvocationAdmission.close')).toBeLessThan(
+      destroyStepIndex('agentInvocationAdmission.flushObservations')
     )
-    expect(destroySource.indexOf("'skillSyncScan.drain'")).toBeLessThan(
-      destroySource.indexOf("'skillSyncService.destroy'")
+    expect(destroyStepIndex('agentInvocationAdmission.flushObservations')).toBeLessThan(
+      destroyStepIndex('cronJobs.destroy')
+    )
+    expect(destroyStepIndex('sessionRuntimes.suspend')).toBeLessThan(
+      destroyStepIndex('skillInitialization.drain')
+    )
+    expect(destroyStepIndex('skillInitialization.drain')).toBeLessThan(
+      destroyStepIndex('pluginService.shutdown')
+    )
+    expect(destroyStepIndex('skillSyncScan.drain')).toBeLessThan(
+      destroyStepIndex('skillSyncService.destroy')
     )
     expect(destroySource).toContain("'yoBrowserPresenter.shutdown'")
     expect(destroySource).toContain("'tabPresenter.destroy'")
     expect(destroySource).toContain("'backgroundExecSessionManager.shutdown'")
-    expect(destroySource.indexOf("'windowPresenter.destroyWindows'")).toBeLessThan(
-      destroySource.indexOf("'mainDatabase.close'")
+    expect(destroyStepIndex('windowPresenter.destroyWindows')).toBeLessThan(
+      destroyStepIndex('mainDatabase.close')
     )
+  })
+
+  it('does not detach startup workload tasks without an observation owner', async () => {
+    const { readFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const compositionSource = readFileSync(
+      path.resolve(process.cwd(), 'src/main/app/composition.ts'),
+      'utf8'
+    )
+
+    expect(compositionSource).not.toContain('void startupWorkloadCoordinator.scheduleTask(')
   })
 
   it('finishes migrations and Skill initialization before the initial window', async () => {
@@ -328,9 +373,23 @@ describe('session boundary composition', () => {
       path.resolve(process.cwd(), 'src/main/device/routes.ts'),
       'utf8'
     )
+    const compositionSource = readFileSync(
+      path.resolve(process.cwd(), 'src/main/app/composition.ts'),
+      'utf8'
+    )
+    const restartStart = compositionSource.indexOf('async function restartApplication()')
+    const restartEnd = compositionSource.indexOf('\n  }', restartStart)
+    expect(restartStart).toBeGreaterThanOrEqual(0)
+    expect(restartEnd).toBeGreaterThan(restartStart)
+    const restartSource = compositionSource.slice(restartStart, restartEnd)
 
     expect(deviceRoutesSource).toContain('await deps.restartApplication()')
     expect(deviceRoutesSource).not.toContain('await deps.device.restartApp()')
+    expect(restartSource).toContain("const actionClaim = await stop('restart')")
+    expect(restartSource).toContain(
+      "if (!actionClaim) throw new Error('Application shutdown is already owned')"
+    )
+    expect(compositionSource).toContain("actionClaim = await stop('data_reset')")
   })
 
   it('publishes runtime updates through the Session boundary', async () => {
