@@ -43,7 +43,10 @@ function createHarness() {
       scopeFor: vi.fn()
     },
     interactionParking: { clearSession: vi.fn(record('interactionParking.clearSession')) },
-    toolSurfaceDiagnostics: { clear: vi.fn(record('toolSurfaceDiagnostics.clear')) }
+    toolSurfaceDiagnostics: { clear: vi.fn(record('toolSurfaceDiagnostics.clear')) },
+    programmaticToolParents: {
+      releaseSession: vi.fn(record('programmaticToolParents.releaseSession'))
+    }
   } as unknown as SessionLifecycleCoordinatorDependencies
 
   return { cancel, coordinator: new SessionLifecycleCoordinator(deps), deps, order, runtime }
@@ -51,11 +54,12 @@ function createHarness() {
 
 describe('SessionLifecycleCoordinator', () => {
   it('cleans nothing and hydrates nothing when the session has no runtime instance', async () => {
-    const { cancel, coordinator, runtime } = createHarness()
+    const { cancel, coordinator, deps, runtime } = createHarness()
 
     await coordinator.cleanup(SESSION_ID)
 
     expect(cancel).not.toHaveBeenCalled()
+    expect(deps.programmaticToolParents.releaseSession).not.toHaveBeenCalled()
     expect(runtime.getHydrated(toAppSessionId(SESSION_ID))).toBeUndefined()
   })
 
@@ -117,6 +121,7 @@ describe('SessionLifecycleCoordinator', () => {
       'pendingInputs.deleteBySession',
       'transcript.deleteBySession',
       'sessionStore.delete',
+      'programmaticToolParents.releaseSession',
       'interactionParking.clearSession',
       'toolSurfaceDiagnostics.clear',
       'memory.finishSessionDestroy',
@@ -137,9 +142,21 @@ describe('SessionLifecycleCoordinator', () => {
       'pendingInputs.deleteBySession',
       'transcript.deleteBySession',
       'sessionStore.delete',
+      'programmaticToolParents.releaseSession',
       'interactionParking.clearSession',
       'memory.finishSessionDestroy',
       'toolService.clearConversationToolMapping'
     ])
+  })
+
+  it('retains the parent fence when durable Session deletion fails', async () => {
+    const { coordinator, deps } = createHarness()
+    vi.mocked(deps.sessionStore.delete).mockImplementationOnce(() => {
+      throw new Error('tape deletion failed')
+    })
+
+    await expect(coordinator.destroy(SESSION_ID)).rejects.toThrow('tape deletion failed')
+
+    expect(deps.programmaticToolParents.releaseSession).not.toHaveBeenCalled()
   })
 })

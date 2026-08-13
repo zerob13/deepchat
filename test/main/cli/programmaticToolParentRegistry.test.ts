@@ -44,7 +44,7 @@ function binding(): AgentCliProgrammaticOperationBinding {
 
 function setup() {
   const operationBinding = binding()
-  const { table } = createTapeTableMock()
+  const { entries, table } = createTapeTableMock()
   const journal = new ExecutionJournalService(() => table)
   const authority = new AgentCliTokenAuthority({
     createToken: () => 'p'.repeat(43),
@@ -63,7 +63,7 @@ function setup() {
     messageId: operationBinding.operation.messageId,
     runKind: 'loop'
   })
-  return { authority, controller, journal, operationBinding, registration, registry }
+  return { authority, controller, entries, journal, operationBinding, registration, registry }
 }
 
 describe('ProgrammaticToolParentRegistry', () => {
@@ -383,6 +383,66 @@ describe('ProgrammaticToolParentRegistry', () => {
 
     expect(registry.commitRunTerminal(RUN, commit)).toMatchObject({ created: true })
     expect(commit).toHaveBeenCalledOnce()
+  })
+
+  it('releases a deleted Session without inventing outcomes for a nested T1-only operation', () => {
+    const { authority, controller, entries, journal, operationBinding, registration, registry } =
+      setup()
+    const outerDispatch = journal.commitDispatch({
+      sessionId: operationBinding.operation.sessionId,
+      messageId: operationBinding.operation.messageId,
+      operation: {
+        runId: operationBinding.operation.runId,
+        requestSeq: operationBinding.operation.requestSeq,
+        providerToolCallId: operationBinding.operation.providerToolCallId
+      },
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool call', stdin: '{}' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' }
+    })
+    registration.armOuterDispatch({ ...outerDispatch, operation: operationBinding.operation })
+    registration.takeArmedToken()
+    const argumentTemplate = { arguments: { value: 'write' }, bindings: [] }
+    controller.reserveChildren([
+      {
+        childOrdinal: 0,
+        toolName: 'remote_write',
+        toolSource: 'mcp',
+        target: { serverName: 'remote', originalName: 'remote_write' },
+        definitionHash: '4'.repeat(64),
+        argumentTemplate
+      }
+    ])
+    controller.materializeChild({
+      childOrdinal: 0,
+      argumentTemplate,
+      normalizedArguments: { value: 'write' }
+    })
+    controller.commitChildDispatch(0, {
+      toolName: 'remote_write',
+      toolSource: 'mcp',
+      normalizedArguments: { value: 'write' },
+      target: { serverName: 'remote', originalName: 'remote_write' }
+    })
+    const journalEventCount = entries.length
+
+    expect(() => registry.assertRunTerminalAllowed(RUN)).toThrow(/has not settled/)
+    registry.releaseSession('another-session')
+    expect(() => registry.assertRunTerminalAllowed(RUN)).toThrow(/has not settled/)
+
+    registry.releaseSession(RUN.sessionId)
+
+    expect(entries).toHaveLength(journalEventCount)
+    expect(
+      entries.some(
+        (entry) =>
+          entry.name === 'execution/tool_outcome' || entry.name === 'execution/run_terminal'
+      )
+    ).toBe(false)
+    expect(authority.snapshot()).toEqual({ tokens: 0, conversations: 0 })
+    expect(() => registry.assertRunTerminalAllowed(RUN)).not.toThrow()
+    expect(() => registration.takeCompletedInvocationResult()).toThrow(/no longer active/)
   })
 
   it('arms from the real outer T1 receipt and settles outer T2 before Run terminal', () => {

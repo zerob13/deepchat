@@ -23,6 +23,7 @@ import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
 import type { InteractionParkingRegistry } from './interactionParkingRegistry'
 import type { ToolSurfaceShadowDiagnosticsRegistryPort } from './toolSurfaceDiagnostics'
 import { revokeToolSurfaceDeferredDispatchesForSession } from './toolSurface'
+import type { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 
 export interface SessionInitConfig {
   agentId?: string
@@ -56,6 +57,7 @@ export interface SessionLifecycleCoordinatorDependencies {
   >
   interactionParking: Pick<InteractionParkingRegistry, 'clearSession'>
   toolSurfaceDiagnostics: Pick<ToolSurfaceShadowDiagnosticsRegistryPort, 'clear'>
+  programmaticToolParents: Pick<ProgrammaticToolParentRegistry, 'releaseSession'>
 }
 
 export class SessionLifecycleCoordinator {
@@ -135,6 +137,7 @@ export class SessionLifecycleCoordinator {
     this.deps.pendingInputs.deleteBySession(sessionId)
     this.deps.transcript.deleteBySession(sessionId)
     this.deps.sessionStore.delete(sessionId)
+    this.deps.programmaticToolParents.releaseSession(sessionId)
     this.deps.interactionParking.clearSession(sessionId)
     if (instance) {
       try {

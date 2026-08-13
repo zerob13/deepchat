@@ -281,6 +281,11 @@ export class ProgrammaticToolParentController {
     this.stateValue = 'revoked'
   }
 
+  /** Releases bearer/process authority without inventing a durable outcome for an armed parent. */
+  releaseProcessAuthority(): void {
+    this.preparedGrant.revoke()
+  }
+
   failBeforeChildPlan(): void {
     this.requireState('armed')
     if (this.children) {

@@ -301,6 +301,15 @@ export class ProgrammaticToolParentRegistry {
     }
   }
 
+  /** Releases process-live authority only after the owning Session's durable facts are deleted. */
+  releaseSession(sessionId: string): void {
+    for (const [key, { controller }] of this.parents) {
+      if (controller.operation.sessionId !== sessionId) continue
+      controller.releaseProcessAuthority()
+      this.parents.delete(key)
+    }
+  }
+
   commitRunTerminal(
     run: ProgrammaticToolParentRunIdentity,
     commit: () => ExecutionJournalCommitReceipt
