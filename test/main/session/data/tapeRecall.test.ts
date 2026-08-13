@@ -2940,6 +2940,8 @@ describe('SessionTape recall', () => {
         const projectionTable = new DeepChatTapeSearchProjectionTable(db)
         table.createTable()
         projectionTable.createTable()
+        table.ensureBootstrapAnchor('s1')
+        const tapeIncarnationId = table.getBootstrapIncarnation('s1')!
         const service = new SessionTape({
           deepchatTapeEntriesTable: table,
           deepchatTapeSearchProjectionTable: projectionTable,
@@ -2999,14 +3001,31 @@ describe('SessionTape recall', () => {
           pathHits[0].entryId
         )
         const replaceProjection = vi.spyOn(projectionTable, 'replaceSession')
-        const contextFact = table.append({
-          sessionId: 's1',
-          kind: 'context',
-          name: 'skill/materialized',
-          source: { type: 'runtime_event', id: 'skill-source', seq: 0 },
-          payload: { effectiveContent: 'private-skill-materialization-needle' },
-          meta: {}
-        })
+        const effectiveContent = 'private-skill-materialization-needle'
+        const fixtureHash = hashSkillEffectiveContent(effectiveContent)
+        const [receipt] = new TapeSkillMaterializationService({
+          getSkillMaterializationStore: () => table
+        }).materializeSkillContexts([
+          {
+            sessionId: 's1',
+            expectedTapeIncarnationId: tapeIncarnationId,
+            agentId: 'agent-1',
+            sourceType: 'builtin',
+            sourceId: 'skill-source',
+            skillName: 'projection-isolation',
+            effectiveContent,
+            builderVersion: 'test-builder',
+            renderedManifestHash: fixtureHash,
+            scriptInventoryHash: fixtureHash,
+            executionPackage: {
+              files: [],
+              executables: [],
+              runtimePolicy: { python: 'auto', node: 'auto' },
+              environmentBindingId: null
+            }
+          }
+        ])
+        const contextFact = table.getByEntryId('s1', receipt.entryId)!
         expect(table.getMaxEntryId('s1')).toBe(contextFact.entry_id)
         expect(table.getMaxEntryIdExcludingContext('s1')).toBeLessThan(contextFact.entry_id)
         expect(service.search('s1', 'Redis TTL', { limit: 5 })).toHaveLength(1)
@@ -3020,7 +3039,10 @@ describe('SessionTape recall', () => {
             exitStatus: 42
           }
         })
-        expect(projectionTable.isCurrent('s1', table.getMaxEntryId('s1'))).toBe(true)
+        expect(projectionTable.isCurrent('s1', table.getMaxEntryIdExcludingContext('s1'))).toBe(
+          true
+        )
+        expect(projectionTable.isCurrent('s1', table.getMaxEntryId('s1'))).toBe(false)
 
         table.append({
           sessionId: 's1',

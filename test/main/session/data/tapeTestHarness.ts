@@ -19,6 +19,7 @@ import { DeepChatTapeEntriesTable } from '@/session/data/tables/deepchatTapeEntr
 import { DeepChatExecutionJournalStore } from '@/tape/infrastructure/sqlite/tapeEntryStore'
 import { EXECUTION_JOURNAL_EVENT_NAMES } from '@/tape/domain/executionJournal'
 import { SqliteTapeLifecycleAdapter } from '@/tape/infrastructure/sqlite/tapeLifecycleAdapter'
+import type { TapeTransactionRunner } from '@/tape/ports/storage'
 import {
   DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION,
   DeepChatTapeSearchProjectionTable
@@ -64,6 +65,24 @@ function createTapeTableMock() {
   const entries: any[] = []
   let tapeIncarnationSequence = 0
   let inTransaction = false
+  const runInTransaction: TapeTransactionRunner['runInTransaction'] = <T>(
+    operation: () => T
+  ): T => {
+    const snapshot = entries.map((entry) => ({ ...entry }))
+    const previousTransactionState = inTransaction
+    inTransaction = true
+    try {
+      return operation()
+    } catch (error) {
+      entries.splice(0, entries.length, ...snapshot)
+      throw error
+    } finally {
+      inTransaction = previousTransactionState
+    }
+  }
+  const runInTransactionMock = vi.fn((operation: () => unknown) =>
+    runInTransaction(operation)
+  ) as ReturnType<typeof vi.fn> & TapeTransactionRunner['runInTransaction']
   const table = {
     ensureBootstrapAnchor: vi.fn((sessionId: string) => {
       if (
@@ -190,19 +209,7 @@ function createTapeTableMock() {
           unterminatedRunKeys.has(runKey(entry.session_id, entry.source_id))
       )
     }),
-    runInTransaction: vi.fn((operation: () => unknown) => {
-      const snapshot = entries.map((entry) => ({ ...entry }))
-      const previousTransactionState = inTransaction
-      inTransaction = true
-      try {
-        return operation()
-      } catch (error) {
-        entries.splice(0, entries.length, ...snapshot)
-        throw error
-      } finally {
-        inTransaction = previousTransactionState
-      }
-    }),
+    runInTransaction: runInTransactionMock,
     isInTransaction: vi.fn(() => inTransaction),
     getBySession: vi.fn((sessionId: string) =>
       entries.filter((entry) => entry.session_id === sessionId)

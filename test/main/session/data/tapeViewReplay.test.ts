@@ -473,6 +473,9 @@ describe('SessionTape view and replay', () => {
       assembledAt: 200
     }
     const manifest = createTapeViewManifest(baseInput)
+    if (manifest.schemaVersion !== 6 && manifest.schemaVersion !== 7) {
+      throw new Error('Expected a Skill-bearing ViewManifest fixture.')
+    }
     const first = service.appendViewManifest(manifest)
     const second = service.appendViewManifest(manifest)
     const laterRetry = service.appendViewManifest(
