@@ -60,9 +60,62 @@ export const MAX_PROGRAMMATIC_TOOL_BATCH_STEPS = MAX_TAPE_PROGRAMMATIC_TOOL_BATC
 export const MAX_PROGRAMMATIC_TOOL_INPUT_BYTES = MAX_TAPE_PROGRAMMATIC_TOOL_INPUT_BYTES
 export const MAX_PROGRAMMATIC_TOOL_OUTPUT_BYTES = MAX_TAPE_PROGRAMMATIC_TOOL_OUTPUT_BYTES
 export const MAX_PROGRAMMATIC_TOOL_DURATION_MS = MAX_TAPE_PROGRAMMATIC_TOOL_DURATION_MS
+export const PROGRAMMATIC_EXEC_STDIN_DESCRIPTION =
+  'Owned request body for DeepChat Programmatic Tool call or batch commands'
 
 const CANONICAL_JSON_OPTIONS = Object.freeze({ omitUndefinedProperties: true })
 const MAX_WORKSPACE_PATH_BYTES = 32 * 1024
+const PROGRAMMATIC_EXEC_STDIN_SCHEMA = Object.freeze({
+  type: 'string',
+  minLength: 1,
+  maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
+  description: PROGRAMMATIC_EXEC_STDIN_DESCRIPTION
+})
+
+function isAgentExecDefinition(definition: MCPToolDefinition): boolean {
+  return (
+    definition.source === 'agent' &&
+    definition.function.name === 'exec' &&
+    definition.server.name === 'agent-filesystem'
+  )
+}
+
+export function exposeProgrammaticExecStdin(
+  definitions: readonly MCPToolDefinition[]
+): MCPToolDefinition[] {
+  return definitions.map((definition) => {
+    if (!isAgentExecDefinition(definition)) {
+      return definition
+    }
+    const existing = definition.function.parameters.properties.stdin
+    if (existing !== undefined) {
+      if (
+        definition.function.parameters.required?.includes('stdin') ||
+        canonicalJsonStringifyData(existing, CANONICAL_JSON_OPTIONS) !==
+        canonicalJsonStringifyData(PROGRAMMATIC_EXEC_STDIN_SCHEMA, CANONICAL_JSON_OPTIONS)
+      ) {
+        throw new ToolSurfaceError(
+          'Agent exec exposes a conflicting Programmatic stdin contract.',
+          'conflicting_tool'
+        )
+      }
+      return definition
+    }
+    return {
+      ...definition,
+      function: {
+        ...definition.function,
+        parameters: {
+          ...definition.function.parameters,
+          properties: {
+            ...definition.function.parameters.properties,
+            stdin: PROGRAMMATIC_EXEC_STDIN_SCHEMA
+          }
+        }
+      }
+    }
+  })
+}
 
 export interface ProgrammaticToolSurfaceEntryV1 {
   readonly target: DeepChatExecutionToolTargetIdentity

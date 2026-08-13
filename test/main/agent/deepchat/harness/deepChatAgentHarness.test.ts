@@ -72,6 +72,7 @@ import {
 } from '@/tape/domain/toolSurfaceFacts'
 import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 import { ToolSurfaceCanaryDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
+import { MAX_PROGRAMMATIC_TOOL_INPUT_BYTES } from '@/agent/deepchat/runtime/programmaticToolSurface'
 
 vi.mock('nanoid', () => ({ nanoid: vi.fn(() => 'mock-msg-id') }))
 
@@ -3012,6 +3013,17 @@ describe('DeepChatAgentHarness', () => {
         }))
         ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
           expect(params.run.resources.toolSurfaceMode).toBe(expectedMode)
+          const exec = params.run.resources.toolDefinitions.find(
+            (definition) => definition.function.name === 'exec'
+          )
+          expect(exec?.function.parameters.properties.stdin).toEqual(
+            expectedMode === 'cli-programmatic'
+              ? expect.objectContaining({
+                  type: 'string',
+                  maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES
+                })
+              : undefined
+          )
           expect(
             String(params.run.messages[0]?.content).includes('## Programmatic Tool Access')
           ).toBe(expectedMode === 'cli-programmatic')
@@ -3824,6 +3836,7 @@ describe('DeepChatAgentHarness', () => {
       recreateAgentWithToolSurfaceRunMode(() => 'cli-programmatic')
       const providerEntryFactNames: string[][] = []
       const providerToolNamesAtEntry: string[][] = []
+      const providerExecStdinSchemas: unknown[] = []
       llmProvider.providerInstance.coreStream.mockImplementation(
         async function* (
           _messages,
@@ -3834,6 +3847,10 @@ describe('DeepChatAgentHarness', () => {
           requestTools
         ) {
           providerToolNamesAtEntry.push(requestTools.map((tool) => tool.function.name))
+          providerExecStdinSchemas.push(
+            requestTools.find((tool) => tool.function.name === 'exec')?.function.parameters.properties
+              .stdin
+          )
           providerEntryFactNames.push(
             sqlitePresenter.deepchatTapeEntriesTable
               .getBySession('s1')
@@ -3847,6 +3864,11 @@ describe('DeepChatAgentHarness', () => {
       const bindings: LoopRunRequestToolSurfaceBinding[] = []
       ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
         expect(params.run.resources.toolSurfaceMode).toBe('cli-programmatic')
+        expect(
+          params.run.resources.toolDefinitions.find(
+            (definition) => definition.function.name === 'exec'
+          )?.function.parameters.properties.stdin
+        ).toMatchObject({ type: 'string', maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES })
         const initialSystemPrompt = String(params.run.messages[0]?.content)
         expect(initialSystemPrompt).toContain('## Programmatic Tool Access')
         expect(initialSystemPrompt.match(/## Programmatic Tool Access/g)).toHaveLength(1)
@@ -3884,6 +3906,16 @@ describe('DeepChatAgentHarness', () => {
       expect(providerToolNamesAtEntry).toEqual([
         ['exec', 'deepchat_question'],
         ['exec', 'deepchat_question']
+      ])
+      expect(providerExecStdinSchemas).toEqual([
+        expect.objectContaining({
+          type: 'string',
+          maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES
+        }),
+        expect.objectContaining({
+          type: 'string',
+          maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES
+        })
       ])
       expect(providerEntryFactNames).toEqual([
         [

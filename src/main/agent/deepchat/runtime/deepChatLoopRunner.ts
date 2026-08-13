@@ -171,6 +171,7 @@ import {
   assertProgrammaticToolCapabilityViewPrepared,
   buildProgrammaticToolCapabilityV1,
   createProgrammaticToolSurfaceRunControllerV1,
+  exposeProgrammaticExecStdin,
   projectProgrammaticToolTapeProvenanceV1,
   type ProgrammaticToolCapabilityV1
 } from './programmaticToolSurface'
@@ -854,12 +855,14 @@ export class DeepChatLoopRunner {
           agentExecAvailable
         ) {
           try {
+            const programmaticProviderDefinitions =
+              exposeProgrammaticExecStdin(initialProviderActiveDefinitions)
             programmaticController = createProgrammaticToolSurfaceRunControllerV1({
               ceilingDefinitions: [
-                ...initialProviderActiveDefinitions,
+                ...programmaticProviderDefinitions,
                 ...ceilingDefinitions.filter((definition) => definition.source === 'mcp')
               ],
-              providerActiveDefinitions: initialProviderActiveDefinitions,
+              providerActiveDefinitions: programmaticProviderDefinitions,
               policyVersion: PROGRAMMATIC_TOOL_SURFACE_POLICY_VERSION
             })
           } catch (error) {
@@ -970,12 +973,14 @@ export class DeepChatLoopRunner {
         const initialProviderActiveDefinitions = tools.filter(
           (definition) => definition.source === 'agent'
         )
+        const programmaticProviderDefinitions =
+          exposeProgrammaticExecStdin(initialProviderActiveDefinitions)
         toolSurfaceController = createProgrammaticToolSurfaceRunControllerV1({
           ceilingDefinitions: [
-            ...initialProviderActiveDefinitions,
+            ...programmaticProviderDefinitions,
             ...ceilingDefinitions.filter((definition) => definition.source === 'mcp')
           ],
-          providerActiveDefinitions: initialProviderActiveDefinitions,
+          providerActiveDefinitions: programmaticProviderDefinitions,
           policyVersion: PROGRAMMATIC_TOOL_SURFACE_POLICY_VERSION
         })
         programmaticProviderActiveDefinitions = Object.freeze(
@@ -1021,6 +1026,10 @@ export class DeepChatLoopRunner {
       toolSurfaceMode === 'cli-programmatic'
         ? appendCliProgrammaticToolAdapterSection(initialPromptAssembly)
         : initialPromptAssembly
+    const runToolDefinitions =
+      toolSurfaceMode === 'cli-programmatic'
+        ? exposeProgrammaticExecStdin(tools)
+        : tools
     const runMessages =
       runPromptAssembly === initialPromptAssembly
         ? messages
@@ -1070,7 +1079,7 @@ export class DeepChatLoopRunner {
       messages: runMessages,
       streamState: createState(),
       resources: {
-        toolDefinitions: tools,
+        toolDefinitions: runToolDefinitions,
         activeSkillNames: initialRunSkillNames,
         promptAssembly: runPromptAssembly,
         commandShell,

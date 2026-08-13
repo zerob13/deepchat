@@ -86,6 +86,7 @@ import {
 import { recordToolSurfaceCanaryDiscovery } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 import {
   MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
+  PROGRAMMATIC_EXEC_STDIN_DESCRIPTION,
   type ProgrammaticToolCapabilityV1
 } from '@/agent/deepchat/runtime/programmaticToolSurface'
 import {
@@ -299,7 +300,7 @@ export class AgentToolManager {
           `stdin must not exceed ${MAX_PROGRAMMATIC_TOOL_INPUT_BYTES} UTF-8 bytes`
         )
         .optional()
-        .describe('Owned request body for DeepChat Programmatic Tool call or batch commands'),
+        .describe(PROGRAMMATIC_EXEC_STDIN_DESCRIPTION),
       timeoutMs: z
         .number()
         .min(100)
@@ -960,6 +961,12 @@ export class AgentToolManager {
 
   private getFileSystemToolDefinitions(): MCPToolDefinition[] {
     const schemas = this.fileSystemSchemas
+    const execParameters = toDeepChatJsonSchema(schemas.exec) as {
+      type: string
+      properties: Record<string, unknown>
+      required?: string[]
+    }
+    const { stdin: _programmaticStdin, ...execProviderProperties } = execParameters.properties
     const defs: MCPToolDefinition[] = [
       {
         execution: TOOL_EXECUTION.read.parallel,
@@ -1063,10 +1070,9 @@ export class AgentToolManager {
           name: 'exec',
           description:
             'Execute a shell command in the current working directory or an explicit cwd. External cwd paths are allowed in Full Access mode; default mode asks for approval. Use background: true when you know the command should detach immediately. Otherwise foreground exec waits briefly, and long-running commands may auto-background and return a session ID for use with the process tool.',
-          parameters: toDeepChatJsonSchema(schemas.exec) as {
-            type: string
-            properties: Record<string, unknown>
-            required?: string[]
+          parameters: {
+            ...execParameters,
+            properties: execProviderProperties
           }
         },
         server: {

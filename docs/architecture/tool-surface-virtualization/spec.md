@@ -511,10 +511,13 @@ versioned pricing. Providers lacking comparable cache/pricing remain separate co
 Native identity, approval, permission, Journal, and results remain native. Small catalogs preserve
 eligible calls. V4 needs no ExecutionContract and its `toolDefinitionsHash` covers exact active
 definitions; V5 ceilings remain provider-only. Existing manifests/contracts/facts/hash recipes do
-not mutate. The Agent `exec` provider schema receives one globally stable bounded owned-stdin field;
-it is not conditional on adapter choice. This intentional one-time schema/cache-prefix change keeps
-existing command calls valid and binds stdin into permission and Journal argument hashing. ACP and
-disabled configurable tools remain excluded. Search/selector errors are bounded
+not mutate. The canonical Agent `exec` provider schema has no owned-stdin field. A Run frozen to CLI
+Programmatic receives one stable bounded owned-stdin field before its ceiling, snapshot, and hashes
+are constructed; every View in that Run uses the same projected definition. Other adapters retain
+the existing schema and avoid an unusable field and its cache-prefix churn. Runtime validation still
+rejects owned stdin without exact Programmatic authority, and accepted stdin is bound into the
+invocation grant and Journal argument hashing. ACP and disabled configurable tools remain excluded.
+Search/selector errors are bounded
 and never expose the full catalog. In a Native Activation canary, initial selector failure degrades
 to bounded core plus native `tool_search`; an individual search failure returns a bounded error.
 Rollback prevents new canary Runs and never mutates an existing Run or facts. Search cannot enumerate

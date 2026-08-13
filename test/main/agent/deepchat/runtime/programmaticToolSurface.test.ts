@@ -5,6 +5,7 @@ import {
   MAX_PROGRAMMATIC_TOOL_AUTHORITY_PROJECTION_BYTES,
   MAX_PROGRAMMATIC_TOOL_BATCH_STEPS,
   MAX_PROGRAMMATIC_TOOL_CHILDREN,
+  MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
   PROGRAMMATIC_TOOL_ADAPTER_MODE,
   attachProgrammaticToolDeferredResumeCapability,
   assertIssuedProgrammaticToolCapability,
@@ -13,6 +14,7 @@ import {
   buildProgrammaticToolCapabilityV1,
   buildProgrammaticToolSurfaceV1,
   createProgrammaticToolSurfaceRunControllerV1,
+  exposeProgrammaticExecStdin,
   markProgrammaticToolCapabilityProvenanceCommitted,
   preflightProgrammaticToolRunCeilingV1,
   projectProgrammaticToolTapeProvenanceV1,
@@ -201,6 +203,39 @@ function expectSurfaceError(run: () => unknown, code: ToolSurfaceError['code']):
 }
 
 describe('Programmatic Tool Surface', () => {
+  it('projects owned exec stdin only onto the Programmatic provider surface', () => {
+    const exec = agentTool('exec')
+    const remote = mcpTool('remote_read')
+    const exposed = exposeProgrammaticExecStdin([exec, remote])
+    const exposedExec = exposed[0]
+
+    expect(exec.function.parameters.properties.stdin).toBeUndefined()
+    expect(exposedExec).not.toBe(exec)
+    expect(exposedExec.function.parameters.properties.stdin).toMatchObject({
+      type: 'string',
+      minLength: 1,
+      maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES
+    })
+    expect(exposed[1]).toBe(remote)
+
+    expectSurfaceError(
+      () =>
+        exposeProgrammaticExecStdin([
+          {
+            ...exec,
+            function: {
+              ...exec.function,
+              parameters: {
+                ...exec.function.parameters,
+                properties: { ...exec.function.parameters.properties, stdin: { type: 'number' } }
+              }
+            }
+          }
+        ]),
+      'conflicting_tool'
+    )
+  })
+
   it('derives a frozen MCP-only surface disjoint from the provider-active surface', () => {
     const native = agentTool('exec')
     const pinned = mcpTool('remote_read')

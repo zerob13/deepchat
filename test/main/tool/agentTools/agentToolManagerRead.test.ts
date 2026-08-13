@@ -10,7 +10,6 @@ import { backgroundExecSessionManager } from '@/agent/shared/process/backgroundE
 import * as sessionVisionResolverModule from '@/agent/vision/sessionVisionResolver'
 import { createAgentToolDependencies } from './agentToolDependencies'
 import { CommandPermissionService } from '@/tool/permission'
-import { MAX_PROGRAMMATIC_TOOL_INPUT_BYTES } from '@/agent/deepchat/runtime/programmaticToolSurface'
 
 vi.mock('fs', async (importOriginal) => {
   const actual = (await importOriginal()) as typeof import('fs')
@@ -197,10 +196,7 @@ describe('AgentToolManager read routing', () => {
       process: { effect: 'write', mode: 'sequential' }
     })
     const exec = definitions.find((definition) => definition.function.name === 'exec')
-    expect(exec?.function.parameters.properties.stdin).toMatchObject({
-      type: 'string',
-      maxLength: MAX_PROGRAMMATIC_TOOL_INPUT_BYTES
-    })
+    expect(exec?.function.parameters.properties.stdin).toBeUndefined()
   })
 
   it('commits process mutations after local validation and before the utility target', async () => {
