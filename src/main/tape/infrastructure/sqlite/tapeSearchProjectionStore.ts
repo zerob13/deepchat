@@ -22,7 +22,8 @@ import type {
 // Version 6 derives tool order refs from the corresponding effective message.
 // Version 7 excludes Tool Surface provenance from ordinary Tape search.
 // Version 8 excludes Programmatic Tool Surface provenance from ordinary Tape search.
-export const DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION = 8
+// Version 9 excludes provider View manifests and their ExecutionContract provenance.
+export const DEEPCHAT_TAPE_SEARCH_PROJECTION_VERSION = 9
 
 export type DeepChatTapeSearchProjectionInput = TapeSearchProjectionInput
 export type DeepChatTapeSearchProjectionRow = TapeSearchProjectionRow
