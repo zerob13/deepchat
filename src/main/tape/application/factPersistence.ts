@@ -300,6 +300,33 @@ export function buildTapeToolRevisionIndex(rows: DeepChatTapeEntryRow[]): TapeTo
   return revisions
 }
 
+function buildToolFactMeta(
+  source: TapeFactSource,
+  status: string,
+  options: TapeToolFactAppendOptions,
+  storedMeta?: Record<string, unknown>
+): Record<string, unknown> {
+  const baseMeta = options.reason
+    ? { source, role: 'assistant', status, reason: options.reason }
+    : { source, role: 'assistant', status }
+  if (options.skillContextEvidence) {
+    return {
+      ...baseMeta,
+      skillContextEvidence: readSkillContextEvidence({
+        schemaVersion: 1,
+        ...options.skillContextEvidence
+      })
+    }
+  }
+  if (options.allowStoredSkillContextEvidence && storedMeta?.skillContextEvidence) {
+    return {
+      ...baseMeta,
+      skillContextEvidence: readSkillContextEvidence(storedMeta.skillContextEvidence)
+    }
+  }
+  return baseMeta
+}
+
 export function appendTapeToolFact(
   table: TapeFactWriter,
   input: TapeToolFactInput,
@@ -312,18 +339,7 @@ export function appendTapeToolFact(
   const { prepared } = described
 
   table.ensureBootstrapAnchor(input.sessionId)
-  const baseMeta = options.reason
-    ? { source, role: 'assistant', status: block.status, reason: options.reason }
-    : { source, role: 'assistant', status: block.status }
-  const meta = options.skillContextEvidence
-    ? {
-        ...baseMeta,
-        skillContextEvidence: readSkillContextEvidence({
-          schemaVersion: 1,
-          ...options.skillContextEvidence
-        })
-      }
-    : baseMeta
+  const meta = buildToolFactMeta(source, block.status, options)
   return table.append({
     sessionId: input.sessionId,
     kind: prepared.kind,
@@ -356,25 +372,8 @@ export function assertTapeToolFactPhysicalEnvelope(
   const described = describeTapeToolFact(input)
   if (!described) throw new Error('Tape tool fact input is not appendable.')
   const { prepared } = described
-  const baseMeta = options.reason
-    ? { source, role: 'assistant', status: input.block.status, reason: options.reason }
-    : { source, role: 'assistant', status: input.block.status }
   const storedMeta = parseTapeJsonObject(row.meta_json)
-  let expectedMeta: Record<string, unknown> = baseMeta
-  if (options.skillContextEvidence) {
-    expectedMeta = {
-      ...baseMeta,
-      skillContextEvidence: readSkillContextEvidence({
-        schemaVersion: 1,
-        ...options.skillContextEvidence
-      })
-    }
-  } else if (options.allowStoredSkillContextEvidence && storedMeta.skillContextEvidence) {
-    expectedMeta = {
-      ...baseMeta,
-      skillContextEvidence: readSkillContextEvidence(storedMeta.skillContextEvidence)
-    }
-  }
+  const expectedMeta = buildToolFactMeta(source, input.block.status, options, storedMeta)
   const expectedProvenanceKey = buildToolFactProvenanceKey(
     prepared.kind,
     input.messageId,

@@ -328,13 +328,21 @@ export class AgentToolManager {
       query: z
         .string()
         .max(SKILL_LIST_QUERY_MAX_BYTES)
+        .refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= SKILL_LIST_QUERY_MAX_BYTES,
+          `Query may contain at most ${SKILL_LIST_QUERY_MAX_BYTES} UTF-8 bytes`
+        )
         .optional()
         .describe(
-          'Optional local lexical search over skill names, categories, and descriptions (up to 256 Unicode characters).'
+          `Optional local lexical search over skill names, categories, and descriptions (up to ${SKILL_LIST_QUERY_MAX_BYTES} UTF-8 bytes).`
         ),
       cursor: z
         .string()
         .max(SKILL_LIST_CURSOR_MAX_BYTES)
+        .refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= SKILL_LIST_CURSOR_MAX_BYTES,
+          `Cursor may contain at most ${SKILL_LIST_CURSOR_MAX_BYTES} UTF-8 bytes`
+        )
         .optional()
         .describe('Opaque cursor from a previous skill_list response.'),
       limit: z
@@ -364,6 +372,10 @@ export class AgentToolManager {
         .string()
         .min(1)
         .max(SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES)
+        .refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES,
+          `Script path may contain at most ${SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES} UTF-8 bytes`
+        )
         .describe(
           'Exact canonical script path from the active skill inventory (scripts/<name>.<ext>)'
         ),
@@ -2794,10 +2806,12 @@ export class AgentToolManager {
       throw new Error(`Invalid arguments for skill_run: ${validationResult.error.message}`)
     }
 
+    const requestSeq = options?.requestSeq
     if (
       !options?.runId ||
-      !Number.isSafeInteger(options.requestSeq) ||
-      (options.requestSeq ?? 0) <= 0 ||
+      requestSeq === undefined ||
+      !Number.isSafeInteger(requestSeq) ||
+      requestSeq <= 0 ||
       !options.manifestHash ||
       !options.tapeIncarnationId
     ) {
@@ -2807,7 +2821,7 @@ export class AgentToolManager {
     const authority = await this.dependencies.skillExecutionAuthority.resolve({
       sessionId: conversationId,
       runId: options.runId,
-      requestSeq: options.requestSeq as number,
+      requestSeq,
       manifestHash: options.manifestHash,
       tapeIncarnationId: options.tapeIncarnationId,
       skillName: validationResult.data.skill

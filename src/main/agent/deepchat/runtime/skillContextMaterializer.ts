@@ -278,7 +278,9 @@ export class SkillContextMaterializer {
         .map((name) => ({ name, scope: 'message' as const }))
     ]
     if (ordered.length > MAX_SKILL_MATERIALIZATION_BATCH_COUNT) {
-      throw new RangeError('Skill materialization batch exceeds 64 bodies.')
+      throw new RangeError(
+        `Skill materialization batch exceeds ${MAX_SKILL_MATERIALIZATION_BATCH_COUNT} bodies.`
+      )
     }
     const resolutions = await this.dependencies.skills.resolveFreshEffectiveSkillContents(
       agentId,

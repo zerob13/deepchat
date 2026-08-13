@@ -510,6 +510,7 @@ describe('Tape layer boundaries', () => {
       (statement): statement is ts.InterfaceDeclaration =>
         ts.isInterfaceDeclaration(statement) && statement.name.text === 'DeepChatLoopTapePort'
     )
+    expect(declaration, 'DeepChatLoopTapePort declaration not found').toBeDefined()
     const inheritedCapabilities =
       declaration?.heritageClauses
         ?.flatMap((clause) => clause.types)
@@ -533,6 +534,7 @@ describe('Tape layer boundaries', () => {
           ? [relativeToMain(file)]
           : []
       })
+      .sort()
 
     expect(callSites).toEqual([
       'agent/deepchat/runtime/skillContextMaterializer.ts',

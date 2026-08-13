@@ -70,7 +70,7 @@ owner，也不能通过 canonical module 的新增导出隐式扩大旧路径合
 | Live delegation repository | `ParentTaskContractWriter`、`TaskContractWriter`、`TaskEvaluationWriter` |
 | Turn coordinator / ACP compatibility | `TapeReconciliationPort` |
 | Transcript | `TapeMessageFactWriter` |
-| Memory runtime | `TapeRawEntryReader`、`TapeAnchorWriter` |
+| Memory runtime | `TapeNonContextEntryReader`、`TapeAnchorWriter` |
 | Settings / compaction | `TapeAnchorReader`、`TapeAnchorWriter`、`TapeLifecycleAdmin` |
 | Memory routes | `TapeInspectionReader` |
 | IPC / Session data | 现有 `SessionTapePort` |
@@ -79,7 +79,7 @@ owner，也不能通过 canonical module 的新增导出隐式扩大旧路径合
 IPC boundary 按原时序执行 `ensureSessionTapeReady`。facade 只做 service 组合和兼容转发，不承载新的
 domain policy；外部方法的签名、同步/异步行为、异常和 fallback 语义保持稳定。
 
-`TapeRawEntryReader` 只暴露 Memory runtime 实际需要的 `getBySession`。Memory routes 使用的
+`TapeNonContextEntryReader` 只暴露 Memory runtime 实际需要的 `getBySession`。Memory routes 使用的
 `TapeInspectionReader` 只返回 effective message source span 与 Memory ViewManifest DTO，不返回
 `DeepChatTapeEntryRow`。完整的 manifest assembly source set 命名为
 `TapeViewManifestAssemblySources`，domain lookup map 命名为 `TapeViewManifestLookupMaps`；两种历史

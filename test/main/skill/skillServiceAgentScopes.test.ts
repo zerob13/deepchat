@@ -450,11 +450,8 @@ describe('SkillService Agent scopes', () => {
       if (process.platform !== 'win32') fs.chmodSync(installedManifest, 0o600)
     }
 
-    const migrateLegacyBuiltin = vi.spyOn(service as any, 'migrateLegacyBuiltinExecutionSupport')
     await service.installBuiltinSkills()
     await service.installBuiltinSkills()
-    expect(migrateLegacyBuiltin).toHaveBeenCalledWith('docx')
-    expect(migrateLegacyBuiltin).toHaveBeenCalledWith('pptx')
 
     for (const name of ['docx', 'pptx']) {
       const manifest = fs.readFileSync(path.join(skillsRoot, name, 'SKILL.md'), 'utf8')

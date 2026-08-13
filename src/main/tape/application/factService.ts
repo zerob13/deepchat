@@ -203,67 +203,37 @@ export class TapeFactService
         dispatchRow,
         outcomeRow
       })
-      const row = appendTapeToolFact(
-        this.table,
-        {
-          sessionId: toTapeSessionId(input.sessionId),
-          messageId: input.messageId,
-          orderSeq: input.orderSeq,
-          blockIndex: input.blockIndex,
-          block: {
-            type: 'tool_call',
-            content: '',
-            status: 'success',
-            timestamp: input.timestamp,
-            tool_call: {
-              id: input.toolCallId,
-              name: input.toolName,
-              params: '',
-              response: input.responseText
-            }
-          },
-          provenance: {
-            source: 'tool_result',
-            sourceId,
-            sequence: input.blockIndex
+      const factInput = {
+        sessionId: toTapeSessionId(input.sessionId),
+        messageId: input.messageId,
+        orderSeq: input.orderSeq,
+        blockIndex: input.blockIndex,
+        block: {
+          type: 'tool_call',
+          content: '',
+          status: 'success',
+          timestamp: input.timestamp,
+          tool_call: {
+            id: input.toolCallId,
+            name: input.toolName,
+            params: '',
+            response: input.responseText
           }
         },
-        'live',
-        { reason: 'tool_loop', skillContextEvidence }
-      )
+        provenance: {
+          source: 'tool_result',
+          sourceId,
+          sequence: input.blockIndex
+        }
+      } satisfies TapeToolFactInput
+      const factOptions = { reason: 'tool_loop', skillContextEvidence } as const
+      const row = appendTapeToolFact(this.table, factInput, 'live', factOptions)
       if (!row) throw new Error('Runtime Skill-view result fact was not appendable.')
       if (row.entry_id <= evidence.outcomeEntryId) {
         throw new Error('Runtime Skill-view result fact does not follow its Journal outcome.')
       }
 
-      assertTapeToolFactPhysicalEnvelope(
-        row,
-        {
-          sessionId: toTapeSessionId(input.sessionId),
-          messageId: input.messageId,
-          orderSeq: input.orderSeq,
-          blockIndex: input.blockIndex,
-          block: {
-            type: 'tool_call',
-            content: '',
-            status: 'success',
-            timestamp: input.timestamp,
-            tool_call: {
-              id: input.toolCallId,
-              name: input.toolName,
-              params: '',
-              response: input.responseText
-            }
-          },
-          provenance: {
-            source: 'tool_result',
-            sourceId,
-            sequence: input.blockIndex
-          }
-        },
-        'live',
-        { reason: 'tool_loop', skillContextEvidence }
-      )
+      assertTapeToolFactPhysicalEnvelope(row, factInput, 'live', factOptions)
 
       if (this.getTapeIncarnationId(input.sessionId) !== incarnation) {
         throw new Error('Session Tape incarnation changed during Runtime Skill-view persistence.')

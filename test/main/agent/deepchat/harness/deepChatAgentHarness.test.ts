@@ -64,6 +64,7 @@ import {
   ExecutionJournalCorruptionError,
   ExecutionJournalError
 } from '@/tape/domain/executionJournal'
+import { TapeFactService } from '@/tape/application/factService'
 import { buildTaskContract } from '@/tape/domain/taskContract'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 
@@ -5250,6 +5251,45 @@ describe('DeepChatAgentHarness', () => {
               entry.kind === 'context' && entry.name === 'skill/materialized'
           )
       ).toHaveLength(1)
+    })
+
+    it('rejects a mismatched runtime Skill view before appending its durable result fact', async () => {
+      const appendSkillViewResultFact = vi
+        .spyOn(TapeFactService.prototype, 'appendSkillViewResultFact')
+        .mockImplementation(() => {
+          throw new Error('unexpected durable fact append')
+        })
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params: any) => {
+        const assistantRow = makeDeepchatAssistantRow(2, '', params.run.messageId, 'pending')
+        sqlitePresenter.deepchatMessagesTable.get.mockImplementation((messageId: string) =>
+          messageId === params.run.messageId ? assistantRow : undefined
+        )
+        await expect(
+          params.controls.commitRuntimeSkillView({
+            resolution: {
+              identity: {
+                agentId: 'deepchat',
+                sourceType: 'created',
+                sourceId: '/skills/runtime-skill',
+                skillName: 'runtime-skill'
+              },
+              effectiveContent: 'expected effective content'
+            },
+            toolCallId: 'tool-call-1',
+            responseText: JSON.stringify({ content: 'different content' }),
+            blockIndex: 0,
+            timestamp: 1,
+            operation: {},
+            outcomeEntryId: 1
+          })
+        ).rejects.toThrow('does not match its execution snapshot')
+        return { status: 'completed' }
+      })
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      await agent.processMessage('s1', 'Inspect the runtime skill')
+
+      expect(appendSkillViewResultFact).not.toHaveBeenCalled()
     })
 
     it('keeps one source version across a Run and fresh-resolves the next execution', async () => {

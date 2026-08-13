@@ -7,9 +7,9 @@ import type {
 import type {
   ExecutionJournalPersistenceStore,
   TapeBootstrapStore,
+  TapeBootstrapIncarnationReader,
   TapeEntryLifecycleStore,
   TapeEntryStore,
-  TapeIncarnationReader,
   TapeTransactionRunner
 } from './storage'
 import type { SkillMaterializationPersistenceStore } from './storage'
@@ -150,7 +150,7 @@ export interface TapeTerminalMessageReader {
 export type TapeApplicationEntryStore = TapeEntryStore &
   TapeTransactionRunner &
   TapeBootstrapStore &
-  TapeIncarnationReader
+  TapeBootstrapIncarnationReader
 
 export interface TapeApplicationDatabase {
   readonly deepchatTapeEntriesTable: TapeApplicationEntryStore &

@@ -15,9 +15,9 @@ import {
   type ExecutionOperationIdentity
 } from './executionJournal'
 import { hashJsonData } from './canonicalJson'
+import { isBoundedSkillTapeIdentity } from './skillIdentity'
 
 const HASH = /^[a-f0-9]{64}$/
-const MAX_ID_BYTES = 1024
 const MAX_SOURCE_REFS = 64
 export const MAX_SKILL_CONTEXTS_PER_VIEW = 64
 export const MAX_SKILL_VIEW_RESULT_FACT_BYTES = SKILL_RUNTIME_VIEW_RESULT_MAX_BYTES
@@ -77,14 +77,6 @@ export interface TapeSkillContextEvidence {
 
 export type TapeSkillContextEvidenceInput = Omit<TapeSkillContextEvidence, 'schemaVersion'>
 
-function id(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.trim().length > 0 &&
-    Buffer.byteLength(value, 'utf8') <= MAX_ID_BYTES
-  )
-}
-
 function positive(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
@@ -97,10 +89,10 @@ export function readSkillContentIdentity(value: unknown): TapeSkillIdentity {
   if (
     Object.keys(identity).sort().join('\0') !==
       ['agentId', 'skillName', 'sourceId', 'sourceType'].sort().join('\0') ||
-    !id(identity.agentId) ||
+    !isBoundedSkillTapeIdentity(identity.agentId) ||
     !isSkillSourceType(identity.sourceType) ||
-    !id(identity.sourceId) ||
-    !id(identity.skillName)
+    !isBoundedSkillTapeIdentity(identity.sourceId) ||
+    !isBoundedSkillTapeIdentity(identity.skillName)
   ) {
     throw new TypeError('Skill content identity is invalid.')
   }
@@ -222,11 +214,11 @@ function validateMaterializationRef(
     Object.keys(ref).sort().join('\0') !== refKeys.sort().join('\0') ||
     ref.kind !== 'materialization' ||
     !positive(ref.entryId) ||
-    !id(ref.tapeIncarnationId) ||
-    !id(ref.agentId) ||
+    !isBoundedSkillTapeIdentity(ref.tapeIncarnationId) ||
+    !isBoundedSkillTapeIdentity(ref.agentId) ||
     !isSkillSourceType(ref.sourceType) ||
-    !id(ref.sourceId) ||
-    !id(ref.skillName) ||
+    !isBoundedSkillTapeIdentity(ref.sourceId) ||
+    !isBoundedSkillTapeIdentity(ref.skillName) ||
     !HASH.test(ref.effectiveContentHash) ||
     (projectedContentHash !== undefined && projectedContentHash !== ref.effectiveContentHash) ||
     ref.agentId !== context.agentId ||
@@ -271,10 +263,10 @@ function validateSkillContexts(
     }
     if (
       Object.keys(item).sort().join('\0') !== contextKeys.sort().join('\0') ||
-      !id(context.agentId) ||
+      !isBoundedSkillTapeIdentity(context.agentId) ||
       !isSkillSourceType(context.sourceType) ||
-      !id(context.sourceId) ||
-      !id(context.skillName) ||
+      !isBoundedSkillTapeIdentity(context.sourceId) ||
+      !isBoundedSkillTapeIdentity(context.skillName) ||
       !ref ||
       !positive(ref.entryId) ||
       typeof context.projectedContentHash !== 'string' ||

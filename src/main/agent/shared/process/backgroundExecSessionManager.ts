@@ -1377,23 +1377,26 @@ class BackgroundExecUtilityProxy {
   }
 
   async cleanupConversation(conversationId: string): Promise<void> {
-    await this.request('cleanupConversation', [conversationId])
-    for (const [sessionId, session] of this.activeSessions) {
-      if (session.conversationId === conversationId) {
-        this.activeSessions.delete(sessionId)
+    try {
+      await this.request('cleanupConversation', [conversationId])
+    } finally {
+      for (const [sessionId, session] of this.activeSessions) {
+        if (session.conversationId === conversationId) {
+          this.activeSessions.delete(sessionId)
+        }
       }
-    }
-    for (const [sessionId, session] of this.crashedSessions) {
-      if (session.conversationId === conversationId) {
-        this.crashedSessions.delete(sessionId)
+      for (const [sessionId, session] of this.crashedSessions) {
+        if (session.conversationId === conversationId) {
+          this.crashedSessions.delete(sessionId)
+        }
       }
-    }
-    for (const [sessionId, session] of this.completedSessions) {
-      if (session.conversationId === conversationId) {
-        this.completedSessions.delete(sessionId)
+      for (const [sessionId, session] of this.completedSessions) {
+        if (session.conversationId === conversationId) {
+          this.completedSessions.delete(sessionId)
+        }
       }
+      this.stopCompletedSessionReconciliationIfIdle()
     }
-    this.stopCompletedSessionReconciliationIfIdle()
   }
 
   async shutdown(): Promise<void> {

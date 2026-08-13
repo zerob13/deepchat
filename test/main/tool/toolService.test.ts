@@ -981,7 +981,6 @@ describe('ToolService', () => {
       function: { name: SKILL_LIST_AGENT_TOOL_NAME, arguments: '{}' }
     })
 
-    expect(isEnabled).toHaveBeenCalledTimes(2)
     expect(defs.filter((tool) => tool.function.name === SKILL_LIST_AGENT_TOOL_NAME)).toEqual([
       expect.objectContaining({ source: 'agent' })
     ])

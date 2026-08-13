@@ -524,7 +524,15 @@ describe('DeepChatContextCoordinator', () => {
   })
 
   it('durably binds a materialized message Skill to the exact provider projection', async () => {
-    const fixture = createAttemptInput()
+    const fixture = createAttemptInput({
+      assertAuthority: (authority) => {
+        expect(Object.isFrozen(authority)).toBe(true)
+        expect(Object.isFrozen(authority.skillContexts)).toBe(true)
+        expect(Object.isFrozen(authority.skillContexts[0])).toBe(true)
+        expect(Object.isFrozen(authority.skillContexts[0].sourceEntryIds)).toBe(true)
+        expect(Object.isFrozen(authority.skillContexts[0].authoritativeRef)).toBe(true)
+      }
+    })
     const context = registerMessageSkill(fixture)
 
     await collect(new DeepChatContextCoordinator().streamProviderAttempts(fixture.input))

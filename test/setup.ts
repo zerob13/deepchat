@@ -261,7 +261,7 @@ vi.mock('fs', () => {
     },
     promises: {
       access: vi.fn(),
-      realpath: vi.fn(),
+      realpath: vi.fn(async (target: string) => target),
       readFile: vi.fn(),
       writeFile: vi.fn(),
       mkdir: vi.fn(),

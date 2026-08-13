@@ -499,6 +499,13 @@ export function buildRequestContextLedger(input: {
       ? { contributors: messageContributors }
       : {})
   }))
+  if (sessionContributors && !costs.has('Session Skills')) {
+    items.push({
+      category: 'Session Skills',
+      estimatedTokens: 0,
+      contributors: sessionContributors
+    })
+  }
 
   return {
     attribution,

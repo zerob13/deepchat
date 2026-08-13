@@ -7,6 +7,7 @@ import type { DeepChatTapeReplaySlice } from '@shared/types/tape-replay'
 import { isDeepChatExecutionContract } from './executionContract'
 import { hashJson } from './viewManifest'
 import { validateSchema6SkillContexts, validateSchema7SkillContexts } from './skillContext'
+import { isBoundedSkillTapeIdentity } from './skillIdentity'
 
 const VIEW_POLICIES = new Set([
   'cache_aware_context_v1',
@@ -34,7 +35,6 @@ const SCHEMA_V3_ENTRY_REASONS = new Set([
   'memory_context'
 ])
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/
-const BOUNDED_IDENTITY_BYTES = 1024
 
 const VIEW_EXCLUDED_REASONS = new Set([
   'before_summary_cursor',
@@ -172,14 +172,6 @@ function hasExecutionContractForSchema(
   )
 }
 
-function isBoundedIdentity(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.trim().length > 0 &&
-    Buffer.byteLength(value, 'utf8') <= BOUNDED_IDENTITY_BYTES
-  )
-}
-
 export function isTapeViewManifest(
   value: unknown,
   sessionId: string
@@ -233,8 +225,8 @@ export function isTapeViewManifest(
     isViewManifestMeta(value.meta) &&
     (schemaVersion < 6 ||
       (value.hashVersion === (schemaVersion === 6 ? 4 : 5) &&
-        isBoundedIdentity(value.runId) &&
-        isBoundedIdentity(value.tapeIncarnationId) &&
+        isBoundedSkillTapeIdentity(value.runId) &&
+        isBoundedSkillTapeIdentity(value.tapeIncarnationId) &&
         (() => {
           try {
             if (schemaVersion === 6) validateSchema6SkillContexts(value.skillContexts)

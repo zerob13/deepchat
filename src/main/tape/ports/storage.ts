@@ -81,7 +81,7 @@ export interface TapeBootstrapStore {
   ensureBootstrapAnchor(sessionId: string): void
 }
 
-export interface TapeIncarnationReader {
+export interface TapeBootstrapIncarnationReader {
   getBootstrapIncarnation(sessionId: string): string | undefined
 }
 
@@ -106,7 +106,7 @@ export interface ContractPersistenceStore extends TapeTransactionRunner, TapeBoo
 
 /** The reserved Skill context namespace is writable only through the strict materialization path. */
 export interface SkillMaterializationPersistenceStore
-  extends TapeTransactionRunner, TapeBootstrapStore, TapeIncarnationReader {
+  extends TapeTransactionRunner, TapeBootstrapStore, TapeBootstrapIncarnationReader {
   appendSkillMaterialization(input: {
     sessionId: string
     sourceId: string

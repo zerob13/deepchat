@@ -88,7 +88,11 @@ export class SessionDeletion implements SessionLifecycleDeletionPort {
     }
 
     this.dependencies.sessions.delete(sessionId)
-    this.dependencies.skills.completeNewAgentSessionSkillsDeletion(sessionId)
+    try {
+      this.dependencies.skills.completeNewAgentSessionSkillsDeletion(sessionId)
+    } catch (error) {
+      stageErrors.push({ stage: 'skills-completion', error })
+    }
     deletedSessionIds.push(sessionId)
 
     if (stageErrors.length > 0) {

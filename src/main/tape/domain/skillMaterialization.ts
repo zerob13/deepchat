@@ -17,6 +17,7 @@ import {
   type EffectiveSkillExecutionPackage
 } from '@shared/types/skill'
 import type { DeepChatTapeEntryRow } from './entry'
+import { isBoundedSkillTapeIdentity, MAX_SKILL_TAPE_IDENTITY_BYTES } from './skillIdentity'
 
 export const SKILL_MATERIALIZATION_NAME = 'skill/materialized' as const
 export const SKILL_MATERIALIZATION_SCHEMA_VERSION = 3 as const
@@ -32,7 +33,6 @@ const MAX_SKILL_MATERIALIZATION_STORED_PAYLOAD_BYTES =
   SKILL_EFFECTIVE_CONTENT_MAX_BYTES * 6 + SKILL_EXECUTION_PACKAGE_MAX_ENCODED_BYTES + 64 * 1024
 
 const SHA256 = /^[a-f0-9]{64}$/
-const MAX_IDENTITY_BYTES = 1024
 
 export interface TapeSkillIdentity {
   agentId: string
@@ -90,12 +90,10 @@ function parseObject(json: string, field: string): Record<string, unknown> {
 }
 
 function requireIdentity(value: unknown, field: string): string {
-  if (
-    typeof value !== 'string' ||
-    !value.trim() ||
-    Buffer.byteLength(value, 'utf8') > MAX_IDENTITY_BYTES
-  ) {
-    throw new TypeError(`${field} must be a non-empty UTF-8 string of at most 1024 bytes.`)
+  if (!isBoundedSkillTapeIdentity(value)) {
+    throw new TypeError(
+      `${field} must be a non-empty UTF-8 string of at most ${MAX_SKILL_TAPE_IDENTITY_BYTES} bytes.`
+    )
   }
   return value
 }

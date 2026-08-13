@@ -71,7 +71,11 @@ function createMockSqlitePresenter() {
     runInTransaction: vi.fn((operation: () => unknown) => operation()),
     isInTransaction: vi.fn(() => false),
     ensureBootstrapAnchor: vi.fn((sessionId: string) => {
-      if (tapeEntries.some((entry) => entry.session_id === sessionId && entry.kind === 'anchor')) {
+      if (
+        tapeEntries.some(
+          (entry) => entry.session_id === sessionId && entry.name === 'session/start'
+        )
+      ) {
         return
       }
       tapeTable.appendAnchor({

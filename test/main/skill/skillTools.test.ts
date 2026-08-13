@@ -161,6 +161,18 @@ describe('SkillTools', () => {
       expect(mockSkillService.getActiveSkills).not.toHaveBeenCalled()
     })
 
+    it('rejects a stale cursor when the conversation loses its Agent scope', async () => {
+      const firstPage = await skillTools.handleSkillList('conv-123', [], { limit: 1 })
+      ;(mockSkillService.resolveSessionAgentId as Mock).mockResolvedValue(null)
+
+      await expect(
+        skillTools.handleSkillList('conv-123', [], {
+          cursor: firstPage.nextCursor,
+          limit: 1
+        })
+      ).rejects.toThrow('does not match the current query and catalog')
+    })
+
     it('reports current-message active skills without pinning them', async () => {
       ;(mockSkillService.getActiveSkills as Mock).mockResolvedValue([])
 

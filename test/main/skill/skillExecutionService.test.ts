@@ -63,6 +63,12 @@ import { rtkRuntimeService } from '@/agent/shared/process/rtkRuntimeService'
 import { terminateProcessTree } from '@/agent/shared/process/processTree'
 import { materializeSkillExecutionPackageTree } from '@/skill/skillExecutionPackageTree'
 
+class MockWritableStream extends EventEmitter {
+  write = vi.fn()
+  end = vi.fn()
+  destroy = vi.fn()
+}
+
 describe('SkillExecutionService', () => {
   let service: SkillExecutionService
   let resolveConversationWorkdir: ReturnType<typeof vi.fn>
@@ -646,11 +652,7 @@ describe('SkillExecutionService', () => {
     class MockChild extends EventEmitter {
       stdout = new MockStream()
       stderr = new MockStream()
-      stdin = {
-        write: vi.fn(),
-        end: vi.fn(),
-        destroy: vi.fn()
-      }
+      stdin = new MockWritableStream()
       kill = vi.fn()
     }
 
@@ -706,11 +708,7 @@ describe('SkillExecutionService', () => {
     class MockChild extends EventEmitter {
       stdout = new MockStream()
       stderr = new MockStream()
-      stdin = {
-        write: vi.fn(),
-        end: vi.fn(),
-        destroy: vi.fn()
-      }
+      stdin = new MockWritableStream()
       kill = vi.fn()
     }
 
@@ -754,6 +752,50 @@ describe('SkillExecutionService', () => {
     expect(result.output).toContain('Exit Code: 0')
   })
 
+  it('handles an early child stdin close without an uncaught stream error', async () => {
+    class MockStream extends EventEmitter {
+      destroy = vi.fn()
+    }
+
+    class MockChild extends EventEmitter {
+      stdout = new MockStream()
+      stderr = new MockStream()
+      stdin = new MockWritableStream()
+      kill = vi.fn()
+    }
+
+    const child = new MockChild()
+    child.stdin.write.mockImplementationOnce(() => {
+      const error = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+      child.stdin.emit('error', error)
+      return false
+    })
+    vi.mocked(spawn).mockReturnValue(child as never)
+    vi.spyOn(service as never, 'createForegroundOutputPath' as never).mockReturnValue(null)
+
+    const resultPromise = (service as never).runForeground(
+      {
+        command: 'python',
+        args: ['script.py'],
+        cwd: '/skills/ocr',
+        env: { PATH: '/bin' },
+        shellCommand: 'python script.py',
+        outputPrefix: 'skill_ocr',
+        spawnMode: 'direct'
+      },
+      1000,
+      'conv-1',
+      POSIX_COMMAND_SHELL,
+      'input'
+    )
+    child.emit('close', 0)
+
+    await expect(resultPromise).resolves.toMatchObject({
+      output: expect.stringContaining('Exit Code: 0')
+    })
+    expect(child.stdin.end).toHaveBeenCalledOnce()
+  })
+
   it('terminates the complete foreground process tree on timeout', async () => {
     vi.useFakeTimers()
 
@@ -765,11 +807,7 @@ describe('SkillExecutionService', () => {
     class MockChild extends EventEmitter {
       stdout = new MockStream()
       stderr = new MockStream()
-      stdin = {
-        write: vi.fn(),
-        end: vi.fn(),
-        destroy: vi.fn()
-      }
+      stdin = new MockWritableStream()
       unref = vi.fn()
       kill = vi.fn()
     }
@@ -813,11 +851,7 @@ describe('SkillExecutionService', () => {
     class MockChild extends EventEmitter {
       stdout = new MockStream()
       stderr = new MockStream()
-      stdin = {
-        write: vi.fn(),
-        end: vi.fn(),
-        destroy: vi.fn()
-      }
+      stdin = new MockWritableStream()
     }
 
     const child = new MockChild()
@@ -866,11 +900,7 @@ describe('SkillExecutionService', () => {
     class MockChild extends EventEmitter {
       stdout = new MockStream()
       stderr = new MockStream()
-      stdin = {
-        write: vi.fn(),
-        end: vi.fn(),
-        destroy: vi.fn()
-      }
+      stdin = new MockWritableStream()
       unref = vi.fn()
     }
 
@@ -921,11 +951,7 @@ describe('SkillExecutionService', () => {
     class MockChild extends EventEmitter {
       stdout = new MockStream()
       stderr = new MockStream()
-      stdin = {
-        write: vi.fn(),
-        end: vi.fn(),
-        destroy: vi.fn()
-      }
+      stdin = new MockWritableStream()
       unref = vi.fn()
     }
 
@@ -967,11 +993,7 @@ describe('SkillExecutionService', () => {
     class MockChild extends EventEmitter {
       stdout = new MockStream()
       stderr = new MockStream()
-      stdin = {
-        write: vi.fn(),
-        end: vi.fn(),
-        destroy: vi.fn()
-      }
+      stdin = new MockWritableStream()
       kill = vi.fn()
     }
 

@@ -86,6 +86,14 @@ export function isContextWindowErrorLike(value: unknown): boolean {
   return hasContextWindowErrorText(value, new Set<unknown>(), 0, { totalChars: 0 })
 }
 
+function hasValidCeiling(numbers: ReturnType<typeof parseExplicitContextNumbers>): boolean {
+  return (
+    numbers.limitScope !== undefined &&
+    numbers.observedLimitTokens !== undefined &&
+    (numbers.actualTokens === undefined || numbers.actualTokens > numbers.observedLimitTokens)
+  )
+}
+
 export function inspectContextOverflow(value: unknown): ContextOverflowFacts {
   const matches: string[] = []
   const matched = hasContextWindowErrorText(value, new Set<unknown>(), 0, { totalChars: 0 }, matches)
@@ -101,11 +109,7 @@ export function inspectContextOverflow(value: unknown): ContextOverflowFacts {
   for (const text of matches) {
     const numbers = parseExplicitContextNumbers(text)
     if (numbers.actualTokens === undefined && numbers.observedLimitTokens === undefined) continue
-    const hasValidCeiling =
-      numbers.limitScope !== undefined &&
-      numbers.observedLimitTokens !== undefined &&
-      (numbers.actualTokens === undefined || numbers.actualTokens > numbers.observedLimitTokens)
-    const rank = hasValidCeiling
+    const rank = hasValidCeiling(numbers)
       ? numbers.actualTokens === undefined
         ? 3
         : 4
@@ -117,17 +121,12 @@ export function inspectContextOverflow(value: unknown): ContextOverflowFacts {
     explicitMatch = { ...numbers, text, scope: resolveContextScope(text) }
   }
   if (explicitMatch) {
-    const hasValidCeiling =
-      explicitMatch.limitScope !== undefined &&
-      explicitMatch.observedLimitTokens !== undefined &&
-      (explicitMatch.actualTokens === undefined ||
-        explicitMatch.actualTokens > explicitMatch.observedLimitTokens)
     return {
       matched: true,
       ...(explicitMatch.actualTokens !== undefined
         ? { actualTokens: explicitMatch.actualTokens }
         : {}),
-      ...(hasValidCeiling
+      ...(hasValidCeiling(explicitMatch)
         ? {
             limitTokens: explicitMatch.observedLimitTokens,
             limitScope: explicitMatch.limitScope

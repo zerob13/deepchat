@@ -783,6 +783,9 @@ export class SkillExecutionService {
         if (signal.aborted) onAbort()
       }
 
+      child.stdin?.on('error', (error) => {
+        logger.warn('[SkillExecutionService] Failed to write skill stdin', { error })
+      })
       if (!aborted && stdin !== undefined) {
         child.stdin?.write(stdin)
       }

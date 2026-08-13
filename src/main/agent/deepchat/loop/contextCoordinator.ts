@@ -228,6 +228,12 @@ export interface ProviderAttemptAuthorityPort {
   }): void
 }
 
+function deepFreeze<T>(value: T): T {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested)
+  return Object.freeze(value)
+}
+
 export interface ProviderRateGatePort {
   beforeWait(): void
   wait(signal: AbortSignal): Promise<void>
@@ -811,7 +817,7 @@ export class DeepChatContextCoordinator {
             requestSeq,
             manifestHash: requestView!.manifestHash,
             tapeIncarnationId: requestView!.tapeIncarnationId!,
-            skillContexts: Object.freeze(structuredClone(skillContexts))
+            skillContexts: deepFreeze(structuredClone(skillContexts))
           })
         : null
 
@@ -846,14 +852,12 @@ export class DeepChatContextCoordinator {
       input.requestMessages.splice(0, input.requestMessages.length, ...recovered.messages)
     }
 
-    const projectContextOverflowRetry = (inputMessages: {
-      providerMessages: ChatMessage[]
-      providerMaxTokens: number
+    const projectContextOverflowRetry = (
       strictProviderOverflowRetry: boolean
-    }): RequestContextPreflight => {
+    ): RequestContextPreflight => {
       let candidateMessages = input.requestMessages
       let candidateMaxTokens = input.maxTokens
-      if (inputMessages.strictProviderOverflowRetry) {
+      if (strictProviderOverflowRetry) {
         candidateMaxTokens = input.budget.getStrictRetryMaxTokens(input.maxTokens)
         candidateMessages = input.budget.fitStrictRetry({
           messages: candidateMessages,
@@ -1116,11 +1120,9 @@ export class DeepChatContextCoordinator {
               } else {
                 await recoverProviderContextOverflow(providerMessages, providerMaxTokens)
               }
-              const retryProjection = projectContextOverflowRetry({
-                providerMessages,
-                providerMaxTokens,
-                strictProviderOverflowRetry: strictProviderOverflowRetryPending
-              })
+              const retryProjection = projectContextOverflowRetry(
+                strictProviderOverflowRetryPending
+              )
               if (!retryProjection.fitsWithinContext) {
                 throw input.budget.buildOverflowAfterRecoveryError(
                   retryProjection,
@@ -1177,7 +1179,9 @@ export class DeepChatContextCoordinator {
             }
             if (observation.providerThrew) {
               if (failureClassification === 'context_overflow' && observation.outputCommitted) {
-                throw new Error(CONTEXT_OVERFLOW_AFTER_OUTPUT_ERROR)
+                throw new Error(CONTEXT_OVERFLOW_AFTER_OUTPUT_ERROR, {
+                  cause: observation.providerError
+                })
               }
               throw observation.providerError
             }

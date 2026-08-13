@@ -322,7 +322,17 @@ describe('agent request context budget', () => {
       requestedMaxTokens: 100
     })
 
-    const ledger = buildRequestContextLedger({ preflight, promptAssembly })
+    const ledger = buildRequestContextLedger({
+      preflight,
+      promptAssembly,
+      skills: [
+        {
+          scope: 'session',
+          name: 'opaque-session-skill',
+          effectiveContent: 'SESSION_SKILL_BODY'
+        }
+      ]
+    })
 
     expect(ledger.attribution).toBe('opaque_system_prompt')
     expect(ledger.items).toContainEqual({
@@ -330,6 +340,11 @@ describe('agent request context budget', () => {
       estimatedTokens: 'ACTUAL_PROVIDER_PROMPT'.length
     })
     expect(ledger.items.some((item) => item.category === 'Configured prompt')).toBe(false)
+    expect(ledger.items).toContainEqual({
+      category: 'Session Skills',
+      estimatedTokens: 0,
+      contributors: [{ name: 'opaque-session-skill', estimatedTokens: 18 }]
+    })
   })
 
   it('attributes equal active-turn contributions by structure instead of text identity', () => {

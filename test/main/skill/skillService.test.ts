@@ -1361,7 +1361,14 @@ describe('SkillService', () => {
       expect(first.executionPackage.files[1].base64).toBe(
         contents.get(`${skillRoot}/scripts/run.js`)!.toString('base64')
       )
-      expect(fs.promises.opendir).toHaveBeenCalledTimes(4)
+      expect((fs.promises.opendir as Mock).mock.calls.map(([target]) => target)).toEqual(
+        expect.arrayContaining([
+          `${skillRoot}/scripts`,
+          `${skillRoot}/scripts/templates`,
+          `${skillRoot}/ooxml`,
+          `${skillRoot}/ooxml/schemas`
+        ])
+      )
       expect(fs.promises.readdir).not.toHaveBeenCalledWith(
         `${skillRoot}/scripts`,
         expect.anything()
@@ -3683,14 +3690,27 @@ describe('SkillService', () => {
       expect(newSessionActiveSkillsStore.get('new-session-retired')).toEqual([])
     })
 
-    it('releases a deletion tombstone after the Session row is gone', async () => {
+    it('accepts writes for a reused Session identity after deletion finalization', async () => {
+      ;(skillSessionStatePort.hasNewSession as Mock).mockResolvedValue(true)
+      mockSkillTree(['skill-1'])
+      ;(fs.existsSync as Mock).mockReturnValue(true)
+      ;(fs.readFileSync as Mock).mockReturnValue('test')
+      ;(matter as unknown as Mock).mockReturnValue({
+        data: { name: 'skill-1', description: 'Test' },
+        content: ''
+      })
+      await skillService.discoverSkills()
       await skillService.clearNewAgentSessionSkills('new-session-deleted')
 
-      expect((skillService as any).retiredSessionSkillScopes.has('new-session-deleted')).toBe(true)
+      await expect(
+        skillService.setActiveSkills('new-session-deleted', ['skill-1'])
+      ).resolves.toEqual([])
 
       skillService.completeNewAgentSessionSkillsDeletion('new-session-deleted')
 
-      expect((skillService as any).retiredSessionSkillScopes.has('new-session-deleted')).toBe(false)
+      await expect(
+        skillService.setActiveSkills('new-session-deleted', ['skill-1'])
+      ).resolves.toEqual(['skill-1'])
     })
   })
 

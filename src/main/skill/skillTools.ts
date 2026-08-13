@@ -32,16 +32,7 @@ export class SkillTools {
       ? await this.skillService.resolveSessionAgentId(conversationId)
       : BUILTIN_SKILL_AGENT_ID
     if (!resolvedAgentId) {
-      return {
-        skills: [],
-        sessionActiveCount: 0,
-        activeForExecutionCount: 0,
-        pinnedCount: 0,
-        activeCount: 0,
-        totalCount: 0,
-        totalMatched: 0,
-        omittedCount: 0
-      }
+      return buildSkillListResult([], [], [], input)
     }
     const agentId = resolvedAgentId
     const allSkills = await this.skillService.getMetadataList(agentId)

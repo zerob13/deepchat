@@ -83,7 +83,9 @@ describe('Skill execution package tree', () => {
     const tree = await materializeSkillExecutionPackageTree(executionPackage())
     pendingRoots.add(tree.rootPath)
 
-    expect(path.dirname(tree.rootPath)).toBe(path.resolve(os.tmpdir()))
+    expect(await fs.promises.realpath(path.dirname(tree.rootPath))).toBe(
+      await fs.promises.realpath(os.tmpdir())
+    )
     await expect(
       fs.promises.readFile(tree.resolveFile('scripts/run.py'), 'utf8')
     ).resolves.toContain('Path(__file__)')

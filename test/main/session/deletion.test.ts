@@ -147,6 +147,18 @@ describe('SessionDeletion', () => {
     expect(harness.dependencies.skills.completeNewAgentSessionSkillsDeletion).not.toHaveBeenCalled()
   })
 
+  it('reports deletion success after the row is removed even if Skill finalization fails', async () => {
+    const harness = createHarness()
+    harness.records.delete('child')
+    harness.dependencies.skills.completeNewAgentSessionSkillsDeletion.mockImplementationOnce(() => {
+      throw new Error('skill finalization failed')
+    })
+
+    await expect(harness.transaction.deleteSessionTree('parent')).resolves.toEqual(['parent'])
+    expect(harness.dependencies.sessions.delete).toHaveBeenCalledWith('parent')
+    expect(harness.records.has('parent')).toBe(false)
+  })
+
   it('waits for in-flight child creation and includes the settled child in the delete tree', async () => {
     const harness = createHarness()
     let releaseCreation!: () => void

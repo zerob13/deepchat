@@ -1283,7 +1283,7 @@ export async function processStream(params: ProcessParams): Promise<ProcessResul
               activeSkillNames,
               failClosed: true
             })
-            run.resources.activeSkillNames = [...(controls?.getActiveSkillNames?.() ?? [])]
+            run.resources.activeSkillNames = [...(activeSkillNames ?? [])]
             currentTools = run.resources.toolDefinitions
           }
 

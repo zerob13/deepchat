@@ -873,6 +873,37 @@ describe('backgroundExecSessionManager utility proxy', () => {
     expect(proxy.crashedSessions.has('bg_owned')).toBe(true)
   })
 
+  it('clears local conversation state when utility-host cleanup fails', async () => {
+    const proxy = backgroundExecSessionManager as any
+    const session = {
+      conversationId: 'conv-1',
+      sessionId: 'bg_session',
+      command: 'pnpm test',
+      createdAt: 1,
+      lastAccessedAt: 1
+    }
+    proxy.activeSessions.set('bg_active', { ...session, sessionId: 'bg_active' })
+    proxy.crashedSessions.set('bg_crashed', { ...session, sessionId: 'bg_crashed' })
+    proxy.completedSessions.set('bg_completed', {
+      ...session,
+      sessionId: 'bg_completed',
+      status: 'done',
+      outputLength: 0,
+      offloaded: false,
+      timedOut: false
+    })
+    vi.spyOn(proxy, 'request').mockRejectedValue(new Error('utility host unavailable'))
+
+    await expect(backgroundExecSessionManager.cleanupConversation('conv-1')).rejects.toThrow(
+      'utility host unavailable'
+    )
+
+    expect(proxy.activeSessions.size).toBe(0)
+    expect(proxy.crashedSessions.size).toBe(0)
+    expect(proxy.completedSessions.size).toBe(0)
+    expect(proxy.completedSessionReconciliationTimer).toBeNull()
+  })
+
   it('returns crashed completion results without starting a fresh utility host', async () => {
     const proxy = backgroundExecSessionManager as any
     proxy.crashedSessions.set('bg_crashed', {

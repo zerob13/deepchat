@@ -282,6 +282,7 @@ function normalizeHistoricalSkillMarkerNames(
           Array.from(
             name
               .normalize('NFC')
+              // eslint-disable-next-line no-control-regex
               .replace(/[\u0000-\u001f\u007f]+/g, ' ')
               .replace(/\s+/g, ' ')
               .trim()

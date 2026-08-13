@@ -1203,20 +1203,6 @@ export class DeepChatLoopRunner {
             if (!message || message.sessionId !== sessionId || message.role !== 'assistant') {
               throw new Error('Runtime Skill-view result lost its assistant message identity.')
             }
-            const receipt = this.ports.tape.appendSkillViewResultFact({
-              sessionId,
-              expectedTapeIncarnationId: tapeIncarnationId,
-              messageId,
-              orderSeq: message.orderSeq,
-              blockIndex: input.blockIndex,
-              toolCallId: input.toolCallId,
-              toolName: 'skill_view',
-              responseText: input.responseText,
-              timestamp: input.timestamp,
-              identity: input.resolution.identity,
-              operation: input.operation,
-              outcomeEntryId: input.outcomeEntryId
-            })
             let result: Record<string, unknown>
             try {
               const parsed = JSON.parse(input.responseText) as unknown
@@ -1231,6 +1217,20 @@ export class DeepChatLoopRunner {
             if (result.content !== input.resolution.effectiveContent) {
               throw new Error('Runtime Skill-view result does not match its execution snapshot.')
             }
+            const receipt = this.ports.tape.appendSkillViewResultFact({
+              sessionId,
+              expectedTapeIncarnationId: tapeIncarnationId,
+              messageId,
+              orderSeq: message.orderSeq,
+              blockIndex: input.blockIndex,
+              toolCallId: input.toolCallId,
+              toolName: 'skill_view',
+              responseText: input.responseText,
+              timestamp: input.timestamp,
+              identity: input.resolution.identity,
+              operation: input.operation,
+              outcomeEntryId: input.outcomeEntryId
+            })
             const executionRef = await this.ports.skillContextMaterializer.materializeRuntimeView({
               sessionId,
               expectedTapeIncarnationId: tapeIncarnationId,
@@ -1389,13 +1389,13 @@ export class DeepChatLoopRunner {
       supportsAudioInput: params.supportsAudioInput,
       traceDebugEnabled: params.traceDebugEnabled,
       ...(params.executionContract ? { executionContract: params.executionContract } : {}),
-      ...(params.skillContexts?.length
-        ? {
-            runId: params.runId,
-            tapeIncarnationId: params.tapeIncarnationId,
-            skillContexts: params.skillContexts,
-            requireDurableManifest: params.requireDurableManifest
-          }
+      ...(params.runId !== undefined ? { runId: params.runId } : {}),
+      ...(params.tapeIncarnationId !== undefined
+        ? { tapeIncarnationId: params.tapeIncarnationId }
+        : {}),
+      ...(params.skillContexts?.length ? { skillContexts: params.skillContexts } : {}),
+      ...(params.requireDurableManifest !== undefined
+        ? { requireDurableManifest: params.requireDurableManifest }
         : {})
     })
     this.ports.tape.appendViewManifest(manifest)

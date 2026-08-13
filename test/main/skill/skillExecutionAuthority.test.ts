@@ -169,7 +169,7 @@ function fixture(scope: 'session' | 'runtime_view' = 'session') {
 
 describe('SkillExecutionAuthorityResolver', () => {
   it.each(['session', 'runtime_view'] as const)(
-    'resolves immutable $scope execution bytes from the exact provider view',
+    'resolves immutable %s execution bytes from the exact provider view',
     async (scope) => {
       const { resolver, request, tape, environments } = fixture(scope)
       const authority = await resolver.resolve(request)

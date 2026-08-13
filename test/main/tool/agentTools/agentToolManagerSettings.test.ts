@@ -14,11 +14,13 @@ import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { SkillExecutionService } from '@/skill/skillExecutionService'
 import { POSIX_COMMAND_SHELL } from '../../../helpers/commandShell'
 import {
+  SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES,
   SKILL_RUN_MAX_ARGUMENTS,
   SKILL_RUN_MAX_ARGUMENT_CHARS,
   SKILL_RUN_MAX_STDIN_CHARS,
   SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS
 } from '@shared/types/skill'
+import { SKILL_LIST_CURSOR_MAX_BYTES, SKILL_LIST_QUERY_MAX_BYTES } from '@/skill/routingCatalog'
 
 const SKILL_EVIDENCE_HASH = 'a'.repeat(64)
 
@@ -356,7 +358,8 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
         args: [
           'x'.repeat(SKILL_RUN_MAX_ARGUMENT_CHARS),
           'y'.repeat(SKILL_RUN_MAX_ARGUMENT_CHARS),
-          'z'.repeat(SKILL_RUN_MAX_TOTAL_ARGUMENT_CHARS - SKILL_RUN_MAX_ARGUMENT_CHARS * 2 + 1)
+          'z'.repeat(SKILL_RUN_MAX_ARGUMENT_CHARS),
+          'overflow'
         ]
       }
     },
@@ -385,6 +388,33 @@ describe('AgentToolManager DeepChat settings tool gating', () => {
       ).rejects.toThrow('Invalid arguments for skill_run')
 
       expect(resolveSkillExecutionAuthority).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    {
+      toolName: 'skill_list',
+      args: { query: '界'.repeat(Math.floor(SKILL_LIST_QUERY_MAX_BYTES / 3) + 1) }
+    },
+    {
+      toolName: 'skill_list',
+      args: { cursor: '界'.repeat(Math.floor(SKILL_LIST_CURSOR_MAX_BYTES / 3) + 1) }
+    },
+    {
+      toolName: 'skill_run',
+      args: {
+        skill: 'ocr',
+        script: '界'.repeat(Math.floor(SKILL_EXECUTION_PACKAGE_MAX_PATH_BYTES / 3) + 1)
+      }
+    }
+  ])(
+    'rejects multibyte $toolName input beyond its UTF-8 byte limit',
+    async ({ toolName, args }) => {
+      const manager = buildManager()
+
+      await expect(manager.callTool(toolName, args, 'conv-1')).rejects.toThrow(
+        `Invalid arguments for ${toolName}`
+      )
     }
   )
 

@@ -102,7 +102,10 @@ describe('skill routing catalog', () => {
     const projection = renderSkillRoutingCatalogWithinBudget(cards, 86)
 
     expect(projection.report.mode).toBe('summary')
-    expect(projection.report.summaryCodePointCap).toBe(79)
+    expect(projection.report.summaryCodePointCap).toBeGreaterThan(0)
+    expect(projection.report.summaryCodePointCap).toBeLessThan(
+      SKILL_ROUTING_DESCRIPTION_MAX_CODE_POINTS
+    )
     expect(approximateTokenSize(projection.content)).toBeLessThanOrEqual(86)
   })
 

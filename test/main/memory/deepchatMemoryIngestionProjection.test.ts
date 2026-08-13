@@ -192,7 +192,7 @@ describe('DeepChatMemoryIngestionProjectionTable', () => {
           getSkillMaterializationStore: () => tape
         })
         const fixtureHash = hashSkillEffectiveContent('fixture')
-        materialization.materializeSkillContexts([
+        const receipts = materialization.materializeSkillContexts([
           {
             sessionId: 's1',
             expectedTapeIncarnationId: tapeIncarnationId,
@@ -212,6 +212,7 @@ describe('DeepChatMemoryIngestionProjectionTable', () => {
             }
           }
         ])
+        expect(receipts).toHaveLength(1)
 
         expect(projection.isCurrent('s1', tape.getMaxEntryId('s1'))).toBe(true)
         const currentRange = projection.readCurrentRange('s1', 0, 10)

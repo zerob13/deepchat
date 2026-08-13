@@ -273,6 +273,11 @@ describe('DeepChat system prompt builder', () => {
       getRuntimeState: () => ({ providerId: 'openai', modelId: 'gpt-4o' }),
       hasProjectDir: () => false
     } as unknown as DeepChatAgentInstance
+    const compactCatalog = [
+      { name: 'skill-a', description: 'Skill A routes alpha tasks' },
+      { name: 'skill-b', description: 'Skill B routes beta tasks' }
+    ]
+    const getMetadataList = vi.fn().mockResolvedValue(compactCatalog)
     const dependencies = {
       providerSettings: {} as unknown as ProviderSettingsPort,
       skillSettings: {
@@ -285,14 +290,7 @@ describe('DeepChat system prompt builder', () => {
       },
       skillService: {
         resolveSessionAgentId: vi.fn().mockResolvedValue('writer'),
-        getMetadataList: vi.fn().mockResolvedValue([
-          { name: 'skill-a', description: 'Skill A routes alpha tasks' },
-          { name: 'skill-b', description: 'Skill B routes beta tasks' },
-          ...Array.from({ length: 100 }, (_, index) => ({
-            name: `catalog-${index}`,
-            description: `Catalog entry ${index} ${'detail '.repeat(100)}`
-          }))
-        ]),
+        getMetadataList,
         getActiveSkills: vi.fn().mockResolvedValue([]),
         loadSkillContent: vi.fn(async (_agentId: string, skillName: string) => ({
           name: skillName,
@@ -336,7 +334,18 @@ describe('DeepChat system prompt builder', () => {
       second.sections.find((section) => section.kind === 'skills_metadata')?.content
     )
     expect(
-      first.sections.find((section) => section.kind === 'skills_metadata')?.degradationCodes
+      first.sections.find((section) => section.kind === 'skills_metadata')?.degradationCodes ?? []
+    ).not.toContain('skill_catalog_omitted')
+
+    getMetadataList.mockResolvedValue(
+      Array.from({ length: 100 }, (_, index) => ({
+        name: `catalog-${index}`,
+        description: `Catalog entry ${index} ${'detail '.repeat(100)}`
+      }))
+    )
+    const omitted = await build([])
+    expect(
+      omitted.sections.find((section) => section.kind === 'skills_metadata')?.degradationCodes
     ).toContain('skill_catalog_omitted')
   })
 

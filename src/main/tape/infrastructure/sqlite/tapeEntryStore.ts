@@ -585,6 +585,9 @@ export class DeepChatTapeEntriesTable
     if (authorizedNamespace !== 'skill-materialized' && input.name === SKILL_MATERIALIZATION_NAME) {
       throw new Error('skill/materialized is reserved for the strict materialization writer.')
     }
+    if (authorizedNamespace !== 'skill-materialized' && input.kind === 'context') {
+      throw new Error('The context entry kind is reserved for the strict materialization writer.')
+    }
     const append = this.db.transaction(() => {
       const provenanceKey = buildProvenanceKey(input)
       if (input.idempotent && provenanceKey) {
