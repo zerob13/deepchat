@@ -1375,6 +1375,9 @@ export class AgentToolManager {
           skillScopeGuard.resolvePath(execArgs.cwd, workspaceRoot)
         )
       }
+      if (isProgrammaticInvocation) {
+        options.signal?.throwIfAborted()
+      }
       const commandResult = await bashHandler.executeCommand(
         {
           command: execArgs.command,
@@ -1390,6 +1393,7 @@ export class AgentToolManager {
           oneShotCommandGrantId: options.oneShotCommandGrantId,
           stdin: execArgs.stdin,
           programmatic: isProgrammaticInvocation,
+          signal: isProgrammaticInvocation ? options.signal : undefined,
           maxTimeoutMs: isProgrammaticInvocation
             ? options.programmaticToolCapability?.quotas.maxDurationMs
             : undefined,

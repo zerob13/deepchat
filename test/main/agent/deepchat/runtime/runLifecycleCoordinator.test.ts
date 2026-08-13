@@ -99,6 +99,7 @@ function createHarness(initialMessages: ChatMessageRecord[] = []) {
   const terminalObserver: RunLifecycleCoordinatorPorts['terminalObserver'] = {
     observeTerminal: vi.fn()
   }
+  const revokeConversation = vi.fn()
   const emitMessageRefresh = vi.fn()
   const coordinator = new RunLifecycleCoordinator({
     runtime,
@@ -106,7 +107,8 @@ function createHarness(initialMessages: ChatMessageRecord[] = []) {
     transcript,
     pendingInputWakeup,
     terminalObserver,
-    messageProjection: { refresh: emitMessageRefresh }
+    messageProjection: { refresh: emitMessageRefresh },
+    programmaticAuthority: { revokeConversation }
   })
 
   return {
@@ -114,6 +116,7 @@ function createHarness(initialMessages: ChatMessageRecord[] = []) {
     emitMessageRefresh,
     messages,
     pendingInputWakeup,
+    revokeConversation,
     runtime,
     statusPorts,
     terminalObserver,
@@ -314,22 +317,24 @@ describe('RunLifecycleCoordinator', () => {
     expect(pendingInputWakeup.drain).toHaveBeenCalledWith(SESSION_ID, 'completed')
   })
 
-  it('revokes deferred Tool Surface dispatches when a session is cancelled', async () => {
-    const { coordinator } = createHarness()
+  it('revokes deferred dispatches and live Programmatic grants when a session is cancelled', async () => {
+    const { coordinator, revokeConversation } = createHarness()
     const revoke = vi.spyOn(toolSurface, 'revokeToolSurfaceDeferredDispatchesForSession')
 
     await coordinator.cancel(SESSION_ID)
 
+    expect(revokeConversation).toHaveBeenCalledWith(SESSION_ID)
     expect(revoke).toHaveBeenCalledWith(SESSION_ID)
   })
 
-  it('revokes deferred Tool Surface dispatches when current scope operations are cancelled', () => {
-    const { coordinator } = createHarness()
+  it('revokes deferred dispatches and live grants when current scope operations are cancelled', () => {
+    const { coordinator, revokeConversation } = createHarness()
     const scope = coordinator.getOrCreateScope(SESSION_ID)
     const revoke = vi.spyOn(toolSurface, 'revokeToolSurfaceDeferredDispatchesForSession')
 
     coordinator.cancelScopeOperations(scope)
 
+    expect(revokeConversation).toHaveBeenCalledWith(SESSION_ID)
     expect(revoke).toHaveBeenCalledWith(SESSION_ID)
   })
 

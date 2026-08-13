@@ -911,6 +911,116 @@ describe('AgentBashHandler', () => {
     expect(completionSpy).not.toHaveBeenCalled()
   })
 
+  it('terminates an attached Programmatic command when its Run is cancelled', async () => {
+    const commandEnvironment = createProgrammaticCommandEnvironment()
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService(),
+      commandEnvironment
+    )
+    vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: 'deepchat tool batch',
+      command: 'deepchat tool batch',
+      env: { PATH: '/bin' },
+      rewritten: false,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    })
+    vi.spyOn(backgroundExecSessionManager, 'start').mockResolvedValue({
+      sessionId: 'bg_cancelled_programmatic',
+      status: 'running'
+    })
+    vi.spyOn(backgroundExecSessionManager, 'write').mockResolvedValue()
+    const completionSpy = vi
+      .spyOn(backgroundExecSessionManager, 'getCompletionResult')
+      .mockImplementation(() => new Promise(() => {}))
+    let finishRemoval = () => {}
+    const removeSpy = vi.spyOn(backgroundExecSessionManager, 'remove').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRemoval = resolve
+        })
+    )
+    const controller = new AbortController()
+
+    const pending = handler.executeCommand(
+      { command: 'deepchat tool batch', description: 'Run programmatic batch' },
+      {
+        commandShell: POSIX_COMMAND_SHELL,
+        conversationId: 'conv-1',
+        stdin: '{"steps":[]}',
+        programmatic: true,
+        signal: controller.signal,
+        beforeExecute: () => armedProgrammaticToken
+      }
+    )
+    await vi.waitFor(() => expect(completionSpy).toHaveBeenCalledOnce())
+
+    controller.abort()
+
+    let settled = false
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      }
+    )
+    await vi.waitFor(() => expect(removeSpy).toHaveBeenCalledOnce())
+    expect(settled).toBe(false)
+
+    finishRemoval()
+    await expect(pending).rejects.toMatchObject({
+      name: 'ProgrammaticCommandLaunchError',
+      cause: expect.objectContaining({ name: 'AbortError' })
+    })
+    expect(removeSpy).toHaveBeenCalledWith('conv-1', 'bg_cancelled_programmatic')
+  })
+
+  it('does not spawn a Programmatic command cancelled immediately after outer dispatch', async () => {
+    const controller = new AbortController()
+    const handler = new AgentBashHandler(
+      [workspaceRoot],
+      { get: () => undefined },
+      createPermissionService(),
+      createProgrammaticCommandEnvironment()
+    )
+    vi.spyOn(handler as never, 'prepareCommand' as never).mockResolvedValue({
+      originalCommand: 'deepchat tool search --query mail',
+      command: 'deepchat tool search --query mail',
+      env: { PATH: '/bin' },
+      rewritten: false,
+      rtkApplied: false,
+      rtkMode: 'bypass'
+    })
+    const startSpy = vi.spyOn(backgroundExecSessionManager, 'start')
+
+    await expect(
+      handler.executeCommand(
+        {
+          command: 'deepchat tool search --query mail',
+          description: 'Search programmatic tools'
+        },
+        {
+          commandShell: POSIX_COMMAND_SHELL,
+          conversationId: 'conv-1',
+          programmatic: true,
+          signal: controller.signal,
+          beforeExecute: () => {
+            controller.abort()
+            return armedProgrammaticToken
+          }
+        }
+      )
+    ).rejects.toMatchObject({
+      name: 'ProgrammaticCommandLaunchError',
+      cause: expect.objectContaining({ name: 'AbortError' })
+    })
+    expect(startSpy).not.toHaveBeenCalled()
+  })
+
   it('cleans up completed foreground sessions that finish inside the yield window', async () => {
     const handler = new AgentBashHandler(
       [workspaceRoot],

@@ -747,7 +747,9 @@ not authorize outer T2.
 An in-process outer shell approval may continue before T1 with the same frozen View capability and a
 fresh grant. A Programmatic command pending at that shell gate is not resumed after restart. Once
 outer T1 exists, child approval keeps the CLI request and outer exec open; restart aborts the
-controller and leaves existing T1 evidence for normal parking.
+controller and leaves existing T1 evidence for normal parking. Session Run cancellation, including
+transcript mutation, revokes all live Programmatic grants and terminates their attached CLI
+processes. That abort stops future children but never synthesizes an outcome for a dispatched child.
 
 Batch v1 is fixed-count, bounded, sequential, fail-fast, and non-durable. Only bounded static paths
 to earlier completed results are accepted through static RFC 6901 bindings from existing argument

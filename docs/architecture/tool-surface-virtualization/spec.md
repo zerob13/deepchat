@@ -439,8 +439,9 @@ copies raw arguments, result/error text, MCP envelopes, binary data, or temporar
 | every child has T2 but outer T2 is missing | incomplete; no automatic projection |
 | explicit model retry | new provider operation and new identities |
 
-T1-only operations are parked. `AbortError` by name is not cancellation evidence; the owned abort
-signal is authoritative.
+T1-only operations are parked. `AbortError` by name is not cancellation evidence. The owned abort
+signal authorizes revoking the exact local-control grant, terminating its attached CLI process, and
+preventing later children; it does not prove an already-dispatched child outcome.
 
 ## Tape Contract
 

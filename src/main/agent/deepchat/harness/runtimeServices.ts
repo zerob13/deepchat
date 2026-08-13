@@ -86,8 +86,11 @@ export interface DeepChatHarnessDependencies {
   toolSurfaceRunMode?: ToolSurfaceRunModePort
   /** Process-live causality owner. It never reconstructs dispatch authority from Tape. */
   programmaticToolParents?: ProgrammaticToolParentRegistry
-  /** Shared local-control authority used only to prepare inert exact-operation grants. */
-  agentCliTokenAuthority?: Pick<AgentCliTokenAuthority, 'prepareProgrammaticOperation'>
+  /** Shared local-control authority for inert exact-operation grants and Run-scoped revocation. */
+  agentCliTokenAuthority?: Pick<
+    AgentCliTokenAuthority,
+    'prepareProgrammaticOperation' | 'revokeConversation'
+  >
 }
 
 /**

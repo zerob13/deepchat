@@ -345,6 +345,7 @@ describe('AgentToolManager read routing', () => {
         rtkApplied: false,
         rtkMode: 'bypass'
       })
+    const controller = new AbortController()
 
     try {
       const result = (await manager.callTool(
@@ -359,7 +360,8 @@ describe('AgentToolManager read routing', () => {
           programmaticToolCapability: {
             quotas: { maxInputBytes: 32, maxDurationMs: 45_000 }
           } as never,
-          programmaticToolParent: { takeArmedToken: vi.fn() } as never
+          programmaticToolParent: { takeArmedToken: vi.fn() } as never,
+          signal: controller.signal
         }
       )) as { content: string }
 
@@ -369,6 +371,7 @@ describe('AgentToolManager read routing', () => {
           conversationId: 'conv1',
           stdin: 'owned input',
           programmatic: true,
+          signal: controller.signal,
           maxTimeoutMs: 45_000,
           outputPreviewChars: 7_000
         })

@@ -254,7 +254,8 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     transcript: messageStore,
     messageProjection,
     terminalObserver: hookSink,
-    pendingInputWakeup: pendingInputWakeup.wakeup
+    pendingInputWakeup: pendingInputWakeup.wakeup,
+    programmaticAuthority: deps.agentCliTokenAuthority
   })
   const sessionState = new SessionStateResolver({
     registry: runtime,

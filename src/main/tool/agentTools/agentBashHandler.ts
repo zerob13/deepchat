@@ -52,6 +52,7 @@ export interface ExecuteCommandOptions {
   env?: Record<string, string>
   stdin?: string
   programmatic?: boolean
+  signal?: AbortSignal
   maxTimeoutMs?: number
   outputPrefix?: string
   outputPreviewChars?: number
@@ -168,6 +169,9 @@ export class AgentBashHandler {
 
     const { command, timeout, background, cwd: requestedCwd, yieldMs } = parsed.data
     const isProgrammaticInvocation = options.programmatic === true
+    if (isProgrammaticInvocation) {
+      options.signal?.throwIfAborted()
+    }
     if (
       isProgrammaticInvocation &&
       (!options.conversationId || background || yieldMs !== undefined)
@@ -229,6 +233,9 @@ export class AgentBashHandler {
       options.commandShell,
       resolvedEnvironment.preserveCommand || isProgrammaticInvocation
     )
+    if (isProgrammaticInvocation) {
+      options.signal?.throwIfAborted()
+    }
 
     let armedProgrammaticToken: ArmedAgentCliProgrammaticToken | void
     try {
@@ -415,6 +422,9 @@ export class AgentBashHandler {
     if (!conversationId) {
       throw new Error('Managed shell process requires a conversation ID')
     }
+    if (options.programmatic === true) {
+      options.signal?.throwIfAborted()
+    }
 
     const session = await backgroundExecSessionManager.start(conversationId, command, cwd, {
       commandShell: options.commandShell,
@@ -428,6 +438,40 @@ export class AgentBashHandler {
       )
     })
 
+    let removal: Promise<void> | undefined
+    const removeSession = (): Promise<void> => {
+      removal ??= backgroundExecSessionManager.remove(conversationId, session.sessionId)
+      return removal
+    }
+    const signal = options.programmatic === true ? options.signal : undefined
+    let removeAbortListener = () => {}
+    const abortObserved = signal
+      ? new Promise<void>((resolve) => {
+          const onAbort = () => {
+            void removeSession().catch((error) => {
+              logger.warn(
+                '[AgentBashHandler] Failed to terminate an aborted Programmatic command',
+                {
+                  conversationId,
+                  sessionId: session.sessionId,
+                  error
+                }
+              )
+            })
+            resolve()
+          }
+          signal.addEventListener('abort', onAbort, { once: true })
+          removeAbortListener = () => signal.removeEventListener('abort', onAbort)
+          if (signal.aborted) onAbort()
+        })
+      : null
+
+    if (signal?.aborted) {
+      await removeSession().catch(() => {})
+      removeAbortListener()
+      signal.throwIfAborted()
+    }
+
     try {
       await backgroundExecSessionManager.write(
         conversationId,
@@ -436,66 +480,90 @@ export class AgentBashHandler {
         true
       )
     } catch (error) {
-      await backgroundExecSessionManager
-        .remove(conversationId, session.sessionId)
-        .catch((cause) => {
-          logger.warn(
-            '[AgentBashHandler] Failed to cleanup a session after stdin delivery failed',
-            {
-              conversationId,
-              sessionId: session.sessionId,
-              cause
-            }
-          )
+      await removeSession().catch((cause) => {
+        logger.warn('[AgentBashHandler] Failed to cleanup a session after stdin delivery failed', {
+          conversationId,
+          sessionId: session.sessionId,
+          cause
         })
+      })
+      removeAbortListener()
+      if (signal?.aborted) signal.throwIfAborted()
       throw error
     }
 
-    const yielded =
-      options.stdin === undefined && options.programmatic !== true
-        ? await backgroundExecSessionManager.waitForCompletionOrYield(
-            conversationId,
-            session.sessionId,
-            options.yieldMs ?? getBackgroundExecConfig().backgroundMs,
-            options.outputPreviewChars ?? COMMAND_PREVIEW_CHARS
-          )
-        : {
-            kind: 'completed' as const,
-            result: await backgroundExecSessionManager.getCompletionResult(
+    try {
+      const yielded =
+        options.stdin === undefined && options.programmatic !== true
+          ? await backgroundExecSessionManager.waitForCompletionOrYield(
               conversationId,
               session.sessionId,
+              options.yieldMs ?? getBackgroundExecConfig().backgroundMs,
               options.outputPreviewChars ?? COMMAND_PREVIEW_CHARS
             )
-          }
+          : {
+              kind: 'completed' as const,
+              result: await (abortObserved && signal
+                ? Promise.race([
+                    backgroundExecSessionManager.getCompletionResult(
+                      conversationId,
+                      session.sessionId,
+                      options.outputPreviewChars ?? COMMAND_PREVIEW_CHARS
+                    ),
+                    abortObserved.then(async () => {
+                      await removeSession().catch(() => {})
+                      signal.throwIfAborted()
+                      throw new DOMException('Aborted', 'AbortError')
+                    })
+                  ])
+                : backgroundExecSessionManager.getCompletionResult(
+                    conversationId,
+                    session.sessionId,
+                    options.outputPreviewChars ?? COMMAND_PREVIEW_CHARS
+                  ))
+            }
 
-    if (yielded.kind === 'running') {
-      return yielded
-    }
-
-    const retainOffloadedSession =
-      options.stdin === undefined && options.programmatic !== true && yielded.result.offloaded
-
-    try {
-      return {
-        kind: 'completed',
-        output: yielded.result.output,
-        exitCode: yielded.result.exitCode,
-        timedOut: yielded.result.timedOut,
-        offloaded: retainOffloadedSession,
-        outputFilePath: retainOffloadedSession ? yielded.result.outputFilePath : undefined
+      if (yielded.kind === 'running') {
+        return yielded
       }
-    } finally {
-      if (!retainOffloadedSession) {
-        await backgroundExecSessionManager
-          .remove(conversationId, session.sessionId)
-          .catch((error) => {
+
+      const retainOffloadedSession =
+        options.stdin === undefined && options.programmatic !== true && yielded.result.offloaded
+
+      try {
+        return {
+          kind: 'completed',
+          output: yielded.result.output,
+          exitCode: yielded.result.exitCode,
+          timedOut: yielded.result.timedOut,
+          offloaded: retainOffloadedSession,
+          outputFilePath: retainOffloadedSession ? yielded.result.outputFilePath : undefined
+        }
+      } finally {
+        if (!retainOffloadedSession) {
+          await removeSession().catch((error) => {
             logger.warn('[AgentBashHandler] Failed to cleanup completed foreground exec session', {
               conversationId,
               sessionId: session.sessionId,
               error
             })
           })
+        }
       }
+    } catch (error) {
+      if (options.programmatic === true) {
+        await removeSession().catch((cause) => {
+          logger.warn('[AgentBashHandler] Failed to cleanup failed Programmatic command', {
+            conversationId,
+            sessionId: session.sessionId,
+            cause
+          })
+        })
+      }
+      if (signal?.aborted) signal.throwIfAborted()
+      throw error
+    } finally {
+      removeAbortListener()
     }
   }
 
