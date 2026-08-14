@@ -40,6 +40,11 @@ describe('DeepChat system prompt builder', () => {
     expect(first.prompt).toContain('Discovery does not authorize a target.')
     expect(first.prompt).toContain('rechecks current authority and policy before execution')
     expect(first.prompt).toContain('Pass call and batch JSON through the `exec` stdin field')
+    expect(first.prompt).toContain(
+      "Search results already include each tool's input signature and a copyable call example"
+    )
+    expect(first.prompt).toContain("copy the example's `command` and `stdin` fields into `exec`")
+    expect(first.prompt).toContain('only when you need the complete input schema')
     expect(first.prompt).toContain('--target <name>')
     expect(first.prompt).toContain('Describe targets may use exact double quotes')
     expect(first.prompt).toContain('never use single quotes or escapes')
