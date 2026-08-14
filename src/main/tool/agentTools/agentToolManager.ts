@@ -1,14 +1,20 @@
 import type { ProviderSettingsPort } from '@/provider/settings'
-import { TOOL_EXECUTION, type MCPToolDefinition, type ToolDispatchCommit } from '@shared/types/mcp'
+import {
+  TOOL_EXECUTION,
+  type MCPToolDefinition,
+  type ToolDispatchCommit,
+  type ToolOutcomeProjectionRegistrar
+} from '@shared/types/mcp'
 import type { AgentSettingsPort } from '@/agent/settings'
 import type { SettingsStore } from '@/config/settingsStore'
-import type { AgentToolProgressUpdate } from '@shared/types/tool'
+import type { AgentToolProgressUpdate, ToolPermissionLeaseCapability } from '@shared/types/tool'
 import { toDeepChatJsonSchema } from '@shared/lib/zodJsonSchema'
 import { z } from 'zod'
 import fs from 'fs'
 import path from 'path'
 import { app, nativeImage } from 'electron'
 import logger from '@shared/logger'
+import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { ToolCallImagePreview } from '@shared/types/core/mcp'
 import {
@@ -59,15 +65,23 @@ import {
   IMAGE_GENERATE_TOOL_NAME,
   IMAGE_GENERATION_TOOL_SERVER_NAME
 } from './agentImageGenerationTool'
-import { AgentPlanTool, UPDATE_PLAN_TOOL_NAME } from './agentPlanTool'
+import { AGENT_CORE_TOOL_SERVER_NAME, AgentPlanTool, UPDATE_PLAN_TOOL_NAME } from './agentPlanTool'
 import { AgentTapeToolHandler } from './agentTapeTools'
 import { AGENT_MEMORY_TOOL_SERVER_NAME, AgentMemoryToolHandler } from './agentMemoryTools'
-import { createAgentToolErrorResult } from '@shared/lib/agentToolResultEnvelope'
+import {
+  createAgentToolErrorResult,
+  createAgentToolSuccessResult
+} from '@shared/lib/agentToolResultEnvelope'
 import {
   CRON_JOB_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_NAME,
   LIVE_DELEGATION_AGENT_TOOL_SERVER_NAME,
+  SKILL_AGENT_TOOL_NAMES,
   SKILL_LIST_AGENT_TOOL_NAME,
+  SKILL_MANAGE_AGENT_TOOL_NAME,
+  SKILL_RUN_AGENT_TOOL_NAME,
+  SKILL_VIEW_AGENT_TOOL_NAME,
+  TOOL_SEARCH_AGENT_TOOL_NAME,
   assertAgentToolExposure,
   isTapeToolName,
   type AgentToolExposure
@@ -85,6 +99,22 @@ import { LiveDelegationAgentTool } from './liveDelegationTool'
 import { normalizeOrchestrationPolicy } from '@shared/orchestration/policy'
 import { ResolvedCommandShellSchema, type ResolvedCommandShell } from '@shared/commandShell'
 import { resolveAgentOutputLimits, type AgentOutputLimits } from '@shared/lib/agentOutputLimits'
+import {
+  assertActiveToolSurfaceExecutionContext,
+  type ToolSurfaceExecutionContext
+} from '@/agent/deepchat/runtime/toolSurface'
+import { recordToolSurfaceCanaryDiscovery } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
+import {
+  MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
+  PROGRAMMATIC_EXEC_STDIN_DESCRIPTION,
+  type ProgrammaticToolCapabilityV1
+} from '@/agent/deepchat/runtime/programmaticToolSurface'
+import {
+  TOOL_SEARCH_TOOL_SERVER_NAME,
+  parseToolSearchInput,
+  searchToolSurfaceSnapshot
+} from './toolSearchTool'
+import type { ProgrammaticToolParentRegistration } from '@/cli/programmaticToolParentRegistry'
 
 // Consider moving to a shared handlers location in future refactoring
 import {
@@ -147,6 +177,7 @@ interface AgentToolManagerOptions {
 interface AgentToolExecutionOptions {
   toolCallId?: string
   runId?: string
+  messageId?: string
   requestSeq?: number
   manifestHash?: string
   tapeIncarnationId?: string
@@ -154,10 +185,15 @@ interface AgentToolExecutionOptions {
   signal?: AbortSignal
   allowExternalFileAccess?: boolean
   activeSkillNames?: string[]
+  toolSurfaceContext?: ToolSurfaceExecutionContext
+  programmaticToolCapability?: ProgrammaticToolCapabilityV1
+  programmaticToolParent?: ProgrammaticToolParentRegistration
+  registerOutcomeProjection?: ToolOutcomeProjectionRegistrar
   liveDelegationAuthorization?: LiveDelegationStartAuthorization
   commitDispatch?: ToolDispatchCommit
   commandShell?: ResolvedCommandShell
   oneShotCommandGrantId?: string
+  permissionLease?: ToolPermissionLeaseCapability
 }
 
 type AgentFileSystemExecutionOptions = AgentToolExecutionOptions & {
@@ -218,7 +254,11 @@ export class AgentToolManager {
     serverName: string,
     normalizedArguments: Record<string, unknown>,
     options?: AgentToolExecutionOptions
-  ): ((resolvedArguments?: Record<string, unknown>) => void) | undefined {
+  ):
+    | ((
+        resolvedArguments?: Record<string, unknown>
+      ) => ReturnType<ProgrammaticToolParentRegistration['takeArmedToken']> | void)
+    | undefined {
     const commitDispatch = options?.commitDispatch
     if (!commitDispatch) return undefined
     return (resolvedArguments = normalizedArguments) => {
@@ -229,6 +269,7 @@ export class AgentToolManager {
         normalizedArguments: resolvedArguments,
         target: { serverName, originalName: toolName }
       })
+      return options?.programmaticToolParent?.takeArmedToken()
     }
   }
 
@@ -273,6 +314,16 @@ export class AgentToolManager {
     [GREP_TOOL_NAME]: FffGrepArgsSchema,
     exec: z.object({
       command: z.string().min(1).describe('The shell command to execute'),
+      stdin: z
+        .string()
+        .min(1)
+        .max(MAX_PROGRAMMATIC_TOOL_INPUT_BYTES)
+        .refine(
+          (value) => Buffer.byteLength(value, 'utf8') <= MAX_PROGRAMMATIC_TOOL_INPUT_BYTES,
+          `stdin must not exceed ${MAX_PROGRAMMATIC_TOOL_INPUT_BYTES} UTF-8 bytes`
+        )
+        .optional()
+        .describe(PROGRAMMATIC_EXEC_STDIN_DESCRIPTION),
       timeoutMs: z
         .number()
         .min(100)
@@ -520,16 +571,24 @@ export class AgentToolManager {
     conversationId?: string
     activeSkillNames?: string[]
     subagentCapability?: DeepChatSubagentCapability
-    catalogPurpose?: 'runtime' | 'configurable'
+    catalogPurpose?: 'runtime' | 'configurable' | 'universe'
+    signal?: AbortSignal
     skillsEnabled?: boolean
     requireCompleteCatalog?: boolean
   }): Promise<MCPToolDefinition[]> {
+    context.signal?.throwIfAborted()
     const defs: MCPToolDefinition[] = []
     const isAgentMode = context.chatMode === 'agent'
     const skillsEnabled = context.skillsEnabled ?? this.isSkillsEnabled()
     const isConfigurableCatalog = context.catalogPurpose === 'configurable'
+    const isUniverseCatalog = context.catalogPurpose === 'universe'
+    const isDefinitionOnlyCatalog = isConfigurableCatalog || isUniverseCatalog
     const acceptsExposure = (exposure: AgentToolExposure): boolean =>
       !isConfigurableCatalog || exposure === 'user-configurable'
+    const handleAvailabilityError = (message: string, error: unknown): void => {
+      if (isUniverseCatalog || context.requireCompleteCatalog) throw error
+      logger.warn(message, { error })
+    }
     const appendDefinitions = (
       definitions: MCPToolDefinition[],
       expectedExposure: AgentToolExposure
@@ -542,12 +601,12 @@ export class AgentToolManager {
       }
     }
 
-    if (!isConfigurableCatalog) {
+    if (!isDefinitionOnlyCatalog) {
       this.syncContext(context)
     }
 
     // 1. FileSystem tools (agent mode only)
-    if (isAgentMode && (isConfigurableCatalog || this.fileSystemHandler)) {
+    if (isAgentMode && (isDefinitionOnlyCatalog || this.fileSystemHandler)) {
       const fsDefs = this.getFileSystemToolDefinitions()
       appendDefinitions(fsDefs, 'user-configurable')
     }
@@ -563,38 +622,60 @@ export class AgentToolManager {
     // 2.15. Session tape tools (DeepChat sessions only)
     if (isAgentMode && acceptsExposure('system-model')) {
       try {
-        if (await this.tapeToolHandler.canUse(context.conversationId)) {
+        if (
+          await awaitWithAbort(this.tapeToolHandler.canUse(context.conversationId), context.signal)
+        ) {
           appendDefinitions(this.tapeToolHandler.getToolDefinitions(), 'system-model')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to resolve tape tool availability', { error })
-        if (context.requireCompleteCatalog) throw error
+        context.signal?.throwIfAborted()
+        handleAvailabilityError(
+          '[AgentToolManager] Failed to resolve tape tool availability',
+          error
+        )
       }
     }
 
     // 2.16. Long-term memory tools (only when the agent has memory enabled)
     if (isAgentMode) {
       try {
-        if (await this.memoryToolHandler.canUse(context.conversationId)) {
+        if (
+          await awaitWithAbort(
+            this.memoryToolHandler.canUse(context.conversationId),
+            context.signal
+          )
+        ) {
           appendDefinitions(this.memoryToolHandler.getToolDefinitions(), 'user-configurable')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to resolve memory tool availability', { error })
-        if (context.requireCompleteCatalog) throw error
+        context.signal?.throwIfAborted()
+        handleAvailabilityError(
+          '[AgentToolManager] Failed to resolve memory tool availability',
+          error
+        )
       }
     }
 
     // 2.25. Image generation tool (deepchat agent sessions with an image model)
     if (isAgentMode) {
       try {
-        if (await this.imageGenerationTool.canUse(context.conversationId)) {
+        if (
+          await awaitWithAbort(
+            this.imageGenerationTool.canUse(
+              context.conversationId,
+              isUniverseCatalog ? { strict: true, reportDiagnostics: false } : undefined
+            ),
+            context.signal
+          )
+        ) {
           appendDefinitions([this.imageGenerationTool.getToolDefinition()], 'user-configurable')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to resolve image generation tool availability', {
+        context.signal?.throwIfAborted()
+        handleAvailabilityError(
+          '[AgentToolManager] Failed to resolve image generation tool availability',
           error
-        })
-        if (context.requireCompleteCatalog) throw error
+        )
       }
     }
 
@@ -618,63 +699,62 @@ export class AgentToolManager {
           appendDefinitions([subagentToolDefinition], 'system-model')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to resolve subagent tool availability', { error })
-        if (context.requireCompleteCatalog) throw error
+        handleAvailabilityError(
+          '[AgentToolManager] Failed to resolve subagent tool availability',
+          error
+        )
       }
     }
 
     // 3. Skill tools (agent mode only)
     if (isAgentMode && skillsEnabled) {
       const skillDefs = this.getSkillToolDefinitions()
-      appendDefinitions(
-        skillDefs.filter((definition) => definition.function.name === SKILL_LIST_AGENT_TOOL_NAME),
-        'system-model'
-      )
-      appendDefinitions(
-        skillDefs.filter((definition) => definition.function.name !== SKILL_LIST_AGENT_TOOL_NAME),
-        'user-configurable'
-      )
+      appendDefinitions(skillDefs, 'system-model')
 
       if (
-        context.conversationId &&
-        (await this.hasRunnableSkillScripts(
-          context.conversationId,
-          context.activeSkillNames,
-          context.requireCompleteCatalog
-        ))
+        isUniverseCatalog ||
+        (context.conversationId &&
+          (await this.hasRunnableSkillScripts(
+            context.conversationId,
+            context.activeSkillNames,
+            context.requireCompleteCatalog
+          )))
       ) {
-        appendDefinitions([this.getSkillRunToolDefinition()], 'user-configurable')
+        appendDefinitions([this.getSkillRunToolDefinition()], 'system-model')
       }
     }
 
     // 4. DeepChat settings tools (agent mode only, skill gated)
     if (isAgentMode && skillsEnabled && context.conversationId) {
       try {
-        const activeSkills =
-          context.activeSkillNames ??
-          (await this.getSkillService().getActiveSkills(context.conversationId))
+        const activeSkills = isUniverseCatalog
+          ? (context.activeSkillNames ?? [])
+          : (context.activeSkillNames ??
+            (await this.getSkillService().getActiveSkills(context.conversationId)))
         if (activeSkills.includes(CHAT_SETTINGS_SKILL_NAME)) {
-          const allowedTools = await this.getSkillService().getActiveSkillsAllowedTools(
-            context.conversationId,
-            activeSkills
-          )
           const requiredSettingsTools = Object.values(CHAT_SETTINGS_TOOL_NAMES)
-          const nonOpenSettingsTools = requiredSettingsTools.filter(
-            (tool) => tool !== CHAT_SETTINGS_TOOL_NAMES.open
-          )
-          const hasNonOpenSettingsTool = nonOpenSettingsTools.some((tool) =>
-            allowedTools.includes(tool)
-          )
-          const effectiveAllowedTools = hasNonOpenSettingsTool
-            ? allowedTools
-            : Array.from(new Set([...allowedTools, ...requiredSettingsTools]))
+          let effectiveAllowedTools: string[] = requiredSettingsTools
+          if (!isUniverseCatalog) {
+            const allowedTools = await this.getSkillService().getActiveSkillsAllowedTools(
+              context.conversationId,
+              activeSkills
+            )
+            const nonOpenSettingsTools = requiredSettingsTools.filter(
+              (tool) => tool !== CHAT_SETTINGS_TOOL_NAMES.open
+            )
+            const hasNonOpenSettingsTool = nonOpenSettingsTools.some((tool) =>
+              allowedTools.includes(tool)
+            )
+            effectiveAllowedTools = hasNonOpenSettingsTool
+              ? allowedTools
+              : Array.from(new Set([...allowedTools, ...requiredSettingsTools]))
+          }
 
           const settingsDefs = buildChatSettingsToolDefinitions(effectiveAllowedTools)
           appendDefinitions(settingsDefs, 'user-configurable')
         }
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to load DeepChat settings tools', { error })
-        if (context.requireCompleteCatalog) throw error
+        handleAvailabilityError('[AgentToolManager] Failed to load DeepChat settings tools', error)
       }
     }
 
@@ -683,8 +763,7 @@ export class AgentToolManager {
       try {
         appendDefinitions(this.getYoBrowserToolHandler().getToolDefinitions(), 'user-configurable')
       } catch (error) {
-        logger.warn('[AgentToolManager] Failed to load YoBrowser tools', { error })
-        if (context.requireCompleteCatalog) throw error
+        handleAvailabilityError('[AgentToolManager] Failed to load YoBrowser tools', error)
       }
     }
 
@@ -703,7 +782,13 @@ export class AgentToolManager {
     if (toolName === UPDATE_PLAN_TOOL_NAME) {
       return this.planTool.call(args, conversationId, {
         toolCallId: options?.toolCallId,
-        onProgress: options?.onProgress
+        onProgress: options?.onProgress,
+        beforeMutation: this.createAgentDispatchCommit(
+          toolName,
+          AGENT_CORE_TOOL_SERVER_NAME,
+          args,
+          options
+        )
       })
     }
 
@@ -718,6 +803,76 @@ export class AgentToolManager {
           content: 'question_requested',
           isError: false,
           toolResult: parsedQuestion.data
+        }
+      }
+    }
+
+    if (toolName === TOOL_SEARCH_AGENT_TOOL_NAME) {
+      const context = options?.toolSurfaceContext
+      const parsed = parseToolSearchInput(args)
+      if (!parsed.success) {
+        if (context) {
+          recordToolSurfaceCanaryDiscovery(context.snapshot, {
+            kind: 'search',
+            stableTargetKeys: Object.freeze([]),
+            failed: true
+          })
+        }
+        throw new Error(parsed.error)
+      }
+      if (!context) {
+        throw new Error('ToolSearch requires an active Tool Surface execution context.')
+      }
+      assertActiveToolSurfaceExecutionContext(context, context.snapshot.request)
+      const commitDispatch = this.createAgentDispatchCommit(
+        toolName,
+        TOOL_SEARCH_TOOL_SERVER_NAME,
+        parsed.data,
+        options
+      )
+      if (!commitDispatch || !options?.registerOutcomeProjection) {
+        throw new Error('ToolSearch requires dispatch and outcome projection capabilities.')
+      }
+      options.signal?.throwIfAborted()
+      commitDispatch(parsed.data)
+      let execution: ReturnType<typeof searchToolSurfaceSnapshot>
+      try {
+        execution = searchToolSurfaceSnapshot(parsed.data, context)
+      } catch (error) {
+        recordToolSurfaceCanaryDiscovery(context.snapshot, {
+          kind: 'search',
+          stableTargetKeys: Object.freeze([]),
+          failed: true
+        })
+        throw error
+      }
+      options.registerOutcomeProjection(() => {
+        try {
+          context.submitActivationCandidates(execution.candidates)
+          recordToolSurfaceCanaryDiscovery(context.snapshot, {
+            kind: 'search',
+            stableTargetKeys: execution.candidates.map((candidate) => candidate.stableTargetKey)
+          })
+        } catch (error) {
+          recordToolSurfaceCanaryDiscovery(context.snapshot, {
+            kind: 'search',
+            stableTargetKeys: Object.freeze([]),
+            failed: true
+          })
+          throw error
+        }
+      })
+      const content = JSON.stringify(execution.result, null, 2)
+      return {
+        content,
+        rawData: {
+          content,
+          isError: false,
+          toolResult: createAgentToolSuccessResult(TOOL_SEARCH_AGENT_TOOL_NAME, execution.result, {
+            summary: `Found ${execution.result.results.length} discoverable tool candidate${execution.result.results.length === 1 ? '' : 's'}.`,
+            data: execution.result,
+            meta: { resultCount: execution.result.results.length }
+          })
         }
       }
     }
@@ -891,6 +1046,12 @@ export class AgentToolManager {
 
   private getFileSystemToolDefinitions(): MCPToolDefinition[] {
     const schemas = this.fileSystemSchemas
+    const execParameters = toDeepChatJsonSchema(schemas.exec) as {
+      type: string
+      properties: Record<string, unknown>
+      required?: string[]
+    }
+    const { stdin: _programmaticStdin, ...execProviderProperties } = execParameters.properties
     const defs: MCPToolDefinition[] = [
       {
         execution: TOOL_EXECUTION.read.parallel,
@@ -994,10 +1155,9 @@ export class AgentToolManager {
           name: 'exec',
           description:
             'Execute a shell command in the current working directory or an explicit cwd. External cwd paths are allowed in Full Access mode; default mode asks for approval. Use background: true when you know the command should detach immediately. Otherwise foreground exec waits briefly, and long-running commands may auto-background and return a session ID for use with the process tool.',
-          parameters: toDeepChatJsonSchema(schemas.exec) as {
-            type: string
-            properties: Record<string, unknown>
-            required?: string[]
+          parameters: {
+            ...execParameters,
+            properties: execProviderProperties
           }
         },
         server: {
@@ -1232,7 +1392,9 @@ export class AgentToolManager {
       includeSkillRoots: toolName !== 'exec',
       includeRuntimeRoots: toolName !== 'exec',
       requiredPermission: this.getRequiredFilePermission(toolName),
-      activeSkillNames: options.activeSkillNames
+      activeSkillNames: options.activeSkillNames,
+      provisionalLeaseId:
+        options.permissionLease?.kind === 'file' ? options.permissionLease.leaseId : undefined
     })
     const protectedDirectoryRules = await this.buildProtectedSkillDirectoryRules(
       conversationId,
@@ -1252,11 +1414,35 @@ export class AgentToolManager {
       )
       const execArgs = parsedArgs as {
         command: string
+        stdin?: string
         timeoutMs?: number
         description?: string
         cwd?: string
         background?: boolean
         yieldMs?: number
+      }
+      const isProgrammaticInvocation = options.programmaticToolParent !== undefined
+      if (isProgrammaticInvocation) {
+        if (!options.programmaticToolCapability) {
+          throw new Error('Programmatic exec requires an active Programmatic Tool capability.')
+        }
+        const invocationInput = execArgs.stdin ?? execArgs.command
+        if (
+          Buffer.byteLength(invocationInput, 'utf8') >
+          options.programmaticToolCapability.quotas.maxInputBytes
+        ) {
+          throw new Error(
+            'Programmatic exec input exceeds the active Programmatic Tool input quota.'
+          )
+        }
+        if (execArgs.timeoutMs !== undefined) {
+          throw new Error('Programmatic exec duration is owned by its active capability.')
+        }
+      } else if (execArgs.stdin !== undefined) {
+        if (!options.programmaticToolCapability) {
+          throw new Error('Owned exec stdin requires an active Programmatic Tool capability.')
+        }
+        throw new Error('Owned exec stdin requires an active Programmatic Tool parent operation.')
       }
       if (execArgs.cwd) {
         const skillScopeGuard = new AgentFileSystemHandler(allowedDirectories, {
@@ -1268,6 +1454,9 @@ export class AgentToolManager {
         skillScopeGuard.assertReadAllowedAbsolute(
           skillScopeGuard.resolvePath(execArgs.cwd, workspaceRoot)
         )
+      }
+      if (isProgrammaticInvocation) {
+        options.signal?.throwIfAborted()
       }
       const commandResult = await bashHandler.executeCommand(
         {
@@ -1282,6 +1471,12 @@ export class AgentToolManager {
           conversationId,
           commandShell: options.commandShell,
           oneShotCommandGrantId: options.oneShotCommandGrantId,
+          stdin: execArgs.stdin,
+          programmatic: isProgrammaticInvocation,
+          signal: isProgrammaticInvocation ? options.signal : undefined,
+          maxTimeoutMs: isProgrammaticInvocation
+            ? options.programmaticToolCapability?.quotas.maxDurationMs
+            : undefined,
           allowExternalCwd: allowExternalFileAccess,
           outputPreviewChars: outputLimits.commandOutputInlineChars,
           beforeExecute: this.createAgentDispatchCommit(
@@ -1585,6 +1780,7 @@ export class AgentToolManager {
       includeRuntimeRoots?: boolean
       requiredPermission?: FilePermissionLevel
       activeSkillNames?: string[]
+      provisionalLeaseId?: string
     } = {}
   ): Promise<string[]> {
     const includeSkillRoots = options.includeSkillRoots !== false
@@ -1623,7 +1819,8 @@ export class AgentToolManager {
     if (conversationId) {
       const approved = this.dependencies.permissions.getApprovedFilePaths(
         conversationId,
-        options.requiredPermission ?? 'read'
+        options.requiredPermission ?? 'read',
+        options.provisionalLeaseId
       )
       for (const approvedPath of approved) {
         addPath(approvedPath)
@@ -2249,7 +2446,7 @@ export class AgentToolManager {
         execution: TOOL_EXECUTION.read.parallel,
         type: 'function',
         function: {
-          name: 'skill_list',
+          name: SKILL_LIST_AGENT_TOOL_NAME,
           description:
             'Search or browse available skills as bounded routing cards. Use query to find skills omitted from the system catalog and nextCursor to continue.',
           parameters: toDeepChatJsonSchema(schemas.skill_list) as {
@@ -2268,7 +2465,7 @@ export class AgentToolManager {
         execution: TOOL_EXECUTION.write,
         type: 'function',
         function: {
-          name: 'skill_view',
+          name: SKILL_VIEW_AGENT_TOOL_NAME,
           description:
             'Inspect a specific skill before relying on it. Returns the rendered SKILL.md body or a requested supporting file under the skill root.',
           parameters: toDeepChatJsonSchema(schemas.skill_view) as {
@@ -2287,7 +2484,7 @@ export class AgentToolManager {
         execution: TOOL_EXECUTION.write,
         type: 'function',
         function: {
-          name: 'skill_manage',
+          name: SKILL_MANAGE_AGENT_TOOL_NAME,
           description:
             'Create or edit temporary draft skills in the conversation draft area. Use the returned draftId for follow-up draft operations. This cannot modify installed skills.',
           parameters: toDeepChatJsonSchema(schemas.skill_manage) as {
@@ -2310,7 +2507,7 @@ export class AgentToolManager {
       execution: TOOL_EXECUTION.write,
       type: 'function',
       function: {
-        name: 'skill_run',
+        name: SKILL_RUN_AGENT_TOOL_NAME,
         description:
           'Run a bundled script from a skill active in the current message/tool loop. This is the preferred way to execute skill-local Python, Node, or shell helpers without guessing paths.',
         parameters: toDeepChatJsonSchema(this.skillSchemas.skill_run) as {
@@ -2328,11 +2525,14 @@ export class AgentToolManager {
   }
 
   private isSkillTool(toolName: string): boolean {
-    return toolName === 'skill_list' || toolName === 'skill_view' || toolName === 'skill_manage'
+    return (
+      toolName !== SKILL_RUN_AGENT_TOOL_NAME &&
+      (SKILL_AGENT_TOOL_NAMES as readonly string[]).includes(toolName)
+    )
   }
 
   private isSkillExecutionTool(toolName: string): boolean {
-    return toolName === 'skill_run'
+    return toolName === SKILL_RUN_AGENT_TOOL_NAME
   }
 
   private async hasRunnableSkillScripts(
@@ -2622,7 +2822,7 @@ export class AgentToolManager {
     const skillTools = this.getSkillTools()
     const effectiveActiveSkills = this.normalizeActiveSkillOption(options?.activeSkillNames)
 
-    if (toolName === 'skill_list') {
+    if (toolName === SKILL_LIST_AGENT_TOOL_NAME) {
       const validationResult = this.skillSchemas.skill_list.safeParse(args)
       if (!validationResult.success) {
         throw new Error(`Invalid arguments for skill_list: ${validationResult.error.message}`)
@@ -2635,7 +2835,7 @@ export class AgentToolManager {
       return { content: JSON.stringify(result) }
     }
 
-    if (toolName === 'skill_view') {
+    if (toolName === SKILL_VIEW_AGENT_TOOL_NAME) {
       const schema = this.skillSchemas.skill_view
       const validationResult = schema.safeParse(args)
       if (!validationResult.success) {
@@ -2752,7 +2952,7 @@ export class AgentToolManager {
       }
     }
 
-    if (toolName === 'skill_manage') {
+    if (toolName === SKILL_MANAGE_AGENT_TOOL_NAME) {
       const schema = this.skillSchemas.skill_manage
       const validationResult = schema.safeParse(args)
       if (!validationResult.success) {
@@ -2781,7 +2981,7 @@ export class AgentToolManager {
 
   private buildSkillManageToolResult(result: SkillManageResult): Record<string, unknown> {
     return {
-      toolName: 'skill_manage',
+      toolName: SKILL_MANAGE_AGENT_TOOL_NAME,
       ...result,
       ...(result.success === true &&
       result.action === 'create' &&
@@ -2804,7 +3004,7 @@ export class AgentToolManager {
     conversationId?: string,
     options?: AgentToolExecutionOptions
   ): Promise<AgentToolCallResult> {
-    if (toolName !== 'skill_run') {
+    if (toolName !== SKILL_RUN_AGENT_TOOL_NAME) {
       throw new Error(`Unknown skill execution tool: ${toolName}`)
     }
 
@@ -2929,7 +3129,10 @@ export class AgentToolManager {
       if (shouldCheckPermission && conversationId) {
         const approved = this.dependencies.permissions.consumeSettingsApproval(
           conversationId,
-          toolName
+          toolName,
+          options?.permissionLease?.kind === 'settings'
+            ? options.permissionLease.leaseId
+            : undefined
         )
         if (!approved) {
           const responseContent = 'components.messageBlockPermissionRequest.description.write'

@@ -36,6 +36,7 @@ import {
   SkillManageRequest,
   SkillManageResult,
   SkillDraftActionResult,
+  SkillMetadataCatalogSnapshot,
   SkillRuntimePolicy,
   SkillScriptDescriptor,
   SkillScriptRuntime,
@@ -85,6 +86,7 @@ import {
 
 const execFileAsync = promisify(execFile)
 const READ_ONLY_BUNDLED_SKILL_NAMES = new Set(['deepchat-cli'])
+const MAX_METADATA_SNAPSHOT_ITEMS = 4_096
 const EFFECTIVE_SKILL_CONTENT_BUILDER_VERSION = 'skill-effective-content-v3'
 // SHA-256 values cover the canonical manifest and complete pre-declaration resource tree.
 const LEGACY_BUILTIN_EXECUTION_SUPPORT_MIGRATIONS = {
@@ -1288,6 +1290,38 @@ export class SkillService implements SkillServicePort {
     await this.ensureAgentCatalogDiscovered(normalizedAgentId)
     await this.ensureAgentBindingsInitialized(normalizedAgentId)
     return this.getVisibleMetadataFromCache(normalizedAgentId)
+  }
+
+  /**
+   * Snapshot an already-discovered catalog without starting discovery or publishing catalog events.
+   */
+  snapshotCachedMetadataList(
+    agentId: string,
+    options: { readonly maxItems: number }
+  ): SkillMetadataCatalogSnapshot {
+    const normalizedAgentId = assertSafeSkillAgentId(agentId)
+    if (
+      !Number.isSafeInteger(options.maxItems) ||
+      options.maxItems <= 0 ||
+      options.maxItems > MAX_METADATA_SNAPSHOT_ITEMS
+    ) {
+      throw new Error('Skill metadata snapshot maxItems is invalid.')
+    }
+    if (!this.builtinCatalogDiscovered && this.metadataCache.size === 0) {
+      return { state: 'unavailable' }
+    }
+    const visibleSkills: SkillMetadata[] = []
+    for (const skill of this.getMetadataCacheForAgent(normalizedAgentId).values()) {
+      if (!this.isSkillVisible(skill, normalizedAgentId)) continue
+      visibleSkills.push(skill)
+      if (visibleSkills.length > options.maxItems) {
+        return { state: 'overflow', minimumItemCount: visibleSkills.length }
+      }
+    }
+    return {
+      state: 'ready',
+      skills: structuredClone(this.sortSkillMetadata(visibleSkills))
+    }
   }
 
   private getVisibleMetadataFromCache(agentId: string): SkillMetadata[] {
@@ -5447,6 +5481,13 @@ export class SkillService implements SkillServicePort {
     logger.warn('[SkillService] Ignoring skill state update for retired legacy conversation.', {
       conversationId
     })
+  }
+
+  /**
+   * Snapshot persisted active names without validation, repair, or persistence.
+   */
+  snapshotPersistedActiveSkillNames(conversationId: string): string[] {
+    return [...this.sessionStatePort.getPersistedNewSessionSkills(conversationId)]
   }
 
   /**

@@ -27,7 +27,9 @@ import { buildUsageFromMetadata, stampTerminalMetadata } from './runtimeMetadata
 import type { SessionStatusPublisher } from './sessionStatusPublisher'
 import type { MessageProjectionService } from './messageProjectionService'
 import { resolveStreamRequestId as resolveRegistryStreamRequestId } from './streamRequestId'
+import { revokeToolSurfaceDeferredDispatchesForSession } from './toolSurface'
 import type { ProcessResult } from './types'
+import type { AgentCliTokenAuthority } from '@/cli/agentTokenAuthority'
 
 export type PendingInputWakeReason = 'enqueue' | 'completed' | 'manual'
 
@@ -55,6 +57,7 @@ export interface RunLifecycleCoordinatorPorts {
   pendingInputWakeup: PendingInputWakeup
   terminalObserver: RunTerminalObserver
   messageProjection: Pick<MessageProjectionService, 'refresh'>
+  programmaticAuthority: Pick<AgentCliTokenAuthority, 'revokeConversation'>
 }
 
 export class RunLifecycleCoordinator {
@@ -256,6 +259,8 @@ export class RunLifecycleCoordinator {
   }
 
   async cancel(sessionId: string): Promise<void> {
+    this.ports.programmaticAuthority.revokeConversation(sessionId)
+    revokeToolSurfaceDeferredDispatchesForSession(sessionId)
     const scope = this.getHydratedScope(sessionId)
     if (!scope) {
       return
@@ -309,6 +314,8 @@ export class RunLifecycleCoordinator {
     if (!scope.isCurrent()) {
       return
     }
+    this.ports.programmaticAuthority.revokeConversation(scope.sessionId)
+    revokeToolSurfaceDeferredDispatchesForSession(scope.sessionId)
     scope.instance.abortAndClearGeneration()
     scope.instance.abortDeferredToolCalls()
     this.cancelProviderPermissions(scope.instance)
@@ -394,7 +401,12 @@ export class RunLifecycleCoordinator {
   }
 
   schedulePendingInputDrain(sessionId: string, reason: PendingInputWakeReason): void {
-    void this.requestPendingInputDrain(sessionId, reason).catch(() => undefined)
+    void this.requestPendingInputDrain(sessionId, reason).catch((error) => {
+      logger.error(
+        `[DeepChatAgent] drainPendingQueueIfPossible error session=${sessionId} reason=${reason}`,
+        redactRuntimeErrorForLog(error)
+      )
+    })
   }
 
   private canSettleAbortedRun(scope: SessionRuntimeScope, runId?: string): boolean {

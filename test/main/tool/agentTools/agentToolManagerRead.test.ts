@@ -199,6 +199,8 @@ describe('AgentToolManager read routing', () => {
       exec: { effect: 'write', mode: 'sequential' },
       process: { effect: 'write', mode: 'sequential' }
     })
+    const exec = definitions.find((definition) => definition.function.name === 'exec')
+    expect(exec?.function.parameters.properties.stdin).toBeUndefined()
   })
 
   it('selects parallel for the production read tool definitions', async () => {
@@ -384,19 +386,155 @@ describe('AgentToolManager read routing', () => {
         rtkApplied: false,
         rtkMode: 'bypass'
       })
+    const controller = new AbortController()
 
     try {
       const result = (await manager.callTool(
         'exec',
-        { command: 'printf ok', description: 'Print text' },
-        'conv1'
+        {
+          command: 'deepchat tool call',
+          stdin: 'owned input',
+          description: 'Call programmatic tool'
+        },
+        'conv1',
+        {
+          programmaticToolCapability: {
+            quotas: { maxInputBytes: 32, maxDurationMs: 45_000 }
+          } as never,
+          programmaticToolParent: { takeArmedToken: vi.fn() } as never,
+          signal: controller.signal
+        }
       )) as { content: string }
 
       expect(executeCommand).toHaveBeenCalledWith(
-        expect.objectContaining({ command: 'printf ok' }),
-        expect.objectContaining({ conversationId: 'conv1', outputPreviewChars: 7_000 })
+        expect.objectContaining({ command: 'deepchat tool call', timeout: undefined }),
+        expect.objectContaining({
+          conversationId: 'conv1',
+          stdin: 'owned input',
+          programmatic: true,
+          signal: controller.signal,
+          maxTimeoutMs: 45_000,
+          outputPreviewChars: 7_000
+        })
       )
       expect(result.content).toContain('ok')
+    } finally {
+      executeCommand.mockRestore()
+    }
+  })
+
+  it('routes scalar Programmatic discovery without owned stdin', async () => {
+    const executeCommand = vi
+      .spyOn(AgentBashHandler.prototype, 'executeCommand')
+      .mockResolvedValue({
+        output: '{"tools":[]}\nExit Code: 0',
+        rtkApplied: false,
+        rtkMode: 'bypass'
+      })
+
+    try {
+      await manager.callTool(
+        'exec',
+        {
+          command: 'deepchat tool search --query calendar --limit 4',
+          description: 'Search programmatic tools'
+        },
+        'conv1',
+        {
+          programmaticToolCapability: {
+            quotas: { maxInputBytes: 1024, maxDurationMs: 45_000 }
+          } as never,
+          programmaticToolParent: { takeArmedToken: vi.fn() } as never
+        }
+      )
+
+      expect(executeCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: 'deepchat tool search --query calendar --limit 4'
+        }),
+        expect.objectContaining({
+          conversationId: 'conv1',
+          stdin: undefined,
+          programmatic: true,
+          maxTimeoutMs: 45_000
+        })
+      )
+    } finally {
+      executeCommand.mockRestore()
+    }
+  })
+
+  it('rejects owned exec stdin outside a Programmatic Tool capability', async () => {
+    const executeCommand = vi.spyOn(AgentBashHandler.prototype, 'executeCommand')
+
+    try {
+      await expect(
+        manager.callTool(
+          'exec',
+          {
+            command: 'deepchat tool call',
+            stdin: '{}',
+            description: 'Call programmatic tool'
+          },
+          'conv1'
+        )
+      ).rejects.toThrow(/requires an active Programmatic Tool capability/)
+      expect(executeCommand).not.toHaveBeenCalled()
+    } finally {
+      executeCommand.mockRestore()
+    }
+  })
+
+  it('applies the active Programmatic Tool input quota in UTF-8 bytes', async () => {
+    const executeCommand = vi.spyOn(AgentBashHandler.prototype, 'executeCommand')
+
+    try {
+      await expect(
+        manager.callTool(
+          'exec',
+          {
+            command: 'deepchat tool call',
+            stdin: '😀',
+            description: 'Call programmatic tool'
+          },
+          'conv1',
+          {
+            programmaticToolCapability: {
+              quotas: { maxInputBytes: 3, maxDurationMs: 45_000 }
+            } as never,
+            programmaticToolParent: { takeArmedToken: vi.fn() } as never
+          }
+        )
+      ).rejects.toThrow(/exceeds the active Programmatic Tool input quota/)
+      expect(executeCommand).not.toHaveBeenCalled()
+    } finally {
+      executeCommand.mockRestore()
+    }
+  })
+
+  it('rejects model-owned timeouts for a capability-timed Programmatic exec', async () => {
+    const executeCommand = vi.spyOn(AgentBashHandler.prototype, 'executeCommand')
+
+    try {
+      await expect(
+        manager.callTool(
+          'exec',
+          {
+            command: 'deepchat tool call',
+            stdin: '{}',
+            timeoutMs: 1_000,
+            description: 'Call programmatic tool'
+          },
+          'conv1',
+          {
+            programmaticToolCapability: {
+              quotas: { maxInputBytes: 32, maxDurationMs: 45_000 }
+            } as never,
+            programmaticToolParent: { takeArmedToken: vi.fn() } as never
+          }
+        )
+      ).rejects.toThrow(/duration is owned by its active capability/)
+      expect(executeCommand).not.toHaveBeenCalled()
     } finally {
       executeCommand.mockRestore()
     }
