@@ -80,7 +80,8 @@ export class DeepChatToolResolver {
       sessionId,
       projectDir,
       resourceInstance,
-      onResolved
+      onResolved,
+      true
     )
     return await catalog.resolve(
       activeSkillNamesOverride === undefined
@@ -93,7 +94,8 @@ export class DeepChatToolResolver {
     sessionId: string,
     projectDir: string | null,
     resourceInstance: DeepChatAgentInstance,
-    onResolved?: (snapshot: DeepChatToolCatalogSnapshot) => void
+    onResolved?: (snapshot: DeepChatToolCatalogSnapshot) => void,
+    trustActiveSkillNamesOverride = false
   ): ToolCatalogPort {
     const catalog = createToolCatalogPort<DeepChatToolProfileKind>({
       toolService: this.dependencies.toolService,
@@ -119,12 +121,15 @@ export class DeepChatToolResolver {
             ])
           : activeSkillNamesOverride === undefined
             ? await this.resolveActiveSkillNamesForToolProfile(sessionId)
-            : activeSkillNamesOverride
-        const effectiveActiveSkillNames = await this.validateSkillNamesForAgent(
-          scopedAgentId,
-          requestedActiveSkillNames,
-          failClosed
-        )
+            : normalizeStringList(activeSkillNamesOverride)
+        const effectiveActiveSkillNames =
+          activeSkillNamesOverride !== undefined && trustActiveSkillNamesOverride && !failClosed
+            ? normalizeStringList(activeSkillNamesOverride)
+            : await this.validateSkillNamesForAgent(
+                scopedAgentId,
+                requestedActiveSkillNames,
+                failClosed
+              )
         const profile = this.resolveToolProfile(
           sessionId,
           projectDir,

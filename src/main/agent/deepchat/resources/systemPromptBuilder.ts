@@ -232,6 +232,7 @@ export async function buildSystemPromptAssemblyWithSkills(
     : requestedActiveSkills.filter((skillName) => availableSkillNames.has(skillName))
   if (
     !skillMetadataLookupFailed &&
+    activeSkillNamesOverride === undefined &&
     normalizedActiveSkills.length !== requestedActiveSkills.length
   ) {
     pinnedSkillsDegradations.push('pinned_skill_unavailable')

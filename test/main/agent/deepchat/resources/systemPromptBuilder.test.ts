@@ -50,6 +50,7 @@ describe('DeepChat system prompt builder', () => {
       },
       skillService: {
         getMetadataList: vi.fn().mockResolvedValue([]),
+        getAllSkills: vi.fn().mockResolvedValue([]),
         getActiveSkills: vi.fn().mockResolvedValue([]),
         loadSkillContent: vi.fn(),
         resolveSessionAgentId: vi.fn().mockResolvedValue('deepchat')
@@ -229,6 +230,10 @@ describe('DeepChat system prompt builder', () => {
             { name: 'skill-a', description: 'Skill A' },
             { name: 'skill-b', description: 'Skill B' }
           ]),
+          getAllSkills: vi.fn().mockResolvedValue([
+            { name: 'skill-a', description: 'Skill A' },
+            { name: 'skill-b', description: 'Skill B' }
+          ]),
           getActiveSkills: vi.fn().mockResolvedValue(['skill-a', 'skill-b']),
           loadSkillContent
         },
@@ -379,6 +384,7 @@ describe('DeepChat system prompt builder', () => {
           skillService: {
             resolveSessionAgentId: vi.fn().mockResolvedValue('writer'),
             getMetadataList: vi.fn().mockRejectedValue(new Error('catalog unavailable')),
+            getAllSkills: vi.fn().mockRejectedValue(new Error('catalog unavailable')),
             getActiveSkills: vi.fn().mockResolvedValue([]),
             loadSkillContent
           },
@@ -514,6 +520,7 @@ describe('DeepChat system prompt builder', () => {
       },
       skillService: {
         getMetadataList: vi.fn().mockResolvedValue([]),
+        getAllSkills: vi.fn().mockResolvedValue([]),
         getActiveSkills: vi.fn().mockResolvedValue([]),
         loadSkillContent: vi.fn(),
         resolveSessionAgentId: vi.fn().mockResolvedValue('deepchat')
@@ -584,6 +591,10 @@ describe('DeepChat system prompt builder', () => {
               { name: 'skill-a', description: 'Skill A' },
               { name: 'skill-b', description: 'Skill B' }
             ]),
+            getAllSkills: vi.fn().mockResolvedValue([
+              { name: 'skill-a', description: 'Skill A' },
+              { name: 'skill-b', description: 'Skill B' }
+            ]),
             getActiveSkills: vi.fn().mockResolvedValue([]),
             loadSkillContent: vi.fn()
           },
@@ -646,6 +657,7 @@ describe('DeepChat system prompt builder', () => {
         skillService: {
           resolveSessionAgentId: vi.fn().mockResolvedValue(null),
           getMetadataList: vi.fn().mockResolvedValue([]),
+          getAllSkills: vi.fn().mockResolvedValue([]),
           getActiveSkills: vi.fn().mockResolvedValue([]),
           loadSkillContent: vi.fn()
         },
