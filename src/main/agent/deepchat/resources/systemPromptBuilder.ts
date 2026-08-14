@@ -76,7 +76,7 @@ export interface SystemPromptBuildInput {
 const CLI_PROGRAMMATIC_TOOL_ADAPTER_PROMPT = [
   '## Programmatic Tool Access',
   'If an instruction or active Skill names a tool that is not in your native tool list, do not call that name directly.',
-  'Use `exec` to run `deepchat tool search --query "<terms>" [--limit <n>]` or `deepchat tool describe --target <unquoted-name>`, then copy the returned invocation into `deepchat tool call` or bounded `deepchat tool batch`. Pass call and batch JSON through the `exec` stdin field; never use shell redirection. Omit the `timeoutMs`, `background`, and `yieldMs` exec fields for these Programmatic commands.',
+  'Use `exec` to run `deepchat tool search --query "<terms>" [--limit <n>]` or `deepchat tool describe --target <name>`, then copy the returned invocation into `deepchat tool call` or bounded `deepchat tool batch`. Describe targets may use exact double quotes, but prefer the unquoted returned name; never use single quotes or escapes. Pass call and batch JSON through the `exec` stdin field; never use shell redirection. Omit the `timeoutMs`, `background`, and `yieldMs` exec fields for these Programmatic commands.',
   "Discovery does not authorize a target. Only targets in this Run's frozen Programmatic Surface can be requested; every child call independently rechecks current authority and policy before execution. Do not invoke native tools through the Programmatic Tool CLI."
 ].join('\n')
 

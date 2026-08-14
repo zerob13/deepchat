@@ -271,6 +271,19 @@ function parseCanonicalProgrammaticSearchCommand(
   return Object.freeze({ query, limit: Number(limitMatch[1]) })
 }
 
+function parseCanonicalProgrammaticDescribeCommand(command: string): string | null {
+  const prefix = 'deepchat tool describe --target '
+  if (!command.startsWith(prefix)) return null
+  const argumentText = command.slice(prefix.length)
+  let target = argumentText
+  if (argumentText.startsWith('"')) {
+    if (argumentText.length < 3 || !argumentText.endsWith('"')) return null
+    target = argumentText.slice(1, -1)
+  }
+  if (!PROGRAMMATIC_TOOL_SAFE_SCALAR_PATTERN.test(target) || target.startsWith('-')) return null
+  return target
+}
+
 export function buildAgentCliProgrammaticInvocationHash(input: {
   command: Readonly<{ domain: 'tool'; verb: AgentCliProgrammaticToolVerb }>
   route: `tool.${AgentCliProgrammaticToolVerb}`
@@ -310,16 +323,13 @@ export function parseAgentCliProgrammaticExecInvocation(input: {
     }
     parsed = toolSearchRoute.input.parse(search)
   } else if (verb === 'describe') {
-    if (
-      input.stdin !== undefined ||
-      tokens.length !== 5 ||
-      tokens[3] !== '--target' ||
-      !PROGRAMMATIC_TOOL_SAFE_SCALAR_PATTERN.test(tokens[4]) ||
-      tokens[4].startsWith('-')
-    ) {
-      throw new Error('Programmatic Tool describe requires one canonical bounded target')
+    const target = parseCanonicalProgrammaticDescribeCommand(command)
+    if (input.stdin !== undefined || !target) {
+      throw new Error(
+        'Programmatic Tool describe requires one unquoted or exact double-quoted safe target'
+      )
     }
-    parsed = toolDescribeRoute.input.parse({ target: tokens[4] })
+    parsed = toolDescribeRoute.input.parse({ target })
   } else if (verb === 'call' || verb === 'batch') {
     if (tokens.length !== 3 || input.stdin === undefined) {
       throw new Error('Programmatic Tool call and batch require an exact command and owned stdin')

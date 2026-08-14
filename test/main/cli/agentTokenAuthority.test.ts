@@ -440,6 +440,9 @@ describe('AgentCliTokenAuthority', () => {
     const describe = parseAgentCliProgrammaticExecInvocation({
       command: 'deepchat tool describe --target calendar_search'
     })
+    const quotedDescribe = parseAgentCliProgrammaticExecInvocation({
+      command: 'deepchat tool describe --target "calendar_search"'
+    })
 
     expect(search).toMatchObject({
       command: { domain: 'tool', verb: 'search' },
@@ -459,6 +462,7 @@ describe('AgentCliTokenAuthority', () => {
         params: { target: 'calendar_search' }
       })
     )
+    expect(quotedDescribe).toEqual(describe)
   })
 
   it.each([
@@ -481,6 +485,15 @@ describe('AgentCliTokenAuthority', () => {
     { command: 'deepchat tool search --query calendar --limit +4' },
     { command: 'deepchat tool search --query calendar | cat' },
     { command: 'deepchat tool describe --target $TARGET' },
+    { command: "deepchat tool describe --target 'calendar_search'" },
+    { command: 'deepchat tool describe --target ""' },
+    { command: 'deepchat tool describe --target "calendar_search' },
+    { command: 'deepchat tool describe --target calendar_search"' },
+    { command: 'deepchat tool describe --target "calendar search"' },
+    { command: 'deepchat tool describe --target "calendar_search" extra' },
+    { command: 'deepchat tool describe --target "calendar_$TARGET"' },
+    { command: 'deepchat tool describe --target "calendar_$(whoami)"' },
+    { command: 'deepchat tool describe --target "calendar_\\"search"' },
     { command: 'deepchat tool call' },
     { command: 'deepchat tool batch' },
     { command: 'deepchat tool call --target remote', stdin: '{}' },

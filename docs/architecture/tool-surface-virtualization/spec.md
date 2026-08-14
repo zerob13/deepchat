@@ -280,8 +280,10 @@ deepchat tool batch
 
 Search accepts either one unquoted safe term or multiple safe terms enclosed in double quotes.
 Quoted queries contain no escapes, use one ASCII space between terms, and exclude shell expansion
-and control characters in POSIX, PowerShell, and cmd. The authority parser binds the decoded query,
-not its quoted command spelling, into the exact invocation hash.
+and control characters in POSIX, PowerShell, and cmd. Describe accepts one safe target either
+unquoted or enclosed in exactly one pair of ASCII double quotes, with no escapes. The authority
+parser binds the decoded query or target, not its quoted command spelling, into the exact invocation
+hash. Single-quoted forms remain invalid because their shell semantics are not portable.
 
 `search` and `describe` read only the originating View's frozen Programmatic Surface. They do not
 authorize, activate, create target Journal facts, or create a “seen” ledger. A target in that frozen

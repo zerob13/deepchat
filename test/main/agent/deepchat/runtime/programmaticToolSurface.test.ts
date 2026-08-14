@@ -230,7 +230,11 @@ describe('Programmatic Tool Surface', () => {
     expect(exposedExec.function.description).toContain(
       'Omit timeoutMs, background, and yieldMs entirely'
     )
-    expect(exposedExec.function.description).toContain('--target <unquoted-name>')
+    expect(exposedExec.function.description).toContain('--target <name>')
+    expect(exposedExec.function.description).toContain(
+      'Describe targets may use exact double quotes'
+    )
+    expect(exposedExec.function.description).toContain('never use single quotes or escapes')
     expect(exposedExec.function.parameters.properties.stdin).toMatchObject({
       type: 'string',
       minLength: 1,

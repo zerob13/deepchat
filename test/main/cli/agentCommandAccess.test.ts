@@ -274,6 +274,47 @@ describe('AgentCliCommandAccess', () => {
   )
 
   it.each([POSIX_COMMAND_SHELL, WINDOWS_POWERSHELL_COMMAND_SHELL, CMD_COMMAND_SHELL])(
+    'normalizes an exact double-quoted describe target for the $dialect shell',
+    async (commandShell) => {
+      const { directory } = await createCliDirectory()
+      const access = new AgentCliCommandAccess({
+        tokenAuthority: new AgentCliTokenAuthority(),
+        commandPermission: new CommandPermissionService(),
+        resolveCliDirectory: () => directory
+      })
+      const command = 'deepchat tool describe --target "calendar_search"'
+      const armed = {
+        token: 'd'.repeat(43),
+        conversationId: 'conversation-1',
+        programmaticOperation: {
+          command: { domain: 'tool', verb: 'describe' },
+          route: 'tool.describe',
+          canonicalInvocationHash: buildAgentCliProgrammaticInvocationHash({
+            command: { domain: 'tool', verb: 'describe' },
+            route: 'tool.describe',
+            params: { target: 'calendar_search' }
+          }),
+          operation: { sessionId: 'conversation-1' }
+        }
+      } as unknown as ArmedAgentCliProgrammaticToken
+
+      expect(
+        access.createProgrammaticEnvironment(
+          armed,
+          'conversation-1',
+          command,
+          undefined,
+          commandShell
+        )
+      ).toEqual({
+        variables: { [LOCAL_CONTROL_AGENT_TOKEN_ENV]: armed.token },
+        prependPath: [directory],
+        preserveCommand: true
+      })
+    }
+  )
+
+  it.each([POSIX_COMMAND_SHELL, WINDOWS_POWERSHELL_COMMAND_SHELL, CMD_COMMAND_SHELL])(
     'rejects noncanonical multi-term discovery syntax for the $dialect shell',
     async (commandShell) => {
       const { directory } = await createCliDirectory()
