@@ -202,7 +202,7 @@ function createCommitInput(
     policyVersion: 1,
     contextBuilderVersion: 'legacy-v1',
     messages,
-    tools: activeTools,
+    tools: [...activeTools],
     latestEntryId: options.latestEntryId ?? 0,
     anchorEntryIds: [],
     included: [],
@@ -1100,8 +1100,15 @@ describe('ToolSurfaceProvenanceService', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
     const input = createCommitInput()
-    const altered = structuredClone(input)
-    altered.surface.activeEntries[0].execution = TOOL_EXECUTION.write
+    const altered = {
+      ...structuredClone(input),
+      surface: {
+        ...structuredClone(input.surface),
+        activeEntries: input.surface.activeEntries.map((entry, index) =>
+          index === 0 ? { ...entry, execution: TOOL_EXECUTION.write } : entry
+        )
+      }
+    }
 
     expect(() => service.commitToolSurfaceView(altered)).toThrow(ToolSurfaceProvenanceError)
     expect(entries).toEqual([])
