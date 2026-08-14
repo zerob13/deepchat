@@ -65,6 +65,20 @@ export interface LoopRunResources {
 export interface LoopRunProviderRecovery {
   contextOverflowHandoffAttempted: boolean
   strictProviderOverflowRetryUsed: boolean
+  contextRecoverySequencesUsed: number
+}
+
+export const MAX_CONTEXT_RECOVERY_SEQUENCES_PER_RUN = 3
+
+export interface LoopRunPromptUsageAnchor {
+  readonly providerId: string
+  readonly modelId: string
+  readonly generationConfigHash: string
+  readonly toolDefinitionsHash: string
+  readonly messageCount: number
+  readonly messagesHash: string
+  readonly promptTokens: number
+  readonly cacheReadTokens: number | null
 }
 
 export interface LoopRunRequestContractBinding {
@@ -101,6 +115,7 @@ export interface LoopRun<TStreamState> {
   readonly streamState: TStreamState
   resources: LoopRunResources
   providerRecovery: LoopRunProviderRecovery
+  promptUsageAnchor: LoopRunPromptUsageAnchor | null
   activeRequestContract: LoopRunRequestContractBinding | null
   activeRequestView: LoopRunRequestViewBinding | null
   activeRequestToolSurface: LoopRunRequestToolSurfaceBinding | null
@@ -168,12 +183,29 @@ export function createLoopRun<TStreamState>(
     resources,
     providerRecovery: {
       contextOverflowHandoffAttempted: false,
-      strictProviderOverflowRetryUsed: false
+      strictProviderOverflowRetryUsed: false,
+      contextRecoverySequencesUsed: 0
     },
+    promptUsageAnchor: null,
     activeRequestContract: null,
     activeRequestView: null,
     activeRequestToolSurface: null
   }
+}
+
+export function beginContextRecoverySequence(run: LoopRun<unknown>): boolean {
+  if (run.providerRecovery.contextOverflowHandoffAttempted) return true
+  if (run.providerRecovery.contextRecoverySequencesUsed >= MAX_CONTEXT_RECOVERY_SEQUENCES_PER_RUN) {
+    return false
+  }
+  run.providerRecovery.contextOverflowHandoffAttempted = true
+  run.providerRecovery.contextRecoverySequencesUsed += 1
+  return true
+}
+
+export function resetContextRecoverySequence(run: LoopRun<unknown>): void {
+  run.providerRecovery.contextOverflowHandoffAttempted = false
+  run.providerRecovery.strictProviderOverflowRetryUsed = false
 }
 
 function sameSkillIdentity(

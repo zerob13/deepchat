@@ -1,6 +1,10 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
 import logger from '@shared/logger'
-import type { AssistantMessageBlock, MessageMetadata } from '@shared/types/agent-interface'
+import type {
+  AssistantMessageBlock,
+  ChatMessageRecord,
+  MessageMetadata
+} from '@shared/types/agent-interface'
 import type {
   ChatMessage,
   ChatMessageProviderReplayProjector
@@ -50,11 +54,18 @@ import {
   estimateToolReserveTokens,
   fitRequestMessagesToContextWindow,
   formatRequestContextLedger,
+  getUsableContextLength,
   preflightRequestContext,
   resolveEffectiveContextBudget
 } from '@/agent/deepchat/runtime/contextBudget'
-import type { ContextBuildMetadata } from '@/agent/deepchat/runtime/contextBuilder'
-import type { CompactionService } from '@/agent/deepchat/runtime/compactionService'
+import {
+  estimateMessagesTokens,
+  type ContextBuildMetadata
+} from '@/agent/deepchat/runtime/contextBuilder'
+import {
+  hasCompactionBoundaryAdvanced,
+  type CompactionService
+} from '@/agent/deepchat/runtime/compactionService'
 import { resolveInterleavedReasoningConfig } from '@/agent/deepchat/runtime/generationSettings'
 import {
   inspectContextOverflow,
@@ -79,6 +90,7 @@ import {
 } from '@/tape/domain/viewManifest'
 import { isCanonicalAgentExecToolSurfaceEntry } from '@/tape/domain/toolSurfaceFacts'
 import type { DeepChatLoopTapePort } from '@/tape/ports/capabilities'
+import { buildTapeResumeView } from './tapeViewAssembler'
 import {
   buildExecutionContract,
   buildProviderMessagesHash,
@@ -1441,6 +1453,7 @@ export class DeepChatLoopRunner {
           for await (const event of ports.contextCoordinator.streamProviderAttempts({
             run: loopRun,
             requestMessages,
+            providerId: state.providerId,
             modelId: requestModelId,
             modelConfig: requestModelConfig,
             temperature: requestTemperature,
@@ -1532,7 +1545,7 @@ export class DeepChatLoopRunner {
               : {}),
             budget: {
               estimateToolReserveTokens,
-              preflight: ({ messages, tools, requestedMaxTokens }) => {
+              preflight: ({ messages, tools, requestedMaxTokens, promptTokenEstimate }) => {
                 const budget = getEffectiveContextBudget(requestedMaxTokens)
                 return preflightRequestContext({
                   messages,
@@ -1540,7 +1553,8 @@ export class DeepChatLoopRunner {
                   contextLength: budget.contextLength,
                   outputCapContextLength: budget.outputCapContextLength,
                   requestedMaxTokens,
-                  contextContributions: activeContextContributions
+                  contextContributions: activeContextContributions,
+                  promptTokenEstimate
                 })
               },
               fitStrictRetry: ({ messages, reserveTokens, requestedMaxTokens }) =>
@@ -1579,6 +1593,7 @@ export class DeepChatLoopRunner {
               recover: async ({ requestMessages, requestedMaxTokens, tools }) =>
                 await recoverRequestContextPressure({
                   sessionId,
+                  messageId,
                   providerId: state.providerId,
                   modelId: requestModelId,
                   requestMessages,
@@ -1592,6 +1607,8 @@ export class DeepChatLoopRunner {
                   interleavedReasoning,
                   minimumProtectedTailCount: 0,
                   contextContributions: getOrCreateContextContributions(),
+                  providerReplayProjector,
+                  requestedViewPolicyId: viewContext?.policy,
                   signal: abortController.signal,
                   expectedInstance: resourceInstance
                 })
@@ -2403,6 +2420,7 @@ export class DeepChatLoopRunner {
 
   private async recoverRequestContextPressure(params: {
     sessionId: string
+    messageId: string
     providerId: string
     modelId: string
     requestMessages: ChatMessage[]
@@ -2415,6 +2433,8 @@ export class DeepChatLoopRunner {
     interleavedReasoning: InterleavedReasoningConfig
     minimumProtectedTailCount: number
     contextContributions: ContextRuntimeContributions
+    providerReplayProjector?: ChatMessageProviderReplayProjector
+    requestedViewPolicyId?: string | null
     signal: AbortSignal
     expectedInstance: DeepChatAgentInstance
   }): Promise<{
@@ -2423,6 +2443,7 @@ export class DeepChatLoopRunner {
     syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
   }> {
     const toolReserveTokens = estimateToolReserveTokens(params.tools)
+    let compactedHistoryRecords: ChatMessageRecord[] | null = null
     return await this.ports.contextCoordinator.recoverFromPressure<SessionSummaryState>({
       requestMessages: params.requestMessages,
       baseSystemPrompt: params.baseSystemPrompt,
@@ -2467,12 +2488,14 @@ export class DeepChatLoopRunner {
               params.expectedInstance
             ),
           readSummary: () => this.ports.sessionStore.getSummaryState(params.sessionId),
-          afterCompactionApplyReturned: (intent) =>
+          afterCompactionApplyReturned: (intent, summary) => {
+            if (!hasCompactionBoundaryAdvanced(intent.previousState, summary)) return
             this.ports.memoryIngestionObserver.afterCompactionApplyReturned({
               session: params.expectedInstance.getMemorySessionHandle(),
               origin: 'context-pressure',
               targetCursorOrderSeq: intent.targetCursorOrderSeq
-            }),
+            })
+          },
           checkpoints: {
             assertCurrent: () =>
               this.ports.runLifecycle.assertCurrentInstance(
@@ -2481,7 +2504,14 @@ export class DeepChatLoopRunner {
               )
           }
         })
-        return prepared.intent ? { applied: true, summary: prepared.summary } : { applied: false }
+        if (
+          !prepared.intent ||
+          !hasCompactionBoundaryAdvanced(prepared.intent.previousState, prepared.summary)
+        ) {
+          return { applied: false }
+        }
+        compactedHistoryRecords = prepared.history
+        return { applied: true, summary: prepared.summary }
       },
       assembleCheckpoint: async (summaryState) =>
         buildContextCheckpoint(
@@ -2497,6 +2527,59 @@ export class DeepChatLoopRunner {
           minimumProtectedTailCount,
           contextContributions: params.contextContributions
         }),
+      rebuildAfterCompaction: ({ summary, requestMessages }) => {
+        if (
+          !compactedHistoryRecords?.some((record) => record.id === params.messageId)
+        ) {
+          return requestMessages
+        }
+        const leadingMessage = requestMessages[0]
+        let currentSystemMessage = ''
+        if (leadingMessage?.role === 'system') {
+          if (typeof leadingMessage.content !== 'string') {
+            return requestMessages
+          }
+          currentSystemMessage = leadingMessage.content
+        }
+        // The resume builder may trim its reconstructed active turn, but that turn is replaced
+        // below by the in-flight request. Keep those mutations provisional; the final fitter
+        // updates the canonical contributions from the exact View that recovery accepts.
+        const provisionalRebuildContext = { ...params.contextContributions }
+        const rebuiltMessages = buildTapeResumeView({
+          sessionId: params.sessionId,
+          assistantMessageId: params.messageId,
+          systemPrompt: currentSystemMessage,
+          contextLength: getUsableContextLength(params.contextLength),
+          reserveTokens: params.requestedMaxTokens,
+          messageStore: this.ports.messageStore,
+          supportsVision: params.supportsVision,
+          historyRecords: compactedHistoryRecords,
+          requestedPolicyId: params.requestedViewPolicyId,
+          contextContributions: provisionalRebuildContext,
+          options: {
+            summaryCursorOrderSeq: summary.summaryCursorOrderSeq,
+            fallbackProtectedTurnCount: 1,
+            supportsAudioInput: params.supportsAudioInput,
+            extraReserveTokens: toolReserveTokens,
+            preserveInterleavedReasoning: params.interleavedReasoning.preserveReasoningContent,
+            preserveEmptyInterleavedReasoning:
+              params.interleavedReasoning.preserveEmptyReasoningContent === true,
+            providerReplayProjector: params.providerReplayProjector
+          }
+        }).messages
+        const activeTurnStart = requestMessages.findLastIndex((message) => message.role === 'user')
+        const rebuiltActiveTurnStart = rebuiltMessages.findLastIndex(
+          (message) => message.role === 'user'
+        )
+        if (activeTurnStart < 0 || rebuiltActiveTurnStart < 0) {
+          return requestMessages
+        }
+        return [
+          ...rebuiltMessages.slice(0, rebuiltActiveTurnStart),
+          ...requestMessages.slice(activeTurnStart)
+        ]
+      },
+      measure: estimateMessagesTokens,
       assertCurrent: () =>
         this.ports.runLifecycle.assertCurrentInstance(params.sessionId, params.expectedInstance)
     })

@@ -48,7 +48,7 @@ import {
   getUsableContextLength
 } from './contextBudget'
 import type { CompactionRuntimeCoordinator } from './compactionRuntimeCoordinator'
-import type { CompactionService } from './compactionService'
+import { hasCompactionBoundaryAdvanced, type CompactionService } from './compactionService'
 import { isContextWindowErrorLike } from './contextWindowError'
 import { resolveInterleavedReasoningConfig } from './generationSettings'
 import {
@@ -751,12 +751,14 @@ export class TurnCoordinator {
                 )
             ),
           readSummary: () => this.ports.sessionStore.getSummaryState(sessionId),
-          afterCompactionApplyReturned: (intent) =>
+          afterCompactionApplyReturned: (intent, summary) => {
+            if (!hasCompactionBoundaryAdvanced(intent.previousState, summary)) return
             this.ports.memoryIngestionObserver.afterCompactionApplyReturned({
               session: instance.getMemorySessionHandle(),
               origin: 'initial',
               targetCursorOrderSeq: intent.targetCursorOrderSeq
-            }),
+            })
+          },
           checkpoints: {
             assertCurrent: () => scope.assertCurrent(),
             beforeHistoryRefresh: () => {
@@ -842,12 +844,14 @@ export class TurnCoordinator {
                 )
             ),
           readSummary: () => this.ports.sessionStore.getSummaryState(sessionId),
-          afterCompactionApplyReturned: (intent) =>
+          afterCompactionApplyReturned: (intent, summary) => {
+            if (!hasCompactionBoundaryAdvanced(intent.previousState, summary)) return
             this.ports.memoryIngestionObserver.afterCompactionApplyReturned({
               session: instance.getMemorySessionHandle(),
               origin: 'initial',
               targetCursorOrderSeq: intent.targetCursorOrderSeq
-            }),
+            })
+          },
           checkpoints: {
             assertCurrent: () => scope.assertCurrent()
           }
@@ -1644,10 +1648,7 @@ export class TurnCoordinator {
             toolDefinitions: tools,
             contextLength: contextBudgetLength,
             maxTokens,
-            toolCallId: budgetToolCall.id,
-            toolName: budgetToolCall.name,
-            rawContent: budgetToolCall.responseText ?? '',
-            existingOffloadPath: budgetToolCall.existingOffloadPath,
+            budgetToolCall,
             signal: preStreamAbortSignal
           })
           throwIfAbortRequested(preStreamAbortSignal)
@@ -1927,22 +1928,21 @@ export class TurnCoordinator {
     toolDefinitions: MCPToolDefinition[]
     contextLength: number
     maxTokens: number
-    toolCallId: string
-    toolName: string
-    rawContent: string
-    existingOffloadPath?: string
+    budgetToolCall: ResumeBudgetToolCall
     signal?: AbortSignal
   }) {
+    const { budgetToolCall } = params
     return await this.ports.toolOutputGuard.fitExistingToolOutput({
       sessionId: params.sessionId,
       conversationMessages: params.resumeContext,
       toolDefinitions: params.toolDefinitions,
       contextLength: params.contextLength,
       maxTokens: params.maxTokens,
-      toolCallId: params.toolCallId,
-      toolName: params.toolName,
-      rawContent: params.rawContent,
-      existingOffloadPath: params.existingOffloadPath,
+      toolCallId: budgetToolCall.id,
+      toolName: budgetToolCall.name,
+      rawContent: budgetToolCall.responseText ?? '',
+      offloadPath: budgetToolCall.offloadPath,
+      existingOffloadPath: budgetToolCall.existingOffloadPath,
       signal: params.signal
     })
   }
