@@ -5003,6 +5003,7 @@ describe('dispatch', () => {
         {
           permissionMode: 'full_access',
           signal: io.abortSignal,
+          activeSkillNames: undefined,
           commandShell: POSIX_COMMAND_SHELL
         }
       )

@@ -46,6 +46,7 @@ import type { AgentCliTokenAuthority } from '@/cli/agentTokenAuthority'
 export type DeepChatHarnessSkillPort = Pick<
   SkillServicePort,
   | 'getMetadataList'
+  | 'getAllSkills'
   | 'getActiveSkills'
   | 'snapshotPersistedActiveSkillNames'
   | 'resolveSessionAgentId'

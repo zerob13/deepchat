@@ -70,6 +70,7 @@ export type ToolExecutionPreCheckOptions = Pick<
   ToolExecutionOptions,
   | 'permissionMode'
   | 'signal'
+  | 'activeSkillNames'
   | 'commandShell'
   | 'messageId'
   | 'runId'

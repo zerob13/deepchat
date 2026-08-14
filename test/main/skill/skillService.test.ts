@@ -339,6 +339,11 @@ describe('SkillService', () => {
   let fakeWatcherService: ReturnType<typeof createFakeWatcherService>
   let configSettings: Map<string, unknown>
 
+  const assignDiscoveredSkills = async (...names: string[]) => {
+    const discoveredNames = (await skillService.getAllSkills()).map(({ name }) => name)
+    await skillService.setSkillAssignments('deepchat', names.length > 0 ? names : discoveredNames)
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
     newSessionActiveSkillsStore.clear()
@@ -546,28 +551,37 @@ describe('SkillService', () => {
   })
 
   describe('initialize', () => {
-    it('continues startup when Agent Skill snapshot migration fails', async () => {
+    it('keeps migration authoritative and retries startup after a migration failure', async () => {
       const error = new Error('Symbolic links are not allowed in Skill snapshots')
       const installSpy = vi.spyOn(skillService, 'installBuiltinSkills').mockResolvedValue()
       const discoverSpy = vi.spyOn(skillService, 'discoverSkills').mockResolvedValue([])
-      vi.spyOn(skillService as any, 'migrateLegacyAgentSkillScopes').mockRejectedValue(error)
+      vi.spyOn(skillService as any, 'migrateSharedSkills')
+        .mockRejectedValueOnce(error)
+        .mockResolvedValue(undefined)
 
-      await expect(skillService.initialize()).resolves.toBeUndefined()
+      await expect(skillService.initialize()).rejects.toBe(error)
 
       expect(installSpy).toHaveBeenCalledOnce()
       expect(discoverSpy).toHaveBeenCalledOnce()
-      expect(fakeWatcherService.service.watch).toHaveBeenCalledOnce()
-      expect((skillService as any).initialized).toBe(true)
+      expect(fakeWatcherService.service.watch).not.toHaveBeenCalled()
+      expect((skillService as any).initialized).toBe(false)
       expect(logger.warn).toHaveBeenCalledWith(
-        '[SkillService] Agent Skill migration failed; continuing startup.',
+        '[SkillService] Shared Skills migration failed; startup can retry.',
         { error }
       )
+
+      await expect(skillService.initialize()).resolves.toBeUndefined()
+      expect(installSpy).toHaveBeenCalledTimes(2)
+      expect(discoverSpy).toHaveBeenCalledTimes(2)
+      expect(fakeWatcherService.service.watch).toHaveBeenCalledOnce()
+      expect((skillService as any).initialized).toBe(true)
     })
 
     it('continues when the file watcher cannot start', async () => {
       const error = new Error('File watcher utility process exited with code 1.')
       const installSpy = vi.spyOn(skillService, 'installBuiltinSkills').mockResolvedValue()
       const discoverSpy = vi.spyOn(skillService, 'discoverSkills').mockResolvedValue([])
+      vi.spyOn(skillService as any, 'migrateSharedSkills').mockResolvedValue(undefined)
       ;(fakeWatcherService.service.watch as Mock).mockRejectedValueOnce(error)
 
       await expect(skillService.initialize()).resolves.toBeUndefined()
@@ -611,7 +625,8 @@ describe('SkillService', () => {
       expect(fakeWatcherService.watchers).toHaveLength(0)
       expect(discoverSpy).not.toHaveBeenCalled()
       expect((skillService as any).initialized).toBe(false)
-      expect((skillService as any).scopedCatalogs.size).toBe(0)
+      expect((skillService as any).metadataCache.size).toBe(0)
+      expect((skillService as any).contentCache.size).toBe(0)
     })
 
     it('resolves initialization when shutdown trips its active-operation fence', async () => {
@@ -866,7 +881,7 @@ describe('SkillService', () => {
   })
 
   describe('getMetadataList', () => {
-    it('snapshots only an already-discovered detached catalog', async () => {
+    it('snapshots assigned Skills from an already-discovered detached catalog', async () => {
       expect(skillService.snapshotCachedMetadataList('deepchat', { maxItems: 10 })).toEqual({
         state: 'unavailable'
       })
@@ -880,6 +895,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.getMetadataList()
+      await assignDiscoveredSkills()
 
       const first = skillService.snapshotCachedMetadataList('deepchat', { maxItems: 10 })
       expect(first).toMatchObject({
@@ -895,6 +911,7 @@ describe('SkillService', () => {
       })
 
       ;(skillService as any).metadataCache.set('second', createSkillMetadata('second', 'second'))
+      await assignDiscoveredSkills('test', 'second')
       expect(skillService.snapshotCachedMetadataList('deepchat', { maxItems: 1 })).toEqual({
         state: 'overflow',
         minimumItemCount: 2
@@ -945,6 +962,7 @@ describe('SkillService', () => {
         skillRoot: '/plugins/fixture/plugin-skill',
         pluginRoot: '/plugins/fixture'
       })
+      await assignDiscoveredSkills('regular-skill', 'plugin-skill')
 
       expect((await skillService.getMetadataList()).map((skill) => skill.name)).toEqual([
         'regular-skill',
@@ -992,15 +1010,15 @@ describe('SkillService', () => {
       expect(await skillService.getActiveSkills('plugin-conv')).toEqual([])
     })
 
-    it('invalidates already-loaded scoped catalogs when Plugin Skills change', async () => {
-      const scopedCatalog = {
-        metadataCache: new Map([
-          ['stale-plugin', createSkillMetadata('stale-plugin', 'stale-plugin')]
-        ]),
-        contentCache: new Map([['stale-plugin', { name: 'stale-plugin', content: 'stale' }]]),
-        discoveryPromise: null
-      }
-      ;(skillService as any).scopedCatalogs.set('writer', scopedCatalog)
+    it('invalidates the shared catalog and all Agent content caches when Plugin Skills change', async () => {
+      ;(skillService as any).metadataCache.set(
+        'stale-plugin',
+        createSkillMetadata('stale-plugin', 'stale-plugin')
+      )
+      ;(skillService as any).contentCache.set(
+        'writer',
+        new Map([['stale-plugin', { name: 'stale-plugin', content: 'stale' }]])
+      )
       ;(skillService as any).initialized = true
       const discoverSpy = vi.spyOn(skillService, 'discoverSkills').mockResolvedValue([])
       ;(fs.existsSync as Mock).mockReturnValue(true)
@@ -1011,27 +1029,20 @@ describe('SkillService', () => {
         skillRoot: '/plugins/plugin-skill'
       })
 
-      expect(scopedCatalog.metadataCache.size).toBe(0)
-      expect(scopedCatalog.contentCache.size).toBe(0)
+      expect((skillService as any).metadataCache.size).toBe(0)
+      expect((skillService as any).contentCache.size).toBe(0)
       expect(discoverSpy).toHaveBeenCalledWith('deepchat')
-      expect(discoverSpy).toHaveBeenCalledWith('writer')
-
-      scopedCatalog.metadataCache.set(
-        'plugin-skill',
-        createSkillMetadata('plugin-skill', 'plugin-skill')
-      )
       discoverSpy.mockClear()
       await skillService.unregisterPluginSkillsByOwner('plugin-owner')
 
-      expect(scopedCatalog.metadataCache.size).toBe(0)
+      expect((skillService as any).metadataCache.size).toBe(0)
       expect(discoverSpy).toHaveBeenCalledWith('deepchat')
-      expect(discoverSpy).toHaveBeenCalledWith('writer')
       discoverSpy.mockRestore()
     })
   })
 
   describe('skill management state', () => {
-    it('keeps disabled skills in the unified catalog and filters runtime paths', async () => {
+    it('keeps unused Skills globally while filtering the Agent catalog', async () => {
       mockSkillTree(['test-skill'])
       ;(fs.existsSync as Mock).mockReturnValue(true)
       ;(fs.readFileSync as Mock).mockReturnValue('test')
@@ -1040,14 +1051,18 @@ describe('SkillService', () => {
         content: '# Test'
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       publishDeepchatEventMock.mockClear()
 
       await skillService.setSkillDeepChatDisabled('test-skill', true)
 
       expect((await skillService.getMetadataList()).map((skill) => skill.name)).toEqual([])
-      expect(await skillService.loadSkillContent('test-skill')).toBeNull()
+      expect(await skillService.loadSkillContent('test-skill')).toEqual(
+        expect.objectContaining({ name: 'test-skill' })
+      )
       expect(await skillService.validateSkillNames(['test-skill'])).toEqual([])
-      expect(await skillService.getUnifiedSkillCatalog()).toEqual([
+      expect(await skillService.getUnifiedSkillCatalog()).toEqual([])
+      expect(await skillService.getAllSkills()).toEqual([
         expect.objectContaining({
           name: 'test-skill',
           deepchatDisabled: true
@@ -1056,9 +1071,9 @@ describe('SkillService', () => {
       expect(publishDeepchatEventMock).toHaveBeenCalledWith(
         'skills.catalog.changed',
         expect.objectContaining({
-          reason: 'disabled-updated',
+          reason: 'assignments-updated',
           name: 'test-skill',
-          disabled: true
+          agentIds: ['deepchat']
         })
       )
 
@@ -1081,55 +1096,6 @@ describe('SkillService', () => {
         'test-skill'
       ])
       expect(await skillService.validateSkillNames(['test-skill'])).toEqual(['test-skill'])
-    })
-
-    it('records adopted skill provenance and DeepChat-owned agent link state', async () => {
-      ;(fs.existsSync as Mock).mockReturnValue(true)
-      ;(fs.readFileSync as Mock).mockReturnValue(
-        '---\nname: adopted-skill\ndescription: Adopted\n---\n# Adopted'
-      )
-      ;(matter as unknown as Mock).mockReturnValue({
-        data: { name: 'adopted-skill', description: 'Adopted' },
-        content: '# Adopted'
-      })
-
-      await skillService.registerAdoptedSkill({
-        name: 'adopted-skill',
-        canonicalPath: `${DEFAULT_SKILLS_DIR}/adopted-skill`,
-        agentId: 'codex',
-        agentPath: '/mock/home/.codex/skills/adopted-skill',
-        originalPath: '/mock/home/.codex/skills/adopted-skill'
-      })
-
-      const state = configSettings.get('skills.managementState') as any
-      expect(state.agents.deepchat.skills['adopted-skill']).toEqual(
-        expect.objectContaining({
-          canonicalPath: `${DEFAULT_SKILLS_DIR}/adopted-skill`,
-          source: expect.objectContaining({
-            type: 'adopted',
-            agentId: 'codex',
-            originalPath: '/mock/home/.codex/skills/adopted-skill',
-            adoptedAt: expect.any(String)
-          }),
-          agentLinks: {
-            codex: expect.objectContaining({
-              path: '/mock/home/.codex/skills/adopted-skill',
-              state: 'linked',
-              createdByDeepChat: true,
-              linkedAt: expect.any(String)
-            })
-          }
-        })
-      )
-      expect(await skillService.getUnifiedSkillCatalog()).toEqual([
-        expect.objectContaining({
-          name: 'adopted-skill',
-          sourceType: 'adopted',
-          agentLinks: expect.objectContaining({
-            codex: expect.objectContaining({ createdByDeepChat: true })
-          })
-        })
-      ])
     })
   })
 
@@ -1219,6 +1185,7 @@ describe('SkillService', () => {
 
     it('resolves the same canonical effective content as a root skill view', async () => {
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       const view = await skillService.viewSkill('test-skill')
       const [resolved] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
@@ -1231,6 +1198,7 @@ describe('SkillService', () => {
 
     it('resolves fresh disk content despite a populated content cache', async () => {
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       const cached = await skillService.loadSkillContent('test-skill')
       expect(cached?.content).toContain('Skill content here')
       ;(matter as unknown as Mock).mockReturnValue({
@@ -1248,6 +1216,7 @@ describe('SkillService', () => {
 
     it('rejects a fresh manifest that grows after its bounded file handle is opened', async () => {
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       const manifestBytes = Buffer.from('test content')
       const stats = {
         dev: 1,
@@ -1276,6 +1245,7 @@ describe('SkillService', () => {
 
     it('rejects a manifest that changes while its execution package is being snapshotted', async () => {
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       vi.spyOn(skillService as any, 'readStableRegularFile')
         .mockResolvedValueOnce(Buffer.from('first manifest'))
         .mockResolvedValueOnce(Buffer.from('changed manifest'))
@@ -1287,6 +1257,7 @@ describe('SkillService', () => {
 
     it('returns deterministic canonical identity and evidence hashes', async () => {
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       const [first] = await skillService.resolveFreshEffectiveSkillContents('deepchat', [
         'test-skill'
@@ -1367,6 +1338,7 @@ describe('SkillService', () => {
       })
 
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       await skillService.saveSkillExtension('test-skill', {
         version: 1,
         env: { API_TOKEN: 'must-not-enter-tape' },
@@ -1443,6 +1415,7 @@ describe('SkillService', () => {
 
     it('bounds scripts directory enumeration before reading package candidates', async () => {
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       const scriptsDir = `${DEFAULT_SKILLS_DIR}/test-skill/scripts`
       ;(fs.existsSync as Mock).mockReturnValue(true)
       ;(fs.readdirSync as Mock).mockImplementation((target: string) =>
@@ -1458,6 +1431,7 @@ describe('SkillService', () => {
 
     it('fails clearly when a selected visible skill disappeared from disk', async () => {
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       ;(fs.promises.lstat as Mock).mockRejectedValueOnce(
         Object.assign(new Error('ENOENT: missing manifest'), { code: 'ENOENT' })
       )
@@ -1471,6 +1445,7 @@ describe('SkillService', () => {
 
     it('fails closed when the catalog changes during a fresh resolve', async () => {
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       const lstat = fs.promises.lstat as Mock
       lstat.mockImplementationOnce(async (...args: Parameters<typeof fs.promises.lstat>) => {
         await skillService.discoverSkills('deepchat')
@@ -1552,6 +1527,7 @@ describe('SkillService', () => {
         content: '# Skill body'
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
     })
 
     it('returns the full skill content and linked files', async () => {
@@ -1603,6 +1579,28 @@ describe('SkillService', () => {
               })
             ]
           })
+        })
+      )
+    })
+
+    it('keeps a Skill view authorized by the current Run snapshot after unassignment', async () => {
+      await skillService.setSkillAssignment('deepchat', 'test-skill', false)
+
+      await expect(skillService.viewSkillForAgent('deepchat', 'test-skill')).resolves.toEqual({
+        success: false,
+        error: 'Skill "test-skill" not found'
+      })
+
+      const result = await skillService.viewSkillForAgent('deepchat', 'test-skill', {
+        conversationId: 'conv-view',
+        activeSkillNames: ['test-skill']
+      })
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          name: 'test-skill',
+          isPinned: false
         })
       )
     })
@@ -2492,28 +2490,25 @@ describe('SkillService', () => {
         expect.objectContaining({ name: 'guizang-ppt-skill-1' })
       )
       expect(configSettings.get('skills.managementState')).toMatchObject({
-        agents: {
-          deepchat: {
-            skills: {
-              'guizang-ppt-skill-1': {
-                source: {
-                  type: 'git-install',
-                  repoUrl: 'https://github.com/op7418/guizang-ppt-skill',
-                  repoFormat: 'single-skill'
-                }
-              }
+        skills: {
+          'guizang-ppt-skill-1': {
+            source: {
+              type: 'git-install',
+              repoUrl: 'https://github.com/op7418/guizang-ppt-skill',
+              repoFormat: 'single-skill'
             }
           }
         }
       })
       expect(publishDeepchatEventMock).toHaveBeenCalledWith('skills.catalog.changed', {
         reason: 'git-installed',
-        agentIds: ['deepchat'],
+        agentIds: undefined,
         version: expect.any(Number)
       })
       expect(
         publishDeepchatEventMock.mock.calls.filter(
-          ([eventName]) => eventName === 'skills.catalog.changed'
+          ([eventName, payload]) =>
+            eventName === 'skills.catalog.changed' && payload.reason === 'git-installed'
         )
       ).toHaveLength(1)
     })
@@ -2569,7 +2564,7 @@ describe('SkillService', () => {
     it('exports and imports the configured multi-skill sync directory layout', async () => {
       const syncDir = '/mock/sync'
       await skillService.setSkillsSyncDirectory({ skillsDirectory: syncDir })
-      vi.spyOn(skillService, 'getUnifiedSkillCatalog').mockResolvedValue([
+      vi.spyOn(skillService, 'getAllSkills').mockResolvedValue([
         {
           name: 'guizang-ppt-skill',
           description: 'Create PPT files',
@@ -2636,7 +2631,7 @@ describe('SkillService', () => {
       const backupPath =
         `${syncDir}/skills/.export-backup-atomic-skill-` + '12345678-1234-1234-1234-123456789abc'
       await skillService.setSkillsSyncDirectory({ skillsDirectory: syncDir })
-      vi.spyOn(skillService, 'getUnifiedSkillCatalog').mockResolvedValue([
+      vi.spyOn(skillService, 'getAllSkills').mockResolvedValue([
         {
           agentId: 'deepchat',
           name: 'atomic-skill',
@@ -2721,7 +2716,6 @@ describe('SkillService', () => {
       )
       expect(publishDeepchatEventMock).toHaveBeenCalledWith('skills.catalog.changed', {
         reason: 'sync-imported',
-        agentIds: ['deepchat'],
         version: expect.any(Number)
       })
     })
@@ -2763,7 +2757,6 @@ describe('SkillService', () => {
       )
       expect(publishDeepchatEventMock).toHaveBeenCalledWith('skills.catalog.changed', {
         reason: 'sync-imported',
-        agentIds: ['deepchat'],
         version: expect.any(Number)
       })
     })
@@ -2825,123 +2818,6 @@ describe('SkillService', () => {
     })
   })
 
-  describe('uninstallSkill', () => {
-    it('should clean stale local state when skill directory no longer exists', async () => {
-      ;(skillService as any).metadataCache.set(
-        'nonexistent',
-        createSkillMetadata('nonexistent', 'nonexistent')
-      )
-      ;(skillService as any).contentCache.set('nonexistent', {
-        name: 'nonexistent',
-        content: 'content'
-      })
-      configSettings.set('skills.managementState', {
-        version: 1,
-        skills: {
-          nonexistent: {
-            name: 'nonexistent',
-            canonicalPath: `${DEFAULT_SKILLS_DIR}/nonexistent`,
-            deepchat: { disabled: true },
-            extension: {
-              version: 1,
-              env: {},
-              runtimePolicy: { python: 'auto', node: 'auto' },
-              scriptOverrides: {}
-            },
-            source: { type: 'created' }
-          }
-        }
-      })
-      ;(fs.existsSync as Mock).mockReturnValue(false)
-      publishDeepchatEventMock.mockClear()
-
-      const result = await skillService.uninstallSkill('nonexistent')
-
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('not found')
-      expect(result.errorCode).toBe('not_found')
-      expect(
-        (configSettings.get('skills.managementState') as any).agents.deepchat.skills.nonexistent
-      ).toBeUndefined()
-      expect((skillService as any).metadataCache.has('nonexistent')).toBe(false)
-      expect((skillService as any).contentCache.has('nonexistent')).toBe(false)
-      expect(publishDeepchatEventMock).not.toHaveBeenCalled()
-    })
-
-    it('should not remove sidecar paths for invalid missing skill names', async () => {
-      ;(fs.existsSync as Mock).mockReturnValue(false)
-
-      const result = await skillService.uninstallSkill('../outside')
-
-      expect(result.errorCode).toBe('invalid_skill')
-      expect(fs.rmSync).not.toHaveBeenCalled()
-    })
-
-    it('should successfully uninstall a skill', async () => {
-      const skillDir = `${DEFAULT_SKILLS_DIR}/test-skill`
-      ;(skillService as any).metadataCache.set(
-        'test-skill',
-        createSkillMetadata('test-skill', 'test-skill')
-      )
-      let removed = false
-      ;(fs.existsSync as Mock).mockImplementation((target: string) => {
-        if (target === skillDir) return !removed
-        return true
-      })
-      ;(fs.rmSync as Mock).mockImplementation((target: string) => {
-        if (target === skillDir) {
-          removed = true
-        }
-      })
-
-      const result = await skillService.uninstallSkill('test-skill')
-
-      expect(result.success).toBe(true)
-      expect(result.skillName).toBe('test-skill')
-      expect(fs.rmSync).toHaveBeenCalled()
-      expect(publishDeepchatEventMock).toHaveBeenCalledWith(
-        'skills.catalog.changed',
-        expect.objectContaining({
-          reason: 'uninstalled',
-          name: 'test-skill',
-          version: expect.any(Number)
-        })
-      )
-    })
-
-    it('should not clear caches or publish success when uninstall cannot remove the folder', async () => {
-      const skillDir = `${DEFAULT_SKILLS_DIR}/locked-skill`
-      const lockError = Object.assign(new Error('EPERM: operation not permitted, rmdir'), {
-        code: 'EPERM'
-      })
-      ;(skillService as any).metadataCache.set(
-        'locked-skill',
-        createSkillMetadata('locked-skill', 'locked-skill')
-      )
-      ;(skillService as any).contentCache.set('locked-skill', {
-        name: 'locked-skill',
-        content: 'content'
-      })
-      ;(fs.existsSync as Mock).mockImplementation((target: string) => target === skillDir)
-      ;(fs.rmSync as Mock).mockImplementation(() => {
-        throw lockError
-      })
-      publishDeepchatEventMock.mockClear()
-
-      const result = await skillService.uninstallSkill('locked-skill')
-
-      expect(result).toMatchObject({
-        success: false,
-        errorCode: 'target_locked',
-        skillName: 'locked-skill',
-        targetPath: skillDir
-      })
-      expect((skillService as any).metadataCache.has('locked-skill')).toBe(true)
-      expect((skillService as any).contentCache.has('locked-skill')).toBe(true)
-      expect(publishDeepchatEventMock).not.toHaveBeenCalled()
-    })
-  })
-
   describe('updateSkillFile', () => {
     beforeEach(async () => {
       mockSkillTree(['test-skill'])
@@ -2952,6 +2828,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
     })
 
     it('should fail if skill does not exist', async () => {
@@ -2980,7 +2857,11 @@ describe('SkillService', () => {
     })
 
     it('rolls back an updated manifest that no longer parses as the same Skill', async () => {
-      ;(skillService as any).contentCache.set('test-skill', {
+      const contentCache = (skillService as any).getContentCacheForAgent('deepchat') as Map<
+        string,
+        { name: string; content: string }
+      >
+      contentCache.set('test-skill', {
         name: 'test-skill',
         content: 'cached old content'
       })
@@ -2998,7 +2879,7 @@ describe('SkillService', () => {
         'test',
         'utf-8'
       )
-      expect((skillService as any).contentCache.get('test-skill')).toEqual({
+      expect(contentCache.get('test-skill')).toEqual({
         name: 'test-skill',
         content: 'cached old content'
       })
@@ -3021,6 +2902,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
     })
 
     it('saves skill content and extension together', async () => {
@@ -3045,7 +2927,7 @@ describe('SkillService', () => {
         'utf-8'
       )
       const state = configSettings.get('skills.managementState') as any
-      expect(state.agents.deepchat.skills['test-skill'].extension).toEqual(extension)
+      expect(state.agents.deepchat.bindings['test-skill'].extension).toEqual(extension)
       expect(publishDeepchatEventMock).toHaveBeenCalledWith(
         'skills.catalog.changed',
         expect.objectContaining({
@@ -3082,8 +2964,14 @@ describe('SkillService', () => {
         'utf-8'
       )
       expect(
-        (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
-      ).toBeUndefined()
+        (configSettings.get('skills.managementState') as any).agents.deepchat.bindings['test-skill']
+          .extension
+      ).toEqual({
+        version: 1,
+        env: {},
+        runtimePolicy: { python: 'auto', node: 'auto' },
+        scriptOverrides: {}
+      })
     })
 
     it('does not persist extension state when the updated manifest is invalid', async () => {
@@ -3093,7 +2981,11 @@ describe('SkillService', () => {
         runtimePolicy: { python: 'builtin' as const, node: 'system' as const },
         scriptOverrides: {}
       }
-      ;(skillService as any).contentCache.set('test-skill', {
+      const contentCache = (skillService as any).getContentCacheForAgent('deepchat') as Map<
+        string,
+        { name: string; content: string }
+      >
+      contentCache.set('test-skill', {
         name: 'test-skill',
         content: 'cached old content'
       })
@@ -3115,8 +3007,16 @@ describe('SkillService', () => {
         'old skill content',
         'utf-8'
       )
-      expect(configSettings.get('skills.managementState')).toBeUndefined()
-      expect((skillService as any).contentCache.get('test-skill')).toEqual({
+      expect(
+        (configSettings.get('skills.managementState') as any).agents.deepchat.bindings['test-skill']
+          .extension
+      ).toEqual({
+        version: 1,
+        env: {},
+        runtimePolicy: { python: 'auto', node: 'auto' },
+        scriptOverrides: {}
+      })
+      expect(contentCache.get('test-skill')).toEqual({
         name: 'test-skill',
         content: 'cached old content'
       })
@@ -3134,6 +3034,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
     })
 
     it('should return empty array for non-existent skill', async () => {
@@ -3164,6 +3065,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
     })
 
     it('should save and load database runtime config', async () => {
@@ -3187,7 +3089,7 @@ describe('SkillService', () => {
         expect.objectContaining({
           agents: expect.objectContaining({
             deepchat: expect.objectContaining({
-              skills: expect.objectContaining({
+              bindings: expect.objectContaining({
                 'test-skill': expect.objectContaining({ extension })
               })
             })
@@ -3209,7 +3111,7 @@ describe('SkillService', () => {
       }
       await skillService.saveSkillExtension('test-skill', original)
       const firstBinding = (configSettings.get('skills.managementState') as any).agents.deepchat
-        .skills['test-skill'].runtimeBindingId
+        .bindings['test-skill'].runtimeBindingId
 
       await skillService.saveSkillExtension('test-skill', {
         ...original,
@@ -3218,21 +3120,21 @@ describe('SkillService', () => {
         scriptOverrides: { 'scripts/run.py': { enabled: false } }
       })
       const policyOnlyBinding = (configSettings.get('skills.managementState') as any).agents
-        .deepchat.skills['test-skill'].runtimeBindingId
+        .deepchat.bindings['test-skill'].runtimeBindingId
 
       await skillService.saveSkillWithExtension('test-skill', 'new content', {
         ...original,
         env: { A: 'one', B: 'two' }
       })
       const contentOnlyBinding = (configSettings.get('skills.managementState') as any).agents
-        .deepchat.skills['test-skill'].runtimeBindingId
+        .deepchat.bindings['test-skill'].runtimeBindingId
 
       await skillService.saveSkillExtension('test-skill', {
         ...original,
         env: { A: 'changed', B: 'two' }
       })
       const changedBinding = (configSettings.get('skills.managementState') as any).agents.deepchat
-        .skills['test-skill'].runtimeBindingId
+        .bindings['test-skill'].runtimeBindingId
 
       expect(firstBinding).toBe('11111111-1111-4111-8111-111111111111')
       expect(policyOnlyBinding).toBe(firstBinding)
@@ -3245,7 +3147,7 @@ describe('SkillService', () => {
         skillService.resolveSkillRuntimeEnvironmentBinding('deepchat', 'test-skill', changedBinding)
       ).resolves.toEqual({ A: 'changed', B: 'two' })
 
-      delete (configSettings.get('skills.managementState') as any).agents.deepchat.skills[
+      delete (configSettings.get('skills.managementState') as any).agents.deepchat.bindings[
         'test-skill'
       ].runtimeBindingId
       await expect(
@@ -3254,7 +3156,7 @@ describe('SkillService', () => {
 
       await skillService.saveSkillExtension('test-skill', { ...original, env: {} })
       expect(
-        (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
+        (configSettings.get('skills.managementState') as any).agents.deepchat.bindings['test-skill']
           .runtimeBindingId
       ).toBeUndefined()
       await expect(
@@ -3278,25 +3180,27 @@ describe('SkillService', () => {
         if (target === sidecarPath) return JSON.stringify(extension)
         return 'test'
       })
+      delete (configSettings.get('skills.managementState') as any).agents.deepchat.bindings[
+        'test-skill'
+      ]
 
       const loaded = await skillService.getSkillExtension('test-skill')
 
       expect(loaded).toEqual(extension)
       expect(
-        (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
+        (configSettings.get('skills.managementState') as any).agents.deepchat.bindings['test-skill']
           .extension
       ).toEqual(extension)
       const bindingId = (configSettings.get('skills.managementState') as any).agents.deepchat
-        .skills['test-skill'].runtimeBindingId
+        .bindings['test-skill'].runtimeBindingId
       expect(bindingId).toBe('12345678-1234-1234-1234-123456789abc')
       expect(await skillService.getSkillExtension('test-skill')).toEqual(extension)
       expect(
-        (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
+        (configSettings.get('skills.managementState') as any).agents.deepchat.bindings['test-skill']
           .runtimeBindingId
       ).toBe(bindingId)
       expect(fs.rmSync).toHaveBeenCalledWith(sidecarPath, { force: true })
     })
-
     it('reads raw skill file content by skill name', async () => {
       ;(fs.promises.readFile as Mock).mockImplementation(async (target: string) => {
         if (target.endsWith('/test-skill/SKILL.md')) {
@@ -3361,32 +3265,6 @@ describe('SkillService', () => {
         })
       ])
     })
-
-    it('should remove management state when uninstalling a skill', async () => {
-      const skillDir = `${DEFAULT_SKILLS_DIR}/test-skill`
-      let removed = false
-      await skillService.saveSkillExtension('test-skill', {
-        version: 1,
-        env: { API_KEY: 'secret' },
-        runtimePolicy: { python: 'builtin', node: 'system' },
-        scriptOverrides: {}
-      })
-      ;(fs.existsSync as Mock).mockImplementation((target: string) => {
-        if (target === skillDir) return !removed
-        return true
-      })
-      ;(fs.rmSync as Mock).mockImplementation((target: string) => {
-        if (target === skillDir) {
-          removed = true
-        }
-      })
-
-      await skillService.uninstallSkill('test-skill')
-
-      expect(
-        (configSettings.get('skills.managementState') as any).agents.deepchat.skills['test-skill']
-      ).toBeUndefined()
-    })
   })
 
   describe('snapshotPersistedActiveSkillNames', () => {
@@ -3427,6 +3305,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       await skillService.setActiveSkills('new-session-2', ['skill-1'])
       const active = await skillService.getActiveSkills('new-session-2')
@@ -3449,6 +3328,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       const active = await skillService.getActiveSkills('new-session-2b')
 
@@ -3470,6 +3350,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       const active = await skillService.getActiveSkills('new-session-cua')
 
@@ -3501,6 +3382,7 @@ describe('SkillService', () => {
       )
 
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       const active = await skillService.getActiveSkills('legacy-session-conv-123')
 
@@ -3533,6 +3415,7 @@ describe('SkillService', () => {
         }
       )
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       const active = await skillService.getActiveSkills('legacy-session-conv-456')
 
@@ -3561,6 +3444,7 @@ describe('SkillService', () => {
         }
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
     })
 
     it('does not persist skill state for retired raw legacy conversations', async () => {
@@ -3639,6 +3523,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       const active = await skillService.setActiveSkills('new-session-cua-set', ['cua-driver'])
 
@@ -3661,6 +3546,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
 
       await skillService.setActiveSkills('new-session-4a', ['skill-1'])
       skillService.destroy()
@@ -3750,6 +3636,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
       await skillService.clearNewAgentSessionSkills('new-session-deleted')
 
       await expect(
@@ -3774,6 +3661,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
     })
 
     it('should return only valid skill names', async () => {
@@ -3803,6 +3691,7 @@ describe('SkillService', () => {
         content: ''
       })
       await skillService.discoverSkills()
+      await assignDiscoveredSkills()
     })
 
     it('returns union of allowed tools for repaired imported legacy sessions', async () => {
@@ -3906,6 +3795,39 @@ describe('SkillService', () => {
           version: expect.any(Number)
         })
       )
+    })
+
+    it('preserves bindings across an atomic-save delete and create sequence', async () => {
+      mockSkillTree(['skill-a'])
+      ;(matter as unknown as Mock).mockReturnValue({
+        data: { name: 'skill-a', description: 'Skill A' },
+        content: '# Skill A'
+      })
+      await skillService.discoverSkills()
+      await skillService.setSkillAssignment('deepchat', 'skill-a', true)
+      const metadataCache = (skillService as any).metadataCache as Map<string, SkillMetadata>
+      const metadata = metadataCache.get('skill-a')!
+      const stateBefore = structuredClone(
+        configSettings.get('skills.managementState') as Record<string, unknown>
+      )
+
+      await skillService.watchSkillFiles()
+      const watcher = fakeWatcherService.watchers.at(-1)
+      ;(fs.existsSync as Mock).mockImplementation((target: string) => target !== metadata.path)
+      await watcher?.emit([{ type: 'delete', path: metadata.path }])
+
+      expect(metadataCache.has('skill-a')).toBe(false)
+      expect(configSettings.get('skills.managementState')).toEqual(stateBefore)
+
+      ;(fs.existsSync as Mock).mockReturnValue(true)
+      ;(skillService as any).parseSkillMetadata = vi.fn().mockResolvedValue(metadata)
+      await watcher?.emit([{ type: 'create', path: metadata.path }])
+
+      expect(metadataCache.get('skill-a')).toEqual(metadata)
+      expect(
+        (configSettings.get('skills.managementState') as any).agents.deepchat.bindings['skill-a']
+          .assigned
+      ).toBe(true)
     })
 
     it('keeps the first cached entry when a changed skill renames to a duplicate name', async () => {

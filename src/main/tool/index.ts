@@ -104,6 +104,7 @@ type MainProcessToolPreCheckOptions = Pick<
   MainProcessToolCallOptions,
   | 'permissionMode'
   | 'signal'
+  | 'activeSkillNames'
   | 'commandShell'
   | 'messageId'
   | 'runId'
@@ -961,6 +962,7 @@ export class ToolService implements ToolServicePort {
       const result = await awaitWithAbort(
         this.agentToolManager.preCheckToolPermission(toolName, args, request.conversationId, {
           allowExternalFileAccess: allowsExternalFileAccess(permissionMode),
+          activeSkillNames: options?.activeSkillNames,
           commandShell: options?.commandShell
         }),
         options?.signal

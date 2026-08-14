@@ -2676,7 +2676,6 @@ export async function createMainProcessControl(dependencies: {
       skillService,
       skillSyncService,
       skillSettings,
-      agentSettings,
       ensureInitialized: ensureSkillServicesInitialized,
       assertSessionActiveSkillsMutable: async (conversationId) => {
         const state = await deepChatAgentHarness.getSessionState(conversationId)

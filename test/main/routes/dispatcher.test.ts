@@ -773,6 +773,7 @@ function createRuntime() {
       pendingProviderInstalls.push(preview)
     }),
     sendToAllWindows: vi.fn().mockResolvedValue(undefined),
+    sendToMainWindow: vi.fn().mockResolvedValue(true),
     getFloatingChatWindow: vi.fn(() => ({
       getWindow: () => browserWindowState.windows.get(19) ?? null
     }))
@@ -1146,20 +1147,6 @@ function createRuntime() {
     source: externalSkill,
     warnings: []
   }
-  const exportPreview = {
-    skillName: 'write-tests',
-    targetTool: 'codex',
-    targetPath: '/tools/write-tests.md',
-    convertedContent: '# Write tests',
-    warnings: []
-  }
-  const syncResult = {
-    success: true,
-    imported: 1,
-    exported: 0,
-    skipped: 0,
-    failed: []
-  }
   const skillSyncService = {
     scanExternalTools: vi.fn().mockResolvedValue([scanResult]),
     getNewDiscoveries: vi.fn().mockResolvedValue([
@@ -1189,14 +1176,7 @@ function createRuntime() {
         }
       }
     ]),
-    previewImport: vi.fn().mockResolvedValue([importPreview]),
-    executeImport: vi.fn().mockResolvedValue(syncResult),
-    previewExport: vi.fn().mockResolvedValue([exportPreview]),
-    executeExport: vi.fn().mockResolvedValue({
-      ...syncResult,
-      imported: 0,
-      exported: 1
-    })
+    previewImport: vi.fn().mockResolvedValue([importPreview])
   } as unknown as SkillSyncServicePort
 
   const oauthService = {
@@ -1590,7 +1570,6 @@ function createRuntime() {
     skillService,
     skillSyncService,
     skillSettings,
-    agentSettings: providerSettings as any,
     ensureInitialized: vi.fn().mockResolvedValue(undefined),
     assertSessionActiveSkillsMutable,
     recordSettingsActivity: (input) => sqlitePresenter.recordSettingsActivity(input)
@@ -3734,11 +3713,11 @@ describe('dispatchDeepchatRoute', () => {
     const result = await dispatchDeepchatRoute(
       runtime,
       'skills.listAgentImportSources',
-      { targetAgentId: 'deepchat' },
+      {},
       context
     )
 
-    expect(providerSettings.getAgent).toHaveBeenCalledWith('deepchat')
+    expect(providerSettings.getAgent).not.toHaveBeenCalled()
     expect(skillSyncService.scanExternalTools).toHaveBeenCalledOnce()
     expect(result).toEqual({
       sources: [
@@ -5325,6 +5304,13 @@ describe('dispatchDeepchatRoute', () => {
       createRendererRouteContext(42, 7)
     )
 
+    const resumeGuidedOnboardingResult = await dispatchDeepchatRoute(
+      runtime,
+      'window.resumeGuidedOnboarding',
+      {},
+      createRendererRouteContext(42, 7)
+    )
+
     const startGuidedOnboardingResult = await dispatchDeepchatRoute(
       runtime,
       'window.startGuidedOnboarding',
@@ -5370,7 +5356,7 @@ describe('dispatchDeepchatRoute', () => {
     expect(windowPresenter.getSettingsWindowId).toHaveBeenCalled()
     expect(windowPresenter.closeSettingsWindow).toHaveBeenCalled()
     expect(closeSettingsResult).toEqual({ closed: true })
-    expect(windowPresenter.focusMainWindow).toHaveBeenCalledTimes(2)
+    expect(windowPresenter.focusMainWindow).toHaveBeenCalledTimes(3)
     expect(focusMainResult).toEqual({ focused: true })
     expect(windowPresenter.notifySettingsReady).toHaveBeenCalledWith(42)
     expect(notifySettingsReadyResult).toEqual({ notified: true })
@@ -5390,6 +5376,11 @@ describe('dispatchDeepchatRoute', () => {
       pendingProviderInstallResult.preview
     )
     expect(requeueProviderInstallResult).toEqual({ queued: true })
+    expect(windowPresenter.sendToMainWindow).toHaveBeenCalledWith('deepchat:event', {
+      name: 'appRuntime.guidedOnboardingResumeRequested',
+      payload: {}
+    })
+    expect(resumeGuidedOnboardingResult).toEqual({ requested: true, focused: true })
     expect(windowPresenter.sendToAllWindows).toHaveBeenCalledWith('dev:start-guided-onboarding')
     expect(startGuidedOnboardingResult).toEqual({
       started: true,
