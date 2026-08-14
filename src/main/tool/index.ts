@@ -97,7 +97,7 @@ type MainProcessToolCallOptions = ToolCallOptions & {
     capability: ProgrammaticToolCapabilityV1
     snapshot: ToolSurfaceSnapshot
     entry: ProgrammaticToolSurfaceEntryV1
-    assertAuthorityActive?: () => void
+    assertAuthorityActive: () => void
   }>
 }
 type MainProcessToolPreCheckOptions = Pick<
@@ -562,19 +562,12 @@ export class ToolService implements ToolServicePort {
           'Programmatic child requires one exact frozen capability and durable child dispatch.'
         )
       }
-      if (programmaticToolChild.assertAuthorityActive) {
-        assertIssuedProgrammaticToolAuthorityAssertion(programmaticToolChild.assertAuthorityActive)
-        programmaticToolChild.assertAuthorityActive()
-        assertProgrammaticToolCapabilityViewCommitted(
-          programmaticToolChild.capability,
-          programmaticToolChild.snapshot
-        )
-      } else {
-        assertProgrammaticToolCapabilityViewActive(
-          programmaticToolChild.capability,
-          programmaticToolChild.snapshot
-        )
-      }
+      assertIssuedProgrammaticToolAuthorityAssertion(programmaticToolChild.assertAuthorityActive)
+      programmaticToolChild.assertAuthorityActive()
+      assertProgrammaticToolCapabilityViewCommitted(
+        programmaticToolChild.capability,
+        programmaticToolChild.snapshot
+      )
     }
     const assertToolSurfaceContextActive = (): void => {
       if (!toolSurfaceContext) return
@@ -904,7 +897,7 @@ export class ToolService implements ToolServicePort {
     capability: ProgrammaticToolCapabilityV1
     snapshot: ToolSurfaceSnapshot
     entry: ProgrammaticToolSurfaceEntryV1
-    assertAuthorityActive?: () => void
+    assertAuthorityActive: () => void
     permissionMode: PermissionMode
     signal: AbortSignal
     commitDispatch: ToolDispatchCommit
@@ -922,9 +915,7 @@ export class ToolService implements ToolServicePort {
         capability: input.capability,
         snapshot: input.snapshot,
         entry: input.entry,
-        ...(input.assertAuthorityActive
-          ? { assertAuthorityActive: input.assertAuthorityActive }
-          : {})
+        assertAuthorityActive: input.assertAuthorityActive
       }
     })
   }

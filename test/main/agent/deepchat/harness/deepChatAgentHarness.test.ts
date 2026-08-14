@@ -3895,6 +3895,7 @@ describe('DeepChatAgentHarness', () => {
 
         const preparation = await params.controls?.prepareSkillActivation?.('review-skill')
         expect(preparation?.kind).toBe('prepared')
+        expect(params.controls?.getActiveSkillNames?.()).toEqual(['session-skill'])
         expect(params.run.resources.activeSkillNames).toEqual(['session-skill'])
         expect(params.run.resources.toolDefinitions.map((tool) => tool.function.name)).toEqual([
           'deepchat_question'
@@ -3904,6 +3905,7 @@ describe('DeepChatAgentHarness', () => {
         }
         preparation.apply()
 
+        expect(params.controls?.getActiveSkillNames?.()).toEqual(['review-skill', 'session-skill'])
         expect(params.run.resources.activeSkillNames).toEqual(['review-skill', 'session-skill'])
         expect(params.run.resources.toolDefinitions.map((tool) => tool.function.name)).toEqual([
           'deepchat_question',

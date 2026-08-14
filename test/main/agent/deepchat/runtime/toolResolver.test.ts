@@ -7,6 +7,7 @@ import {
   MAX_SKILL_TOOL_REQUIREMENTS
 } from '@/agent/deepchat/runtime/toolResolver'
 import type { DeepChatAgentConfig } from '@shared/types/agent-interface'
+import { SKILL_NAME_MAX_LENGTH } from '@shared/types/skill'
 import {
   TOOL_EXECUTION,
   type MCPToolDefinition,
@@ -859,6 +860,32 @@ describe('DeepChatToolResolver Run definition universe', () => {
     expect(getAllToolDefinitions).not.toHaveBeenCalled()
     expect(Object.isFrozen(result)).toBe(true)
     expect(Object.isFrozen(result.skillRequirements)).toBe(true)
+  })
+
+  it('accepts active Skill names up to the shared repository limit', async () => {
+    const skillName = `skill-${'a'.repeat(SKILL_NAME_MAX_LENGTH - 'skill-'.length)}`
+    const { resolver, resourceInstance } = createUniverseResolver({
+      activeSkills: [skillName],
+      metadata: [{ name: skillName }]
+    })
+
+    const result = await resolver.resolveRunToolDefinitionUniverse(
+      'session-1',
+      null,
+      undefined,
+      resourceInstance as any
+    )
+
+    expect(result).toMatchObject({
+      status: 'resolved',
+      complete: true,
+      mandatoryAdmissionBlocked: false,
+      activeSkillNames: [skillName],
+      degradationCounts: []
+    })
+    expect(result.skillRequirements).toEqual([
+      expect.objectContaining({ skillName, activeAtRunStart: true, activatable: true })
+    ])
   })
 
   it('resolves bundled legacy Skill requirements to native Agent targets', async () => {

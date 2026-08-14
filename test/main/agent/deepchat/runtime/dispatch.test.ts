@@ -1409,6 +1409,31 @@ describe('dispatch', () => {
       expect(parent.parents.prepare).not.toHaveBeenCalled()
     })
 
+    it('rejects Programmatic exec operation identity that conflicts with its request', () => {
+      const { binding, capability } = createDispatchProgrammaticToolSurfaceBinding()
+      const parent = createProgrammaticParentStub([])
+
+      expect(() =>
+        prepareProgrammaticExecParent({
+          toolName: 'exec',
+          argumentsJson: PROGRAMMATIC_EXEC_ARGUMENTS,
+          operation: {
+            runId: '11111111-1111-4111-8111-111111111111',
+            requestSeq: 1,
+            providerToolCallId: 'tc-exec',
+            sessionId: 'another-session'
+          } as Parameters<typeof prepareProgrammaticExecParent>[0]['operation'],
+          sessionId: 's1',
+          messageId: 'm1',
+          permissionMode: 'full_access',
+          toolSurfaceSnapshot: binding.snapshot,
+          capability,
+          parents: parent.parents
+        })
+      ).toThrow('Programmatic Tool exec operation identity does not match its request')
+      expect(parent.parents.prepare).not.toHaveBeenCalled()
+    })
+
     it('arms a Programmatic exec only after outer T1 and passes its exact parent authority', async () => {
       const { tools, binding } = createDispatchProgrammaticToolSurfaceBinding()
       const toolService = createMockToolService()

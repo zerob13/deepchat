@@ -1,4 +1,8 @@
-import type { SkillMetadataSnapshotPort, SkillServicePort } from '@shared/types/skill'
+import {
+  SKILL_NAME_MAX_LENGTH,
+  type SkillMetadataSnapshotPort,
+  type SkillServicePort
+} from '@shared/types/skill'
 import type { MCPToolDefinition } from '@shared/types/core/mcp'
 import type { ToolServicePort } from '@shared/types/tool'
 import { types as nodeTypes } from 'node:util'
@@ -57,7 +61,6 @@ export const MAX_SKILL_TOOL_REQUIREMENTS = 256
 export const MAX_RUN_TOOL_REQUIREMENTS = 4_096
 export const MAX_RUN_TOOL_REQUIREMENT_NAME_BYTES = 1_024
 const MAX_RUN_ACTIVE_SKILL_NAMES = MAX_RUN_TOOL_UNIVERSE_SKILLS
-const MAX_RUN_SKILL_NAME_LENGTH = 64
 const MAX_RUN_DEGRADATION_COUNT = MAX_RUN_TOOL_REQUIREMENTS
 const MAX_UNAVAILABLE_TOOL_DEFINITION_SOURCES = MAX_RUN_TOOL_UNIVERSE_DEFINITIONS
 const RUN_SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
@@ -206,7 +209,7 @@ function normalizeRunActiveSkillNames(
       return { ok: false, code: 'active-skill-snapshot-invalid' }
     }
     const name = item.trim()
-    if (!name || name.length > MAX_RUN_SKILL_NAME_LENGTH || !RUN_SKILL_NAME_PATTERN.test(name)) {
+    if (!name || name.length > SKILL_NAME_MAX_LENGTH || !RUN_SKILL_NAME_PATTERN.test(name)) {
       return { ok: false, code: 'active-skill-snapshot-invalid' }
     }
     names.add(name)
@@ -421,7 +424,7 @@ export class DeepChatToolResolver {
       const skillName = typeof rawName === 'string' ? rawName.trim() : ''
       if (
         !skillName ||
-        skillName.length > MAX_RUN_SKILL_NAME_LENGTH ||
+        skillName.length > SKILL_NAME_MAX_LENGTH ||
         !RUN_SKILL_NAME_PATTERN.test(skillName) ||
         (inspectedAllowedTools !== undefined && !inspectedAllowedTools.ok)
       ) {

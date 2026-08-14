@@ -837,21 +837,27 @@ export class DeepChatLoopRunner {
     }
     const getCandidateActiveSkillNames = () =>
       resolveEffectiveActiveSkillNames(catalogActiveSkillNames, resourceInstance)
-    const unconstrainedToolCatalog = this.ports.toolResolver.createSessionToolCatalogPort(
-      sessionId,
-      projectDir,
-      resourceInstance,
-      (snapshot) => {
-        catalogActiveSkillNames = [...snapshot.activeSkillNames]
-        catalogEnabledMcpServerIds = snapshot.enabledMcpServerIds
-      }
-    )
-    const toolCatalog = {
-      resolve: async (request?: { activeSkillNames?: string[]; failClosed?: boolean }) => {
-        const resolved = await unconstrainedToolCatalog.resolve(request)
-        return meetTaskContractToolDefinitions(sessionId, resolved, taskContractContext)
+    const publishToolCatalogSnapshot = (snapshot: DeepChatToolCatalogSnapshot): void => {
+      catalogActiveSkillNames = [...snapshot.activeSkillNames]
+      catalogEnabledMcpServerIds = snapshot.enabledMcpServerIds
+    }
+    const createTaskConstrainedToolCatalog = (
+      onResolved?: (snapshot: DeepChatToolCatalogSnapshot) => void
+    ) => {
+      const unconstrainedToolCatalog = this.ports.toolResolver.createSessionToolCatalogPort(
+        sessionId,
+        projectDir,
+        resourceInstance,
+        onResolved
+      )
+      return {
+        resolve: async (request?: { activeSkillNames?: string[]; failClosed?: boolean }) => {
+          const resolved = await unconstrainedToolCatalog.resolve(request)
+          return meetTaskContractToolDefinitions(sessionId, resolved, taskContractContext)
+        }
       }
     }
+    const toolCatalog = createTaskConstrainedToolCatalog(publishToolCatalogSnapshot)
     const tools =
       providedTools && providedToolCatalogSnapshot && recoveredRuntimeSkillContexts.length === 0
         ? providedTools
@@ -1895,11 +1901,26 @@ export class DeepChatLoopRunner {
                         new Set([...getCandidateActiveSkillNames(), skillName])
                       ).sort((left, right) => left.localeCompare(right))
                     )
-                    const resolvedTools = await toolCatalog.resolve({
+                    let stagedCatalogSnapshot: DeepChatToolCatalogSnapshot | undefined
+                    const stagedToolCatalog = createTaskConstrainedToolCatalog((snapshot) => {
+                      stagedCatalogSnapshot = {
+                        activeSkillNames: [...snapshot.activeSkillNames],
+                        enabledMcpServerIds:
+                          snapshot.enabledMcpServerIds === undefined ||
+                          snapshot.enabledMcpServerIds === null
+                            ? snapshot.enabledMcpServerIds
+                            : [...snapshot.enabledMcpServerIds]
+                      }
+                    })
+                    const resolvedTools = await stagedToolCatalog.resolve({
                       activeSkillNames: [...nextActiveSkillNames]
                     })
                     abortSignal.throwIfAborted()
                     resourceScope.assertCurrent()
+                    const resolvedCatalogSnapshot = stagedCatalogSnapshot
+                    if (!resolvedCatalogSnapshot) {
+                      throw new Error('Prepared Skill activation did not resolve its tool catalog.')
+                    }
                     const preparedSurface = prepareSurface({
                       requiredStableTargetKeys: requirement.requiredStableTargetKeys,
                       eligibleDefinitions: resolvedTools
@@ -1930,6 +1951,7 @@ export class DeepChatLoopRunner {
                         if (applied) return
                         applied = true
                         preparedSurface.apply()
+                        publishToolCatalogSnapshot(resolvedCatalogSnapshot)
                         resourceInstance.activateRuntimeSkill(skillName)
                         loopRun.resources.activeSkillNames = [...nextActiveSkillNames]
                         loopRun.resources.toolDefinitions = [

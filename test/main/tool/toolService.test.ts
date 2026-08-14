@@ -513,6 +513,62 @@ describe('ToolService', () => {
     markProgrammaticToolCapabilityProvenanceCommitted(capability, snapshot)
     const entry = capability.entries[0]
     if (!entry) throw new Error('Expected one Programmatic child entry')
+    const { table } = createTapeTableMock()
+    const executionJournal = new ExecutionJournalService(() => table)
+    const tokenAuthority = new AgentCliTokenAuthority({
+      createToken: () => 'd'.repeat(43),
+      createTokenId: () => 'deferred-child-authority'
+    })
+    const parentRegistry = new ProgrammaticToolParentRegistry({
+      tokenAuthority,
+      executionJournal
+    })
+    executionJournal.commitRunStarted({
+      sessionId: requestIdentity.sessionId,
+      runId: requestIdentity.runId,
+      messageId: requestIdentity.messageId,
+      runKind: 'deferred_tool'
+    })
+    const parent = parentRegistry.prepare({
+      binding: {
+        schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
+        surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
+        operation: {
+          ...requestIdentity,
+          providerToolCallId: 'exec-deferred-1'
+        },
+        command: { domain: 'tool', verb: 'call' },
+        route: 'tool.call',
+        canonicalInvocationHash: 'd'.repeat(64),
+        adapterMode: capability.adapterMode,
+        capabilityHash: capability.capabilityHash,
+        programmaticSurfaceHash: capability.programmaticSurfaceHash,
+        quotas: capability.quotas
+      },
+      invocationAuthority: { capability, snapshot, permissionMode: 'full_access' },
+      assertAuthorityActive: () =>
+        assertProgrammaticToolCapabilityViewCommitted(capability, snapshot)
+    })
+    const outerDispatch = executionJournal.commitDispatch({
+      sessionId: requestIdentity.sessionId,
+      messageId: requestIdentity.messageId,
+      operation: {
+        runId: requestIdentity.runId,
+        requestSeq: requestIdentity.requestSeq,
+        providerToolCallId: 'exec-deferred-1'
+      },
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'deepchat tool call', stdin: '{}' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' }
+    })
+    parent.armOuterDispatch({
+      ...outerDispatch,
+      operation: parent.operation
+    })
+    const invocation = parentRegistry.resolveInvocation(
+      parent.takeArmedToken().programmaticOperation
+    )
     const childRequest = {
       id: 'programmatic-child-1',
       type: 'function' as const,
@@ -527,6 +583,7 @@ describe('ToolService', () => {
       capability,
       snapshot,
       entry,
+      assertAuthorityActive: invocation.assertAuthorityActive,
       signal: new AbortController().signal,
       commitDispatch: vi.fn(),
       registerOutcomeProjection: vi.fn()
@@ -644,62 +701,6 @@ describe('ToolService', () => {
       sessionKind: 'regular',
       agentWorkspacePath: null
     })
-    const { table } = createTapeTableMock()
-    const executionJournal = new ExecutionJournalService(() => table)
-    const tokenAuthority = new AgentCliTokenAuthority({
-      createToken: () => 'd'.repeat(43),
-      createTokenId: () => 'deferred-child-authority'
-    })
-    const parentRegistry = new ProgrammaticToolParentRegistry({
-      tokenAuthority,
-      executionJournal
-    })
-    executionJournal.commitRunStarted({
-      sessionId: requestIdentity.sessionId,
-      runId: requestIdentity.runId,
-      messageId: requestIdentity.messageId,
-      runKind: 'deferred_tool'
-    })
-    const parent = parentRegistry.prepare({
-      binding: {
-        schemaVersion: AGENT_CLI_PROGRAMMATIC_GRANT_SCHEMA_VERSION,
-        surfaceVersion: LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION,
-        operation: {
-          ...requestIdentity,
-          providerToolCallId: 'exec-deferred-1'
-        },
-        command: { domain: 'tool', verb: 'call' },
-        route: 'tool.call',
-        canonicalInvocationHash: 'd'.repeat(64),
-        adapterMode: capability.adapterMode,
-        capabilityHash: capability.capabilityHash,
-        programmaticSurfaceHash: capability.programmaticSurfaceHash,
-        quotas: capability.quotas
-      },
-      invocationAuthority: { capability, snapshot, permissionMode: 'full_access' },
-      assertAuthorityActive: () =>
-        assertProgrammaticToolCapabilityViewCommitted(capability, snapshot)
-    })
-    const outerDispatch = executionJournal.commitDispatch({
-      sessionId: requestIdentity.sessionId,
-      messageId: requestIdentity.messageId,
-      operation: {
-        runId: requestIdentity.runId,
-        requestSeq: requestIdentity.requestSeq,
-        providerToolCallId: 'exec-deferred-1'
-      },
-      toolName: 'exec',
-      toolSource: 'agent',
-      normalizedArguments: { command: 'deepchat tool call', stdin: '{}' },
-      target: { serverName: 'agent-filesystem', originalName: 'exec' }
-    })
-    parent.armOuterDispatch({
-      ...outerDispatch,
-      operation: parent.operation
-    })
-    const invocation = parentRegistry.resolveInvocation(
-      parent.takeArmedToken().programmaticOperation
-    )
     revokeToolSurfaceExecutionEligibility(snapshot)
     await expect(
       toolService.callProgrammaticToolChild({
@@ -712,9 +713,10 @@ describe('ToolService', () => {
     await expect(
       toolService.callProgrammaticToolChild({
         ...childAccess,
+        assertAuthorityActive: undefined,
         permissionMode: 'full_access'
-      })
-    ).rejects.toThrow(/not bound to an active provider View/)
+      } as never)
+    ).rejects.toThrow(/authority assertion was not issued/)
     parentRegistry.releaseSession(requestIdentity.sessionId)
   })
 

@@ -401,7 +401,12 @@ export class RunLifecycleCoordinator {
   }
 
   schedulePendingInputDrain(sessionId: string, reason: PendingInputWakeReason): void {
-    void this.requestPendingInputDrain(sessionId, reason).catch(() => undefined)
+    void this.requestPendingInputDrain(sessionId, reason).catch((error) => {
+      logger.error(
+        `[DeepChatAgent] drainPendingQueueIfPossible error session=${sessionId} reason=${reason}`,
+        redactRuntimeErrorForLog(error)
+      )
+    })
   }
 
   private canSettleAbortedRun(scope: SessionRuntimeScope, runId?: string): boolean {

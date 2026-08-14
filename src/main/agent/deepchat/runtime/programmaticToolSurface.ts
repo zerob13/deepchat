@@ -872,16 +872,12 @@ export function assertProgrammaticToolChildDefinitionAllowsDispatch(input: {
   readonly capability: ProgrammaticToolCapabilityV1
   readonly snapshot: ToolSurfaceSnapshot
   readonly entry: ProgrammaticToolSurfaceEntryV1
-  readonly assertAuthorityActive?: () => void
+  readonly assertAuthorityActive: () => void
   readonly request: ToolSurfaceRequestIdentity
   readonly currentDefinition: MCPToolDefinition
 }): void {
-  if (input.assertAuthorityActive) {
-    input.assertAuthorityActive()
-    assertProgrammaticToolCapabilityViewCommitted(input.capability, input.snapshot)
-  } else {
-    assertProgrammaticToolCapabilityViewActive(input.capability, input.snapshot)
-  }
+  input.assertAuthorityActive()
+  assertProgrammaticToolCapabilityViewCommitted(input.capability, input.snapshot)
   if (
     input.capability.request.sessionId !== input.request.sessionId ||
     input.capability.request.messageId !== input.request.messageId ||
@@ -923,7 +919,7 @@ export function assertProgrammaticToolChildRuntimeAllowsDispatch(input: {
   readonly capability: ProgrammaticToolCapabilityV1
   readonly snapshot: ToolSurfaceSnapshot
   readonly entry: ProgrammaticToolSurfaceEntryV1
-  readonly assertAuthorityActive?: () => void
+  readonly assertAuthorityActive: () => void
   readonly request: ToolSurfaceRequestIdentity
   readonly currentDefinition: MCPToolDefinition
   readonly currentWorkspace: DeepChatExecutionWorkspaceCeiling

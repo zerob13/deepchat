@@ -83,10 +83,20 @@ export function prepareProgrammaticExecParent(input: {
     assertProgrammaticToolCapabilityViewActive(capability, snapshot)
   }
   const invocation = parseAgentCliProgrammaticExecInvocation({ command, stdin })
+  const suppliedRequestIdentity = input.operation as ExecutionOperationIdentity &
+    Partial<{ sessionId: string; messageId: string }>
+  if (
+    (suppliedRequestIdentity.sessionId !== undefined &&
+      suppliedRequestIdentity.sessionId !== input.sessionId) ||
+    (suppliedRequestIdentity.messageId !== undefined &&
+      suppliedRequestIdentity.messageId !== input.messageId)
+  ) {
+    throw new Error('Programmatic Tool exec operation identity does not match its request')
+  }
   const operation = Object.freeze({
+    ...input.operation,
     sessionId: input.sessionId,
-    messageId: input.messageId,
-    ...input.operation
+    messageId: input.messageId
   })
   return input.parents.prepare({
     binding: {
