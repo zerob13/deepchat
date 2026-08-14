@@ -4805,6 +4805,7 @@ describe('DeepChatAgentHarness', () => {
         return { status: 'completed', stopReason: 'complete' }
       })
       recreateAgentWithToolSurfaceRunMode(() => 'full')
+      const recordRun = vi.spyOn(ToolSurfaceCanaryDiagnosticsRegistry.prototype, 'recordRun')
 
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       const turn = agent.processMessage('s1', 'Hello')
@@ -4822,6 +4823,7 @@ describe('DeepChatAgentHarness', () => {
       await turn
 
       expect(llmProvider.providerInstance.coreStream).not.toHaveBeenCalled()
+      expect(recordRun).not.toHaveBeenCalled()
     })
 
     it('does not start a retry attempt after its full Tool Surface session is replaced', async () => {

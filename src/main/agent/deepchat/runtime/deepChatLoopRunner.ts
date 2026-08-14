@@ -2145,7 +2145,11 @@ export class DeepChatLoopRunner {
       }
       throw errorToPropagate
     } finally {
-      if (toolSurfaceCanaryIdentity && toolSurfaceMode !== 'legacy') {
+      if (
+        toolSurfaceCanaryIdentity &&
+        toolSurfaceMode !== 'legacy' &&
+        resourceScope.isCurrent()
+      ) {
         try {
           const toolSurfaceCanaryCompletedAt = readMonotonicNow(diagnosticNow)
           this.ports.toolSurfaceCanaryDiagnostics.recordRun({
