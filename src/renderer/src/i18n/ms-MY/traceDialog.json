@@ -19,26 +19,26 @@
     "view": "Paparan",
     "entries": "Entri",
     "budget": "Bajet",
-    "execution": "Execution"
+    "execution": "Audit pelaksanaan"
   },
   "empty": "Tiada diagnostik",
-  "emptyDesc": "Tiada jejak permintaan atau manifes paparan tersedia untuk mesej ini",
+  "emptyDesc": "Tiada jejak permintaan, manifes paparan Tape atau audit pelaksanaan bersarang tersedia untuk mesej ini",
   "requestUnavailable": "Tiada jejak permintaan",
   "requestUnavailableDesc": "Mesej ini tiada jejak permintaan penyedia yang disimpan",
   "manifestUnavailable": "Tiada manifes paparan",
   "manifestUnavailableDesc": "Mesej ini tiada manifes paparan Tape yang disimpan",
   "execution": {
-    "empty": "No nested executions",
-    "emptyDesc": "No programmatic tool operation is recorded for this request",
-    "corrupt": "Execution audit is corrupt",
-    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
-    "unavailable": "Execution audit unavailable",
-    "unavailableDesc": "The nested Journal facts could not be read",
-    "truncated": "Only the first 256 nested operations are shown",
+    "empty": "Tiada pelaksanaan bersarang",
+    "emptyDesc": "Tiada operasi alat berprogram direkodkan untuk permintaan ini",
+    "corrupt": "Audit pelaksanaan rosak",
+    "corruptDesc": "Fakta Journal bersarang bercanggah atau tidak dapat disahkan",
+    "unavailable": "Audit pelaksanaan tidak tersedia",
+    "unavailableDesc": "Fakta Journal bersarang tidak dapat dibaca",
+    "truncated": "Hanya 256 operasi bersarang pertama dipaparkan",
     "status": {
-      "success": "Success",
-      "error": "Error",
-      "indeterminate": "Indeterminate"
+      "success": "Berjaya",
+      "error": "Ralat",
+      "indeterminate": "Tidak dapat ditentukan"
     }
   },
   "viewId": "ID paparan",

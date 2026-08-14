@@ -116,7 +116,7 @@ export type CliServerDependencies = Readonly<{
     caller: CliRouteCaller,
     operation: AgentCliProgrammaticOperationGrant,
     signal: AbortSignal,
-    markDispatchStarted: () => void
+    takeSettlementOwnership: () => void
   ): Promise<unknown>
   completeProgrammaticToolPreDispatchFailure?(
     method: string,
@@ -313,7 +313,10 @@ export class CliServer {
     this.pid = dependencies.pid ?? process.pid
     this.log = dependencies.log ?? console
     this.surfaceV2 = new Map(dependencies.surface ?? CLI_SURFACE_V2)
-    this.surfaceV3 = new Map(CLI_SURFACE_V3)
+    this.surfaceV3 = new Map([
+      ...this.surfaceV2,
+      ...[...CLI_SURFACE_V3].filter(([, entry]) => entry.programmaticOnly)
+    ])
   }
 
   getStatus(): CliRuntimeStatus {
@@ -718,7 +721,7 @@ export class CliServer {
     let requestId = UNKNOWN_REQUEST_ID
     let routeMethod = 'unknown'
     let programmaticInvocationAdmitted = false
-    let programmaticDispatchStarted = false
+    let programmaticSettlementOwned = false
     try {
       const surface =
         routeSurfaceVersion === LOCAL_CONTROL_PROGRAMMATIC_ROUTE_SURFACE_VERSION
@@ -953,7 +956,7 @@ export class CliServer {
                 programmaticOperation,
                 controller.signal,
                 () => {
-                  programmaticDispatchStarted = true
+                  programmaticSettlementOwned = true
                 }
               )
             }
@@ -984,7 +987,7 @@ export class CliServer {
       if (
         programmaticOperation &&
         programmaticInvocationAdmitted &&
-        !programmaticDispatchStarted &&
+        !programmaticSettlementOwned &&
         this.dependencies.completeProgrammaticToolPreDispatchFailure
       ) {
         try {

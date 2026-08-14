@@ -4897,6 +4897,47 @@ describe('dispatchDeepchatRoute', () => {
     expect(sessionProjectionPort.getTapeContext).toHaveBeenCalledTimes(1)
   })
 
+  it('includes nested execution diagnostics in message trace results', async () => {
+    const { runtime, sessionProjectionPort } = createRuntime()
+    const nestedExecutions = {
+      schemaVersion: 1 as const,
+      state: 'available' as const,
+      operations: [
+        {
+          runId: 'run-1',
+          requestSeq: 1,
+          providerToolCallId: 'provider-call-1',
+          childOrdinal: 0,
+          toolName: 'remote_search',
+          toolSource: 'mcp' as const,
+          target: { serverName: 'remote', originalName: 'search' },
+          argumentsHash: 'a'.repeat(64),
+          definitionHash: 'b'.repeat(64),
+          capabilityHash: 'c'.repeat(64),
+          status: 'success' as const,
+          dispatchEntryId: 10,
+          dispatchCreatedAt: 100,
+          outcomeEntryId: 11,
+          outcomeCreatedAt: 101,
+          responseHash: 'd'.repeat(64),
+          isError: false
+        }
+      ],
+      truncated: false
+    }
+    sessionProjectionPort.listNestedExecutionAudit.mockResolvedValueOnce(nestedExecutions)
+
+    const result = await dispatchDeepchatRoute(
+      runtime,
+      'sessions.listMessageTraces',
+      { messageId: 'message-1' },
+      createRendererRouteContext(88, 3)
+    )
+
+    expect(sessionProjectionPort.listNestedExecutionAudit).toHaveBeenCalledWith('message-1')
+    expect(result).toEqual({ traces: [], manifests: [], nestedExecutions })
+  })
+
   it('dispatches provider query and tool interaction routes through typed services', async () => {
     const { runtime, providerSettings, providerRuntime, acpProviderAdminPort, sessionTurnPort } =
       createRuntime()

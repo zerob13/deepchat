@@ -649,11 +649,17 @@ export async function createMainProcessControl(dependencies: {
       caller,
       operation,
       signal,
-      markDispatchStarted
+      takeSettlementOwnership
     ) => {
       assertRouteAllowedDuringDatabaseMaintenance(method)
-      markDispatchStarted()
-      return await programmaticToolDispatcher.dispatch(method, input, caller, operation, signal)
+      return await programmaticToolDispatcher.dispatch(
+        method,
+        input,
+        caller,
+        operation,
+        signal,
+        takeSettlementOwnership
+      )
     },
     completeProgrammaticToolPreDispatchFailure: (method, operation, error) => {
       programmaticToolDispatcher.completePreDispatchFailure(method, operation, error)

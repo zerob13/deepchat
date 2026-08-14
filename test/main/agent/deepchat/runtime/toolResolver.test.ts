@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   DeepChatToolResolver,
   MAX_RUN_TOOL_REQUIREMENT_NAME_BYTES,
+  MAX_RUN_TOOL_UNIVERSE_DEFINITIONS,
   MAX_RUN_TOOL_UNIVERSE_SKILLS,
   MAX_SKILL_TOOL_REQUIREMENTS
 } from '@/agent/deepchat/runtime/toolResolver'
@@ -1082,6 +1083,28 @@ describe('DeepChatToolResolver Run definition universe', () => {
     expect(getToolDefinitionUniverse).toHaveBeenCalledWith(
       expect.objectContaining({ activeSkillNames: [] })
     )
+  })
+
+  it('reports only definitions beyond the run universe limit as degraded', async () => {
+    const definitions = Array.from(
+      { length: MAX_RUN_TOOL_UNIVERSE_DEFINITIONS + 2 },
+      (_, index) => agentTool(`tool-${index}`)
+    )
+    const { resolver, resourceInstance } = createUniverseResolver({ definitions })
+
+    const result = await resolver.resolveRunToolDefinitionUniverse(
+      'session-1',
+      null,
+      undefined,
+      resourceInstance as any
+    )
+
+    expect(result).toMatchObject({
+      status: 'degraded',
+      complete: false,
+      definitions: [],
+      degradationCounts: [{ code: 'definition-limit-exceeded', count: 2 }]
+    })
   })
 
   it('rejects oversized and invalid Skill requirements before reading their contents', async () => {

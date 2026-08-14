@@ -506,7 +506,8 @@ function isProviderOutputEvent(event: LLMCoreStreamEvent): boolean {
   }
 }
 
-function boundedElapsedMs(startedAt: number, endedAt: number): number {
+function boundedElapsedMs(startedAt: number | undefined, endedAt: number | undefined): number {
+  if (startedAt === undefined || endedAt === undefined) return 0
   const elapsed = endedAt - startedAt
   if (!Number.isFinite(elapsed)) return Number.MAX_SAFE_INTEGER
   return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(elapsed)))
@@ -627,7 +628,8 @@ export class DeepChatLoopRunner {
   constructor(private readonly ports: DeepChatLoopRunnerPorts) {}
 
   async run(args: DeepChatLoopRunInput): Promise<{ runId: string; result: ProcessResult }> {
-    const toolSurfaceCanaryStartedAt = Date.now()
+    const diagnosticNow = this.ports.diagnosticNow
+    const toolSurfaceCanaryStartedAt = readMonotonicNow(diagnosticNow)
     const {
       sessionId,
       messageId,
@@ -1283,7 +1285,7 @@ export class DeepChatLoopRunner {
 
     const toolSurfaceProviderAttempts: ToolSurfaceProviderAttemptDiagnostic[] = []
     let toolSurfaceProviderAttemptsTruncated = false
-    let toolSurfaceFirstProviderOutputAt: number | null = null
+    let toolSurfaceFirstProviderOutputAt: number | undefined
 
     let terminalCommitAttempted = false
     let committedTerminal: ProcessTerminalSelection | null = null
@@ -1841,8 +1843,8 @@ export class DeepChatLoopRunner {
               }),
             createAbortError
           })) {
-            if (isProviderOutputEvent(event)) {
-              toolSurfaceFirstProviderOutputAt ??= Date.now()
+            if (isProviderOutputEvent(event) && toolSurfaceFirstProviderOutputAt === undefined) {
+              toolSurfaceFirstProviderOutputAt = readMonotonicNow(diagnosticNow)
             }
             yield event
           }
@@ -2123,27 +2125,42 @@ export class DeepChatLoopRunner {
     } finally {
       if (toolSurfaceCanaryIdentity && toolSurfaceMode !== 'legacy') {
         try {
+          const toolSurfaceCanaryCompletedAt = readMonotonicNow(diagnosticNow)
           this.ports.toolSurfaceCanaryDiagnostics.recordRun({
             scope: toolSurfaceCanaryScope,
             adapterMode: toolSurfaceMode,
             ...toolSurfaceCanaryIdentity,
             outcome: readCommittedTerminal()?.outcome ?? 'unsettled',
-            durationMs: boundedElapsedMs(toolSurfaceCanaryStartedAt, Date.now()),
+            durationMs: boundedElapsedMs(
+              toolSurfaceCanaryStartedAt,
+              toolSurfaceCanaryCompletedAt
+            ),
             ttftMs:
-              toolSurfaceFirstProviderOutputAt === null
+              toolSurfaceFirstProviderOutputAt === undefined
                 ? null
                 : boundedElapsedMs(
                     toolSurfaceCanaryStartedAt,
                     toolSurfaceFirstProviderOutputAt
                   ),
-            providerRounds: loopRun.logicalRound,
+            providerRounds: Math.max(
+              0,
+              loopRun.logicalRound - observedLogicalRoundBaseline
+            ),
             providerAttempts: toolSurfaceProviderAttempts,
             providerAttemptsTruncated: toolSurfaceProviderAttemptsTruncated,
             evidence:
               toolSurfaceCanaryEvidence?.snapshot() ??
               createToolSurfaceCanaryRunEvidenceRecorder().snapshot()
           })
-        } catch {}
+        } catch (error) {
+          logger.warn('[DeepChatAgent] Tool Surface canary diagnostics recording failed', {
+            sessionId,
+            providerId: state.providerId,
+            modelId: state.modelId,
+            adapterMode: toolSurfaceMode,
+            error
+          })
+        }
       }
       if (
         collectToolSurfaceShadow &&

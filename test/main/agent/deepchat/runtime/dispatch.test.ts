@@ -72,6 +72,7 @@ import type {
 } from '@/cli/programmaticToolParentRegistry'
 import type { ArmedAgentCliProgrammaticToken } from '@/cli/agentTokenAuthority'
 import { ProgrammaticCommandLaunchError } from '@/tool/agentTools/agentBashHandler'
+import { prepareProgrammaticExecParent } from '@/agent/deepchat/runtime/programmaticExecParent'
 
 const publishDeepchatEventMock = vi.hoisted(() => vi.fn())
 const PROGRAMMATIC_EXEC_ARGUMENTS = JSON.stringify({
@@ -285,6 +286,7 @@ function createDispatchToolSurfaceBinding(
 function createDispatchProgrammaticToolSurfaceBinding(): {
   readonly tools: MCPToolDefinition[]
   readonly binding: LoopRunRequestToolSurfaceBinding
+  readonly capability: ReturnType<typeof buildProgrammaticToolCapabilityV1>
 } {
   const exec = {
     ...makeAgentTool('exec'),
@@ -344,6 +346,7 @@ function createDispatchProgrammaticToolSurfaceBinding(): {
   markProgrammaticToolCapabilityProvenanceCommitted(capability, snapshot)
   return {
     tools: snapshot.toolDefinitions as MCPToolDefinition[],
+    capability,
     binding: Object.freeze({
       requestSeq: 1,
       snapshot,
@@ -1379,6 +1382,31 @@ describe('dispatch', () => {
         tool_call_id: 'tc1',
         content: 'changed'
       })
+    })
+
+    it('rejects Programmatic exec authority outside CLI Programmatic mode', () => {
+      const { tools, capability } = createDispatchProgrammaticToolSurfaceBinding()
+      const native = createDispatchToolSurfaceBinding(tools)
+      const parent = createProgrammaticParentStub([])
+
+      expect(() =>
+        prepareProgrammaticExecParent({
+          toolName: 'exec',
+          argumentsJson: PROGRAMMATIC_EXEC_ARGUMENTS,
+          operation: {
+            runId: '11111111-1111-4111-8111-111111111111',
+            requestSeq: 1,
+            providerToolCallId: 'tc-exec'
+          },
+          sessionId: 's1',
+          messageId: 'm1',
+          permissionMode: 'full_access',
+          toolSurfaceSnapshot: native.binding.snapshot,
+          capability,
+          parents: parent.parents
+        })
+      ).toThrow('Programmatic Tool exec requires a CLI Programmatic Tool Surface')
+      expect(parent.parents.prepare).not.toHaveBeenCalled()
     })
 
     it('arms a Programmatic exec only after outer T1 and passes its exact parent authority', async () => {

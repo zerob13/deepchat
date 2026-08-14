@@ -19,26 +19,26 @@
     "view": "Visning",
     "entries": "Poster",
     "budget": "Tokenbudget",
-    "execution": "Execution"
+    "execution": "Udførelsesrevision"
   },
   "empty": "Ingen diagnostik",
-  "emptyDesc": "Der er ingen anmodningssporing eller visningsmanifest for denne besked",
+  "emptyDesc": "Der er ingen anmodningssporing, Tape-visningsmanifest eller revision af indlejrede udførelser for denne besked",
   "requestUnavailable": "Ingen anmodningssporing",
   "requestUnavailableDesc": "Denne besked har ingen gemt udbyderanmodningssporing",
   "manifestUnavailable": "Intet visningsmanifest",
   "manifestUnavailableDesc": "Denne besked har intet gemt Tape-visningsmanifest",
   "execution": {
-    "empty": "No nested executions",
-    "emptyDesc": "No programmatic tool operation is recorded for this request",
-    "corrupt": "Execution audit is corrupt",
-    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
-    "unavailable": "Execution audit unavailable",
-    "unavailableDesc": "The nested Journal facts could not be read",
-    "truncated": "Only the first 256 nested operations are shown",
+    "empty": "Ingen indlejrede udførelser",
+    "emptyDesc": "Der er ikke registreret nogen programmatisk værktøjsoperation for denne anmodning",
+    "corrupt": "Udførelsesrevisionen er beskadiget",
+    "corruptDesc": "De indlejrede Journal-fakta er i konflikt eller kan ikke verificeres",
+    "unavailable": "Udførelsesrevisionen er ikke tilgængelig",
+    "unavailableDesc": "De indlejrede Journal-fakta kunne ikke læses",
+    "truncated": "Kun de første 256 indlejrede operationer vises",
     "status": {
-      "success": "Success",
-      "error": "Error",
-      "indeterminate": "Indeterminate"
+      "success": "Fuldført",
+      "error": "Fejl",
+      "indeterminate": "Ubestemt"
     }
   },
   "viewId": "Visnings-id",

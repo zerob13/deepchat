@@ -19,26 +19,26 @@
     "view": "Vue",
     "entries": "Entrées",
     "budget": "Budget de jetons",
-    "execution": "Execution"
+    "execution": "Audit d’exécution"
   },
   "empty": "Aucun diagnostic",
-  "emptyDesc": "Aucune trace de requête ni aucun manifeste de vue n’est disponible pour ce message",
+  "emptyDesc": "Aucune trace de requête, aucun manifeste de vue Tape ni aucun audit d’exécution imbriquée n’est disponible pour ce message",
   "requestUnavailable": "Aucune trace de requête",
   "requestUnavailableDesc": "Ce message ne possède aucune trace de requête fournisseur persistée",
   "manifestUnavailable": "Aucun manifeste de vue",
   "manifestUnavailableDesc": "Ce message ne possède aucun manifeste de vue Tape persisté",
   "execution": {
-    "empty": "No nested executions",
-    "emptyDesc": "No programmatic tool operation is recorded for this request",
-    "corrupt": "Execution audit is corrupt",
-    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
-    "unavailable": "Execution audit unavailable",
-    "unavailableDesc": "The nested Journal facts could not be read",
-    "truncated": "Only the first 256 nested operations are shown",
+    "empty": "Aucune exécution imbriquée",
+    "emptyDesc": "Aucune opération d’outil programmatique n’est enregistrée pour cette requête",
+    "corrupt": "L’audit d’exécution est corrompu",
+    "corruptDesc": "Les faits Journal imbriqués sont contradictoires ou ne peuvent pas être vérifiés",
+    "unavailable": "Audit d’exécution indisponible",
+    "unavailableDesc": "Les faits Journal imbriqués n’ont pas pu être lus",
+    "truncated": "Seules les 256 premières opérations imbriquées sont affichées",
     "status": {
-      "success": "Success",
-      "error": "Error",
-      "indeterminate": "Indeterminate"
+      "success": "Réussite",
+      "error": "Erreur",
+      "indeterminate": "Indéterminé"
     }
   },
   "viewId": "ID de vue",

@@ -307,12 +307,10 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
   const toolSurfaceCanaryDiagnostics = new ToolSurfaceCanaryDiagnosticsRegistry()
   const programmaticToolParents =
     deps.programmaticToolParents ??
-    (deps.agentCliTokenAuthority
-      ? new ProgrammaticToolParentRegistry({
-          tokenAuthority: deps.agentCliTokenAuthority,
-          executionJournal: sessionData.programmaticExecutionJournal
-        })
-      : new ProgrammaticToolParentRegistry())
+    new ProgrammaticToolParentRegistry({
+      tokenAuthority: deps.agentCliTokenAuthority,
+      executionJournal: sessionData.programmaticExecutionJournal
+    })
   const sessionLifecycle = new SessionLifecycleCoordinator({
     registry: runtime,
     providerSettings,

@@ -953,15 +953,18 @@ describe('processStream', () => {
 
       const error = await rejection
       expect(error).toBeInstanceOf(ExecutionJournalCorruptionError)
+      if (!(error instanceof ExecutionJournalCorruptionError)) {
+        throw new Error('Expected an ExecutionJournalCorruptionError')
+      }
       expect(error).toMatchObject({
         message: terminalFailure.message,
         code: 'conflicting_fact',
         cause: expect.any(AggregateError)
       })
-      expect((error.cause as AggregateError).errors).toEqual([
-        executionFailure,
-        terminalCause
-      ])
+      if (!(error.cause instanceof AggregateError)) {
+        throw new Error('Expected an AggregateError cause')
+      }
+      expect(error.cause.errors).toEqual([executionFailure, terminalCause])
       expect(commitRunTerminal).toHaveBeenCalledOnce()
       expect(messageStore.finalizeAssistantMessage).not.toHaveBeenCalled()
       expect(messageStore.setMessageError).not.toHaveBeenCalled()

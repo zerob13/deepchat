@@ -368,6 +368,24 @@ describe('BackgroundExecSessionManager', () => {
     })
   })
 
+  it('clears the close watchdog when another path finalizes the session', async () => {
+    vi.useFakeTimers()
+    const child = new MockChildProcess()
+    vi.mocked(spawn).mockReturnValue(child as never)
+    mockTerminateProcessTree.mockResolvedValueOnce(false)
+
+    const started = await manager.start('conv-1', 'echo test', '/workspace', {
+      commandShell: PLATFORM_COMMAND_SHELL,
+      timeout: 0
+    })
+    child.emit('exit', 0, null)
+    expect(vi.getTimerCount()).toBe(1)
+
+    await manager.kill('conv-1', started.sessionId)
+
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('clears the yield timer when the session closes before the yield window elapses', async () => {
     vi.useFakeTimers()
 

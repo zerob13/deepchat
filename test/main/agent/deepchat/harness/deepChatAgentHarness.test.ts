@@ -1029,6 +1029,12 @@ function createRuntimeDependencies(
     taskContractContext: {
       prepare: vi.fn().mockReturnValue(null)
     },
+    agentCliTokenAuthority: {
+      prepareProgrammaticOperation: vi.fn(() => {
+        throw new Error('Programmatic operation authority is not configured for this test')
+      }),
+      revokeConversation: vi.fn()
+    },
     commandShell: {
       resolveForTurn: vi.fn().mockResolvedValue(POSIX_COMMAND_SHELL),
       resolveProfile: vi.fn().mockResolvedValue(POSIX_COMMAND_SHELL)
@@ -3312,6 +3318,7 @@ describe('DeepChatAgentHarness', () => {
 
     it('measures TTFT from Run entry across adapter setup and resumed accounting', async () => {
       vi.useFakeTimers()
+      diagnosticNow.mockImplementation(() => Date.now())
       const definitions = createAutomaticAdapterDefinitions(1)
       providerSettings.getModelConfig.mockReturnValue({
         ...providerSettings.getModelConfig(),
@@ -3351,6 +3358,33 @@ describe('DeepChatAgentHarness', () => {
       expect(recordRun).toHaveBeenCalledWith(
         expect.objectContaining({ durationMs: 5_000, ttftMs: 4_000 })
       )
+    })
+
+    it('records provider rounds relative to resumed Run accounting', async () => {
+      const definitions = createAutomaticAdapterDefinitions(1)
+      providerSettings.getModelConfig.mockReturnValue({
+        ...providerSettings.getModelConfig(),
+        functionCall: true
+      })
+      toolService.getAllToolDefinitions.mockResolvedValue(definitions)
+      toolService.getToolDefinitionUniverse.mockResolvedValue({
+        definitions,
+        complete: true,
+        unavailableSourceCount: 0
+      })
+      recreateAgentWithToolSurfaceRunMode(() => 'full')
+      ;(processStream as ReturnType<typeof vi.fn>).mockImplementationOnce(async (params) => {
+        params.run.logicalRound = 5
+        return { status: 'completed', stopReason: 'complete' }
+      })
+      const recordRun = vi.spyOn(ToolSurfaceCanaryDiagnosticsRegistry.prototype, 'recordRun')
+
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      const assistantRow = installPendingQuestion()
+      assistantRow.metadata = JSON.stringify({ providerRounds: 3, toolCalls: 0 })
+      await answerPendingQuestion()
+
+      expect(recordRun).toHaveBeenCalledWith(expect.objectContaining({ providerRounds: 2 }))
     })
 
     it('keeps automatic virtualization sticky through the exit hysteresis band', async () => {

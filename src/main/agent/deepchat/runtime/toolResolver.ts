@@ -582,7 +582,10 @@ export class DeepChatToolResolver {
         addDegradation('definition-universe-unavailable')
       } else if (definitionUniverse.definitions.length > MAX_RUN_TOOL_UNIVERSE_DEFINITIONS) {
         complete = false
-        addDegradation('definition-limit-exceeded', definitionUniverse.definitions.length)
+        addDegradation(
+          'definition-limit-exceeded',
+          definitionUniverse.definitions.length - MAX_RUN_TOOL_UNIVERSE_DEFINITIONS
+        )
       } else {
         try {
           buildCanonicalToolCatalog(definitionUniverse.definitions)

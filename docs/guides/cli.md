@@ -220,7 +220,7 @@ Agent 调用额外经过以下控制：
 
 1. shell command permission；
 2. main 签发的短期 scoped token；
-3. deny-by-default `CLI_SURFACE_V3` caller/scope policy；
+3. deny-by-default `CLI_SURFACE_V2` caller/scope policy；
 4. effect policy 与 renderer-only approval；
 5. ownership、rate、call/byte quota 与脱敏审计。
 
@@ -254,9 +254,10 @@ effect、approval、transport、输入/输出边界、quota 和 audit 语义。
 
 V1 明确不包含：ACP server、远程访问、raw MCP tool invocation、TUI/交互 shell、任意配置或 secret
 读取、server-side OCR batch/layout/model 管理、通用费用预算系统，以及内置 benchmark runner。
-V3 仅为冻结到 CLI Programmatic adapter 的 Agent Run 增加受 originating View capability 约束的
-`tool search|describe|call|batch`；它不是 human raw MCP tunnel，普通 Agent token 和 V2 client 均不可达。
-benchmark 是建立在稳定 JSON/JSONL 合同上的外部 harness。
+普通 Agent token 与 human client 都只使用 V2。V3 仅为冻结到 CLI Programmatic adapter 的 Agent
+Run 增加受 originating View capability 约束的 `tool search|describe|call|batch`；它不是 human raw MCP
+tunnel，普通 Agent token 和 V2 client 均不可达。benchmark 是建立在稳定 JSON/JSONL 合同上的外部
+harness。
 
 完整架构与安全不变量见
 [`docs/architecture/local-control-plane/spec.md`](../architecture/local-control-plane/spec.md)。

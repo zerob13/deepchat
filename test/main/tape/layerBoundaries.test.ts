@@ -584,7 +584,7 @@ describe('Tape layer boundaries', () => {
       assertSkillRequestAuthority: vi.fn(),
       appendViewManifest: vi.fn(),
       commitToolSurfaceView: vi.fn(),
-      appendToolFact: vi.fn(),
+      appendToolFact: vi.fn(async () => ({ sessionId: 's1', entryId: 1, toolResult: null })),
       getTapeIncarnationId: vi.fn(),
       appendSkillViewResultFact: vi.fn(),
       recoverRuntimeSkillViewContexts: vi.fn(),

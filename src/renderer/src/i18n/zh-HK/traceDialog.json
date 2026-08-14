@@ -22,7 +22,7 @@
     "execution": "執行審計"
   },
   "empty": "沒有診斷資料",
-  "emptyDesc": "此訊息沒有可用的要求追蹤或檢視清單",
+  "emptyDesc": "此訊息沒有可用的要求追蹤、Tape 檢視清單或嵌套執行審計",
   "requestUnavailable": "沒有要求追蹤",
   "requestUnavailableDesc": "此訊息沒有已儲存的供應商要求追蹤",
   "manifestUnavailable": "沒有檢視清單",

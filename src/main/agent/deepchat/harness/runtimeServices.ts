@@ -90,7 +90,7 @@ export interface DeepChatHarnessDependencies {
   /** Process-live causality owner. It never reconstructs dispatch authority from Tape. */
   programmaticToolParents?: ProgrammaticToolParentRegistry
   /** Shared local-control authority for inert exact-operation grants and Run-scoped revocation. */
-  agentCliTokenAuthority?: Pick<
+  agentCliTokenAuthority: Pick<
     AgentCliTokenAuthority,
     'prepareProgrammaticOperation' | 'revokeConversation'
   >

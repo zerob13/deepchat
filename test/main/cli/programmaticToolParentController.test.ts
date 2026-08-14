@@ -419,7 +419,7 @@ describe('ProgrammaticToolParentController', () => {
       })
     ).toMatchObject({ created: true })
     expect(settled.controller.state).toBe('settled')
-    expect(settled.entries.some((entry) => entry.meta_json.includes('protocolVersion\":2'))).toBe(
+    expect(settled.entries.some((entry) => JSON.parse(entry.meta_json).protocolVersion === 2)).toBe(
       false
     )
   })

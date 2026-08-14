@@ -19,26 +19,26 @@
     "view": "نما",
     "entries": "ورودی‌ها",
     "budget": "بودجه",
-    "execution": "Execution"
+    "execution": "ممیزی اجرا"
   },
   "empty": "بدون دادهٔ عیب‌یابی",
-  "emptyDesc": "برای این پیام هیچ ردگیری درخواست یا مانیفست نما موجود نیست",
+  "emptyDesc": "برای این پیام هیچ ردگیری درخواست، مانیفست نمای Tape یا ممیزی اجرای تودرتو موجود نیست",
   "requestUnavailable": "بدون ردگیری درخواست",
   "requestUnavailableDesc": "این پیام ردگیری درخواست ارائه‌دهندهٔ ذخیره‌شده ندارد",
   "manifestUnavailable": "بدون مانیفست نما",
   "manifestUnavailableDesc": "این پیام مانیفست نمای Tape ذخیره‌شده ندارد",
   "execution": {
-    "empty": "No nested executions",
-    "emptyDesc": "No programmatic tool operation is recorded for this request",
-    "corrupt": "Execution audit is corrupt",
-    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
-    "unavailable": "Execution audit unavailable",
-    "unavailableDesc": "The nested Journal facts could not be read",
-    "truncated": "Only the first 256 nested operations are shown",
+    "empty": "بدون اجرای تودرتو",
+    "emptyDesc": "هیچ عملیات برنامه‌ریزی‌شدهٔ ابزاری برای این درخواست ثبت نشده است",
+    "corrupt": "ممیزی اجرا خراب است",
+    "corruptDesc": "واقعیت‌های تودرتوی Journal با هم تعارض دارند یا قابل تأیید نیستند",
+    "unavailable": "ممیزی اجرا در دسترس نیست",
+    "unavailableDesc": "واقعیت‌های تودرتوی Journal قابل خواندن نبودند",
+    "truncated": "فقط ۲۵۶ عملیات تودرتوی نخست نمایش داده می‌شوند",
     "status": {
-      "success": "Success",
-      "error": "Error",
-      "indeterminate": "Indeterminate"
+      "success": "موفق",
+      "error": "خطا",
+      "indeterminate": "نامشخص"
     }
   },
   "viewId": "شناسهٔ نما",

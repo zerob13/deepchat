@@ -929,6 +929,12 @@ function createRuntimeDependencies() {
     taskContractContext: {
       prepare: vi.fn().mockReturnValue(null)
     },
+    agentCliTokenAuthority: {
+      prepareProgrammaticOperation: vi.fn(() => {
+        throw new Error('Programmatic operation authority is not configured for this test')
+      }),
+      revokeConversation: vi.fn()
+    },
     commandShell: {
       resolveForTurn: vi.fn().mockResolvedValue(POSIX_COMMAND_SHELL),
       resolveProfile: vi.fn().mockResolvedValue(POSIX_COMMAND_SHELL)

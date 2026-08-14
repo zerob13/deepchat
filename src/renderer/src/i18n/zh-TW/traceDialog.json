@@ -22,7 +22,7 @@
     "execution": "執行稽核"
   },
   "empty": "沒有診斷資料",
-  "emptyDesc": "此訊息沒有可用的請求追蹤或檢視清單",
+  "emptyDesc": "此訊息沒有可用的請求追蹤、Tape 檢視清單或巢狀執行稽核",
   "requestUnavailable": "沒有請求追蹤",
   "requestUnavailableDesc": "此訊息沒有已儲存的供應商請求追蹤",
   "manifestUnavailable": "沒有檢視清單",

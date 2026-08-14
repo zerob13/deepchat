@@ -187,23 +187,34 @@ function createDispatcher(input: ReturnType<typeof buildCapability>) {
   const executeChild = vi.fn()
   const authorizeChild = vi.fn()
   const cancelChildPermission = vi.fn()
+  const takeSettlementOwnership = vi.fn()
+  const implementation = new ProgrammaticToolDispatcher({
+    parents: {
+      commitChildDispatch,
+      commitChildOutcome,
+      failToolInvocationBeforePlan,
+      materializeChild,
+      recordDiscoveryResult,
+      recordToolInvocationResult,
+      reserveChildren,
+      resolveInvocation,
+      stopBeforeChild
+    },
+    executeChild,
+    authorizeChild,
+    cancelChildPermission
+  })
   return {
-    dispatcher: new ProgrammaticToolDispatcher({
-      parents: {
-        commitChildDispatch,
-        commitChildOutcome,
-        failToolInvocationBeforePlan,
-        materializeChild,
-        recordDiscoveryResult,
-        recordToolInvocationResult,
-        reserveChildren,
-        resolveInvocation,
-        stopBeforeChild
-      },
-      executeChild,
-      authorizeChild,
-      cancelChildPermission
-    }),
+    dispatcher: {
+      completePreDispatchFailure: implementation.completePreDispatchFailure.bind(implementation),
+      dispatch: (
+        method: string,
+        request: unknown,
+        caller: CliRouteCaller,
+        grant: AgentCliProgrammaticOperationGrant,
+        signal: AbortSignal
+      ) => implementation.dispatch(method, request, caller, grant, signal, takeSettlementOwnership)
+    },
     authorizeChild,
     cancelChildPermission,
     commitChildDispatch,
@@ -215,7 +226,8 @@ function createDispatcher(input: ReturnType<typeof buildCapability>) {
     recordDiscoveryResult,
     recordToolInvocationResult,
     reserveChildren,
-    stopBeforeChild
+    stopBeforeChild,
+    takeSettlementOwnership
   }
 }
 
@@ -268,6 +280,28 @@ describe('ProgrammaticToolDispatcher', () => {
     expect(fixture.commitChildDispatch).not.toHaveBeenCalled()
   })
 
+  it('leaves malformed request settlement with the pre-dispatch owner', async () => {
+    const context = buildCapability({
+      definitions: [agentExec(), mcpTool({ name: 'remote_search' })]
+    })
+    const fixture = createDispatcher(context)
+
+    await expect(
+      fixture.dispatcher.dispatch(
+        toolCallRoute.name,
+        { target: 42, arguments: {} },
+        agentCaller(),
+        operationGrant(context.capability, 'call'),
+        new AbortController().signal
+      )
+    ).rejects.toThrow()
+
+    expect(fixture.takeSettlementOwnership).not.toHaveBeenCalled()
+    expect(fixture.failToolInvocationBeforePlan).not.toHaveBeenCalled()
+    expect(fixture.reserveChildren).not.toHaveBeenCalled()
+    expect(fixture.recordToolInvocationResult).not.toHaveBeenCalled()
+  })
+
   it('searches only the frozen Programmatic Surface with deterministic bounded summaries', async () => {
     const exec = agentExec()
     const nativePinned = mcpTool({ name: 'calendar_native' })
@@ -287,7 +321,7 @@ describe('ProgrammaticToolDispatcher', () => {
     })
     const evidence = createToolSurfaceCanaryRunEvidenceRecorder()
     bindToolSurfaceCanaryRunEvidence(context.snapshot, evidence)
-    const { dispatcher, recordDiscoveryResult } = createDispatcher(context)
+    const { dispatcher, recordDiscoveryResult, takeSettlementOwnership } = createDispatcher(context)
 
     const output = toolSearchRoute.output.parse(
       await dispatcher.dispatch(
@@ -314,6 +348,10 @@ describe('ProgrammaticToolDispatcher', () => {
         responseText: `${JSON.stringify(output, null, 2)}\nExit Code: 0`,
         isError: false
       }
+    )
+    expect(takeSettlementOwnership).toHaveBeenCalledOnce()
+    expect(takeSettlementOwnership.mock.invocationCallOrder[0]).toBeLessThan(
+      recordDiscoveryResult.mock.invocationCallOrder[0]
     )
     await dispatcher.dispatch(
       toolDescribeRoute.name,
@@ -500,6 +538,10 @@ describe('ProgrammaticToolDispatcher', () => {
       )
     )
 
+    expect(fixture.takeSettlementOwnership).toHaveBeenCalledOnce()
+    expect(fixture.takeSettlementOwnership.mock.invocationCallOrder[0]).toBeLessThan(
+      fixture.reserveChildren.mock.invocationCallOrder[0]
+    )
     expect(output).toEqual({
       step: { childOrdinal: 0, status: 'success', result: 'calendar result' }
     })
@@ -812,6 +854,10 @@ describe('ProgrammaticToolDispatcher', () => {
       },
       { childOrdinal: 1, status: 'not_started' }
     ])
+    expect(fixture.takeSettlementOwnership).toHaveBeenCalledOnce()
+    expect(fixture.takeSettlementOwnership.mock.invocationCallOrder[0]).toBeLessThan(
+      fixture.failToolInvocationBeforePlan.mock.invocationCallOrder[0]
+    )
     expect(fixture.failToolInvocationBeforePlan).toHaveBeenCalledOnce()
     expect(fixture.reserveChildren).not.toHaveBeenCalled()
     expect(fixture.executeChild).not.toHaveBeenCalled()

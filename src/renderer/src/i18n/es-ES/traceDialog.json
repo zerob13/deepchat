@@ -19,26 +19,26 @@
     "view": "Vista",
     "entries": "Entradas",
     "budget": "Presupuesto",
-    "execution": "Execution"
+    "execution": "Auditoría de ejecución"
   },
   "empty": "Sin diagnósticos",
-  "emptyDesc": "No hay traza de solicitud ni manifiesto de vista disponible para este mensaje",
+  "emptyDesc": "No hay traza de solicitud, manifiesto de vista Tape ni auditoría de ejecución anidada disponible para este mensaje",
   "requestUnavailable": "Sin traza de solicitud",
   "requestUnavailableDesc": "Este mensaje no tiene una traza de solicitud del proveedor guardada",
   "manifestUnavailable": "Sin manifiesto de vista",
   "manifestUnavailableDesc": "Este mensaje no tiene un manifiesto de vista de Tape guardado",
   "execution": {
-    "empty": "No nested executions",
-    "emptyDesc": "No programmatic tool operation is recorded for this request",
-    "corrupt": "Execution audit is corrupt",
-    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
-    "unavailable": "Execution audit unavailable",
-    "unavailableDesc": "The nested Journal facts could not be read",
-    "truncated": "Only the first 256 nested operations are shown",
+    "empty": "No hay ejecuciones anidadas",
+    "emptyDesc": "No se ha registrado ninguna operación programática de herramientas para esta solicitud",
+    "corrupt": "La auditoría de ejecución está dañada",
+    "corruptDesc": "Los datos anidados de Journal presentan conflictos o no se pueden verificar",
+    "unavailable": "Auditoría de ejecución no disponible",
+    "unavailableDesc": "No se pudieron leer los datos anidados de Journal",
+    "truncated": "Solo se muestran las primeras 256 operaciones anidadas",
     "status": {
-      "success": "Success",
+      "success": "Correcto",
       "error": "Error",
-      "indeterminate": "Indeterminate"
+      "indeterminate": "Indeterminado"
     }
   },
   "viewId": "ID de vista",

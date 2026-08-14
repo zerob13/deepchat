@@ -936,8 +936,15 @@ export class ProgrammaticToolDispatcher {
     input: unknown,
     caller: CliRouteCaller,
     grant: AgentCliProgrammaticOperationGrant,
-    signal: AbortSignal
+    signal: AbortSignal,
+    takeSettlementOwnership: () => void
   ): Promise<unknown> {
+    let settlementOwnershipTaken = false
+    const claimSettlementOwnership = (): void => {
+      if (settlementOwnershipTaken) return
+      takeSettlementOwnership()
+      settlementOwnershipTaken = true
+    }
     signal.throwIfAborted()
     if (
       caller.principal !== 'agent' ||
@@ -1010,6 +1017,7 @@ export class ProgrammaticToolDispatcher {
         assertOutputWithinCapabilityQuota(output, capability)
         signal.throwIfAborted()
         const result = toolSearchRoute.output.parse(output)
+        claimSettlementOwnership()
         this.options.parents.recordDiscoveryResult(grant, {
           responseText: formatSuccessfulOuterResponse(result),
           isError: false
@@ -1026,6 +1034,7 @@ export class ProgrammaticToolDispatcher {
           failed: true
         })
         if (error instanceof CliRequestError) {
+          claimSettlementOwnership()
           this.options.parents.recordDiscoveryResult(grant, {
             responseText: formatFailedOuterResponse(error),
             isError: true
@@ -1051,6 +1060,7 @@ export class ProgrammaticToolDispatcher {
         assertOutputWithinCapabilityQuota(output, capability)
         signal.throwIfAborted()
         const result = toolDescribeRoute.output.parse(output)
+        claimSettlementOwnership()
         this.options.parents.recordDiscoveryResult(grant, {
           responseText: formatSuccessfulOuterResponse(result),
           isError: false
@@ -1067,6 +1077,7 @@ export class ProgrammaticToolDispatcher {
           failed: true
         })
         if (error instanceof CliRequestError) {
+          claimSettlementOwnership()
           this.options.parents.recordDiscoveryResult(grant, {
             responseText: formatFailedOuterResponse(error),
             isError: true
@@ -1084,6 +1095,7 @@ export class ProgrammaticToolDispatcher {
       if (!entry) {
         const output = toolCallRoute.output.parse({ step: unavailableStep() })
         assertOutputWithinCapabilityQuota(output, capability)
+        claimSettlementOwnership()
         this.options.parents.failToolInvocationBeforePlan(grant, {
           responseText: formatSuccessfulOuterResponse(output),
           isError: true
@@ -1095,6 +1107,7 @@ export class ProgrammaticToolDispatcher {
         arguments: request.arguments,
         bindings: Object.freeze([])
       })
+      claimSettlementOwnership()
       try {
         this.options.parents.reserveChildren(grant, [
           {
@@ -1185,6 +1198,7 @@ export class ProgrammaticToolDispatcher {
           steps: stoppedBatchSteps(request.steps.length, unavailableStep())
         })
         assertOutputWithinCapabilityQuota(output, capability)
+        claimSettlementOwnership()
         this.options.parents.failToolInvocationBeforePlan(grant, {
           responseText: formatSuccessfulOuterResponse(output),
           isError: true
@@ -1198,6 +1212,7 @@ export class ProgrammaticToolDispatcher {
           bindings: Object.freeze([...(step.bindings ?? [])])
         })
       )
+      claimSettlementOwnership()
       try {
         this.options.parents.reserveChildren(
           grant,

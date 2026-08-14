@@ -57,7 +57,7 @@ export interface RunLifecycleCoordinatorPorts {
   pendingInputWakeup: PendingInputWakeup
   terminalObserver: RunTerminalObserver
   messageProjection: Pick<MessageProjectionService, 'refresh'>
-  programmaticAuthority?: Pick<AgentCliTokenAuthority, 'revokeConversation'>
+  programmaticAuthority: Pick<AgentCliTokenAuthority, 'revokeConversation'>
 }
 
 export class RunLifecycleCoordinator {
@@ -259,7 +259,7 @@ export class RunLifecycleCoordinator {
   }
 
   async cancel(sessionId: string): Promise<void> {
-    this.ports.programmaticAuthority?.revokeConversation(sessionId)
+    this.ports.programmaticAuthority.revokeConversation(sessionId)
     revokeToolSurfaceDeferredDispatchesForSession(sessionId)
     const scope = this.getHydratedScope(sessionId)
     if (!scope) {
@@ -314,7 +314,7 @@ export class RunLifecycleCoordinator {
     if (!scope.isCurrent()) {
       return
     }
-    this.ports.programmaticAuthority?.revokeConversation(scope.sessionId)
+    this.ports.programmaticAuthority.revokeConversation(scope.sessionId)
     revokeToolSurfaceDeferredDispatchesForSession(scope.sessionId)
     scope.instance.abortAndClearGeneration()
     scope.instance.abortDeferredToolCalls()

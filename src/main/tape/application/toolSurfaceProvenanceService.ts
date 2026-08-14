@@ -207,6 +207,19 @@ function assertSurfaceMatchesCatalog(
       throw new TypeError('Tool surface active entry does not match its eligible catalog.')
     }
   }
+  const searchEvidence = [
+    ...(surface.searchResultRefs ?? []),
+    ...(surface.candidateRejections ?? [])
+  ]
+  for (const evidence of searchEvidence) {
+    const catalogEntry = catalogByTarget.get(evidence.stableTargetKey)
+    if (
+      !catalogEntry ||
+      catalogEntry.canonicalToolDefinitionHash !== evidence.canonicalToolDefinitionHash
+    ) {
+      throw new TypeError('ToolSearch evidence does not match its eligible catalog.')
+    }
+  }
 }
 
 function assertSurfaceMatchesManifest(

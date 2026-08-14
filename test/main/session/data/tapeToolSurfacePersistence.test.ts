@@ -1096,6 +1096,41 @@ describe('ToolSurfaceProvenanceService', () => {
     expect(entries.map((entry) => entry.name)).toEqual(['session/start', 'tool_search'])
   })
 
+  it('rejects ToolSearch evidence outside the eligible catalog before writing', () => {
+    const { table, entries } = createTapeTableMock()
+    const service = createTapeService(table)
+    const result = appendToolSearchResult(table)
+    const input = createVirtualizedCommitInput(result)
+    const outsideCatalog = buildCanonicalToolCatalog([PROGRAMMATIC_TOOL]).entries[0]
+    const altered = {
+      ...input,
+      surface: {
+        ...input.surface,
+        candidateRejections: [
+          {
+            originRequestSeq: 1,
+            toolCallOrdinalWithinBatch: 0,
+            resultRank: 0,
+            stableTargetKey: outsideCatalog.stableTargetKey,
+            canonicalToolDefinitionHash: outsideCatalog.canonicalToolDefinitionHash,
+            toolResult: {
+              sessionId: SESSION_ID,
+              tapeIncarnationId: result.tapeIncarnationId,
+              entryId: result.entryId,
+              payloadHashVersion: 1 as const,
+              payloadHash: result.payloadHash
+            },
+            rejectionCode: 'ineligible' as const
+          }
+        ]
+      }
+    } satisfies Parameters<typeof service.commitToolSurfaceView>[0]
+
+    expect(() => service.commitToolSurfaceView(altered)).toThrow(ToolSurfaceProvenanceError)
+    expect(entries.map((entry) => entry.name)).toEqual(['session/start', 'tool_search'])
+    expect(table.runInTransaction).not.toHaveBeenCalled()
+  })
+
   it('rejects active evidence that disagrees with the strict contract before writing', () => {
     const { table, entries } = createTapeTableMock()
     const service = createTapeService(table)
@@ -1149,52 +1184,56 @@ describe('ToolSurfaceProvenanceService', () => {
 
   itIfSqlite('enforces canonical idempotency with the SQLite persistence adapter', () => {
     const db = new DatabaseCtor(':memory:')
-    const table = new DeepChatTapeEntriesTable(db)
-    table.createTable()
-    const service = createTapeService(table)
-    const input = createCommitInput()
+    try {
+      const table = new DeepChatTapeEntriesTable(db)
+      table.createTable()
+      const service = createTapeService(table)
+      const input = createCommitInput()
 
-    const first = service.commitToolSurfaceView(input)
-    const repeated = service.commitToolSurfaceView(input)
-    const rows = table.getBySession(SESSION_ID)
+      const first = service.commitToolSurfaceView(input)
+      const repeated = service.commitToolSurfaceView(input)
+      const rows = table.getBySession(SESSION_ID)
 
-    expect(repeated.surface.entryId).toBe(first.surface.entryId)
-    expect(rows.filter((row) => row.name === TAPE_TOOL_CATALOG_EVENT_NAME)).toHaveLength(1)
-    expect(rows.filter((row) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)).toHaveLength(1)
-    expect(
-      table.getEventsBySource(
-        SESSION_ID,
-        TAPE_TOOL_SURFACE_EVENT_NAME,
-        'runtime_event',
-        MESSAGE_ID,
-        1
-      )
-    ).toHaveLength(1)
-
-    db.close()
+      expect(repeated.surface.entryId).toBe(first.surface.entryId)
+      expect(rows.filter((row) => row.name === TAPE_TOOL_CATALOG_EVENT_NAME)).toHaveLength(1)
+      expect(rows.filter((row) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)).toHaveLength(1)
+      expect(
+        table.getEventsBySource(
+          SESSION_ID,
+          TAPE_TOOL_SURFACE_EVENT_NAME,
+          'runtime_event',
+          MESSAGE_ID,
+          1
+        )
+      ).toHaveLength(1)
+    } finally {
+      db.close()
+    }
   })
 
   itIfSqlite('persists Programmatic View facts idempotently with the SQLite adapter', () => {
     const db = new DatabaseCtor(':memory:')
-    const table = new DeepChatTapeEntriesTable(db)
-    table.createTable()
-    const service = createTapeService(table)
-    const input = createProgrammaticCommitInput()
+    try {
+      const table = new DeepChatTapeEntriesTable(db)
+      table.createTable()
+      const service = createTapeService(table)
+      const input = createProgrammaticCommitInput()
 
-    const first = service.commitToolSurfaceView(input)
-    const repeated = service.commitToolSurfaceView(input)
-    const rows = table.getBySession(SESSION_ID)
+      const first = service.commitToolSurfaceView(input)
+      const repeated = service.commitToolSurfaceView(input)
+      const rows = table.getBySession(SESSION_ID)
 
-    expect(repeated.programmaticSurface).toEqual({
-      ...first.programmaticSurface,
-      created: false
-    })
-    expect(rows.filter((row) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)).toHaveLength(1)
-    expect(
-      rows.filter((row) => row.name === TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME)
-    ).toHaveLength(1)
-
-    db.close()
+      expect(repeated.programmaticSurface).toEqual({
+        ...first.programmaticSurface,
+        created: false
+      })
+      expect(rows.filter((row) => row.name === TAPE_TOOL_SURFACE_EVENT_NAME)).toHaveLength(1)
+      expect(
+        rows.filter((row) => row.name === TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME)
+      ).toHaveLength(1)
+    } finally {
+      db.close()
+    }
   })
 
   itIfSqlite('keeps Tool Surface facts out of linked SQL search and context', () => {
@@ -1240,45 +1279,49 @@ describe('ToolSurfaceProvenanceService', () => {
 
   itIfSqlite('rolls back all View facts when the SQLite surface append fails', () => {
     const db = new DatabaseCtor(':memory:')
-    const table = new DeepChatTapeEntriesTable(db)
-    table.createTable()
-    db.exec(`
-      CREATE TRIGGER fail_tool_surface_insert
-      BEFORE INSERT ON deepchat_tape_entries
-      WHEN NEW.name = '${TAPE_TOOL_SURFACE_EVENT_NAME}'
-      BEGIN
-        SELECT RAISE(ABORT, 'surface write failed');
-      END;
-    `)
-    const service = createTapeService(table)
+    try {
+      const table = new DeepChatTapeEntriesTable(db)
+      table.createTable()
+      db.exec(`
+        CREATE TRIGGER fail_tool_surface_insert
+        BEFORE INSERT ON deepchat_tape_entries
+        WHEN NEW.name = '${TAPE_TOOL_SURFACE_EVENT_NAME}'
+        BEGIN
+          SELECT RAISE(ABORT, 'surface write failed');
+        END;
+      `)
+      const service = createTapeService(table)
 
-    expect(() => service.commitToolSurfaceView(createCommitInput())).toThrow(
-      ToolSurfaceProvenanceError
-    )
-    expect(table.getBySession(SESSION_ID)).toEqual([])
-
-    db.close()
+      expect(() => service.commitToolSurfaceView(createCommitInput())).toThrow(
+        ToolSurfaceProvenanceError
+      )
+      expect(table.getBySession(SESSION_ID)).toEqual([])
+    } finally {
+      db.close()
+    }
   })
 
   itIfSqlite('rolls back all View facts when the SQLite Programmatic append fails', () => {
     const db = new DatabaseCtor(':memory:')
-    const table = new DeepChatTapeEntriesTable(db)
-    table.createTable()
-    db.exec(`
-      CREATE TRIGGER fail_programmatic_tool_surface_insert
-      BEFORE INSERT ON deepchat_tape_entries
-      WHEN NEW.name = '${TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME}'
-      BEGIN
-        SELECT RAISE(ABORT, 'programmatic surface write failed');
-      END;
-    `)
-    const service = createTapeService(table)
+    try {
+      const table = new DeepChatTapeEntriesTable(db)
+      table.createTable()
+      db.exec(`
+        CREATE TRIGGER fail_programmatic_tool_surface_insert
+        BEFORE INSERT ON deepchat_tape_entries
+        WHEN NEW.name = '${TAPE_PROGRAMMATIC_TOOL_SURFACE_EVENT_NAME}'
+        BEGIN
+          SELECT RAISE(ABORT, 'programmatic surface write failed');
+        END;
+      `)
+      const service = createTapeService(table)
 
-    expect(() => service.commitToolSurfaceView(createProgrammaticCommitInput())).toThrow(
-      ToolSurfaceProvenanceError
-    )
-    expect(table.getBySession(SESSION_ID)).toEqual([])
-
-    db.close()
+      expect(() => service.commitToolSurfaceView(createProgrammaticCommitInput())).toThrow(
+        ToolSurfaceProvenanceError
+      )
+      expect(table.getBySession(SESSION_ID)).toEqual([])
+    } finally {
+      db.close()
+    }
   })
 })

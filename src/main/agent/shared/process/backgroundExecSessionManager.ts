@@ -1008,6 +1008,10 @@ export class BackgroundExecSessionManager {
     code: number | null,
     signal: NodeJS.Signals | null
   ): Promise<void> {
+    if (session.closeWatchdogId) {
+      clearTimeout(session.closeWatchdogId)
+      session.closeWatchdogId = undefined
+    }
     try {
       session.flushOutputDecoders?.()
       await session.outputWriteQueue.catch((error) => {

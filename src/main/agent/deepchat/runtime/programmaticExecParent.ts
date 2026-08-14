@@ -68,6 +68,9 @@ export function prepareProgrammaticExecParent(input: {
   if (!capability || !snapshot || !input.parents) {
     throw new Error('Programmatic Tool exec requires its exact active View capability')
   }
+  if (snapshot.adapterMode !== 'cli-programmatic') {
+    throw new Error('Programmatic Tool exec requires a CLI Programmatic Tool Surface')
+  }
   if (deferredCapability && deferredCapability !== capability) {
     throw new Error('Programmatic Tool deferred capability does not match its provider View')
   }

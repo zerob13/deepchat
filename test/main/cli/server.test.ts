@@ -1141,9 +1141,9 @@ describe('CLI local transport', () => {
       _caller,
       _operation,
       _signal,
-      markDispatchStarted
+      takeSettlementOwnership
     ) => {
-      markDispatchStarted()
+      takeSettlementOwnership()
       return {
         step: { childOrdinal: 0, status: 'success' as const, result: { found: true } }
       }
@@ -1197,7 +1197,7 @@ describe('CLI local transport', () => {
       _caller,
       _operation,
       _signal,
-      _markDispatchStarted
+      _takeSettlementOwnership
     ) => {
       throw new CliRequestError('unavailable', 'Application is shutting down', {
         httpStatus: 503,
@@ -1235,7 +1235,7 @@ describe('CLI local transport', () => {
     )
   })
 
-  it('does not synthesize pre-dispatch settlement after dispatch starts', async () => {
+  it('does not synthesize settlement after the dispatcher takes ownership', async () => {
     const token = 'q'.repeat(43)
     const params = { target: 'remote_search', arguments: { query: 'weather' } }
     const { authority } = createArmedProgrammaticAuthority({
@@ -1249,9 +1249,9 @@ describe('CLI local transport', () => {
       _caller,
       _operation,
       _signal,
-      markDispatchStarted
+      takeSettlementOwnership
     ) => {
-      markDispatchStarted()
+      takeSettlementOwnership()
       throw new CliRequestError('unavailable', 'Dispatcher failed after admission', {
         httpStatus: 503,
         retriable: true

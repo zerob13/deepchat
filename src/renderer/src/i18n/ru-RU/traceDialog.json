@@ -19,26 +19,26 @@
     "view": "Представление",
     "entries": "Записи",
     "budget": "Бюджет",
-    "execution": "Execution"
+    "execution": "Аудит выполнения"
   },
   "empty": "Нет диагностических данных",
-  "emptyDesc": "Для этого сообщения нет трассировки запроса или манифеста представления",
+  "emptyDesc": "Для этого сообщения нет трассировки запроса, манифеста представления Tape или аудита вложенных выполнений",
   "requestUnavailable": "Нет трассировки запроса",
   "requestUnavailableDesc": "Для этого сообщения нет сохранённой трассировки запроса к провайдеру",
   "manifestUnavailable": "Нет манифеста представления",
   "manifestUnavailableDesc": "Для этого сообщения нет сохранённого манифеста представления Tape",
   "execution": {
-    "empty": "No nested executions",
-    "emptyDesc": "No programmatic tool operation is recorded for this request",
-    "corrupt": "Execution audit is corrupt",
-    "corruptDesc": "The nested Journal facts conflict or cannot be verified",
-    "unavailable": "Execution audit unavailable",
-    "unavailableDesc": "The nested Journal facts could not be read",
-    "truncated": "Only the first 256 nested operations are shown",
+    "empty": "Нет вложенных выполнений",
+    "emptyDesc": "Для этого запроса не зарегистрировано программных операций с инструментами",
+    "corrupt": "Аудит выполнения повреждён",
+    "corruptDesc": "Вложенные факты Journal противоречат друг другу или не могут быть проверены",
+    "unavailable": "Аудит выполнения недоступен",
+    "unavailableDesc": "Не удалось прочитать вложенные факты Journal",
+    "truncated": "Показаны только первые 256 вложенных операций",
     "status": {
-      "success": "Success",
-      "error": "Error",
-      "indeterminate": "Indeterminate"
+      "success": "Успешно",
+      "error": "Ошибка",
+      "indeterminate": "Неопределённо"
     }
   },
   "viewId": "ID представления",
