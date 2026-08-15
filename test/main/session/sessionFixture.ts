@@ -121,7 +121,7 @@ export const createSessionFixture = (input: {
               ...base,
               kind: handle.kind,
               compaction: {
-                getState: () => handle.deepchat.getCompactionState(),
+                getSnapshot: () => handle.deepchat.getCompactionSnapshot(),
                 compact: () => handle.deepchat.compact()
               }
             }

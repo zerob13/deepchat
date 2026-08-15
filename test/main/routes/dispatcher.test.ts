@@ -496,7 +496,6 @@ function createRuntime() {
     retryMessage: vi.fn().mockResolvedValue({ requestId: null, messageId: null }),
     deleteMessage: vi.fn().mockResolvedValue(undefined),
     editUserMessage: vi.fn().mockResolvedValue({}),
-    getSessionCompactionState: vi.fn().mockResolvedValue({ status: 'idle' }),
     getSessionCompactionSnapshot: vi.fn().mockResolvedValue({
       state: {
         status: 'compacted',

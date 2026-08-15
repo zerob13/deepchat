@@ -391,20 +391,6 @@ export class SessionTurn implements SessionTurnPort, SessionInitialTurnPort {
     return await this.dependencies.transcript.editUserMessage(sessionId, messageId, text)
   }
 
-  async getSessionCompactionState(sessionId: string): Promise<SessionCompactionState> {
-    this.requireSession(sessionId)
-    const runtime = this.dependencies.runtime.resolveSession(toAppSessionId(sessionId))
-    if (runtime.kind === 'acp') {
-      return {
-        status: 'idle',
-        cursorOrderSeq: 1,
-        summaryUpdatedAt: null,
-        boundaryReason: null
-      }
-    }
-    return await runtime.compaction.getState()
-  }
-
   async getSessionCompactionSnapshot(sessionId: string): Promise<SessionCompactionSnapshot> {
     this.requireSession(sessionId)
     const runtime = this.dependencies.runtime.resolveSession(toAppSessionId(sessionId))

@@ -100,7 +100,6 @@ export interface DeepChatAgentBackendPort {
   cancelGenerationByEventId(sessionId: AppSessionId, eventId: string): Promise<boolean>
   setSessionAgentContext(sessionId: AppSessionId, config: SessionAgentContextUpdate): Promise<void>
   setSessionModel(sessionId: AppSessionId, providerId: string, modelId: string): Promise<void>
-  getSessionCompactionState(sessionId: AppSessionId): Promise<SessionCompactionState>
   getSessionCompactionSnapshot(sessionId: AppSessionId): Promise<SessionCompactionSnapshot>
   getSessionContextOccupancy(sessionId: AppSessionId): Promise<SessionContextOccupancySnapshot>
   compactSession(
@@ -206,7 +205,6 @@ export function createDeepChatAgentBackend(
       deepchat: {
         setSessionAgentContext: (config) => port.setSessionAgentContext(sessionId, config),
         setModel: (providerId, modelId) => port.setSessionModel(sessionId, providerId, modelId),
-        getCompactionState: () => port.getSessionCompactionState(sessionId),
         getCompactionSnapshot: () => port.getSessionCompactionSnapshot(sessionId),
         getContextOccupancy: () => port.getSessionContextOccupancy(sessionId),
         compact: () => port.compactSession(sessionId),

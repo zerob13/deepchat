@@ -344,7 +344,7 @@ describe('CompactionRuntimeCoordinator', () => {
   it('does not hydrate an instance when neither runtime nor persisted session facts exist', async () => {
     const { coordinator, getInstance, runtime } = createHarness({ hydrate: false })
 
-    await expect(coordinator.getState(SESSION_ID)).rejects.toThrow(
+    await expect(coordinator.getSnapshot(SESSION_ID)).rejects.toThrow(
       `Session ${SESSION_ID} not found`
     )
 
@@ -365,11 +365,13 @@ describe('CompactionRuntimeCoordinator', () => {
       summaryUpdatedAt: 100
     })
 
-    await expect(coordinator.getState(SESSION_ID)).resolves.toEqual({
-      status: 'compacting',
-      cursorOrderSeq: 9,
-      summaryUpdatedAt: 100,
-      boundaryReason: null
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      state: {
+        status: 'compacting',
+        cursorOrderSeq: 9,
+        summaryUpdatedAt: 100,
+        boundaryReason: null
+      }
     })
 
     initialInstance?.setCompactionState({
@@ -377,11 +379,13 @@ describe('CompactionRuntimeCoordinator', () => {
       cursorOrderSeq: 1,
       summaryUpdatedAt: null
     })
-    await expect(coordinator.getState(SESSION_ID)).resolves.toEqual({
-      status: 'compacted',
-      cursorOrderSeq: 7,
-      summaryUpdatedAt: 200,
-      boundaryReason: null
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      state: {
+        status: 'compacted',
+        cursorOrderSeq: 7,
+        summaryUpdatedAt: 200,
+        boundaryReason: null
+      }
     })
   })
 
@@ -393,11 +397,13 @@ describe('CompactionRuntimeCoordinator', () => {
       summaryUpdatedAt: null
     })
 
-    await expect(coordinator.getState(SESSION_ID)).resolves.toEqual({
-      status: 'compacted',
-      cursorOrderSeq: 7,
-      summaryUpdatedAt: null,
-      boundaryReason: null
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      state: {
+        status: 'compacted',
+        cursorOrderSeq: 7,
+        summaryUpdatedAt: null,
+        boundaryReason: null
+      }
     })
   })
 
@@ -435,8 +441,9 @@ describe('CompactionRuntimeCoordinator', () => {
       state: { cursorOrderSeq: 7, reason: 'legacy_reason' },
       createdAt: 201
     })
-    await expect(coordinator.getState(SESSION_ID)).resolves.toMatchObject({
-      boundaryReason: null
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      state: { boundaryReason: null },
+      latestAnchorEntryId: 43
     })
   })
 

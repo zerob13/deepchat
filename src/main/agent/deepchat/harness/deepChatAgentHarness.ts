@@ -295,10 +295,6 @@ export class DeepChatAgentHarness
     return true
   }
 
-  async getSessionCompactionState(sessionId: string): Promise<SessionCompactionState> {
-    return await this.services.compaction.getState(sessionId)
-  }
-
   async getSessionCompactionSnapshot(sessionId: string): Promise<SessionCompactionSnapshot> {
     return await this.services.compaction.getSnapshot(sessionId)
   }

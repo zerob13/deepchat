@@ -13115,6 +13115,7 @@ describe('DeepChatAgentHarness', () => {
         messageType: 'compaction',
         compactionStatus: 'compacting',
         compactionAttemptId: expect.any(String),
+        compactionBoundaryReason: null,
         summaryUpdatedAt: null
       })
 
@@ -13142,6 +13143,7 @@ describe('DeepChatAgentHarness', () => {
         messageType: 'compaction',
         compactionStatus: 'compacting',
         compactionAttemptId: expect.any(String),
+        compactionBoundaryReason: null,
         summaryUpdatedAt: null
       })
 
@@ -13202,6 +13204,7 @@ describe('DeepChatAgentHarness', () => {
         messageType: 'compaction',
         compactionStatus: 'compacting',
         compactionAttemptId: expect.any(String),
+        compactionBoundaryReason: null,
         summaryUpdatedAt: null
       })
       expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).toHaveBeenCalledWith(
@@ -13569,7 +13572,7 @@ describe('DeepChatAgentHarness', () => {
         toolService: toolService,
         hookObserver: noopHookObserver
       })
-      const compactionState = await reopenedAgent.getSessionCompactionState('s1')
+      const { state: compactionState } = await reopenedAgent.getSessionCompactionSnapshot('s1')
 
       expect(compactionState).toEqual({
         status: 'compacted',
@@ -13587,7 +13590,7 @@ describe('DeepChatAgentHarness', () => {
         summaryUpdatedAt: 333
       })
 
-      const compactionState = await agent.getSessionCompactionState('s1')
+      const { state: compactionState } = await agent.getSessionCompactionSnapshot('s1')
 
       expect(compactionState).toEqual({
         status: 'compacted',
@@ -13612,11 +13615,13 @@ describe('DeepChatAgentHarness', () => {
         boundaryReason: null
       })
 
-      await expect(agent.getSessionCompactionState('s1')).resolves.toEqual({
-        status: 'compacting',
-        cursorOrderSeq: 9,
-        summaryUpdatedAt: 111,
-        boundaryReason: null
+      await expect(agent.getSessionCompactionSnapshot('s1')).resolves.toMatchObject({
+        state: {
+          status: 'compacting',
+          cursorOrderSeq: 9,
+          summaryUpdatedAt: 111,
+          boundaryReason: null
+        }
       })
 
       instance.setCompactionState({
@@ -13625,11 +13630,13 @@ describe('DeepChatAgentHarness', () => {
         summaryUpdatedAt: null,
         boundaryReason: null
       })
-      await expect(agent.getSessionCompactionState('s1')).resolves.toEqual({
-        status: 'compacted',
-        cursorOrderSeq: 7,
-        summaryUpdatedAt: 555,
-        boundaryReason: null
+      await expect(agent.getSessionCompactionSnapshot('s1')).resolves.toMatchObject({
+        state: {
+          status: 'compacted',
+          cursorOrderSeq: 7,
+          summaryUpdatedAt: 555,
+          boundaryReason: null
+        }
       })
     })
   })

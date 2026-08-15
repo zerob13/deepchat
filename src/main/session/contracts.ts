@@ -249,7 +249,6 @@ export type SessionTurnRuntimeSession =
   | (SessionTurnRuntimeBase & {
       readonly kind: 'deepchat'
       readonly compaction: {
-        getState(): Promise<SessionCompactionState>
         getSnapshot(): Promise<SessionCompactionSnapshot>
         compact(): Promise<{ compacted: boolean; state: SessionCompactionState }>
       }
@@ -340,7 +339,6 @@ export interface SessionTurnPort {
   ): Promise<MessageStartResult>
   deleteMessage(sessionId: string, messageId: string): Promise<void>
   editUserMessage(sessionId: string, messageId: string, text: string): Promise<ChatMessageRecord>
-  getSessionCompactionState(sessionId: string): Promise<SessionCompactionState>
   getSessionCompactionSnapshot(sessionId: string): Promise<SessionCompactionSnapshot>
   getSessionContextOccupancy(sessionId: string): Promise<SessionContextOccupancySnapshot>
   compactSession(sessionId: string): Promise<{ compacted: boolean; state: SessionCompactionState }>

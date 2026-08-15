@@ -121,13 +121,6 @@ export class CompactionRuntimeCoordinator {
     this.deps.registry.scopeFor(toAppSessionId(sessionId), instance).assertCurrent()
   }
 
-  async getState(
-    sessionId: string,
-    expectedInstance?: DeepChatAgentInstance
-  ): Promise<SessionCompactionState> {
-    return this.resolveProjection(sessionId, expectedInstance).state
-  }
-
   async getSnapshot(
     sessionId: string,
     expectedInstance?: DeepChatAgentInstance
@@ -307,7 +300,7 @@ export class CompactionRuntimeCoordinator {
       if (!intent) {
         return {
           compacted: false,
-          state: await this.getState(sessionId, instance)
+          state: this.resolveProjection(sessionId, instance).state
         }
       }
 
@@ -322,7 +315,7 @@ export class CompactionRuntimeCoordinator {
       const compacted = hasCompactionBoundaryAdvanced(intent.previousState, summaryState)
       return {
         compacted,
-        state: await this.getState(sessionId, instance)
+        state: this.resolveProjection(sessionId, instance).state
       }
     } finally {
       const stillOwnsLifecycle = this.deps.runLifecycle.canSettleOperation(

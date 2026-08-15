@@ -498,7 +498,7 @@ describe('SessionTurn', () => {
       () => harness.coordinator.retryMessage('missing', 'message-1'),
       () => harness.coordinator.deleteMessage('missing', 'message-1'),
       () => harness.coordinator.editUserMessage('missing', 'message-1', 'Edited'),
-      () => harness.coordinator.getSessionCompactionState('missing'),
+      () => harness.coordinator.getSessionCompactionSnapshot('missing'),
       () => harness.coordinator.compactSession('missing'),
       () => harness.coordinator.clearSessionMessages('missing'),
       () =>
@@ -613,12 +613,6 @@ describe('SessionTurn', () => {
       harness.coordinator.respondToolInteraction('s1', 'message-1', 'tool-1', response)
     ).resolves.toEqual({ resumed: true })
     expect(harness.toolInteractions.respond).toHaveBeenCalledWith('message-1', 'tool-1', response)
-    await expect(harness.coordinator.getSessionCompactionState('s1')).resolves.toEqual({
-      status: 'idle',
-      cursorOrderSeq: 1,
-      summaryUpdatedAt: null,
-      boundaryReason: null
-    })
     await expect(harness.coordinator.getSessionCompactionSnapshot('s1')).resolves.toEqual({
       state: {
         status: 'idle',
@@ -653,13 +647,11 @@ describe('SessionTurn', () => {
     expect(harness.compaction.compact).not.toHaveBeenCalled()
   })
 
-  it('delegates DeepChat compaction state and mutation', async () => {
+  it('delegates DeepChat compaction snapshots and mutation', async () => {
     const harness = createHarness()
 
-    await expect(harness.coordinator.getSessionCompactionState('s1')).resolves.toMatchObject({
-      cursorOrderSeq: 3
-    })
     await expect(harness.coordinator.getSessionCompactionSnapshot('s1')).resolves.toMatchObject({
+      state: { cursorOrderSeq: 3 },
       emitSeq: 4,
       latestAnchorEntryId: 12
     })
