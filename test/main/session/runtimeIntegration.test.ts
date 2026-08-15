@@ -233,6 +233,7 @@ function createMockSqlitePresenter() {
     getLatestAnchor: vi.fn().mockReturnValue(undefined),
     getLatestSummaryAnchor: vi.fn().mockReturnValue(undefined),
     getLatestReconstructionAnchor: vi.fn().mockReturnValue(undefined),
+    getLatestProviderContextPressureEvent: vi.fn().mockReturnValue(undefined),
     getReconstructionAnchorByCompactionAttemptId: vi.fn().mockReturnValue(undefined),
     getAnchors: vi.fn().mockReturnValue([]),
     getByProvenanceKey: vi.fn((sessionId: string, provenanceKey: string) =>
