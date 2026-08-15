@@ -278,6 +278,46 @@ provider replay.
 - Record unavailable usage as unknown. Never estimate it as billed usage or write zero values that
   contaminate cache-hit denominators.
 
+##### Compaction Usage Identity And Projection Contract
+
+- `applyCompaction` passes one observer scoped to the immutable `compactionAttemptId` through direct
+  and recursive summary generation. Immediately before each `generateText` call, provision a
+  random `providerCallId`. A retry or repeated application is a new paid call with a new ID;
+  persistence retry of the same observation retains its ID and is idempotent.
+- Observe the provider call at its physical boundary, not at final-summary return. A returned
+  response is recorded before content sanitization. A throw or abort records a terminal observation
+  with null usage. This preserves successful chunk charges when a later chunk, reduce pass,
+  shrink proof, or enclosing compaction fails.
+- Add a typed `compaction/model_call_completed` Tape event owned by a narrow compaction-usage writer.
+  Its source is the runtime event for `compactionAttemptId` and its provenance key includes the
+  provisioned provider-call ID. In the same transaction, the writer reuses an existing event for
+  that provenance or assigns the next positive source sequence for the attempt. The schema
+  allowlists terminal status and non-negative safe-integer usage, records the actual summary
+  provider/model, marker message ID, call sequence, and bounded timestamps, and excludes
+  prompt/response/error content.
+- Persist the Tape fact and usage reporting projection in one synchronous Session SQLite
+  transaction. The observer is diagnostics-only and fail-open: log a persistence failure without
+  changing summary acceptance, committing a different boundary, or repeating the provider call.
+  Marker finalization/retraction and crash reconciliation neither create nor delete usage facts.
+- Migrate `deepchat_usage_stats` from a message-keyed row shape to a stable `usage_id` projection.
+  Keep nullable `message_id`; add category `chat | compaction`, nullable
+  `compaction_attempt_id`/`provider_call_id`/`provider_call_seq`, and nullable token/cache columns.
+  Legacy rows preserve all values as `chat` with `usage_id = message_id`. Ordinary message
+  upserts remain one row per message; compaction uses one row per provider call.
+- A valid returned `totalUsage` writes its exact prompt/completion/total counts. Missing or invalid
+  usage writes a compaction projection row with null token fields so the call remains observable
+  without pretending it was free. `generateText` exposes no cache read/write detail, so compaction
+  cache columns stay null and its input tokens are absent from the cache-hit denominator.
+- Dashboard total tokens aggregate all known usage. Preserve existing message count, daily message
+  activity, and most-active-day semantics by counting only category `chat`. Add a category
+  breakdown with event count, known-usage count, unknown-usage count, and tokens so users can
+  distinguish conversation usage from compaction overhead. Provider/model attribution uses the
+  actual model chosen by `generateRollingSummary`, including a configured assistant model.
+- Focused tests cover one-call success, direct missing usage, thrown/aborted calls, recursive
+  map-reduce accumulation, successful chunks before a later failure, actual assistant-model
+  attribution, idempotent observation replay, marker retraction independence, v32 migration, chat
+  message-count compatibility, category reporting, and cache-rate denominator exclusion.
+
 #### 7. Add A Context-Occupancy Read Model
 
 - Design a renderer read model from provider prompt usage when current, conservative View estimates

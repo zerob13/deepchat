@@ -257,6 +257,44 @@ rollback mechanism and is not the authority for accepting a semantic summary.
   cannot spin. Provider-attempt persistence remains fail-open so a diagnostics write failure cannot
   turn an already completed provider response into a user-visible failure.
 
+### Compaction Model Usage Accounting
+
+- Every physical semantic-summary model call provisions a random `providerCallId` immediately
+  before calling the provider. When the outcome is persisted, the Tape writer atomically assigns
+  the next call sequence within its `compactionAttemptId`; replaying the same provider-call ID
+  resolves to the prior sequence. Recursive map-reduce calls are separate physical calls; they are
+  never collapsed into the final summary result for accounting.
+- The append-only Tape records one idempotent `compaction/model_call_completed` event per physical
+  call. It contains only the compaction attempt/message correlation, call identity and sequence,
+  actual provider/model, terminal status, timestamps, and provider-returned usage. It never stores
+  prompts, summary text, provider errors, credentials, or inferred prices.
+- A call that returns usage records exactly those input, output, and total token counts. A call that
+  throws, is aborted, or returns no valid usage records `usage: null`. Missing usage means unknown:
+  it is not estimated, normalized to zero, or included in token and cache-rate denominators.
+- Observation happens as soon as a provider response returns, before summary sanitization or the
+  enclosing map-reduce operation can fail. Therefore successful chunks remain billable evidence
+  even when a later chunk fails, the generated summary is rejected as non-shrinking, the boundary
+  falls back to boundary-only, or the synthetic marker is subsequently retracted.
+- `deepchat_usage_stats` is a reporting projection, not the source fact. Its stable `usage_id`
+  distinguishes ordinary assistant-message usage from individual compaction calls and retains the
+  source message, category, compaction attempt, provider-call identity, and call sequence. Legacy
+  rows migrate to category `chat` with `usage_id = message_id`; compaction observations use category
+  `compaction` and nullable token/cache fields for unknown usage.
+- Tape append and reporting projection update share the existing synchronous SQLite transaction.
+  Replaying the same provider-call identity is idempotent in both stores. Accounting persistence is
+  fail-open, matching ordinary provider-attempt diagnostics: a local diagnostics failure is logged
+  but cannot discard a valid summary, replay a paid provider call, or alter reconstruction state.
+- Dashboard token totals include all known categories. Existing message counts, calendar activity,
+  and most-active-day semantics continue to count chat messages, not internal model calls. A
+  category breakdown reports chat messages and compaction calls separately, including an explicit
+  unknown-usage count. Cache hit rate uses only rows with measured cache detail; compaction usage
+  from `generateText` currently has no cache read/write contract and is excluded from that
+  denominator rather than represented as a zero-cache hit.
+- The actual summary model owns each observation. If a configured assistant model performs the
+  call, usage is attributed to that provider/model rather than the active chat model. Providers
+  that do not return usage remain truthfully unknown; this slice does not broaden provider claims
+  or synthesize unavailable cache details.
+
 ## Compatibility
 
 - Existing reconstruction anchors containing a summary remain valid and retain their hash and
@@ -274,6 +312,9 @@ rollback mechanism and is not the authority for accepting a semantic summary.
   anchoring. Any later diagnostic field must be additive and backward compatible.
 - Existing isolated and recursive summary requests remain the semantic-summary path.
   Prefix-preserving summary generation is outside this change.
+- Usage statistics schema migration preserves every legacy row as chat usage and keeps existing
+  dashboard token totals and message-activity meaning. New category data is additive at the public
+  dashboard contract. Unknown compaction usage contributes an event count but no token value.
 
 ## Security And Privacy
 
@@ -319,6 +360,12 @@ rollback mechanism and is not the authority for accepting a semantic summary.
 16. A physical attempt that meets either silent-pressure signature appends one idempotent provider
     attempt fact, never replays completed work, and can force at most one next-turn compaction
     preparation until a later reconstruction anchor settles it.
+17. Every completed, failed, or aborted summary model call appends one idempotent Tape observation;
+    every valid returned usage contributes exactly once to compaction-category reporting even if a
+    later map-reduce step or the enclosing compaction fails.
+18. Missing compaction usage remains explicitly unknown, contributes no estimated or zero token
+    counts, and cannot lower the dashboard cache-hit rate. Existing message counts continue to mean
+    chat messages rather than internal summary calls.
 
 ## Implementation Record
 
