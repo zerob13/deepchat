@@ -87,6 +87,22 @@ const TAPE_ENTRY_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_event_name
     ON deepchat_tape_entries(name, session_id, entry_id)
     WHERE kind = 'event';
+  CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_provider_context_pressure
+    ON deepchat_tape_entries(
+      session_id,
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.providerId') END),
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.modelId') END),
+      entry_id
+    )
+    WHERE kind = 'event'
+      AND name = 'provider/attempt_completed'
+      AND (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.schemaVersion') END) = 3
+      AND (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.data.contextPressure.kind') END)
+        IN ('successful_prompt_overflow', 'zero_output_length_at_limit');
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_execution_run
     ON deepchat_tape_entries(name, session_id, source_id, entry_id)
     WHERE kind = 'event' AND source_type = 'runtime_event';
@@ -1075,6 +1091,39 @@ export class DeepChatTapeEntriesTable
       maxSourceSeq > 0
       ? maxSourceSeq
       : 0
+  }
+
+  getLatestProviderContextPressureEvent(
+    sessionId: string,
+    providerId: string,
+    modelId: string,
+    afterEntryId: number
+  ): DeepChatTapeEntryRow | undefined {
+    const normalizedAfterEntryId =
+      Number.isSafeInteger(afterEntryId) && afterEntryId > 0 ? afterEntryId : 0
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = 'provider/attempt_completed'
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.data.schemaVersion') END) = 3
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.data.providerId') END) = ?
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.data.modelId') END) = ?
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.data.contextPressure.kind') END)
+             IN ('successful_prompt_overflow', 'zero_output_length_at_limit')
+           AND entry_id > ?
+         ORDER BY entry_id DESC
+         LIMIT 1`
+      )
+      .get(sessionId, providerId, modelId, normalizedAfterEntryId) as
+      | DeepChatTapeEntryRow
+      | undefined
   }
 
   getSubagentLineageEvents(sessionId: string): DeepChatTapeEntryRow[] {

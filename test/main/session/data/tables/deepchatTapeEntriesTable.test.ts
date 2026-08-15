@@ -3,6 +3,7 @@ import {
   TAPE_TOOL_SURFACE_EVENT_NAME,
   TOOL_SURFACE_TAPE_EVENT_NAMES
 } from '@/tape/domain/toolSurfaceFacts'
+import { buildTapeProviderAttemptEvent } from '@/tape/domain/providerAttempt'
 
 const sqliteModule = await import('better-sqlite3-multiple-ciphers').catch(() => null)
 const tableModule = sqliteModule ? await import('@/session/data/tables/deepchatTapeEntries') : null
@@ -188,6 +189,99 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
     expect(
       table.getMaxEventSourceSeq('s1', 'provider/attempt_completed', 'runtime_event', 'missing')
     ).toBe(0)
+
+    db.close()
+  })
+
+  it('reads the latest matching provider pressure after a reconstruction anchor by index', () => {
+    const { db, table } = createTable()
+    const buildAttempt = (providerId: string, modelId: string) =>
+      buildTapeProviderAttemptEvent({
+        sessionId: 's1',
+        messageId: `message-${providerId}-${modelId}`,
+        logicalRound: 1,
+        requestSeq: 1,
+        physicalAttempt: 1,
+        requestOrigin: 'chat',
+        attemptOrigin: 'initial',
+        providerId,
+        modelId,
+        status: 'completed',
+        stopReason: 'complete',
+        failureClassification: null,
+        retryDecision: 'none',
+        httpStatus: null,
+        errorCode: null,
+        retryDelayMs: null,
+        usage: { inputTokens: 1_001, outputTokens: 1, totalTokens: 1_002 },
+        contextPressure: {
+          kind: 'successful_prompt_overflow',
+          contextWindowTokens: 1_000,
+          thresholdTokens: 1_000
+        }
+      })
+    const appendAttempt = (data: Record<string, unknown>) =>
+      table.appendEvent({
+        sessionId: 's1',
+        name: 'provider/attempt_completed',
+        data
+      })
+
+    const legacy = { ...buildAttempt('provider-1', 'model-1'), schemaVersion: 2 } as Record<
+      string,
+      unknown
+    >
+    delete legacy.contextPressure
+    appendAttempt(legacy)
+    const settled = appendAttempt(buildAttempt('provider-1', 'model-1'))
+    table.appendAnchor({
+      sessionId: 's1',
+      name: 'compaction/auto',
+      state: { summary: 'settled old pressure', cursorOrderSeq: 3 }
+    })
+    appendAttempt({ ...buildAttempt('provider-1', 'model-1'), contextPressure: null })
+    appendAttempt({
+      ...buildAttempt('provider-1', 'model-1'),
+      contextPressure: { kind: 'invalid', contextWindowTokens: 1_000, thresholdTokens: 1_000 }
+    })
+    appendAttempt(buildAttempt('provider-2', 'model-1'))
+    appendAttempt(buildAttempt('provider-1', 'model-2'))
+    const latest = appendAttempt(buildAttempt('provider-1', 'model-1'))
+
+    expect(
+      table.getLatestProviderContextPressureEvent('s1', 'provider-1', 'model-1', settled.entry_id)
+    ).toMatchObject({ entry_id: latest.entry_id })
+    expect(
+      table.getLatestProviderContextPressureEvent('s1', 'provider-1', 'model-1', latest.entry_id)
+    ).toBeUndefined()
+    expect(
+      table.getLatestProviderContextPressureEvent('s1', 'provider-3', 'model-1', 0)
+    ).toBeUndefined()
+
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = 'provider/attempt_completed'
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.data.schemaVersion') END) = 3
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.data.providerId') END) = ?
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.data.modelId') END) = ?
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.data.contextPressure.kind') END)
+             IN ('successful_prompt_overflow', 'zero_output_length_at_limit')
+           AND entry_id > ?
+         ORDER BY entry_id DESC
+         LIMIT 1`
+      )
+      .all('s1', 'provider-1', 'model-1', settled.entry_id) as Array<{ detail: string }>
+    expect(
+      plan.some((row) => /idx_deepchat_tape_entries_provider_context_pressure/i.test(row.detail))
+    ).toBe(true)
 
     db.close()
   })

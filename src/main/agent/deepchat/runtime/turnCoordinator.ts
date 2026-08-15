@@ -59,7 +59,10 @@ import { buildTerminalErrorBlocks, type SessionTranscript } from '@/session/data
 import type { DeepChatEventPublisher, ProcessResult } from './types'
 import { buildUsageFromMetadata, stampTerminalMetadata } from './runtimeMetadata'
 import type { SessionSettingsStore } from '@/session/data/settings'
-import type { TapeReconciliationPort } from '@/tape/ports/capabilities'
+import type {
+  TapeProviderAttemptReader,
+  TapeReconciliationPort
+} from '@/tape/ports/capabilities'
 import { isExecutionJournalError } from '@/tape/domain/executionJournal'
 import { isCommittedRunProjectionError } from './runTerminalProjectionError'
 import {
@@ -151,7 +154,7 @@ export interface TurnCoordinatorPorts {
   sessionStore: SessionSettingsStore
   messageStore: SessionTranscript
   pendingInputs: Pick<SessionPendingInputs, 'createClaimedQueueUserMessage'>
-  tapeReconciliation: TapeReconciliationPort
+  tapeReconciliation: TapeReconciliationPort & TapeProviderAttemptReader
   toolResolver: DeepChatToolResolver
   compactionService: CompactionService
   compactionRuntimeCoordinator: CompactionRuntimeCoordinator
@@ -692,6 +695,12 @@ export class TurnCoordinator {
         if (!useContextBudget) {
           return null
         }
+        const pendingContextPressure =
+          this.ports.tapeReconciliation.getPendingProviderContextPressure(
+            sessionId,
+            state.providerId,
+            state.modelId
+          )
         return await this.runPreStreamStep(
           {
             sessionId,
@@ -714,6 +723,7 @@ export class TurnCoordinator {
               preserveEmptyInterleavedReasoning:
                 interleavedReasoning.preserveEmptyReasoningContent === true,
               newUserContent: content,
+              ...(pendingContextPressure ? { forceContextPressure: true } : {}),
               historyRecords,
               signal: preStreamAbortSignal
             })

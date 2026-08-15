@@ -1,8 +1,11 @@
 import type { DeepChatTapeEntryRow } from '../domain/entry'
 import {
   buildTapeProviderAttemptEvent,
+  parseTapeProviderAttemptEvent,
   TAPE_PROVIDER_ATTEMPT_EVENT_NAME,
-  type TapeProviderAttemptInput
+  TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION,
+  type TapeProviderAttemptInput,
+  type TapeProviderContextPressureRecord
 } from '../domain/providerAttempt'
 import type { TapeApplicationProviders } from '../ports/application'
 import type { TapeProviderAttemptReader, TapeProviderAttemptWriter } from '../ports/capabilities'
@@ -18,6 +21,35 @@ export class TapeProviderAttemptService
     return this.providers
       .getEntryStore()
       .getMaxEventSourceSeq(sessionId, TAPE_PROVIDER_ATTEMPT_EVENT_NAME, 'runtime_event', messageId)
+  }
+
+  getPendingProviderContextPressure(
+    sessionId: string,
+    providerId: string,
+    modelId: string
+  ): TapeProviderContextPressureRecord | null {
+    const table = this.providers.getEntryStore()
+    const latestAnchorEntryId = table.getLatestReconstructionAnchor(sessionId)?.entry_id ?? 0
+    const row = table.getLatestProviderContextPressureEvent(
+      sessionId,
+      providerId,
+      modelId,
+      latestAnchorEntryId
+    )
+    if (!row) return null
+
+    const attempt = parseTapeProviderAttemptEvent(row)
+    if (
+      !attempt ||
+      attempt.schemaVersion !== TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION ||
+      !attempt.contextPressure
+    ) {
+      return null
+    }
+    return {
+      entryId: row.entry_id,
+      attempt: { ...attempt, contextPressure: attempt.contextPressure }
+    }
   }
 
   appendProviderAttempt(input: TapeProviderAttemptInput): DeepChatTapeEntryRow {

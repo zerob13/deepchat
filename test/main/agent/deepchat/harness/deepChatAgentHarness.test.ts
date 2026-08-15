@@ -72,6 +72,7 @@ import {
   TAPE_TOOL_CATALOG_EVENT_NAME,
   TAPE_TOOL_SURFACE_EVENT_NAME
 } from '@/tape/domain/toolSurfaceFacts'
+import { buildTapeProviderAttemptEvent } from '@/tape/domain/providerAttempt'
 import { ProgrammaticToolParentRegistry } from '@/cli/programmaticToolParentRegistry'
 import { ToolSurfaceCanaryDiagnosticsRegistry } from '@/agent/deepchat/runtime/toolSurfaceCanaryDiagnostics'
 import { MAX_PROGRAMMATIC_TOOL_INPUT_BYTES } from '@/agent/deepchat/runtime/programmaticToolSurface'
@@ -648,6 +649,29 @@ function createMockSqlitePresenter() {
               )
               .map((entry) => entry.source_seq)
           )
+      ),
+      getLatestProviderContextPressureEvent: vi.fn(
+        (sessionId: string, providerId: string, modelId: string, afterEntryId: number) =>
+          tapeEntries
+            .filter((entry) => {
+              if (
+                entry.session_id !== sessionId ||
+                entry.kind !== 'event' ||
+                entry.name !== 'provider/attempt_completed' ||
+                entry.entry_id <= afterEntryId
+              ) {
+                return false
+              }
+              const data = JSON.parse(entry.payload_json).data ?? {}
+              return (
+                data.schemaVersion === 3 &&
+                data.providerId === providerId &&
+                data.modelId === modelId &&
+                (data.contextPressure?.kind === 'successful_prompt_overflow' ||
+                  data.contextPressure?.kind === 'zero_output_length_at_limit')
+              )
+            })
+            .sort((left, right) => right.entry_id - left.entry_id)[0]
       ),
       getMaxEntryId: vi.fn((sessionId: string) =>
         Math.max(
@@ -11670,6 +11694,117 @@ describe('DeepChatAgentHarness', () => {
         ([input]: any[]) => input.name === 'auto_handoff/context_overflow'
       )
     }
+
+    function appendSilentContextPressure(providerId = 'openai', modelId = 'gpt-4') {
+      return sqlitePresenter.deepchatTapeEntriesTable.appendEvent({
+        sessionId: 's1',
+        name: 'provider/attempt_completed',
+        data: buildTapeProviderAttemptEvent({
+          sessionId: 's1',
+          messageId: 'pressure-source',
+          logicalRound: 1,
+          requestSeq: 1,
+          physicalAttempt: 1,
+          requestOrigin: 'chat',
+          attemptOrigin: 'initial',
+          providerId,
+          modelId,
+          status: 'completed',
+          stopReason: 'complete',
+          failureClassification: null,
+          retryDecision: 'none',
+          httpStatus: null,
+          errorCode: null,
+          retryDelayMs: null,
+          usage: { inputTokens: 8_193, outputTokens: 1, totalTokens: 8_194 },
+          contextPressure: {
+            kind: 'successful_prompt_overflow',
+            contextWindowTokens: 8_192,
+            thresholdTokens: 8_192
+          }
+        })
+      })
+    }
+
+    it('consumes durable silent pressure as a next-turn overflow handoff', async () => {
+      sqlitePresenter.deepchatMessagesTable.getBySession.mockReturnValue(createSentTurnRecords(3))
+      sqlitePresenter.deepchatMessagesTable.getMaxOrderSeq
+        .mockReturnValueOnce(6)
+        .mockReturnValueOnce(7)
+        .mockReturnValueOnce(8)
+      await agent.initSession('s1', {
+        providerId: 'openai',
+        modelId: 'gpt-4',
+        generationSettings: { contextLength: 8_192, maxTokens: 512 }
+      })
+      appendSilentContextPressure()
+
+      await agent.processMessage('s1', 'continue without replaying the completed response')
+
+      expect(getContextOverflowAnchorCalls()).toHaveLength(1)
+      expect(processStream).toHaveBeenCalledTimes(1)
+    })
+
+    it('settles silent pressure behind a newer reconstruction anchor', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      appendSilentContextPressure()
+      sqlitePresenter.deepchatTapeEntriesTable.appendAnchor({
+        sessionId: 's1',
+        name: 'compaction/auto',
+        state: { summary: 'newer boundary', cursorOrderSeq: 3 }
+      })
+      const prepare = vi
+        .spyOn(CompactionService.prototype, 'prepareForNextUserTurn')
+        .mockResolvedValue(null)
+
+      await agent.processMessage('s1', 'next prompt')
+
+      expect(prepare).toHaveBeenCalledOnce()
+      expect(prepare.mock.calls[0][0].forceContextPressure).toBeUndefined()
+      expect(processStream).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not consume silent pressure recorded for another model identity', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      appendSilentContextPressure('openai', 'gpt-4-old')
+      const prepare = vi
+        .spyOn(CompactionService.prototype, 'prepareForNextUserTurn')
+        .mockResolvedValue(null)
+
+      await agent.processMessage('s1', 'next prompt')
+
+      expect(prepare).toHaveBeenCalledOnce()
+      expect(prepare.mock.calls[0][0].forceContextPressure).toBeUndefined()
+      expect(processStream).toHaveBeenCalledTimes(1)
+    })
+
+    it('continues the next turn when pending pressure has no boundary to advance', async () => {
+      await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
+      appendSilentContextPressure()
+
+      await agent.processMessage('s1', 'only protected input exists')
+
+      expect(getContextOverflowAnchorCalls()).toEqual([])
+      expect(processStream).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps pending pressure inert while automatic compaction is disabled', async () => {
+      providerSettings.resolveDeepChatAgentConfig.mockResolvedValue({
+        autoCompactionEnabled: false
+      })
+      sqlitePresenter.deepchatMessagesTable.getBySession.mockReturnValue(createSentTurnRecords(3))
+      await agent.initSession('s1', {
+        providerId: 'openai',
+        modelId: 'gpt-4',
+        generationSettings: { contextLength: 8_192, maxTokens: 512 }
+      })
+      appendSilentContextPressure()
+
+      await agent.processMessage('s1', 'continue without automatic compaction')
+
+      expect(getContextOverflowAnchorCalls()).toEqual([])
+      expect(processStream).toHaveBeenCalledTimes(1)
+    })
 
     it('bypasses DeepChat context preflight for oversized ACP provider calls', async () => {
       await agent.initSession('s1', {

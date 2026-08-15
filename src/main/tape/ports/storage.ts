@@ -51,6 +51,12 @@ export interface TapeEntryStore {
     sourceType: DeepChatTapeSourceType,
     sourceId: string
   ): number
+  getLatestProviderContextPressureEvent(
+    sessionId: string,
+    providerId: string,
+    modelId: string,
+    afterEntryId: number
+  ): DeepChatTapeEntryRow | undefined
   getSubagentLineageEvents(sessionId: string): DeepChatTapeEntryRow[]
   getFirstEntriesBySessions(sessionIds: string[]): DeepChatTapeEntryRow[]
   getBySessionUpToEntryIdExcludingContext(

@@ -26,6 +26,7 @@ import { isDeepStrictEqual } from 'node:util'
 import type {
   DeepChatProviderAttemptIdentity,
   DeepChatProviderAttemptOrigin,
+  DeepChatProviderContextPressureObservation,
   DeepChatProviderFailureClassification,
   DeepChatProviderRequestOrigin,
   DeepChatProviderRetryDecision
@@ -333,6 +334,7 @@ export interface ProviderAttemptOutcomeInput {
   errorCode: string | null
   retryDelayMs: number | null
   usage: ProviderAttemptUsage | null
+  contextPressure: DeepChatProviderContextPressureObservation | null
 }
 
 export interface ProviderAttemptOutcomePort {
@@ -369,6 +371,47 @@ function providerAttemptUsageFromEvent(event: UsageStreamEvent): ProviderAttempt
         }
       : {})
   }
+}
+
+function detectProviderContextPressure(input: {
+  bypassContextBudget: boolean
+  contextWindowTokens: number
+  status: ProviderAttemptOutcomeInput['status']
+  stopReason: ProviderRoundStopReason | null
+  usage: ProviderAttemptUsage | null
+}): DeepChatProviderContextPressureObservation | null {
+  if (
+    input.bypassContextBudget ||
+    input.status !== 'completed' ||
+    !input.usage ||
+    !Number.isSafeInteger(input.contextWindowTokens) ||
+    input.contextWindowTokens <= 0
+  ) {
+    return null
+  }
+
+  if (input.stopReason === 'complete' && input.usage.inputTokens > input.contextWindowTokens) {
+    return {
+      kind: 'successful_prompt_overflow',
+      contextWindowTokens: input.contextWindowTokens,
+      thresholdTokens: input.contextWindowTokens
+    }
+  }
+
+  const thresholdTokens = Math.max(1, Math.floor(input.contextWindowTokens * 0.99))
+  if (
+    input.stopReason === 'max_tokens' &&
+    input.usage.outputTokens === 0 &&
+    input.usage.inputTokens >= thresholdTokens
+  ) {
+    return {
+      kind: 'zero_output_length_at_limit',
+      contextWindowTokens: input.contextWindowTokens,
+      thresholdTokens
+    }
+  }
+
+  return null
 }
 
 function aggregateProviderAttemptUsage(
@@ -806,6 +849,7 @@ export class DeepChatContextCoordinator {
     }): Promise<{
       providerMessages: ChatMessage[]
       providerMaxTokens: number
+      contextWindowTokens: number
       requestSeq: number
       executionContract: DeepChatExecutionContract | null
       skillAuthority: ProviderAttemptSkillAuthority | null
@@ -1165,6 +1209,7 @@ export class DeepChatContextCoordinator {
       return {
         providerMessages,
         providerMaxTokens,
+        contextWindowTokens: manifestContextLength,
         requestSeq,
         executionContract,
         skillAuthority,
@@ -1277,6 +1322,7 @@ export class DeepChatContextCoordinator {
         const {
           providerMessages,
           providerMaxTokens,
+          contextWindowTokens,
           requestSeq,
           executionContract,
           skillAuthority,
@@ -1452,7 +1498,14 @@ export class DeepChatContextCoordinator {
               httpStatus: failureAssessment?.metadata?.statusCode ?? null,
               errorCode: failureAssessment?.metadata?.code ?? null,
               retryDelayMs: retryPlan?.delayMs ?? null,
-              usage: observation.usage
+              usage: observation.usage,
+              contextPressure: detectProviderContextPressure({
+                bypassContextBudget: input.bypassContextBudget,
+                contextWindowTokens,
+                status,
+                stopReason: assessment.stopReason,
+                usage: observation.usage
+              })
             })
             outcomeAppended = true
             if (startedRetryNumber !== null) {
@@ -1608,7 +1661,14 @@ export class DeepChatContextCoordinator {
                 httpStatus: assessment.failureAssessment?.metadata?.statusCode ?? null,
                 errorCode: assessment.failureAssessment?.metadata?.code ?? null,
                 retryDelayMs: null,
-                usage: observation.usage
+                usage: observation.usage,
+                contextPressure: detectProviderContextPressure({
+                  bypassContextBudget: input.bypassContextBudget,
+                  contextWindowTokens,
+                  status: assessment.status,
+                  stopReason: assessment.stopReason,
+                  usage: observation.usage
+                })
               })
               if (startedRetryNumber !== null) {
                 emitProviderRetryLifecycleEvent(input.retryObserver, {

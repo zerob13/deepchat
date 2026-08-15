@@ -372,6 +372,65 @@ describe('CompactionService', () => {
     expect(manualIntent?.targetCursorOrderSeq).toBe(5)
   })
 
+  it('forces the next automatic boundary for durable provider pressure', async () => {
+    const { service, messageStore, sessionConfig } = createService()
+    sessionConfig.autoCompactionTriggerThreshold = 100
+    sessionConfig.autoCompactionRetainRecentPairs = 1
+    messageStore.getMessages.mockReturnValue(makeCompleteTurns(3, 200))
+
+    const normalIntent = await service.prepareForNextUserTurn({
+      sessionId: 's1',
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      systemPrompt: '',
+      contextLength: 2_000,
+      reserveTokens: 100,
+      supportsVision: false,
+      preserveInterleavedReasoning: false,
+      newUserContent: { text: 'latest turn', files: [] }
+    })
+    const pressureIntent = await service.prepareForNextUserTurn({
+      sessionId: 's1',
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      systemPrompt: '',
+      contextLength: 2_000,
+      reserveTokens: 100,
+      supportsVision: false,
+      preserveInterleavedReasoning: false,
+      newUserContent: { text: 'latest turn', files: [] },
+      forceContextPressure: true
+    })
+
+    expect(normalIntent).toBeNull()
+    expect(pressureIntent).toMatchObject({
+      anchorName: 'auto_handoff/context_overflow',
+      targetCursorOrderSeq: 5
+    })
+  })
+
+  it('does not let durable provider pressure bypass disabled automatic compaction', async () => {
+    const { service, messageStore } = createService({
+      sessionConfig: { autoCompactionEnabled: false, autoCompactionRetainRecentPairs: 1 }
+    })
+    messageStore.getMessages.mockReturnValue(makeCompleteTurns(3, 100))
+
+    const intent = await service.prepareForNextUserTurn({
+      sessionId: 's1',
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      systemPrompt: '',
+      contextLength: 500,
+      reserveTokens: 100,
+      supportsVision: false,
+      preserveInterleavedReasoning: false,
+      newUserContent: { text: 'latest turn', files: [] },
+      forceContextPressure: true
+    })
+
+    expect(intent).toBeNull()
+  })
+
   it('compacts all available turns for manual compaction without retaining a raw tail', async () => {
     const { service, messageStore } = createService({
       sessionConfig: {

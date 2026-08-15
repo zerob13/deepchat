@@ -21,7 +21,10 @@ import type {
 import type { DeepChatNestedExecutionAudit } from '@shared/types/execution-journal-audit'
 import type { DeepChatTapeEntryRow, TapeAnchorAppendInput } from '../domain/entry'
 import type { TapeMessageReplacementOptions, TapeToolFactInput } from '../domain/facts'
-import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
+import type {
+  TapeProviderAttemptInput,
+  TapeProviderContextPressureRecord
+} from '../domain/providerAttempt'
 import type {
   TapeSkillMaterializationInput,
   TapeSkillMaterializationRef,
@@ -232,6 +235,14 @@ export class SessionTape
 
   getMaxProviderAttemptRequestSeq(sessionId: string, messageId: string): number {
     return this.providerAttempts.getMaxProviderAttemptRequestSeq(sessionId, messageId)
+  }
+
+  getPendingProviderContextPressure(
+    sessionId: string,
+    providerId: string,
+    modelId: string
+  ): TapeProviderContextPressureRecord | null {
+    return this.providerAttempts.getPendingProviderContextPressure(sessionId, providerId, modelId)
   }
 
   commitRunStarted(input: CommitExecutionRunStartedInput): ExecutionJournalCommitReceipt {

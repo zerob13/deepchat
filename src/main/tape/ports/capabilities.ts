@@ -12,7 +12,10 @@ import type {
   TapeMessageReplacementOptions,
   TapeToolFactInput
 } from '../domain/facts'
-import type { TapeProviderAttemptInput } from '../domain/providerAttempt'
+import type {
+  TapeProviderAttemptInput,
+  TapeProviderContextPressureRecord
+} from '../domain/providerAttempt'
 import type {
   TapeSkillMaterializationInput,
   TapeSkillMaterializationRef,
@@ -220,6 +223,11 @@ export interface TapeProviderAttemptWriter {
 
 export interface TapeProviderAttemptReader {
   getMaxProviderAttemptRequestSeq(sessionId: string, messageId: string): number
+  getPendingProviderContextPressure(
+    sessionId: string,
+    providerId: string,
+    modelId: string
+  ): TapeProviderContextPressureRecord | null
 }
 
 export interface ExecutionJournalWriter {

@@ -381,6 +381,7 @@ export class CompactionService {
     preserveInterleavedReasoning: boolean
     preserveEmptyInterleavedReasoning?: boolean
     newUserContent: SendMessageInput
+    forceContextPressure?: boolean
     historyRecords?: ChatMessageRecord[]
     signal?: AbortSignal
   }): Promise<CompactionIntent | null> {
@@ -412,7 +413,10 @@ export class CompactionService {
           params.supportsAudioInput === true
         )
       ],
-      anchorName: 'compaction/auto'
+      force: params.forceContextPressure === true,
+      anchorName: params.forceContextPressure
+        ? 'auto_handoff/context_overflow'
+        : 'compaction/auto'
     })
   }
 
