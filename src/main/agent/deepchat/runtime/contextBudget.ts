@@ -203,6 +203,9 @@ export function fitRequestMessagesToContextWindow(params: {
   contextContributions?: ContextRuntimeContributions
   pinnedFirstUserContentHash?: string
 }): ChatMessage[] {
+  if (params.pinnedFirstUserContentHash && !params.contextContributions) {
+    throw new TypeError('Pinned first-user fitting requires cache-aware context contributions.')
+  }
   if (!Number.isFinite(params.contextLength) || params.contextLength <= 0) {
     return params.messages
   }
