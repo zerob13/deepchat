@@ -233,6 +233,7 @@ function createMockSqlitePresenter() {
     getLatestAnchor: vi.fn().mockReturnValue(undefined),
     getLatestSummaryAnchor: vi.fn().mockReturnValue(undefined),
     getLatestReconstructionAnchor: vi.fn().mockReturnValue(undefined),
+    getReconstructionAnchorByCompactionAttemptId: vi.fn().mockReturnValue(undefined),
     getAnchors: vi.fn().mockReturnValue([]),
     getByProvenanceKey: vi.fn((sessionId: string, provenanceKey: string) =>
       tapeEntries.find(
@@ -574,6 +575,19 @@ function createMockSqlitePresenter() {
       }),
       getByStatus: vi.fn((status: string) =>
         messagesList.filter((m) => m.status === status).sort((a, b) => b.updated_at - a.updated_at)
+      ),
+      getCompactionRecoveryCandidates: vi.fn(() =>
+        messagesList.filter((message) => {
+          if (message.role !== 'assistant' || message.status !== 'sent') return false
+          try {
+            const metadata = JSON.parse(message.metadata) as Record<string, unknown>
+            return (
+              metadata.messageType === 'compaction' && metadata.compactionStatus === 'compacting'
+            )
+          } catch {
+            return false
+          }
+        })
       ),
       getIdsBySession: vi.fn((sessionId: string) => {
         return messagesList

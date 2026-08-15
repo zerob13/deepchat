@@ -564,6 +564,13 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     )
   }
 
+  const compactionRecovery = messageStore.reconcileCompactionMessages()
+  if (compactionRecovery.compacted > 0 || compactionRecovery.retracted > 0) {
+    logger.info(
+      `DeepChatAgent: reconciled ${compactionRecovery.compacted} committed and ${compactionRecovery.retracted} stale compaction markers`
+    )
+  }
+
   const recovered = messageStore.recoverPendingMessages({ forceRecoverMessagesBySession })
   if (recovered > 0) {
     logger.info(`DeepChatAgent: recovered ${recovered} pending messages to error status`)

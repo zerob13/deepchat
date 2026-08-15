@@ -82,6 +82,7 @@ function createProviderSettings(): ProviderModelResolutionPort {
 
 function createIntent(previousSummaryUpdatedAt: number | null = null): CompactionIntent {
   return {
+    compactionAttemptId: 'compaction-attempt-1',
     sessionId: SESSION_ID,
     previousState: {
       summaryText: previousSummaryUpdatedAt === null ? null : 'Previous summary',
@@ -217,6 +218,7 @@ function createHarness(options?: {
       }
       return {
         outcome: 'summarized' as const,
+        anchorCommitted: true,
         summaryState: { ...summaryState }
       }
     }
@@ -429,7 +431,8 @@ describe('CompactionRuntimeCoordinator', () => {
     expect(messageStore.updateCompactionMessage).toHaveBeenCalledWith(
       'compaction-message',
       'compacted',
-      1
+      1,
+      { compactionAttemptId: 'compaction-attempt-1' }
     )
     expect(initialInstance?.getCompactionState()).toEqual({
       status: 'compacted',
@@ -440,6 +443,27 @@ describe('CompactionRuntimeCoordinator', () => {
       expect.objectContaining({ status: 'compacting', cursorOrderSeq: 5 }),
       expect.objectContaining({ status: 'compacted', cursorOrderSeq: 5 })
     ])
+  })
+
+  it('removes the local marker when another compaction attempt wins the anchor CAS', async () => {
+    const { applyCompaction, coordinator, messageStore } = createHarness()
+    const intent = createIntent()
+    applyCompaction.mockResolvedValueOnce({
+      outcome: 'summarized',
+      anchorCommitted: false,
+      summaryState: {
+        summaryText: 'Winner summary',
+        summaryCursorOrderSeq: 7,
+        summaryUpdatedAt: 2
+      }
+    })
+
+    await expect(coordinator.apply(SESSION_ID, intent)).resolves.toMatchObject({
+      summaryCursorOrderSeq: 7
+    })
+
+    expect(messageStore.updateCompactionMessage).not.toHaveBeenCalled()
+    expect(messageStore.deleteMessage).toHaveBeenCalledWith('compaction-message')
   })
 
   it('does not settle idle after the operation controller loses ownership', async () => {

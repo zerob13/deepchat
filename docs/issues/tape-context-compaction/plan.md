@@ -165,7 +165,8 @@ added after that summary.
   marker without an attempt ID is always retracted because its outcome cannot be proven. Malformed
   unrelated metadata is not guessed into the compaction state machine.
 - Reconciliation is idempotent: finalized rows no longer match the recovery query, removed rows are
-  absent, and Tape writes retain their existing provenance idempotency. Per-session runtime
+  absent, indicator writes retain their existing provenance identity, and a retraction cannot
+  repeat after its transcript row is removed in the same transaction. Per-session runtime
   serialization permits at most one unsettled attempt; if corrupt duplicate rows exist, apply the
   same anchor comparison independently and never mutate or delete an anchor.
 - Test both crash boundaries (before and after anchor commit), summary and boundary-only anchors,

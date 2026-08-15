@@ -402,6 +402,7 @@ export interface MessageMetadata {
   provider?: string
   messageType?: 'compaction' | 'workflow_result'
   compactionStatus?: 'compacting' | 'compacted'
+  compactionAttemptId?: string
   summaryUpdatedAt?: number | null
   workflowRunId?: string
   workflowResultDeliveryId?: string

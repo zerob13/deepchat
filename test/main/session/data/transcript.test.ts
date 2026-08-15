@@ -30,6 +30,7 @@ function createMockSqlitePresenter() {
       hasBySession: vi.fn().mockReturnValue(false),
       listPageBySession: vi.fn().mockReturnValue([]),
       getByStatus: vi.fn().mockReturnValue([]),
+      getCompactionRecoveryCandidates: vi.fn().mockReturnValue([]),
       getIdsBySession: vi.fn().mockReturnValue([]),
       getIdsFromOrderSeq: vi.fn().mockReturnValue([]),
       get: vi.fn(),
@@ -1025,7 +1026,9 @@ describe('SessionTranscript', () => {
         })
       )
 
-      store.updateCompactionMessage('compaction-message', 'compacted', 2000)
+      store.updateCompactionMessage('compaction-message', 'compacted', 2000, {
+        compactionAttemptId: 'compaction-attempt-1'
+      })
 
       expect(transaction).toHaveBeenCalled()
       expect(appendEvent).toHaveBeenCalledWith(

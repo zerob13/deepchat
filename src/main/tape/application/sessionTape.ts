@@ -457,6 +457,15 @@ export class SessionTape
     return this.providers.getEntryStore().getLatestReconstructionAnchor(sessionId)
   }
 
+  getReconstructionAnchorByCompactionAttemptId(
+    sessionId: string,
+    compactionAttemptId: string
+  ): DeepChatTapeEntryRow | undefined {
+    return this.providers
+      .getEntryStore()
+      .getReconstructionAnchorByCompactionAttemptId(sessionId, compactionAttemptId)
+  }
+
   appendAnchor(input: TapeAnchorAppendInput): DeepChatTapeEntryRow {
     return this.facts.appendAnchor(input)
   }

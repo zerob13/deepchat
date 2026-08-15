@@ -302,6 +302,7 @@ function createMockSqlitePresenter() {
     getBySessionUpToOrderSeq: vi.fn().mockReturnValue([]),
     listPageBySession: vi.fn().mockReturnValue([]),
     getByStatus: vi.fn().mockReturnValue([]),
+    getCompactionRecoveryCandidates: vi.fn().mockReturnValue([]),
     getIdsBySession: vi.fn().mockReturnValue([]),
     getIdsFromOrderSeq: vi.fn().mockReturnValue([]),
     get: vi.fn(),
@@ -677,6 +678,7 @@ function createMockSqlitePresenter() {
             )
             .sort((left, right) => right.entry_id - left.entry_id)[0]
       ),
+      getReconstructionAnchorByCompactionAttemptId: vi.fn(),
       getByProvenanceKey: vi.fn((sessionId: string, provenanceKey: string) =>
         tapeEntries.find(
           (entry) => entry.session_id === sessionId && entry.provenance_key === provenanceKey
@@ -12882,6 +12884,7 @@ describe('DeepChatAgentHarness', () => {
       expect(JSON.parse(insertRows[0].metadata)).toEqual({
         messageType: 'compaction',
         compactionStatus: 'compacting',
+        compactionAttemptId: expect.any(String),
         summaryUpdatedAt: null
       })
 
@@ -12908,6 +12911,7 @@ describe('DeepChatAgentHarness', () => {
       expect(JSON.parse(compactionInsert.metadata)).toEqual({
         messageType: 'compaction',
         compactionStatus: 'compacting',
+        compactionAttemptId: expect.any(String),
         summaryUpdatedAt: null
       })
 
@@ -12967,6 +12971,7 @@ describe('DeepChatAgentHarness', () => {
       expect(JSON.parse(insertRows[0].metadata)).toEqual({
         messageType: 'compaction',
         compactionStatus: 'compacting',
+        compactionAttemptId: expect.any(String),
         summaryUpdatedAt: null
       })
       expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).toHaveBeenCalledWith(

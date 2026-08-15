@@ -313,13 +313,17 @@ export class CompactionRuntimeCoordinator {
             Math.max(1, Math.floor(options.compactionMessageOrderSeq)),
             'compacting',
             intent.previousState.summaryUpdatedAt,
-            { shiftExistingMessages: options.shiftMessagesFromCompactionOrderSeq === true }
+            {
+              compactionAttemptId: intent.compactionAttemptId,
+              shiftExistingMessages: options.shiftMessagesFromCompactionOrderSeq === true
+            }
           )
         : this.deps.messageStore.createCompactionMessage(
             sessionId,
             this.deps.messageStore.getNextOrderSeq(sessionId),
             'compacting',
-            intent.previousState.summaryUpdatedAt
+            intent.previousState.summaryUpdatedAt,
+            { compactionAttemptId: intent.compactionAttemptId }
           ))
 
     if (!options?.startedExternally) {
@@ -350,11 +354,12 @@ export class CompactionRuntimeCoordinator {
     }
 
     this.assertCurrent(sessionId, expectedInstance)
-    if (result.outcome !== 'unchanged') {
+    if (result.anchorCommitted && result.outcome !== 'unchanged') {
       this.deps.messageStore.updateCompactionMessage(
         compactionMessageId,
         'compacted',
-        result.summaryState.summaryUpdatedAt
+        result.summaryState.summaryUpdatedAt,
+        { compactionAttemptId: intent.compactionAttemptId }
       )
     } else {
       this.deps.messageStore.deleteMessage(compactionMessageId)

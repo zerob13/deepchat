@@ -65,6 +65,10 @@ export interface TapeEntryStore {
   getAnchors(sessionId: string, limit?: number): DeepChatTapeEntryRow[]
   getLatestSummaryAnchor(sessionId: string): DeepChatTapeEntryRow | undefined
   getLatestReconstructionAnchor(sessionId: string): DeepChatTapeEntryRow | undefined
+  getReconstructionAnchorByCompactionAttemptId(
+    sessionId: string,
+    compactionAttemptId: string
+  ): DeepChatTapeEntryRow | undefined
   getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
   getMaxEntryId(sessionId: string): number
   getMaxEntryIdExcludingContext(sessionId: string): number

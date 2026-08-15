@@ -341,6 +341,53 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
     db.close()
   })
 
+  it('resolves a committed compaction by attempt identity after a later handoff', () => {
+    const { db, table } = createTable()
+
+    table.ensureBootstrapAnchor('s1')
+    table.appendAnchor({
+      sessionId: 's1',
+      name: 'compaction/auto',
+      state: {
+        compactionAttemptId: 'attempt-1',
+        summary: 'committed summary',
+        cursorOrderSeq: 3
+      },
+      createdAt: 100
+    })
+    table.appendAnchor({
+      sessionId: 's1',
+      name: 'handoff/phase_done',
+      state: { summary: 'later handoff', cursorOrderSeq: 8 },
+      createdAt: 101
+    })
+
+    expect(table.getReconstructionAnchorByCompactionAttemptId('s1', 'attempt-1')).toMatchObject({
+      name: 'compaction/auto',
+      entry_id: 2
+    })
+    expect(table.getReconstructionAnchorByCompactionAttemptId('s1', 'missing')).toBeUndefined()
+    expect(table.getReconstructionAnchorByCompactionAttemptId('s2', 'attempt-1')).toBeUndefined()
+
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'anchor'
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.state.compactionAttemptId') END) = ?
+         ORDER BY entry_id DESC
+         LIMIT 1`
+      )
+      .all('s1', 'attempt-1') as Array<{ detail: string }>
+    expect(
+      plan.some((row) => /idx_deepchat_tape_entries_compaction_attempt/i.test(row.detail))
+    ).toBe(true)
+
+    db.close()
+  })
+
   it('lists recent anchors in chronological order after applying the limit', () => {
     const { db, table } = createTable()
 

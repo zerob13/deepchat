@@ -76,6 +76,14 @@ const TAPE_ENTRY_INDEX_SQL = `
     ON deepchat_tape_entries(session_id, name, entry_id);
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_source
     ON deepchat_tape_entries(session_id, source_type, source_id, source_seq);
+  CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_compaction_attempt
+    ON deepchat_tape_entries(
+      session_id,
+      (CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.state.compactionAttemptId') END),
+      entry_id
+    )
+    WHERE kind = 'anchor';
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_event_name
     ON deepchat_tape_entries(name, session_id, entry_id)
     WHERE kind = 'event';
@@ -1259,6 +1267,32 @@ export class DeepChatTapeEntriesTable
          LIMIT 1`
       )
       .get(sessionId, ...RECONSTRUCTION_ANCHOR_NAMES) as DeepChatTapeEntryRow | undefined
+  }
+
+  getReconstructionAnchorByCompactionAttemptId(
+    sessionId: string,
+    compactionAttemptId: string
+  ): DeepChatTapeEntryRow | undefined {
+    const placeholders = RECONSTRUCTION_ANCHOR_NAMES.map(() => '?').join(', ')
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'anchor'
+           AND (CASE WHEN json_valid(payload_json)
+             THEN json_extract(payload_json, '$.state.compactionAttemptId') END) = ?
+           AND (
+             name IN (${placeholders})
+             OR name LIKE 'handoff/%'
+             OR name LIKE 'auto_handoff/%'
+           )
+         ORDER BY entry_id DESC
+         LIMIT 1`
+      )
+      .get(sessionId, compactionAttemptId, ...RECONSTRUCTION_ANCHOR_NAMES) as
+      | DeepChatTapeEntryRow
+      | undefined
   }
 
   getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined {

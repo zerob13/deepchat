@@ -778,7 +778,8 @@ export class TurnCoordinator {
               sessionId,
               this.ports.messageStore.getNextOrderSeq(sessionId),
               'compacting',
-              intent.previousState.summaryUpdatedAt
+              intent.previousState.summaryUpdatedAt,
+              { compactionAttemptId: intent.compactionAttemptId }
             ),
           appendUserFact: () => {
             const preStreamUserMessageId = instance.getPreStreamTranscriptAnchorId()

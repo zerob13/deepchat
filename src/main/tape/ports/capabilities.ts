@@ -296,6 +296,10 @@ export interface TapeNonContextEntryReader {
 
 export interface TapeAnchorReader {
   getLatestReconstructionAnchor(sessionId: string): DeepChatTapeEntryRow | undefined
+  getReconstructionAnchorByCompactionAttemptId(
+    sessionId: string,
+    compactionAttemptId: string
+  ): DeepChatTapeEntryRow | undefined
 }
 
 export interface TapeAnchorWriter {

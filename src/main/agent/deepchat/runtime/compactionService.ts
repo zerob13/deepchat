@@ -1,4 +1,5 @@
 import type { ProviderModelResolutionPort } from '@/provider/settings'
+import { randomUUID } from 'node:crypto'
 import { approximateTokenSize } from 'tokenx'
 import type {
   ChatMessageRecord,
@@ -69,6 +70,7 @@ export type ModelSpec = {
 }
 
 export type CompactionIntent = {
+  compactionAttemptId: string
   sessionId: string
   previousState: SessionSummaryState
   targetCursorOrderSeq: number
@@ -91,6 +93,7 @@ export type CompactionIntent = {
 
 export type CompactionExecutionResult = {
   outcome: 'summarized' | 'boundary_only' | 'unchanged'
+  anchorCommitted: boolean
   summaryState: SessionSummaryState
 }
 
@@ -603,6 +606,7 @@ export class CompactionService {
     )
     return {
       outcome: this.resolveStoredOutcome(intent.previousState, compareAndSet.currentState),
+      anchorCommitted: compareAndSet.applied,
       summaryState: compareAndSet.currentState
     }
   }
@@ -651,6 +655,7 @@ export class CompactionService {
     )
     return {
       outcome: this.resolveStoredOutcome(intent.previousState, compareAndSet.currentState),
+      anchorCommitted: compareAndSet.applied,
       summaryState: compareAndSet.currentState
     }
   }
@@ -691,6 +696,7 @@ export class CompactionService {
       name: intent.anchorName ?? 'compaction/auto',
       state: {
         ...reconstructionState,
+        compactionAttemptId: intent.compactionAttemptId,
         sourceMessageIds: intent.sourceMessageIds ?? [],
         summaryableTurnCount: intent.summaryableTurnCount ?? intent.summaryBlocks.length,
         retainedTurnCount: floorNonNegative(intent.retainedTurnCount),
@@ -846,6 +852,7 @@ export class CompactionService {
       (scopedRecords[scopedRecords.length - 1]?.orderSeq ?? summaryState.summaryCursorOrderSeq) + 1
 
     return {
+      compactionAttemptId: randomUUID(),
       sessionId: params.sessionId,
       previousState: summaryState,
       targetCursorOrderSeq: Math.max(1, nextCursor),

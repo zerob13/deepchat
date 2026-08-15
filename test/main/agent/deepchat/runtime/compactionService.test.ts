@@ -398,6 +398,9 @@ describe('CompactionService', () => {
     })
 
     expect(intent).not.toBeNull()
+    expect(intent?.compactionAttemptId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    )
     expect(intent?.summaryBlocks).toHaveLength(2)
     expect(intent?.targetCursorOrderSeq).toBe(5)
     expect(intent).toMatchObject({
@@ -857,6 +860,7 @@ describe('CompactionService', () => {
     })
 
     const result = await service.applyCompaction({
+      compactionAttemptId: 'compaction-attempt-1',
       sessionId: 's1',
       previousState: {
         summaryText: null,
@@ -880,6 +884,7 @@ describe('CompactionService', () => {
 
     expect(result).toEqual({
       outcome: 'summarized',
+      anchorCommitted: false,
       summaryState: newerState
     })
     expect(sessionStore.compareAndSetSummaryState).toHaveBeenCalledWith(
@@ -895,6 +900,7 @@ describe('CompactionService', () => {
       expect.objectContaining({
         name: 'compaction/auto',
         state: expect.objectContaining({
+          compactionAttemptId: 'compaction-attempt-1',
           cursorOrderSeq: 3,
           range: null,
           summary: 'generated summary',
@@ -928,6 +934,7 @@ describe('CompactionService', () => {
     )
 
     const result = await service.applyCompaction({
+      compactionAttemptId: 'compaction-attempt-2',
       sessionId: 's1',
       previousState,
       targetCursorOrderSeq: 7,
@@ -948,7 +955,11 @@ describe('CompactionService', () => {
       retainedTokenTarget: 256
     })
 
-    expect(result).toEqual({ outcome: 'boundary_only', summaryState: boundaryState })
+    expect(result).toEqual({
+      outcome: 'boundary_only',
+      anchorCommitted: true,
+      summaryState: boundaryState
+    })
     expect(sessionStore.compareAndSetSummaryState).toHaveBeenCalledWith(
       's1',
       previousState,
@@ -956,6 +967,7 @@ describe('CompactionService', () => {
       expect.objectContaining({
         name: 'auto_handoff/context_overflow',
         state: expect.objectContaining({
+          compactionAttemptId: 'compaction-attempt-2',
           cursorOrderSeq: 7,
           reason: 'summary_unavailable',
           priorSummary: 'last valid summary',
@@ -1010,6 +1022,7 @@ describe('CompactionService', () => {
     providerRuntime.generateText.mockRejectedValueOnce(new Error('summary unavailable'))
 
     await service.applyCompaction({
+      compactionAttemptId: 'compaction-attempt-3',
       sessionId: 's1',
       previousState,
       targetCursorOrderSeq: 9,
@@ -1183,6 +1196,7 @@ describe('CompactionService', () => {
         name: 'compaction/auto',
         createdAt: 0,
         state: {
+          compactionAttemptId: 'compaction-attempt-4',
           summary: 'generated summary',
           cursorOrderSeq: 3,
           range: { fromOrderSeq: 1, toOrderSeq: 2 },
@@ -1199,6 +1213,7 @@ describe('CompactionService', () => {
       )
 
       const result = await service.applyCompaction({
+        compactionAttemptId: 'compaction-attempt-4',
         sessionId: 's1',
         previousState,
         targetCursorOrderSeq: 3,
@@ -1219,7 +1234,11 @@ describe('CompactionService', () => {
         retainedTokenTarget: 0
       })
 
-      expect(result).toEqual({ outcome: 'boundary_only', summaryState: boundaryState })
+      expect(result).toEqual({
+        outcome: 'boundary_only',
+        anchorCommitted: true,
+        summaryState: boundaryState
+      })
       const anchorState = sessionStore.compareAndSetSummaryState.mock.calls[0]?.[3]?.state
       expect(anchorState).toMatchObject({
         cursorOrderSeq: 3,
@@ -1243,6 +1262,7 @@ describe('CompactionService', () => {
 
     await expect(
       service.applyCompaction({
+        compactionAttemptId: 'compaction-attempt-5',
         sessionId: 's1',
         previousState,
         targetCursorOrderSeq: 5,
@@ -1259,7 +1279,11 @@ describe('CompactionService', () => {
         retainedTokenEstimate: 0,
         retainedTokenTarget: 0
       })
-    ).resolves.toEqual({ outcome: 'unchanged', summaryState: previousState })
+    ).resolves.toEqual({
+      outcome: 'unchanged',
+      anchorCommitted: false,
+      summaryState: previousState
+    })
   })
 
   it('passes abort signals into rate-limited compaction waits and rethrows cancellation', async () => {
@@ -1449,6 +1473,7 @@ describe('CompactionService', () => {
 
     await expect(
       service.applyCompaction({
+        compactionAttemptId: 'compaction-attempt-6',
         sessionId: 's1',
         previousState: {
           summaryText: null,
