@@ -698,7 +698,8 @@ describeIfSqlite('Session transcript and Tape order consistency', () => {
       const tapeFacts = {
         appendMessageRecord: vi.fn().mockReturnValue(1),
         appendMessageReplacement: vi.fn().mockReturnValue(1),
-        appendMessageRetraction: vi.fn().mockReturnValue(1)
+        appendMessageRetraction: vi.fn().mockReturnValue(1),
+        appendCompactionModelCall: vi.fn()
       }
       const transcript = new SessionTranscriptCtor(database, tapeFacts)
       database.getDatabase().transaction(() => {

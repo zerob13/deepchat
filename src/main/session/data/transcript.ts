@@ -211,11 +211,11 @@ function isLowSurrogate(code: number): boolean {
 export class SessionTranscript {
   private database: SessionDatabase
   private readonly tapeFacts: TapeMessageFactWriter
-  private readonly compactionUsage?: TapeCompactionModelCallWriter
+  private readonly compactionUsage: TapeCompactionModelCallWriter
 
   constructor(
     database: SessionDatabase,
-    tapeFacts: TapeMessageFactWriter & Partial<TapeCompactionModelCallWriter>,
+    tapeFacts: TapeMessageFactWriter & TapeCompactionModelCallWriter,
     private readonly executionAudit?: Pick<
       ExecutionJournalAuditReader,
       'listMessageIdsWithNestedExecutionAudit'
@@ -227,10 +227,7 @@ export class SessionTranscript {
   ) {
     this.database = database
     this.tapeFacts = tapeFacts
-    this.compactionUsage =
-      typeof tapeFacts.appendCompactionModelCall === 'function'
-        ? (tapeFacts as TapeCompactionModelCallWriter)
-        : undefined
+    this.compactionUsage = tapeFacts
   }
 
   private runInDatabaseTransaction<T>(operation: () => T): T {
@@ -502,12 +499,8 @@ export class SessionTranscript {
   }
 
   recordCompactionModelCall(input: TapeCompactionModelCallInput): void {
-    const compactionUsage = this.compactionUsage
-    if (!compactionUsage) {
-      throw new Error('Compaction usage persistence is not configured.')
-    }
     this.runInDatabaseTransaction(() => {
-      const receipt = compactionUsage.appendCompactionModelCall(input)
+      const receipt = this.compactionUsage.appendCompactionModelCall(input)
       this.database.deepchatUsageStatsTable.upsert(
         buildCompactionUsageStatsRecord({
           sessionId: receipt.row.session_id,

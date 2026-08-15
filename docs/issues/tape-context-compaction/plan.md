@@ -423,6 +423,8 @@ provider replay.
   current View-derived estimates distinctly from provider measurements.
 - [x] Remove the unreachable legacy compaction settings section, its orphaned translations and
   tests, and the unused composer-draft `useContextLength` helper.
+- [x] Require the transcript's compaction usage writer at composition time instead of silently
+  discovering an optional capability that can drop audit and billing facts.
 - [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
   performance, security, naming, regression coverage, and maintenance cost before committing it.
 
