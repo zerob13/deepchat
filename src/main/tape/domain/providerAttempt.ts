@@ -11,6 +11,7 @@ import type { DeepChatTapeEntryRow } from './entry'
 import { parseTapeJsonObject } from './effectiveSemantics'
 
 export const TAPE_PROVIDER_ATTEMPT_EVENT_NAME = 'provider/attempt_completed'
+export type TapeProviderAttemptEventName = typeof TAPE_PROVIDER_ATTEMPT_EVENT_NAME
 export const TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION = 3
 const TAPE_PROVIDER_ATTEMPT_PREVIOUS_SCHEMA_VERSION = 2
 const TAPE_PROVIDER_ATTEMPT_LEGACY_SCHEMA_VERSION = 1

@@ -33,9 +33,19 @@ import {
   type ToolSurfaceTapeEventName
 } from '@/tape/domain/toolSurfaceFacts'
 import { SKILL_MATERIALIZATION_NAME } from '@/tape/domain/skillMaterialization'
+import {
+  TAPE_PROVIDER_ATTEMPT_EVENT_NAME,
+  type TapeProviderAttemptEventName
+} from '@/tape/domain/providerAttempt'
+import {
+  TAPE_COMPACTION_MODEL_CALL_EVENT_NAME,
+  type TapeCompactionModelCallEventName
+} from '@/tape/domain/compactionUsage'
 import type {
+  CompactionUsagePersistenceStore,
   ContractPersistenceStore,
   ExecutionJournalPersistenceStore,
+  ProviderAttemptPersistenceStore,
   TapeBootstrapStore,
   TapeEntryStore,
   TapeMutationProjection,
@@ -655,6 +665,8 @@ export class DeepChatTapeEntriesTable
     TapeEntryStore,
     TapeTransactionRunner,
     TapeBootstrapStore,
+    ProviderAttemptPersistenceStore,
+    CompactionUsagePersistenceStore,
     ToolSurfacePersistenceStore,
     SkillMaterializationPersistenceStore
 {
@@ -716,7 +728,14 @@ export class DeepChatTapeEntriesTable
 
   protected appendInternal(
     input: DeepChatTapeAppendInput,
-    authorizedNamespace: 'execution' | 'contract' | 'tool-surface' | 'skill-materialized' | null
+    authorizedNamespace:
+      | 'execution'
+      | 'contract'
+      | 'tool-surface'
+      | 'skill-materialized'
+      | 'provider-attempt'
+      | 'compaction-usage'
+      | null
   ): DeepChatTapeEntryRow {
     if (authorizedNamespace !== 'execution' && isExecutionJournalReservedName(input.name)) {
       throw new Error(
@@ -734,6 +753,22 @@ export class DeepChatTapeEntriesTable
     }
     if (authorizedNamespace !== 'skill-materialized' && input.kind === 'context') {
       throw new Error('The context entry kind is reserved for the strict materialization writer.')
+    }
+    if (
+      authorizedNamespace !== 'provider-attempt' &&
+      input.name === TAPE_PROVIDER_ATTEMPT_EVENT_NAME
+    ) {
+      throw new Error(
+        'provider/attempt_completed is reserved for the strict provider-attempt writer.'
+      )
+    }
+    if (
+      authorizedNamespace !== 'compaction-usage' &&
+      input.name === TAPE_COMPACTION_MODEL_CALL_EVENT_NAME
+    ) {
+      throw new Error(
+        'compaction/model_call_completed is reserved for the strict compaction-usage writer.'
+      )
     }
     const append = this.db.transaction(() => {
       const provenanceKey = buildProvenanceKey(input)
@@ -875,6 +910,56 @@ export class DeepChatTapeEntriesTable
       createdAt: input.createdAt,
       idempotent: input.idempotent
     })
+  }
+
+  appendProviderAttemptEvent(
+    input: TapeEventAppendInput & { name: TapeProviderAttemptEventName }
+  ): DeepChatTapeEntryRow {
+    if (input.name !== TAPE_PROVIDER_ATTEMPT_EVENT_NAME) {
+      throw new Error(`Unsupported provider-attempt event name: ${input.name}.`)
+    }
+    return this.appendInternal(
+      {
+        sessionId: input.sessionId,
+        kind: 'event',
+        name: input.name,
+        source: input.source,
+        provenanceKey: input.provenanceKey,
+        payload: {
+          name: input.name,
+          data: input.data
+        },
+        meta: input.meta,
+        createdAt: input.createdAt,
+        idempotent: input.idempotent
+      },
+      'provider-attempt'
+    )
+  }
+
+  appendCompactionModelCallEvent(
+    input: TapeEventAppendInput & { name: TapeCompactionModelCallEventName }
+  ): DeepChatTapeEntryRow {
+    if (input.name !== TAPE_COMPACTION_MODEL_CALL_EVENT_NAME) {
+      throw new Error(`Unsupported compaction-usage event name: ${input.name}.`)
+    }
+    return this.appendInternal(
+      {
+        sessionId: input.sessionId,
+        kind: 'event',
+        name: input.name,
+        source: input.source,
+        provenanceKey: input.provenanceKey,
+        payload: {
+          name: input.name,
+          data: input.data
+        },
+        meta: input.meta,
+        createdAt: input.createdAt,
+        idempotent: input.idempotent
+      },
+      'compaction-usage'
+    )
   }
 
   appendToolSurfaceEvent(

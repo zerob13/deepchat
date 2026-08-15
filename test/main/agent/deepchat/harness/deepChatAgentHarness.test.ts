@@ -476,6 +476,20 @@ function createMockSqlitePresenter() {
           payload: { name: input.name, data: input.data }
         })
       }),
+      appendProviderAttemptEvent: vi.fn((input: any) => {
+        return deepchatTapeEntriesTable.append({
+          ...input,
+          kind: 'event',
+          payload: { name: input.name, data: input.data }
+        })
+      }),
+      appendCompactionModelCallEvent: vi.fn((input: any) => {
+        return deepchatTapeEntriesTable.append({
+          ...input,
+          kind: 'event',
+          payload: { name: input.name, data: input.data }
+        })
+      }),
       appendExecutionJournalEvent: vi.fn((input: any) => {
         return deepchatTapeEntriesTable.append({
           ...input,
@@ -6841,7 +6855,7 @@ describe('DeepChatAgentHarness', () => {
 
     it('recovers requestSeq from an outcome when prior manifest and trace writes were lost', async () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
-      sqlitePresenter.deepchatTapeEntriesTable.appendEvent({
+      sqlitePresenter.deepchatTapeEntriesTable.appendProviderAttemptEvent({
         sessionId: 's1',
         name: 'provider/attempt_completed',
         source: { type: 'runtime_event', id: 'mock-msg-id', seq: 3 },

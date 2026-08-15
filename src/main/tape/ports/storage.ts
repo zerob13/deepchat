@@ -14,6 +14,8 @@ import type {
 import type { ContractTapeEventName } from '../domain/contractFacts'
 import type { ToolSurfaceTapeEventName } from '../domain/toolSurfaceFacts'
 import type { TapeSkillMaterializationPayload } from '../domain/skillMaterialization'
+import type { TapeProviderAttemptEventName } from '../domain/providerAttempt'
+import type { TapeCompactionModelCallEventName } from '../domain/compactionUsage'
 
 export interface TapeMutationProjection {
   applyAppendedEntry(row: DeepChatTapeEntryRow, previousSessionMaxEntryId: number): boolean
@@ -120,6 +122,27 @@ export interface TapeTransactionRunner {
 /** Transitional bootstrap capability until bootstrap orchestration lives in application services. */
 export interface TapeBootstrapStore {
   ensureBootstrapAnchor(sessionId: string): void
+}
+
+/** Provider attempt observations have a dedicated namespace gate and writer capability. */
+export interface ProviderAttemptPersistenceStore extends TapeBootstrapStore {
+  appendProviderAttemptEvent(
+    input: TapeEventAppendInput & { name: TapeProviderAttemptEventName }
+  ): DeepChatTapeEntryRow
+}
+
+/** Compaction usage observations have a dedicated namespace gate and writer capability. */
+export interface CompactionUsagePersistenceStore extends TapeTransactionRunner, TapeBootstrapStore {
+  appendCompactionModelCallEvent(
+    input: TapeEventAppendInput & { name: TapeCompactionModelCallEventName }
+  ): DeepChatTapeEntryRow
+  getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
+  getMaxEventSourceSeq(
+    sessionId: string,
+    name: TapeCompactionModelCallEventName,
+    sourceType: DeepChatTapeSourceType,
+    sourceId: string
+  ): number
 }
 
 /** Tool Surface provenance has a dedicated namespace gate and shares the host transaction. */

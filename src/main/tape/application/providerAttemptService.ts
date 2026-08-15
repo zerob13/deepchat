@@ -11,7 +11,10 @@ import {
 import type { TapeApplicationProviders } from '../ports/application'
 import type { TapeProviderAttemptReader, TapeProviderAttemptWriter } from '../ports/capabilities'
 
-type TapeProviderAttemptProviders = Pick<TapeApplicationProviders, 'getEntryStore'>
+type TapeProviderAttemptProviders = Pick<
+  TapeApplicationProviders,
+  'getEntryStore' | 'getProviderAttemptStore'
+>
 
 export class TapeProviderAttemptService
   implements TapeProviderAttemptReader, TapeProviderAttemptWriter
@@ -80,9 +83,9 @@ export class TapeProviderAttemptService
   }
 
   appendProviderAttempt(input: TapeProviderAttemptInput): DeepChatTapeEntryRow {
-    const table = this.providers.getEntryStore()
+    const table = this.providers.getProviderAttemptStore()
     table.ensureBootstrapAnchor(input.sessionId)
-    return table.appendEvent({
+    return table.appendProviderAttemptEvent({
       sessionId: input.sessionId,
       name: TAPE_PROVIDER_ATTEMPT_EVENT_NAME,
       source: {

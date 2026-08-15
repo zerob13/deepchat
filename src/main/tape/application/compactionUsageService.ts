@@ -12,7 +12,10 @@ import type {
   TapeCompactionModelCallWriter
 } from '../ports/capabilities'
 
-type TapeCompactionUsageProviders = Pick<TapeApplicationProviders, 'getEntryStore'>
+type TapeCompactionUsageProviders = Pick<
+  TapeApplicationProviders,
+  'getEntryStore' | 'getCompactionUsageStore'
+>
 
 function provenanceKey(input: TapeCompactionModelCallInput): string {
   return `compaction-model-call:${input.compactionAttemptId}:${input.providerCallId}`
@@ -38,7 +41,7 @@ export class TapeCompactionUsageService
   }
 
   appendCompactionModelCall(input: TapeCompactionModelCallInput): TapeCompactionModelCallReceipt {
-    const table = this.providers.getEntryStore()
+    const table = this.providers.getCompactionUsageStore()
     const append = (): TapeCompactionModelCallReceipt => {
       table.ensureBootstrapAnchor(input.sessionId)
       const key = provenanceKey(input)
@@ -59,7 +62,7 @@ export class TapeCompactionUsageService
           input.compactionAttemptId
         ) + 1
       const event = buildTapeCompactionModelCallEvent(input, callSeq)
-      const row = table.appendEvent({
+      const row = table.appendCompactionModelCallEvent({
         sessionId: input.sessionId,
         name: TAPE_COMPACTION_MODEL_CALL_EVENT_NAME,
         source: {

@@ -2,6 +2,7 @@ import type { DeepChatTapeEntryRow } from './entry'
 import { parseTapeJsonObject } from './effectiveSemantics'
 
 export const TAPE_COMPACTION_MODEL_CALL_EVENT_NAME = 'compaction/model_call_completed'
+export type TapeCompactionModelCallEventName = typeof TAPE_COMPACTION_MODEL_CALL_EVENT_NAME
 const TAPE_COMPACTION_MODEL_CALL_LEGACY_SCHEMA_VERSION = 1
 export const TAPE_COMPACTION_MODEL_CALL_SCHEMA_VERSION = 2
 

@@ -77,6 +77,9 @@ function createService() {
       rows.push(row)
       return row
     },
+    appendCompactionModelCallEvent(event: TapeEventAppendInput) {
+      return this.appendEvent(event)
+    },
     listEventsByNamePage(
       name: string,
       cursor: { sessionId: string; entryId: number } | null,
@@ -99,7 +102,10 @@ function createService() {
   }
   return {
     rows,
-    service: new TapeCompactionUsageService({ getEntryStore: () => store as never })
+    service: new TapeCompactionUsageService({
+      getEntryStore: () => store as never,
+      getCompactionUsageStore: () => store as never
+    })
   }
 }
 
@@ -197,6 +203,60 @@ describe('compaction model call Tape usage', () => {
 
     expect(parseTapeCompactionModelCallEvent(mismatched)).toBeNull()
   })
+})
+
+itIfSqlite('reserves internal provider and compaction observations for exact writers', () => {
+  const db = new DatabaseCtor(':memory:')
+  try {
+    const database = new SessionDatabase({ getDatabase: () => db })
+    const table = database.deepchatTapeEntriesTable
+    table.createTable()
+
+    for (const name of ['provider/attempt_completed', 'compaction/model_call_completed']) {
+      expect(() => table.appendEvent({ sessionId: 's1', name, data: { forged: true } })).toThrow(
+        'reserved for the strict'
+      )
+      expect(() =>
+        table.append({
+          sessionId: 's1',
+          kind: 'event',
+          name,
+          payload: { name, data: { forged: true } }
+        })
+      ).toThrow('reserved for the strict')
+    }
+
+    expect(
+      table.appendEvent({
+        sessionId: 's1',
+        name: 'provider/attempt_completed/future',
+        data: { compatible: true }
+      }).name
+    ).toBe('provider/attempt_completed/future')
+    expect(
+      table.appendAnchor({
+        sessionId: 's1',
+        name: 'compaction/auto',
+        state: { compatible: true }
+      }).name
+    ).toBe('compaction/auto')
+    expect(
+      table.appendProviderAttemptEvent({
+        sessionId: 's1',
+        name: 'provider/attempt_completed',
+        data: { dedicated: true }
+      }).name
+    ).toBe('provider/attempt_completed')
+    expect(
+      table.appendCompactionModelCallEvent({
+        sessionId: 's1',
+        name: 'compaction/model_call_completed',
+        data: { dedicated: true }
+      }).name
+    ).toBe('compaction/model_call_completed')
+  } finally {
+    db.close()
+  }
 })
 
 itIfSqlite('persists compaction call facts and reporting rows atomically and idempotently', () => {

@@ -192,6 +192,20 @@ function createTapeTableMock() {
         payload: { name: input.name, data: input.data }
       })
     ),
+    appendProviderAttemptEvent: vi.fn((input: any) =>
+      table.append({
+        ...input,
+        kind: 'event',
+        payload: { name: input.name, data: input.data }
+      })
+    ),
+    appendCompactionModelCallEvent: vi.fn((input: any) =>
+      table.append({
+        ...input,
+        kind: 'event',
+        payload: { name: input.name, data: input.data }
+      })
+    ),
     appendSkillMaterialization: vi.fn((input: any) =>
       table.append({
         sessionId: input.sessionId,
