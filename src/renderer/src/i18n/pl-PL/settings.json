@@ -41,18 +41,6 @@
     "privacyModeNpmRegistry": "Automatyczne wykrywanie rejestru MCP npm",
     "privacyModeManualActions": "Ręczne kontrole i ręczne czynności odświeżania pozostają dostępne.",
     "privacyModeIntegrations": "Skonfigurowane integracje innych firm pozostają dostępne.",
-    "autoCompaction": {
-      "title": "Automatyczne zagęszczanie",
-      "enabled": "Włącz automatyczne zagęszczanie",
-      "description": "Kiedy rozmowa zbliża się do limitu okna kontekstu modelu, DeepChat może automatycznie podsumować starszą historię, aby sesja mogła trwać dalej. Po wyłączeniu DeepChat nie będzie generować podsumowań, ale w razie potrzeby nadal przytnie widok żądania, aby uniknąć surowych błędów context-window od dostawcy.",
-      "thresholdLabel": "Próg wyzwalania",
-      "thresholdMin": "Wczesny ({value}%)",
-      "thresholdMax": "Późno ({value}%)",
-      "thresholdDescription": "Rozpocznij zagęszczanie, gdy użycie prompt osiągnie tę część efektywnego budżetu historii. Niższe wartości zapewniają większy zapas; wyższe wartości zachowują bardziej surowy kontekst.",
-      "retainPairsLabel": "Zachowaj ostatnie pary wiadomości",
-      "retainPairsValue": "Pary {count}",
-      "retainPairsDescription": "Zachowaj najnowsze ukończone pary użytkowników i asystentów poza zagęszczaniem. Bieżące zapytanie nie jest uwzględnione."
-    },
     "searchAssistantModel": "Modelka Asystenta",
     "selectModel": "Wybierz Model",
     "proxyMode": "Tryb proxy",

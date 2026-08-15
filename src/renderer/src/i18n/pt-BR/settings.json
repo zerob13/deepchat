@@ -94,18 +94,6 @@
     "defaultModel": {
       "title": "Modelo padrão",
       "chatModel": "Modelo de chat padrão"
-    },
-    "autoCompaction": {
-      "title": "Compactação automática",
-      "enabled": "Ativar compactação automática",
-      "description": "Quando uma conversa se aproxima do limite da janela de contexto do modelo, o DeepChat pode resumir automaticamente o histórico mais antigo para manter a sessão em andamento. Se desativado, o DeepChat não gerará resumos, mas ainda aparará a visão da solicitação quando necessário para evitar erros context-window brutos do provedor.",
-      "thresholdLabel": "Limiar de disparo",
-      "thresholdMin": "Mais cedo ({value}%)",
-      "thresholdMax": "Mais tarde ({value}%)",
-      "thresholdDescription": "Inicie a compactação quando o uso do prompt atingir esta parcela do orçamento efetivo de histórico. Valores menores criam mais folga; valores maiores preservam mais contexto bruto.",
-      "retainPairsLabel": "Manter pares de mensagens recentes",
-      "retainPairsValue": "{count} par(es)",
-      "retainPairsDescription": "Mantém fora da compactação os pares mais recentes de usuário e assistente já concluídos. A consulta atual não é incluída."
     }
   },
   "notificationsHooks": {

@@ -41,18 +41,6 @@
     "privacyModeNpmRegistry": "Tự động phát hiện đăng ký MCP npm",
     "privacyModeManualActions": "Kiểm tra thủ công và hành động làm mới thủ công vẫn có sẵn.",
     "privacyModeIntegrations": "Tích hợp bên thứ ba được định cấu hình vẫn có sẵn.",
-    "autoCompaction": {
-      "title": "Tự động nén",
-      "enabled": "Bật tự động nén",
-      "description": "Khi một cuộc trò chuyện tiến gần giới hạn cửa sổ ngữ cảnh của mô hình, DeepChat có thể tự động tóm tắt lịch sử cũ hơn để phiên tiếp tục diễn ra. Nếu tắt, DeepChat sẽ không tạo bản tóm tắt, nhưng vẫn cắt bớt chế độ xem yêu cầu khi cần để tránh lỗi context-window thô từ nhà cung cấp.",
-      "thresholdLabel": "Ngưỡng kích hoạt",
-      "thresholdMin": "Sớm ({value}%)",
-      "thresholdMax": "Muộn ({value}%)",
-      "thresholdDescription": "Bắt đầu nén khi mức sử dụng prompt đạt đến mức chia sẻ này trong ngân sách lịch sử hiệu quả. Giá trị thấp hơn tạo ra nhiều khoảng trống hơn; giá trị cao hơn bảo tồn bối cảnh thô hơn.",
-      "retainPairsLabel": "Giữ lại các cặp tin nhắn gần đây",
-      "retainPairsValue": "(Các) cặp {count}",
-      "retainPairsDescription": "Giữ các cặp người dùng và trợ lý đã hoàn thành gần đây nhất bên ngoài quá trình nén. Truy vấn hiện tại không được bao gồm."
-    },
     "searchAssistantModel": "Trợ lý người mẫu",
     "selectModel": "Chọn mẫu",
     "proxyMode": "Chế độ ủy nhiệm",

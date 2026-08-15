@@ -41,18 +41,6 @@
     "privacyModeNpmRegistry": "Detección automática del registro npm de MCP",
     "privacyModeManualActions": "Las comprobaciones manuales y las acciones de actualización manual permanecen disponibles.",
     "privacyModeIntegrations": "Las integraciones de terceros configuradas permanecen disponibles.",
-    "autoCompaction": {
-      "title": "Compactación automática",
-      "enabled": "Habilitar compactación automática",
-      "description": "Cuando una conversación se acerca al límite de la ventana de contexto del modelo, DeepChat puede resumir automáticamente el historial antiguo para que la sesión continúe. Si está desactivado, DeepChat no generará resúmenes, pero seguirá recortando la vista de la solicitud cuando sea necesario para evitar errores sin procesar de context-window del proveedor.",
-      "thresholdLabel": "Umbral de activación",
-      "thresholdMin": "Temprano ({value}%)",
-      "thresholdMax": "Tarde ({value}%)",
-      "thresholdDescription": "Inicia la compactación cuando el uso del prompt alcanza esta proporción del presupuesto efectivo de historial. Los valores más bajos dejan más margen; los más altos conservan más contexto original.",
-      "retainPairsLabel": "Conservar pares de mensajes recientes",
-      "retainPairsValue": "{count} pares",
-      "retainPairsDescription": "Mantiene fuera de la compactación los pares recientes ya completados de usuario y asistente. La consulta actual no se incluye."
-    },
     "searchAssistantModel": "Modelo asistente",
     "selectModel": "Seleccionar modelo",
     "proxyMode": "Modo proxy",

@@ -421,6 +421,8 @@ provider replay.
   the two reason substates without inferring history from a nullable summary timestamp.
 - [x] Keep stale occupancy evidence in the tooltip, but clear its live percentage and fill; mark
   current View-derived estimates distinctly from provider measurements.
+- [x] Remove the unreachable legacy compaction settings section, its orphaned translations and
+  tests, and the unused composer-draft `useContextLength` helper.
 - [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
   performance, security, naming, regression coverage, and maintenance cost before committing it.
 

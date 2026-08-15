@@ -41,18 +41,6 @@
     "privacyModeNpmRegistry": "MCP npm 注册表自动探测",
     "privacyModeManualActions": "手动检查与手动刷新继续可用。",
     "privacyModeIntegrations": "自行配置的 MCP / Remote 等第三方集成不受影响",
-    "autoCompaction": {
-      "title": "自动压缩",
-      "enabled": "启用自动压缩",
-      "description": "当对话接近模型上下文窗口限制时，DeepChat 会自动总结较早历史，帮助会话继续进行。关闭后，DeepChat 不会生成摘要，但仍会在必要时裁剪请求视图，尽量避免服务商原始 context-window 报错。",
-      "thresholdLabel": "触发阈值",
-      "thresholdMin": "提前（{value}%）",
-      "thresholdMax": "延后（{value}%）",
-      "thresholdDescription": "当 prompt 占用达到有效历史预算的这个比例时开始压缩。值越低缓冲越大，值越高保留的原始上下文越多。",
-      "retainPairsLabel": "保留最近消息对",
-      "retainPairsValue": "{count} 对",
-      "retainPairsDescription": "始终保留最近完成的 user 和 assistant 消息对，不参与压缩。当前最后一次 query 不计入其中。"
-    },
     "searchAssistantModel": "助手模型",
     "selectModel": "选择模型",
     "proxyMode": "代理模式",

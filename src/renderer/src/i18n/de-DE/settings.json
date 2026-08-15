@@ -41,18 +41,6 @@
     "privacyModeNpmRegistry": "Automatische Erkennung der MCP npm Registry",
     "privacyModeManualActions": "Manuelle Prüfungen und manuelle Aktualisierungen bleiben verfügbar.",
     "privacyModeIntegrations": "Selbst konfigurierte Drittanbieter-Integrationen wie MCP / Remote bleiben unberührt",
-    "autoCompaction": {
-      "title": "Automatische Komprimierung",
-      "enabled": "Automatische Komprimierung aktivieren",
-      "description": "Wenn sich eine Unterhaltung dem Kontextfensterlimit des Modells nähert, kann DeepChat ältere Verläufe automatisch zusammenfassen, damit die Sitzung fortgesetzt werden kann. Wenn diese Option deaktiviert ist, erstellt DeepChat keine Zusammenfassungen, kürzt bei Bedarf aber weiterhin die Anfrageansicht, um rohe context-window-Fehler des Anbieters möglichst zu vermeiden.",
-      "thresholdLabel": "Auslöseschwelle",
-      "thresholdMin": "Früher ({value}%)",
-      "thresholdMax": "Später ({value}%)",
-      "thresholdDescription": "Komprimierung starten, wenn die prompt-Nutzung diesen Anteil des effektiven Verlaufsbudgets erreicht. Niedrigere Werte schaffen mehr Puffer, höhere Werte behalten mehr Rohkontext.",
-      "retainPairsLabel": "Neueste Nachrichtenpaare behalten",
-      "retainPairsValue": "{count} Paare",
-      "retainPairsDescription": "Die zuletzt abgeschlossenen user- und assistant-Nachrichtenpaare immer behalten und nicht komprimieren. Die aktuelle letzte query zählt nicht dazu."
-    },
     "searchAssistantModel": "Assistentenmodell",
     "selectModel": "Modell auswählen",
     "proxyMode": "Proxy-Modus",
