@@ -2023,6 +2023,44 @@ describe('sessionStore streaming cleanup', () => {
     })
   })
 
+  it('retries a failed context occupancy snapshot once', async () => {
+    const { store, sessionClient } = await setupStore()
+    sessionClient.getContextOccupancy.mockReset()
+    sessionClient.getContextOccupancy
+      .mockRejectedValueOnce(new Error('temporary IPC failure'))
+      .mockResolvedValueOnce({
+        freshness: 'current',
+        source: 'provider',
+        occupiedTokens: 600,
+        contextWindowTokens: 1_000,
+        requestSeq: 3,
+        manifestEntryId: 30,
+        providerAttemptEntryId: 31,
+        measuredAt: 300
+      })
+
+    await store.applyBootstrapShell({ activeSessionId: 'session-a' })
+    await vi.waitFor(() => {
+      expect(sessionClient.getContextOccupancy).toHaveBeenCalledTimes(2)
+      expect(store.activeContextOccupancy.value).toMatchObject({ occupiedTokens: 600 })
+    })
+  })
+
+  it('cancels a pending occupancy retry after switching sessions', async () => {
+    const { store, sessionClient } = await setupStore()
+    sessionClient.getContextOccupancy.mockReset()
+    sessionClient.getContextOccupancy.mockRejectedValueOnce(new Error('temporary IPC failure'))
+
+    await store.applyBootstrapShell({ activeSessionId: 'session-a' })
+    await Promise.resolve()
+    await store.applyBootstrapShell({ activeSessionId: 'session-b' })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    expect(sessionClient.getContextOccupancy).toHaveBeenCalledTimes(2)
+    expect(sessionClient.getContextOccupancy).toHaveBeenNthCalledWith(1, 'session-a')
+    expect(sessionClient.getContextOccupancy).toHaveBeenNthCalledWith(2, 'session-b')
+  })
+
   it('buffers compaction events until the active-session snapshot is applied', async () => {
     const snapshot = createDeferred<any>()
     const { store, sessionClient, emitSessionCompactionChange } = await setupStore()

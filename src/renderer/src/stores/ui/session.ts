@@ -96,6 +96,8 @@ type SubmissionRequestOptions = {
 const SIDEBAR_GROUP_MODE_KEY = 'sidebar_group_mode'
 const DEFAULT_GROUP_MODE: GroupMode = 'project'
 const DEFAULT_SESSION_PAGE_SIZE = 30
+const CONTEXT_OCCUPANCY_RETRY_DELAY_MS = 250
+const CONTEXT_OCCUPANCY_MAX_ATTEMPTS = 2
 const NO_PROJECT_GROUP_ID = '__no_project__'
 const SESSION_TITLE_COLLATOR = new Intl.Collator(undefined, {
   numeric: true,
@@ -423,21 +425,31 @@ export const useSessionStore = defineStore('session', () => {
 
   const synchronizeContextOccupancy = (sessionId: string): void => {
     const requestId = ++contextOccupancyRequestId
-    void sessionClient
-      .getContextOccupancy(sessionId)
-      .then((snapshot) => {
-        if (activeSessionId.value !== sessionId || contextOccupancyRequestId !== requestId) {
+    void (async () => {
+      for (let attempt = 1; attempt <= CONTEXT_OCCUPANCY_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const snapshot = await sessionClient.getContextOccupancy(sessionId)
+          if (activeSessionId.value !== sessionId || contextOccupancyRequestId !== requestId) {
+            return
+          }
+          activeContextOccupancy.value = snapshot
           return
+        } catch (snapshotError) {
+          if (activeSessionId.value !== sessionId || contextOccupancyRequestId !== requestId) {
+            return
+          }
+          if (attempt < CONTEXT_OCCUPANCY_MAX_ATTEMPTS) {
+            await new Promise((resolve) => setTimeout(resolve, CONTEXT_OCCUPANCY_RETRY_DELAY_MS))
+            if (activeSessionId.value !== sessionId || contextOccupancyRequestId !== requestId) {
+              return
+            }
+            continue
+          }
+          activeContextOccupancy.value = null
+          console.warn('[sessionStore] Failed to read context occupancy:', snapshotError)
         }
-        activeContextOccupancy.value = snapshot
-      })
-      .catch((snapshotError) => {
-        if (activeSessionId.value !== sessionId || contextOccupancyRequestId !== requestId) {
-          return
-        }
-        activeContextOccupancy.value = null
-        console.warn('[sessionStore] Failed to read context occupancy:', snapshotError)
-      })
+      }
+    })()
   }
 
   const synchronizeCompactionState = (sessionId: string): void => {
@@ -1531,7 +1543,10 @@ export const useSessionStore = defineStore('session', () => {
     },
     onCompactionChanged: handleCompactionChanged
   })
-  registerStoreCleanup(sessionIpcBinding.cleanup)
+  registerStoreCleanup(() => {
+    contextOccupancyRequestId += 1
+    sessionIpcBinding?.cleanup()
+  })
   void ensureGroupModeLoaded()
 
   return {

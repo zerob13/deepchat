@@ -404,7 +404,7 @@ provider replay.
   reconciliation failures per row, and rerun restart reconciliation after Session database reopen.
 - [ ] Make compaction usage a rebuildable projection, preserving independently measured token
   fields without inventing totals.
-- [ ] Hydrate occupancy snapshots directly so renderer request ordering cannot create a cold-session
+- [x] Hydrate occupancy snapshots directly so renderer request ordering cannot create a cold-session
   blind spot.
 - [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
   performance, security, naming, regression coverage, and maintenance cost before committing it.

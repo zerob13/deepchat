@@ -3,10 +3,12 @@ import { toAppSessionId } from '@/agent/shared/agentSessionIds'
 import type { DeepChatAgentRuntime } from '@/agent/deepchat/instance/deepChatAgentRuntime'
 import type { SessionTape } from '@/tape/application/sessionTape'
 import type { SessionSettingsCoordinator } from './sessionSettingsCoordinator'
+import type { SessionStateResolver } from './sessionStateResolver'
 import { resolveEffectiveContextBudget } from './contextBudget'
 
 type ContextOccupancyDependencies = {
-  runtime: Pick<DeepChatAgentRuntime, 'getHydratedScope'>
+  runtime: Pick<DeepChatAgentRuntime, 'getOrHydrateScope'>
+  sessionState: Pick<SessionStateResolver, 'getSummary'>
   sessionSettings: Pick<SessionSettingsCoordinator, 'getEffectiveGenerationSettings'>
   tape: Pick<SessionTape, 'getContextOccupancyEvidence'>
 }
@@ -41,9 +43,16 @@ export class ContextOccupancyCoordinator {
   constructor(private readonly deps: ContextOccupancyDependencies) {}
 
   async getSnapshot(sessionId: string): Promise<SessionContextOccupancySnapshot> {
-    const scope = this.deps.runtime.getHydratedScope(toAppSessionId(sessionId))
-    const state = scope?.state()
-    if (!scope || !state) return unavailableContextOccupancy()
+    const scope = this.deps.runtime.getOrHydrateScope(toAppSessionId(sessionId))
+    let state = scope.state()
+    if (!state) {
+      try {
+        state = (await this.deps.sessionState.getSummary(sessionId)) ?? undefined
+      } catch {
+        return unavailableContextOccupancy()
+      }
+      if (!scope.isCurrent() || !state) return unavailableContextOccupancy()
+    }
 
     let configuredContextLength: number
     let requestedMaxTokens: number

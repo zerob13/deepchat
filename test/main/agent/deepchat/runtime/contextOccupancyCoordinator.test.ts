@@ -93,6 +93,7 @@ function setup(
     providerContextLimitTokens?: number
     providerPromptLimitTokens?: number
     hydrated?: boolean
+    sessionExists?: boolean
   } = {}
 ) {
   const instance = {
@@ -110,6 +111,12 @@ function setup(
     modelId: overrides.activeModelId ?? 'gpt-4',
     permissionMode: 'full_access'
   }
+  let runtimeState = overrides.hydrated === false ? undefined : state
+  const scope = {
+    instance,
+    state: () => runtimeState,
+    isCurrent: () => true
+  }
   const evidence: TapeContextOccupancyEvidence = {
     manifest:
       overrides.manifest === undefined ? createManifestRecord() : overrides.manifest,
@@ -120,15 +127,14 @@ function setup(
   }
   const dependencies = {
     runtime: {
-      getHydratedScope: vi.fn(() =>
-        overrides.hydrated === false
-          ? undefined
-          : {
-              instance,
-              state: () => state,
-              isCurrent: () => true
-            }
-      )
+      getOrHydrateScope: vi.fn(() => scope)
+    },
+    sessionState: {
+      getSummary: vi.fn(async () => {
+        if (overrides.sessionExists === false) return null
+        runtimeState = state
+        return state
+      })
     },
     sessionSettings: {
       getEffectiveGenerationSettings: vi.fn(async () => ({
@@ -237,11 +243,25 @@ describe('ContextOccupancyCoordinator', () => {
     })
   })
 
+  it('hydrates a cold session before reading persisted occupancy evidence', async () => {
+    const { coordinator, dependencies } = setup({ hydrated: false })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      freshness: 'current',
+      occupiedTokens: 720
+    })
+    expect(dependencies.sessionState.getSummary).toHaveBeenCalledWith(SESSION_ID)
+    expect(dependencies.sessionSettings.getEffectiveGenerationSettings).toHaveBeenCalledWith(
+      SESSION_ID,
+      expect.anything()
+    )
+  })
+
   it.each([
     ['missing manifest', { manifest: null }],
     ['invalid newest manifest', { manifest: createManifestRecord({ integrity: 'invalid' }) }],
     ['nonpositive window', { manifest: createManifestRecord({ contextLength: 0 }) }],
-    ['unhydrated runtime', { hydrated: false }]
+    ['missing cold session', { hydrated: false, sessionExists: false }]
   ])('returns unavailable for %s', async (_label, overrides) => {
     const { coordinator } = setup(overrides)
     await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toEqual({

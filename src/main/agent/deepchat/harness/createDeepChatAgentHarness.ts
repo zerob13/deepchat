@@ -236,11 +236,6 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     finishSessionAgentReassignment: (sessionId) => memory.finishSessionAgentReassignment(sessionId),
     readPersistedProjectDir: (sessionId) => database.newSessionsTable?.get(sessionId)?.project_dir
   })
-  const contextOccupancy = new ContextOccupancyCoordinator({
-    runtime,
-    sessionSettings,
-    tape: tapeService
-  })
   const promptAssembly = new PromptAssemblyService({
     registry: runtime,
     providerSettings,
@@ -274,6 +269,12 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     runLifecycle,
     identity,
     sessionSettings
+  })
+  const contextOccupancy = new ContextOccupancyCoordinator({
+    runtime,
+    sessionState,
+    sessionSettings,
+    tape: tapeService
   })
   const providerPermissionCoordinator = new ProviderPermissionCoordinator({
     publishEvent,
