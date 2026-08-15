@@ -1282,6 +1282,10 @@ function splitLeadingSystemMessagesForAiSdk(messages: ModelMessage[]): AiSdkProm
   }
 }
 
+function measuredTokenCount(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : undefined
+}
+
 function usageToLlmResponse(
   usage:
     | {
@@ -1291,25 +1295,18 @@ function usageToLlmResponse(
       }
     | undefined
 ): LLMResponse['totalUsage'] | undefined {
-  if (
-    !usage ||
-    typeof usage.inputTokens !== 'number' ||
-    !Number.isFinite(usage.inputTokens) ||
-    usage.inputTokens < 0 ||
-    typeof usage.outputTokens !== 'number' ||
-    !Number.isFinite(usage.outputTokens) ||
-    usage.outputTokens < 0 ||
-    typeof usage.totalTokens !== 'number' ||
-    !Number.isFinite(usage.totalTokens) ||
-    usage.totalTokens < 0
-  ) {
+  if (!usage) return undefined
+  const inputTokens = measuredTokenCount(usage.inputTokens)
+  const outputTokens = measuredTokenCount(usage.outputTokens)
+  const totalTokens = measuredTokenCount(usage.totalTokens)
+  if (inputTokens === undefined && outputTokens === undefined && totalTokens === undefined) {
     return undefined
   }
 
   return {
-    prompt_tokens: usage.inputTokens,
-    completion_tokens: usage.outputTokens,
-    total_tokens: usage.totalTokens
+    ...(inputTokens === undefined ? {} : { prompt_tokens: inputTokens }),
+    ...(outputTokens === undefined ? {} : { completion_tokens: outputTokens }),
+    ...(totalTokens === undefined ? {} : { total_tokens: totalTokens })
   }
 }
 

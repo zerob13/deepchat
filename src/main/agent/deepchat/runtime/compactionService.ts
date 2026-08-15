@@ -109,9 +109,9 @@ export type CompactionModelCallObservation = {
   modelId: string
   status: 'completed' | 'error' | 'aborted'
   usage: {
-    inputTokens: number
-    outputTokens: number
-    totalTokens: number
+    inputTokens: number | null
+    outputTokens: number | null
+    totalTokens: number | null
   } | null
   startedAt: number
   completedAt: number
@@ -140,6 +140,10 @@ function floorNonNegative(value: number): number {
   if (value === Number.POSITIVE_INFINITY) return Number.MAX_SAFE_INTEGER
   if (!Number.isFinite(value)) return 0
   return Math.max(0, Math.floor(value))
+}
+
+function measuredTokenCount(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null
 }
 
 function normalizeOrderSeqRange(value: unknown): OrderSeqRange | null {
@@ -1370,21 +1374,15 @@ export class CompactionService {
   private normalizeModelCallUsage(
     usage: Awaited<ReturnType<ProviderExecutionPort['generateText']>>['totalUsage']
   ): CompactionModelCallObservation['usage'] {
-    if (
-      !usage ||
-      !Number.isSafeInteger(usage.prompt_tokens) ||
-      usage.prompt_tokens < 0 ||
-      !Number.isSafeInteger(usage.completion_tokens) ||
-      usage.completion_tokens < 0 ||
-      !Number.isSafeInteger(usage.total_tokens) ||
-      usage.total_tokens < 0
-    ) {
-      return null
-    }
+    if (!usage) return null
+    const inputTokens = measuredTokenCount(usage.prompt_tokens)
+    const outputTokens = measuredTokenCount(usage.completion_tokens)
+    const totalTokens = measuredTokenCount(usage.total_tokens)
+    if (inputTokens === null && outputTokens === null && totalTokens === null) return null
     return {
-      inputTokens: usage.prompt_tokens,
-      outputTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens
+      inputTokens,
+      outputTokens,
+      totalTokens
     }
   }
 

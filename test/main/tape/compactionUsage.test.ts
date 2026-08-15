@@ -100,6 +100,29 @@ describe('compaction model call Tape usage', () => {
     expect(parseTapeCompactionModelCallEvent(unknownRow)).toEqual(unknown)
   })
 
+  it('round-trips partial usage and keeps legacy complete-usage facts readable', () => {
+    const { service } = createService()
+    const partialRow = service.appendCompactionModelCall(
+      input({ usage: { inputTokens: 100, outputTokens: 20, totalTokens: null } })
+    ).row
+    const legacyRow: DeepChatTapeEntryRow = {
+      ...partialRow,
+      payload_json: partialRow.payload_json
+        .replace('"schemaVersion":2', '"schemaVersion":1')
+        .replace('"totalTokens":null', '"totalTokens":120')
+    }
+
+    expect(parseTapeCompactionModelCallEvent(partialRow)?.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: null
+    })
+    expect(parseTapeCompactionModelCallEvent(legacyRow)).toMatchObject({
+      schemaVersion: 1,
+      usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 }
+    })
+  })
+
   it('assigns monotonic attempt-local sequences and reuses an idempotent call identity', () => {
     const { rows, service } = createService()
 
@@ -203,6 +226,47 @@ itIfSqlite('persists compaction call facts and reporting rows atomically and ide
         )
         .get()
     ).toEqual({ count: 2 })
+  } finally {
+    db.close()
+  }
+})
+
+itIfSqlite('aggregates independently measured compaction usage fields with real SQL', () => {
+  const db = new DatabaseCtor(':memory:')
+  try {
+    const database = new SessionDatabase({ getDatabase: () => db })
+    database.deepchatTapeEntriesTable.createTable()
+    database.deepchatUsageStatsTable.createTable()
+    const transcript = new SessionTranscript(database, new SessionTape(database))
+
+    transcript.recordCompactionModelCall(
+      input({ usage: { inputTokens: 100, outputTokens: 20, totalTokens: null } })
+    )
+    transcript.recordCompactionModelCall(
+      input({ providerCallId: 'call-2', usage: null, status: 'error' })
+    )
+
+    expect(database.deepchatUsageStatsTable.getProviderBreakdownRows()).toEqual([
+      {
+        id: 'provider-1',
+        messageCount: 0,
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 0,
+        cachedInputTokens: 0
+      }
+    ])
+    expect(database.deepchatUsageStatsTable.getCategoryBreakdownRows()).toEqual([
+      {
+        id: 'compaction',
+        eventCount: 2,
+        knownUsageCount: 1,
+        unknownUsageCount: 1,
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 0
+      }
+    ])
   } finally {
     db.close()
   }

@@ -441,7 +441,9 @@ export class DeepChatUsageStatsTable extends BaseTable {
           SUM(total_tokens) AS total_tokens,
           SUM(cached_input_tokens) AS cached_input_tokens
         FROM deepchat_usage_stats
-        WHERE total_tokens IS NOT NULL
+        WHERE input_tokens IS NOT NULL
+          OR output_tokens IS NOT NULL
+          OR total_tokens IS NOT NULL
         GROUP BY provider_id`
       )
       .all() as Array<AggregateRow & { id: string }>
@@ -467,7 +469,9 @@ export class DeepChatUsageStatsTable extends BaseTable {
           SUM(total_tokens) AS total_tokens,
           SUM(cached_input_tokens) AS cached_input_tokens
         FROM deepchat_usage_stats
-        WHERE total_tokens IS NOT NULL
+        WHERE input_tokens IS NOT NULL
+          OR output_tokens IS NOT NULL
+          OR total_tokens IS NOT NULL
         GROUP BY model_id
         ORDER BY SUM(total_tokens) DESC, model_id ASC
         LIMIT ?`
@@ -490,8 +494,12 @@ export class DeepChatUsageStatsTable extends BaseTable {
         `SELECT
           usage_category AS id,
           COUNT(*) AS event_count,
-          COUNT(total_tokens) AS known_usage_count,
-          COUNT(*) - COUNT(total_tokens) AS unknown_usage_count,
+          SUM(CASE WHEN input_tokens IS NOT NULL
+            OR output_tokens IS NOT NULL
+            OR total_tokens IS NOT NULL THEN 1 ELSE 0 END) AS known_usage_count,
+          SUM(CASE WHEN input_tokens IS NULL
+            AND output_tokens IS NULL
+            AND total_tokens IS NULL THEN 1 ELSE 0 END) AS unknown_usage_count,
           SUM(input_tokens) AS input_tokens,
           SUM(output_tokens) AS output_tokens,
           SUM(total_tokens) AS total_tokens

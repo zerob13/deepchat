@@ -1158,6 +1158,50 @@ describe('CompactionService', () => {
     expect(observations[0]).toMatchObject({ status: 'completed', usage: null })
   })
 
+  it('preserves measured usage fields when the provider omits the total', async () => {
+    const { service, providerRuntime } = createService()
+    providerRuntime.generateText.mockResolvedValueOnce({
+      content: 'generated summary',
+      totalUsage: {
+        prompt_tokens: 120,
+        completion_tokens: 30
+      }
+    })
+    const observations: CompactionModelCallObservation[] = []
+
+    await service.applyCompaction(
+      {
+        compactionAttemptId: 'compaction-usage-partial',
+        sessionId: 's1',
+        previousState: {
+          summaryText: null,
+          summaryCursorOrderSeq: 1,
+          summaryUpdatedAt: null
+        },
+        targetCursorOrderSeq: 3,
+        summaryBlocks: ['span to summarize'],
+        currentCheckpointTokenEstimate: 0,
+        newlyHiddenVisibleTokenEstimate: 10_000,
+        currentModel: {
+          providerId: 'openai',
+          modelId: 'gpt-4o',
+          contextLength: 4096
+        },
+        reserveTokens: 512,
+        retainedTurnCount: 0,
+        retainedTokenEstimate: 0,
+        retainedTokenTarget: 0
+      },
+      undefined,
+      (observation) => observations.push(observation)
+    )
+
+    expect(observations[0]).toMatchObject({
+      status: 'completed',
+      usage: { inputTokens: 120, outputTokens: 30, totalTokens: null }
+    })
+  })
+
   it('returns the newer stored summary when a stale compaction loses the CAS race', async () => {
     const newerState: SessionSummaryState = {
       summaryText: 'newer persisted summary',

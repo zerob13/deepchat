@@ -22,9 +22,9 @@ export type LLMResponse = {
   tool_call_response_raw?: MCPToolResponse
   maximum_tool_calls_reached?: boolean
   totalUsage?: {
-    prompt_tokens: number
-    completion_tokens: number
-    total_tokens: number
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
   }
 }
 
