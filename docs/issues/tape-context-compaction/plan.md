@@ -183,6 +183,47 @@ added after that summary.
 - The renderer subscribes and buffers first, reads the snapshot second, then discards buffered
   events at or below the snapshot sequence and applies newer events in order.
 
+##### Renderer State Synchronization Contract
+
+- `CompactionRuntimeCoordinator` owns a process-lifetime `Map<sessionId, emitSeq>`. It is shared by
+  every runtime generation served by that coordinator and therefore does not reset when a hydrated
+  instance is evicted or replaced. A successful permanent session destroy releases its entry; a
+  runtime-only cleanup does not. Each publish increments the sequence before emitting, and the
+  snapshot reads the current sequence at the same synchronous coordinator serialization point.
+- The snapshot is `{ state, emitSeq, latestAnchorEntryId }`. `latestAnchorEntryId` is the SQLite
+  Tape `entry_id` of the latest reconstruction anchor, or null for a session without one. It proves
+  which durable append-only boundary produced the snapshot and remains useful across process
+  restarts; it is not an event-order substitute. `emitSeq` is process-local because Electron main
+  termination also tears down the renderer connection. No wall-clock timestamp participates in
+  ordering.
+- `boundaryReason` is nullable and is read only from the latest reconstruction anchor's `state`.
+  It is exposed only for a persisted compacted boundary; idle and transient compacting states use
+  null so an older boundary reason cannot be mistaken for the outcome of in-flight work. Legacy or
+  malformed anchors also yield null. The three live statuses remain `idle`, `compacting`, and
+  `compacted`.
+- The renderer establishes the global event subscription when the session store is created. For
+  each active-session transition it marks that session as synchronizing, buffers replacement-state
+  events, then requests the snapshot. It applies the snapshot, discards buffered events with
+  `emitSeq <= snapshot.emitSeq`, and applies the remaining events in ascending sequence order.
+  After synchronization, duplicate or stale events are ignored and strictly newer events replace
+  the active read model directly.
+- Activation has its own generation token. A late snapshot, event, or failed request from a prior
+  selection cannot overwrite the current session. Closing or deleting the active session clears
+  its renderer state. Event tracking for permanently deleted sessions is purged, preventing an
+  unbounded renderer map.
+- A renderer reload against a surviving main process receives the coordinator's current sequence
+  in its first snapshot. A full application restart starts new process-local sequences at zero and
+  rebuilds state plus `latestAnchorEntryId` from Tape. Direct ACP sessions return the fixed idle
+  state with sequence zero and no anchor and never emit DeepChat compaction events.
+- Existing transcript compaction markers remain the durable historical divider. This slice does
+  not infer history from transient renderer state, mutate Tape facts, or persist a second UI truth.
+  The synchronized state is the live read model used by later occupancy and status presentation.
+
+Focused coverage must force an event between subscription and snapshot completion, multiple emits
+within one millisecond, stale and duplicate delivery, session switching with a late snapshot,
+runtime instance replacement, process-sequence restart with a stable anchor ID, boundary-only and
+legacy anchor reasons, and the normal compacting-to-compacted transition.
+
 #### 5. Record Silent Overflow Without Replaying Completed Work
 
 - Design an attempt-local durable observation for successful responses whose provider-reported
