@@ -27,6 +27,7 @@ import {
   UserMessageInlineItemSchema,
   PermissionModeSchema,
   SendMessageInputSchema,
+  SessionCompactionSnapshotSchema,
   SessionCompactionStateSchema,
   SessionGenerationSettingsSchema,
   SessionGenerationSettingsPatchSchema,
@@ -577,6 +578,14 @@ export const sessionsCompactRoute = defineRouteContract({
     compacted: z.boolean(),
     state: SessionCompactionStateSchema
   })
+})
+
+export const sessionsGetCompactionSnapshotRoute = defineRouteContract({
+  name: 'sessions.getCompactionSnapshot',
+  input: z.object({
+    sessionId: EntityIdSchema
+  }),
+  output: SessionCompactionSnapshotSchema
 })
 
 export const sessionsExportRoute = defineRouteContract({

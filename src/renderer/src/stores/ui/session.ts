@@ -14,7 +14,8 @@ import type {
   SessionListItem,
   SessionWithState,
   CreateSessionInput,
-  SendMessageInput
+  SendMessageInput,
+  SessionCompactionSnapshot
 } from '@shared/types/agent-interface'
 import {
   normalizeOrchestrationPolicy,
@@ -32,7 +33,7 @@ import { useAgentPlanStore } from './agentPlan'
 import { useAttachmentPreparationStore } from './attachmentPreparation'
 import { useLiveDelegationStore } from './liveDelegation'
 import { isAbortError } from '@/lib/errors'
-import { bindSessionStoreIpc } from './sessionIpc'
+import { bindSessionStoreIpc, type SessionCompactionChangedPayload } from './sessionIpc'
 import { normalizeWorkspacePath } from '@shared/utils/filesystem'
 
 export type UISessionStatus = 'completed' | 'working' | 'error' | 'none'
@@ -79,6 +80,12 @@ export type StartNewConversationOptions = {
 }
 export type CloseSessionOptions = {
   refresh?: boolean
+}
+type ActiveCompactionSync = {
+  sessionId: string
+  requestId: number
+  snapshotPending: boolean
+  bufferedEvents: SessionCompactionChangedPayload[]
 }
 type SubmissionRequestOptions = {
   submissionId?: string
@@ -342,6 +349,8 @@ export const useSessionStore = defineStore('session', () => {
   const removedSessionIds = new Set<string>()
   let sessionByIdsErrorRevision: number | null = null
   let activationNavigationRequestId = 0
+  let compactionSyncRequestId = 0
+  let activeCompactionSync: ActiveCompactionSync | null = null
   let newConversationProjectDirIntentId = 0
   let sessionFetchPromise: Promise<void> | null = null
 
@@ -349,6 +358,7 @@ export const useSessionStore = defineStore('session', () => {
   const bootstrapActiveSession = ref<UISession | null>(null)
   const activeSessionSummary = ref<UIActiveSessionSummary | null>(null)
   const activeSessionId = ref<string | null>(null)
+  const activeCompactionSnapshot = ref<SessionCompactionSnapshot | null>(null)
   const searchIntents = shallowReactive(new Map<string, boolean>())
   const newConversationProjectDirIntent = ref<NewConversationProjectDirIntent | null>(null)
   const groupMode = ref<GroupMode>(DEFAULT_GROUP_MODE)
@@ -369,10 +379,106 @@ export const useSessionStore = defineStore('session', () => {
       console.warn('[sessionStore] Failed to resolve runtime webContents id:', identityError)
     })
 
+  const applyCompactionEvent = (payload: SessionCompactionChangedPayload): void => {
+    const current = activeCompactionSnapshot.value
+    if (current && payload.emitSeq <= current.emitSeq) {
+      return
+    }
+
+    activeCompactionSnapshot.value = {
+      state: {
+        status: payload.status,
+        cursorOrderSeq: payload.cursorOrderSeq,
+        summaryUpdatedAt: payload.summaryUpdatedAt,
+        boundaryReason: payload.boundaryReason
+      },
+      emitSeq: payload.emitSeq,
+      latestAnchorEntryId: payload.latestAnchorEntryId
+    }
+  }
+
+  const handleCompactionChanged = (payload: SessionCompactionChangedPayload): void => {
+    if (activeSessionId.value !== payload.sessionId) {
+      return
+    }
+
+    const sync = activeCompactionSync
+    if (
+      sync?.sessionId === payload.sessionId &&
+      sync.requestId === compactionSyncRequestId &&
+      sync.snapshotPending
+    ) {
+      sync.bufferedEvents.push(payload)
+      return
+    }
+
+    applyCompactionEvent(payload)
+  }
+
+  const synchronizeCompactionState = (sessionId: string): void => {
+    const requestId = ++compactionSyncRequestId
+    const sync: ActiveCompactionSync = {
+      sessionId,
+      requestId,
+      snapshotPending: true,
+      bufferedEvents: []
+    }
+    activeCompactionSync = sync
+    activeCompactionSnapshot.value = null
+
+    void sessionClient
+      .getCompactionSnapshot(sessionId)
+      .then((snapshot) => {
+        if (
+          activeCompactionSync !== sync ||
+          activeSessionId.value !== sessionId ||
+          compactionSyncRequestId !== requestId
+        ) {
+          return
+        }
+
+        activeCompactionSnapshot.value = snapshot
+        sync.bufferedEvents.sort((left, right) => left.emitSeq - right.emitSeq)
+        for (const event of sync.bufferedEvents) {
+          applyCompactionEvent(event)
+        }
+        sync.bufferedEvents.length = 0
+        sync.snapshotPending = false
+      })
+      .catch((snapshotError) => {
+        if (
+          activeCompactionSync !== sync ||
+          activeSessionId.value !== sessionId ||
+          compactionSyncRequestId !== requestId
+        ) {
+          return
+        }
+
+        sync.bufferedEvents.sort((left, right) => left.emitSeq - right.emitSeq)
+        for (const event of sync.bufferedEvents) {
+          applyCompactionEvent(event)
+        }
+        sync.bufferedEvents.length = 0
+        sync.snapshotPending = false
+        activeCompactionSync = null
+        console.warn('[sessionStore] Failed to synchronize compaction state:', snapshotError)
+      })
+  }
+
   const setActiveSessionId = (sessionId: string | null): void => {
+    const changed = activeSessionId.value !== sessionId
     activeSessionId.value = sessionId
     messageStore.setCurrentSessionId(sessionId)
+    if (!sessionId) {
+      compactionSyncRequestId += 1
+      activeCompactionSync = null
+      activeCompactionSnapshot.value = null
+    } else if (changed || !activeCompactionSync) {
+      synchronizeCompactionState(sessionId)
+    }
   }
+
+  const activeCompactionState = computed(() => activeCompactionSnapshot.value?.state ?? null)
 
   const getSearchIntent = (sessionId: string): boolean => searchIntents.get(sessionId) === true
 
@@ -1387,7 +1493,8 @@ export const useSessionStore = defineStore('session', () => {
     },
     onStatusChanged: (sessionId, status, version) => {
       applySessionStatus(sessionId, status, version)
-    }
+    },
+    onCompactionChanged: handleCompactionChanged
   })
   registerStoreCleanup(sessionIpcBinding.cleanup)
   void ensureGroupModeLoaded()
@@ -1395,6 +1502,8 @@ export const useSessionStore = defineStore('session', () => {
   return {
     sessions,
     activeSessionId,
+    activeCompactionSnapshot,
+    activeCompactionState,
     newConversationProjectDirIntent,
     groupMode,
     loading,

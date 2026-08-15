@@ -9,6 +9,7 @@ import {
   contextMenuTranslateRequestedEvent,
   mcpSamplingRequestEvent,
   settingsChangedEvent,
+  sessionsCompactionChangedEvent,
   sessionsUpdatedEvent,
   projectEnvironmentsChangedEvent,
   configLanguageChangedEvent
@@ -43,6 +44,7 @@ import {
   sessionsCreateRoute,
   sessionsDeactivateRoute,
   sessionsGetActiveRoute,
+  sessionsGetCompactionSnapshotRoute,
   sessionsListRoute,
   sessionsQueuePendingInputRoute,
   sessionsRestoreRoute,
@@ -1347,8 +1349,50 @@ describe('main kernel contracts', () => {
       state: {
         status: 'compacted',
         cursorOrderSeq: 3,
-        summaryUpdatedAt: 123
+        summaryUpdatedAt: 123,
+        boundaryReason: null
       }
+    })
+
+    expect(
+      sessionsGetCompactionSnapshotRoute.output.parse({
+        state: {
+          status: 'compacted',
+          cursorOrderSeq: 5,
+          summaryUpdatedAt: null,
+          boundaryReason: 'summary_unavailable'
+        },
+        emitSeq: 7,
+        latestAnchorEntryId: 19
+      })
+    ).toEqual({
+      state: {
+        status: 'compacted',
+        cursorOrderSeq: 5,
+        summaryUpdatedAt: null,
+        boundaryReason: 'summary_unavailable'
+      },
+      emitSeq: 7,
+      latestAnchorEntryId: 19
+    })
+
+    expect(
+      sessionsCompactionChangedEvent.payload.parse({
+        sessionId: 'session-1',
+        status: 'compacting',
+        cursorOrderSeq: 5,
+        summaryUpdatedAt: null,
+        emitSeq: 8,
+        latestAnchorEntryId: 19
+      })
+    ).toEqual({
+      sessionId: 'session-1',
+      status: 'compacting',
+      cursorOrderSeq: 5,
+      summaryUpdatedAt: null,
+      boundaryReason: null,
+      emitSeq: 8,
+      latestAnchorEntryId: 19
     })
   })
 

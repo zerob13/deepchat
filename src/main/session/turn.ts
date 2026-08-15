@@ -6,6 +6,7 @@ import type {
   MessageStartResult,
   PendingSessionInputRecord,
   SendMessageInput,
+  SessionCompactionSnapshot,
   SessionCompactionState,
   ToolInteractionResponse,
   ToolInteractionResult
@@ -393,9 +394,32 @@ export class SessionTurn implements SessionTurnPort, SessionInitialTurnPort {
     this.requireSession(sessionId)
     const runtime = this.dependencies.runtime.resolveSession(toAppSessionId(sessionId))
     if (runtime.kind === 'acp') {
-      return { status: 'idle', cursorOrderSeq: 1, summaryUpdatedAt: null }
+      return {
+        status: 'idle',
+        cursorOrderSeq: 1,
+        summaryUpdatedAt: null,
+        boundaryReason: null
+      }
     }
     return await runtime.compaction.getState()
+  }
+
+  async getSessionCompactionSnapshot(sessionId: string): Promise<SessionCompactionSnapshot> {
+    this.requireSession(sessionId)
+    const runtime = this.dependencies.runtime.resolveSession(toAppSessionId(sessionId))
+    if (runtime.kind === 'acp') {
+      return {
+        state: {
+          status: 'idle',
+          cursorOrderSeq: 1,
+          summaryUpdatedAt: null,
+          boundaryReason: null
+        },
+        emitSeq: 0,
+        latestAnchorEntryId: null
+      }
+    }
+    return await runtime.compaction.getSnapshot()
   }
 
   async compactSession(

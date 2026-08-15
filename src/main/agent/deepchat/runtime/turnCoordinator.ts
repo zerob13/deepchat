@@ -819,7 +819,8 @@ export class TurnCoordinator {
               {
                 status: 'compacting',
                 cursorOrderSeq: intent.targetCursorOrderSeq,
-                summaryUpdatedAt: intent.previousState.summaryUpdatedAt
+                summaryUpdatedAt: intent.previousState.summaryUpdatedAt,
+                boundaryReason: null
               },
               instance
             )

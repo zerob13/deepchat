@@ -29,6 +29,7 @@ import type {
   PendingSessionInputRecord,
   PermissionMode,
   SendMessageInput,
+  SessionCompactionSnapshot,
   SessionCompactionState,
   SessionGenerationSettings,
   SessionKind,
@@ -248,6 +249,7 @@ export type SessionTurnRuntimeSession =
       readonly kind: 'deepchat'
       readonly compaction: {
         getState(): Promise<SessionCompactionState>
+        getSnapshot(): Promise<SessionCompactionSnapshot>
         compact(): Promise<{ compacted: boolean; state: SessionCompactionState }>
       }
       isPendingQueueResumeAvailable(): Promise<boolean>
@@ -337,6 +339,7 @@ export interface SessionTurnPort {
   deleteMessage(sessionId: string, messageId: string): Promise<void>
   editUserMessage(sessionId: string, messageId: string, text: string): Promise<ChatMessageRecord>
   getSessionCompactionState(sessionId: string): Promise<SessionCompactionState>
+  getSessionCompactionSnapshot(sessionId: string): Promise<SessionCompactionSnapshot>
   compactSession(sessionId: string): Promise<{ compacted: boolean; state: SessionCompactionState }>
   clearSessionMessages(sessionId: string): Promise<void>
   cancelGeneration(sessionId: string): Promise<void>

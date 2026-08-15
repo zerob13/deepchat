@@ -127,6 +127,16 @@ function createMockDeepChatAgent() {
       cursorOrderSeq: 1,
       summaryUpdatedAt: null
     }),
+    getSessionCompactionSnapshot: vi.fn().mockResolvedValue({
+      state: {
+        status: 'idle',
+        cursorOrderSeq: 1,
+        summaryUpdatedAt: null,
+        boundaryReason: null
+      },
+      emitSeq: 0,
+      latestAnchorEntryId: null
+    }),
     compactSession: vi.fn().mockResolvedValue({
       compacted: false,
       state: { status: 'idle', cursorOrderSeq: 1, summaryUpdatedAt: null }
@@ -3312,7 +3322,8 @@ describe('Session application coordinators', () => {
       await expect(turn.getSessionCompactionState('s-acp')).resolves.toEqual({
         status: 'idle',
         cursorOrderSeq: 1,
-        summaryUpdatedAt: null
+        summaryUpdatedAt: null,
+        boundaryReason: null
       })
 
       expect(deepChatAgent.getSessionCompactionState).not.toHaveBeenCalled()

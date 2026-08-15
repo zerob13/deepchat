@@ -497,12 +497,23 @@ function createRuntime() {
     deleteMessage: vi.fn().mockResolvedValue(undefined),
     editUserMessage: vi.fn().mockResolvedValue({}),
     getSessionCompactionState: vi.fn().mockResolvedValue({ status: 'idle' }),
+    getSessionCompactionSnapshot: vi.fn().mockResolvedValue({
+      state: {
+        status: 'compacted',
+        cursorOrderSeq: 5,
+        summaryUpdatedAt: 123,
+        boundaryReason: null
+      },
+      emitSeq: 7,
+      latestAnchorEntryId: 19
+    }),
     compactSession: vi.fn().mockResolvedValue({
       compacted: true,
       state: {
         status: 'compacted',
         cursorOrderSeq: 5,
-        summaryUpdatedAt: 123
+        summaryUpdatedAt: 123,
+        boundaryReason: null
       }
     }),
     clearSessionMessages: vi.fn().mockResolvedValue(undefined),
@@ -4495,8 +4506,28 @@ describe('dispatchDeepchatRoute', () => {
       state: {
         status: 'compacted',
         cursorOrderSeq: 5,
-        summaryUpdatedAt: 123
+        summaryUpdatedAt: 123,
+        boundaryReason: null
       }
+    })
+
+    const compactionSnapshot = await dispatchDeepchatRoute(
+      runtime,
+      'sessions.getCompactionSnapshot',
+      { sessionId: 'session-1' },
+      createRendererRouteContext(88, 3)
+    )
+
+    expect(sessionTurnPort.getSessionCompactionSnapshot).toHaveBeenCalledWith('session-1')
+    expect(compactionSnapshot).toEqual({
+      state: {
+        status: 'compacted',
+        cursorOrderSeq: 5,
+        summaryUpdatedAt: 123,
+        boundaryReason: null
+      },
+      emitSeq: 7,
+      latestAnchorEntryId: 19
     })
 
     const retryResult = await dispatchDeepchatRoute(

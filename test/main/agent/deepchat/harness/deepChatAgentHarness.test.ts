@@ -11502,7 +11502,8 @@ describe('DeepChatAgentHarness', () => {
         sessionId: 's1',
         status: 'idle',
         cursorOrderSeq: 1,
-        summaryUpdatedAt: null
+        summaryUpdatedAt: null,
+        boundaryReason: null
       })
     })
 
@@ -13282,12 +13283,14 @@ describe('DeepChatAgentHarness', () => {
         sessionId: 's1',
         status: 'idle',
         cursorOrderSeq: 1,
-        summaryUpdatedAt: null
+        summaryUpdatedAt: null,
+        boundaryReason: null
       })
       expect(instance.getCompactionState()).toEqual({
         status: 'idle',
         cursorOrderSeq: 1,
-        summaryUpdatedAt: null
+        summaryUpdatedAt: null,
+        boundaryReason: null
       })
     })
 
@@ -13298,7 +13301,8 @@ describe('DeepChatAgentHarness', () => {
       instance.setCompactionState({
         status: 'compacted',
         cursorOrderSeq: 5,
-        summaryUpdatedAt: 123
+        summaryUpdatedAt: 123,
+        boundaryReason: null
       })
 
       await agent.destroySession('s1')
@@ -13341,7 +13345,8 @@ describe('DeepChatAgentHarness', () => {
       expect(compactionState).toEqual({
         status: 'compacted',
         cursorOrderSeq: 7,
-        summaryUpdatedAt: 222
+        summaryUpdatedAt: 222,
+        boundaryReason: null
       })
     })
 
@@ -13358,7 +13363,8 @@ describe('DeepChatAgentHarness', () => {
       expect(compactionState).toEqual({
         status: 'compacted',
         cursorOrderSeq: 3,
-        summaryUpdatedAt: 333
+        summaryUpdatedAt: 333,
+        boundaryReason: null
       })
     })
 
@@ -13373,24 +13379,28 @@ describe('DeepChatAgentHarness', () => {
       instance.setCompactionState({
         status: 'compacting',
         cursorOrderSeq: 9,
-        summaryUpdatedAt: 111
+        summaryUpdatedAt: 111,
+        boundaryReason: null
       })
 
       await expect(agent.getSessionCompactionState('s1')).resolves.toEqual({
         status: 'compacting',
         cursorOrderSeq: 9,
-        summaryUpdatedAt: 111
+        summaryUpdatedAt: 111,
+        boundaryReason: null
       })
 
       instance.setCompactionState({
         status: 'idle',
         cursorOrderSeq: 1,
-        summaryUpdatedAt: null
+        summaryUpdatedAt: null,
+        boundaryReason: null
       })
       await expect(agent.getSessionCompactionState('s1')).resolves.toEqual({
         status: 'compacted',
         cursorOrderSeq: 7,
-        summaryUpdatedAt: 555
+        summaryUpdatedAt: 555,
+        boundaryReason: null
       })
     })
   })

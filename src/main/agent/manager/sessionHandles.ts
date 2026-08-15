@@ -6,6 +6,7 @@ import type {
   PermissionMode,
   SendMessageInput,
   SessionAgentContextUpdate,
+  SessionCompactionSnapshot,
   SessionCompactionState,
   SessionGenerationSettings,
   SubagentTapeLinkInput,
@@ -82,6 +83,7 @@ export interface DeepChatControlFacet {
   setSessionAgentContext(config: SessionAgentContextUpdate): Promise<void>
   setModel(providerId: string, modelId: string): Promise<void>
   getCompactionState(): Promise<SessionCompactionState>
+  getCompactionSnapshot(): Promise<SessionCompactionSnapshot>
   compact(): Promise<{ compacted: boolean; state: SessionCompactionState }>
   isPendingQueueResumeAvailable(): Promise<boolean>
   resumePendingQueue(): Promise<boolean>

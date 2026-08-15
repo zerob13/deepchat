@@ -87,7 +87,18 @@ function createHarness(
     getState: vi.fn().mockResolvedValue({
       status: 'idle',
       cursorOrderSeq: 3,
-      summaryUpdatedAt: null
+      summaryUpdatedAt: null,
+      boundaryReason: null
+    }),
+    getSnapshot: vi.fn().mockResolvedValue({
+      state: {
+        status: 'compacted',
+        cursorOrderSeq: 3,
+        summaryUpdatedAt: null,
+        boundaryReason: 'summary_unavailable'
+      },
+      emitSeq: 4,
+      latestAnchorEntryId: 12
     }),
     compact: vi.fn().mockResolvedValue({
       compacted: true,
@@ -593,7 +604,18 @@ describe('SessionTurn', () => {
     await expect(harness.coordinator.getSessionCompactionState('s1')).resolves.toEqual({
       status: 'idle',
       cursorOrderSeq: 1,
-      summaryUpdatedAt: null
+      summaryUpdatedAt: null,
+      boundaryReason: null
+    })
+    await expect(harness.coordinator.getSessionCompactionSnapshot('s1')).resolves.toEqual({
+      state: {
+        status: 'idle',
+        cursorOrderSeq: 1,
+        summaryUpdatedAt: null,
+        boundaryReason: null
+      },
+      emitSeq: 0,
+      latestAnchorEntryId: null
     })
     await expect(harness.coordinator.compactSession('s1')).rejects.toThrow(
       'Agent acp-coder does not support manual compaction.'
@@ -614,6 +636,10 @@ describe('SessionTurn', () => {
 
     await expect(harness.coordinator.getSessionCompactionState('s1')).resolves.toMatchObject({
       cursorOrderSeq: 3
+    })
+    await expect(harness.coordinator.getSessionCompactionSnapshot('s1')).resolves.toMatchObject({
+      emitSeq: 4,
+      latestAnchorEntryId: 12
     })
     await expect(harness.coordinator.compactSession('s1')).resolves.toMatchObject({
       compacted: true

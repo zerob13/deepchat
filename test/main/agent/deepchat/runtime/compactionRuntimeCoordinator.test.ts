@@ -130,6 +130,12 @@ function createHarness(options?: {
     summaryCursorOrderSeq: 1,
     summaryUpdatedAt: null as number | null
   }
+  let reconstructionAnchor: {
+    entryId: number
+    name: string
+    state: Record<string, unknown>
+    createdAt: number
+  } | null = null
   const publishedEvents: Array<{ event: string; payload: unknown }> = []
   const messageStore: CompactionRuntimeCoordinatorDependencies['messageStore'] = {
     createCompactionMessage: vi.fn().mockReturnValue('compaction-message'),
@@ -149,6 +155,7 @@ function createHarness(options?: {
           }
         : undefined
     ),
+    getReconstructionAnchorPromptState: vi.fn(() => reconstructionAnchor),
     getSummaryState: vi.fn(() => ({ ...summaryState })),
     resetSummaryState: vi.fn(() => {
       summaryState = {
@@ -216,6 +223,15 @@ function createHarness(options?: {
         summaryCursorOrderSeq: intent.targetCursorOrderSeq,
         summaryUpdatedAt: (intent.previousState.summaryUpdatedAt ?? 0) + 1
       }
+      reconstructionAnchor = {
+        entryId: (reconstructionAnchor?.entryId ?? 0) + 1,
+        name: 'compaction/manual',
+        state: {
+          summary: summaryState.summaryText,
+          cursorOrderSeq: summaryState.summaryCursorOrderSeq
+        },
+        createdAt: summaryState.summaryUpdatedAt
+      }
       return {
         outcome: 'summarized' as const,
         anchorCommitted: true,
@@ -274,6 +290,7 @@ function createHarness(options?: {
     canSettleOperation,
     clearOperationController,
     coordinator,
+    deps,
     emitMessageRefresh,
     getHydratedInstance,
     getInstance,
@@ -287,6 +304,9 @@ function createHarness(options?: {
     sessionStore,
     setSummaryState: (next: typeof summaryState) => {
       summaryState = next
+    },
+    setReconstructionAnchor: (next: typeof reconstructionAnchor) => {
+      reconstructionAnchor = next
     },
     toolResolver,
     transitionStatus
@@ -325,7 +345,8 @@ describe('CompactionRuntimeCoordinator', () => {
     await expect(coordinator.getState(SESSION_ID)).resolves.toEqual({
       status: 'compacting',
       cursorOrderSeq: 9,
-      summaryUpdatedAt: 100
+      summaryUpdatedAt: 100,
+      boundaryReason: null
     })
 
     initialInstance?.setCompactionState({
@@ -336,7 +357,8 @@ describe('CompactionRuntimeCoordinator', () => {
     await expect(coordinator.getState(SESSION_ID)).resolves.toEqual({
       status: 'compacted',
       cursorOrderSeq: 7,
-      summaryUpdatedAt: 200
+      summaryUpdatedAt: 200,
+      boundaryReason: null
     })
   })
 
@@ -351,7 +373,133 @@ describe('CompactionRuntimeCoordinator', () => {
     await expect(coordinator.getState(SESSION_ID)).resolves.toEqual({
       status: 'compacted',
       cursorOrderSeq: 7,
+      summaryUpdatedAt: null,
+      boundaryReason: null
+    })
+  })
+
+  it('derives boundary-only reason and anchor identity from the latest Tape anchor', async () => {
+    const { coordinator, setReconstructionAnchor, setSummaryState } = createHarness()
+    setSummaryState({
+      summaryText: null,
+      summaryCursorOrderSeq: 7,
       summaryUpdatedAt: null
+    })
+    setReconstructionAnchor({
+      entryId: 42,
+      name: 'compaction/context_pressure',
+      state: {
+        cursorOrderSeq: 7,
+        reason: 'summary_rejected_larger'
+      },
+      createdAt: 200
+    })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toEqual({
+      state: {
+        status: 'compacted',
+        cursorOrderSeq: 7,
+        summaryUpdatedAt: null,
+        boundaryReason: 'summary_rejected_larger'
+      },
+      emitSeq: 0,
+      latestAnchorEntryId: 42
+    })
+
+    setReconstructionAnchor({
+      entryId: 43,
+      name: 'handoff/legacy',
+      state: { cursorOrderSeq: 7, reason: 'legacy_reason' },
+      createdAt: 201
+    })
+    await expect(coordinator.getState(SESSION_ID)).resolves.toMatchObject({
+      boundaryReason: null
+    })
+  })
+
+  it('uses a per-session sequence across same-millisecond events and runtime replacement', async () => {
+    const { coordinator, publishedEvents, runtime } = createHarness()
+    vi.spyOn(Date, 'now').mockReturnValue(100)
+
+    coordinator.emit(SESSION_ID, coordinator.idleState())
+    coordinator.emit(SESSION_ID, {
+      status: 'compacting',
+      cursorOrderSeq: 5,
+      summaryUpdatedAt: null,
+      boundaryReason: null
+    })
+
+    runtime.evict(toAppSessionId(SESSION_ID))
+    const replacement = runtime.getOrHydrate(toAppSessionId(SESSION_ID))
+    replacement.setRuntimeState(createRuntimeState())
+    coordinator.emit(SESSION_ID, coordinator.idleState(), replacement)
+
+    expect(
+      publishedEvents.map(({ payload }) => (payload as { emitSeq: number }).emitSeq)
+    ).toEqual([1, 2, 3])
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({ emitSeq: 3 })
+  })
+
+  it('takes event boundary reasons only from the durable Tape anchor', () => {
+    const { coordinator, publishedEvents, setReconstructionAnchor } = createHarness()
+    setReconstructionAnchor({
+      entryId: 42,
+      name: 'compaction/context_pressure',
+      state: {
+        cursorOrderSeq: 7,
+        reason: 'summary_unavailable'
+      },
+      createdAt: 200
+    })
+
+    coordinator.emit(SESSION_ID, {
+      status: 'compacted',
+      cursorOrderSeq: 7,
+      summaryUpdatedAt: null,
+      boundaryReason: 'summary_rejected_larger'
+    })
+
+    expect(publishedEvents.at(-1)?.payload).toEqual(
+      expect.objectContaining({
+        boundaryReason: 'summary_unavailable',
+        latestAnchorEntryId: 42
+      })
+    )
+  })
+
+  it('restarts process-local sequencing while preserving the durable anchor identity', async () => {
+    const { coordinator, deps, setReconstructionAnchor, setSummaryState } = createHarness()
+    setSummaryState({
+      summaryText: null,
+      summaryCursorOrderSeq: 7,
+      summaryUpdatedAt: null
+    })
+    setReconstructionAnchor({
+      entryId: 42,
+      name: 'compaction/context_pressure',
+      state: {
+        cursorOrderSeq: 7,
+        reason: 'summary_unavailable'
+      },
+      createdAt: 200
+    })
+    coordinator.emit(SESSION_ID, {
+      status: 'compacted',
+      cursorOrderSeq: 7,
+      summaryUpdatedAt: null,
+      boundaryReason: 'summary_unavailable'
+    })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      emitSeq: 1,
+      latestAnchorEntryId: 42
+    })
+
+    const restartedCoordinator = new CompactionRuntimeCoordinator(deps)
+    await expect(restartedCoordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      state: { boundaryReason: 'summary_unavailable' },
+      emitSeq: 0,
+      latestAnchorEntryId: 42
     })
   })
 
@@ -368,7 +516,12 @@ describe('CompactionRuntimeCoordinator', () => {
 
     await expect(coordinator.compact(SESSION_ID)).resolves.toEqual({
       compacted: false,
-      state: { status: 'idle', cursorOrderSeq: 1, summaryUpdatedAt: null }
+      state: {
+        status: 'idle',
+        cursorOrderSeq: 1,
+        summaryUpdatedAt: null,
+        boundaryReason: null
+      }
     })
 
     expect(transitionStatus.mock.calls.map(([, status]) => status)).toEqual([
@@ -424,7 +577,12 @@ describe('CompactionRuntimeCoordinator', () => {
 
     await expect(coordinator.compact(SESSION_ID)).resolves.toEqual({
       compacted: true,
-      state: { status: 'compacted', cursorOrderSeq: 5, summaryUpdatedAt: 1 }
+      state: {
+        status: 'compacted',
+        cursorOrderSeq: 5,
+        summaryUpdatedAt: 1,
+        boundaryReason: null
+      }
     })
 
     expect(applyCompaction).toHaveBeenCalledWith(intent, expect.any(AbortSignal))
@@ -437,7 +595,8 @@ describe('CompactionRuntimeCoordinator', () => {
     expect(initialInstance?.getCompactionState()).toEqual({
       status: 'compacted',
       cursorOrderSeq: 5,
-      summaryUpdatedAt: 1
+      summaryUpdatedAt: 1,
+      boundaryReason: null
     })
     expect(publishedEvents.map(({ payload }) => payload)).toEqual([
       expect.objectContaining({ status: 'compacting', cursorOrderSeq: 5 }),
@@ -506,7 +665,8 @@ describe('CompactionRuntimeCoordinator', () => {
     expect(initialInstance?.getCompactionState()).toEqual({
       status: 'compacted',
       cursorOrderSeq: 3,
-      summaryUpdatedAt: 100
+      summaryUpdatedAt: 100,
+      boundaryReason: null
     })
     expect(publishedEvents.at(-1)?.payload).toEqual(
       expect.objectContaining({
@@ -530,7 +690,8 @@ describe('CompactionRuntimeCoordinator', () => {
     expect(initialInstance?.getCompactionState()).toEqual({
       status: 'compacted',
       cursorOrderSeq: 3,
-      summaryUpdatedAt: 100
+      summaryUpdatedAt: 100,
+      boundaryReason: null
     })
   })
 })

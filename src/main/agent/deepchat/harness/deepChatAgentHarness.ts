@@ -6,6 +6,7 @@ import type {
   QueuePendingInputOptions,
   SendMessageInput,
   SessionAgentContextUpdate,
+  SessionCompactionSnapshot,
   SessionCompactionState,
   SessionGenerationSettings,
   ToolInteractionResponse,
@@ -293,6 +294,10 @@ export class DeepChatAgentHarness
 
   async getSessionCompactionState(sessionId: string): Promise<SessionCompactionState> {
     return await this.services.compaction.getState(sessionId)
+  }
+
+  async getSessionCompactionSnapshot(sessionId: string): Promise<SessionCompactionSnapshot> {
+    return await this.services.compaction.getSnapshot(sessionId)
   }
 
   async compactSession(

@@ -7,7 +7,8 @@ import {
   sessionsMessagesChangedEvent,
   sessionsPendingInputsChangedEvent,
   sessionsStatusChangedEvent,
-  sessionsUpdatedEvent
+  sessionsUpdatedEvent,
+  type DeepchatEventPayload
 } from '@shared/contracts/events'
 import type { DeepchatRouteInput } from '@shared/contracts/routes'
 import {
@@ -30,6 +31,7 @@ import {
   sessionsGetActiveRoute,
   sessionsGetAgentsRoute,
   sessionsGetAgentTransferImpactRoute,
+  sessionsGetCompactionSnapshotRoute,
   sessionsGetDisabledAgentToolsRoute,
   sessionsGetLightweightByIdsRoute,
   sessionsGetGenerationSettingsRoute,
@@ -359,6 +361,10 @@ export function createSessionClient(bridge: DeepchatBridge = getDeepchatBridge()
     return await bridge.invoke(sessionsCompactRoute.name, { sessionId })
   }
 
+  async function getCompactionSnapshot(sessionId: string) {
+    return await bridge.invoke(sessionsGetCompactionSnapshotRoute.name, { sessionId })
+  }
+
   async function exportSession(
     sessionId: string,
     format: 'markdown' | 'html' | 'txt' | 'nowledge-mem'
@@ -500,13 +506,7 @@ export function createSessionClient(bridge: DeepchatBridge = getDeepchatBridge()
   }
 
   function onCompactionChanged(
-    listener: (payload: {
-      sessionId: string
-      status: 'idle' | 'compacting' | 'compacted'
-      cursorOrderSeq: number
-      summaryUpdatedAt: number | null
-      version: number
-    }) => void
+    listener: (payload: DeepchatEventPayload<typeof sessionsCompactionChangedEvent.name>) => void
   ) {
     return bridge.on(sessionsCompactionChangedEvent.name, listener)
   }
@@ -623,6 +623,7 @@ export function createSessionClient(bridge: DeepchatBridge = getDeepchatBridge()
     toggleSessionPinned,
     clearSessionMessages,
     compactSession,
+    getCompactionSnapshot,
     exportSession,
     deleteSession,
     getAgentTransferImpact,

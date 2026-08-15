@@ -30,11 +30,19 @@ export type {
 export type SessionStatus = 'idle' | 'generating' | 'error'
 export type PermissionMode = 'default' | 'auto_approve' | 'full_access'
 export type SessionCompactionStatus = 'idle' | 'compacting' | 'compacted'
+export type SessionCompactionBoundaryReason = 'summary_unavailable' | 'summary_rejected_larger'
 
 export interface SessionCompactionState {
   status: SessionCompactionStatus
   cursorOrderSeq: number
   summaryUpdatedAt: number | null
+  boundaryReason: SessionCompactionBoundaryReason | null
+}
+
+export interface SessionCompactionSnapshot {
+  state: SessionCompactionState
+  emitSeq: number
+  latestAnchorEntryId: number | null
 }
 
 export interface SessionGenerationSettings {

@@ -122,10 +122,20 @@ export const SessionStatusSchema = z.enum(['idle', 'generating', 'error'])
 export const SessionKindSchema = z.enum(['regular', 'subagent'])
 export const AgentTypeSchema = z.enum(['deepchat', 'acp'])
 export const AgentSourceSchema = z.enum(['builtin', 'manual', 'registry'])
+export const SessionCompactionBoundaryReasonSchema = z.enum([
+  'summary_unavailable',
+  'summary_rejected_larger'
+])
 export const SessionCompactionStateSchema = z.object({
   status: z.enum(['idle', 'compacting', 'compacted']),
   cursorOrderSeq: z.number().int().positive(),
-  summaryUpdatedAt: TimestampMsSchema.nullable()
+  summaryUpdatedAt: TimestampMsSchema.nullable(),
+  boundaryReason: SessionCompactionBoundaryReasonSchema.nullable().default(null)
+})
+export const SessionCompactionSnapshotSchema = z.object({
+  state: SessionCompactionStateSchema,
+  emitSeq: z.number().int().nonnegative(),
+  latestAnchorEntryId: z.number().int().positive().nullable()
 })
 
 export const DeepChatSubagentMetaSchema = z
