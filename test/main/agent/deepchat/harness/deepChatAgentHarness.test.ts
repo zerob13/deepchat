@@ -2908,6 +2908,28 @@ describe('DeepChatAgentHarness', () => {
       expect(sqlitePresenter.deepchatMessagesTable.getByStatus).toHaveBeenCalledWith('pending')
     })
 
+    it('reruns persisted runtime reconciliation after the database is reopened', () => {
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable.listUnterminatedRunEvents
+      ).toHaveBeenCalledOnce()
+      expect(sqlitePresenter.deepchatPendingInputsTable.listActive).toHaveBeenCalledOnce()
+      expect(
+        sqlitePresenter.deepchatMessagesTable.getCompactionRecoveryCandidates
+      ).toHaveBeenCalledOnce()
+      expect(sqlitePresenter.deepchatMessagesTable.getByStatus).toHaveBeenCalledOnce()
+
+      agent.reconcileAfterDatabaseReopen()
+
+      expect(
+        sqlitePresenter.deepchatTapeEntriesTable.listUnterminatedRunEvents
+      ).toHaveBeenCalledTimes(2)
+      expect(sqlitePresenter.deepchatPendingInputsTable.listActive).toHaveBeenCalledTimes(2)
+      expect(
+        sqlitePresenter.deepchatMessagesTable.getCompactionRecoveryCandidates
+      ).toHaveBeenCalledTimes(2)
+      expect(sqlitePresenter.deepchatMessagesTable.getByStatus).toHaveBeenCalledTimes(2)
+    })
+
     it('logs recovered count when > 0', () => {
       const loggerInfoMock = vi.mocked(logger.info)
       sqlitePresenter.deepchatMessagesTable.getByStatus.mockReturnValue([

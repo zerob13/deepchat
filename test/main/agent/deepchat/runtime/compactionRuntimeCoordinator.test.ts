@@ -105,6 +105,16 @@ function createIntent(previousSummaryUpdatedAt: number | null = null): Compactio
   }
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, reject, resolve }
+}
+
 type PrepareManualCompactionInput = Parameters<
   CompactionRuntimeCoordinatorDependencies['compactionService']['prepareForManualCompaction']
 >[0]
@@ -665,6 +675,63 @@ describe('CompactionRuntimeCoordinator', () => {
     })
 
     expect(messageStore.updateCompactionMessage).not.toHaveBeenCalled()
+    expect(messageStore.deleteMessage).toHaveBeenCalledWith('compaction-message')
+  })
+
+  it('finalizes a committed marker before fencing a stale runtime completion', async () => {
+    const { applyCompaction, coordinator, initialInstance, messageStore, publishedEvents, runtime } =
+      createHarness()
+    const completion = createDeferred<{
+      outcome: 'summarized'
+      anchorCommitted: true
+      summaryState: {
+        summaryText: string
+        summaryCursorOrderSeq: number
+        summaryUpdatedAt: number
+      }
+    }>()
+    applyCompaction.mockImplementationOnce(async () => await completion.promise)
+
+    const applying = coordinator.apply(SESSION_ID, createIntent(), undefined, initialInstance)
+    await vi.waitFor(() => expect(applyCompaction).toHaveBeenCalledOnce())
+    runtime.evict(toAppSessionId(SESSION_ID))
+    const replacement = runtime.getOrHydrate(toAppSessionId(SESSION_ID))
+    replacement.setRuntimeState(createRuntimeState())
+    completion.resolve({
+      outcome: 'summarized',
+      anchorCommitted: true,
+      summaryState: {
+        summaryText: 'durable summary',
+        summaryCursorOrderSeq: 5,
+        summaryUpdatedAt: 200
+      }
+    })
+
+    await expect(applying).rejects.toMatchObject({ name: 'StaleDeepChatAgentInstanceError' })
+    expect(messageStore.updateCompactionMessage).toHaveBeenCalledWith(
+      'compaction-message',
+      'compacted',
+      200,
+      { compactionAttemptId: 'compaction-attempt-1' }
+    )
+    expect(publishedEvents.map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({ status: 'compacting' })
+    ])
+  })
+
+  it('retracts a failed marker before fencing a stale runtime completion', async () => {
+    const { applyCompaction, coordinator, initialInstance, messageStore, runtime } = createHarness()
+    const completion = createDeferred<never>()
+    applyCompaction.mockImplementationOnce(async () => await completion.promise)
+
+    const applying = coordinator.apply(SESSION_ID, createIntent(), undefined, initialInstance)
+    await vi.waitFor(() => expect(applyCompaction).toHaveBeenCalledOnce())
+    runtime.evict(toAppSessionId(SESSION_ID))
+    const replacement = runtime.getOrHydrate(toAppSessionId(SESSION_ID))
+    replacement.setRuntimeState(createRuntimeState())
+    completion.reject(new Error('provider failed'))
+
+    await expect(applying).rejects.toMatchObject({ name: 'StaleDeepChatAgentInstanceError' })
     expect(messageStore.deleteMessage).toHaveBeenCalledWith('compaction-message')
   })
 

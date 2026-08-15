@@ -3266,6 +3266,7 @@ export async function createMainProcessControl(dependencies: {
       if (!mainDatabase.getDatabase().open) {
         reopenApplicationDatabase()
       }
+      deepChatAgentHarness.reconcileAfterDatabaseReopen()
       memoryIngestionObserver.resumeIngestion()
       memoryService.startBackgroundMaintenance()
       hookService.start()

@@ -120,4 +120,5 @@ export interface DeepChatRuntimeServices {
   toolSurfaceDiagnostics: ToolSurfaceShadowDiagnosticsRegistry
   toolSurfaceCanaryDiagnostics: ToolSurfaceCanaryDiagnosticsRegistry
   acpCompatibility: AcpAgentInstanceDependencyFactory
+  reconcileAfterDatabaseReopen(): void
 }

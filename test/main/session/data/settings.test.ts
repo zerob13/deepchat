@@ -544,7 +544,11 @@ describeIfSqlite('Session transcript and Tape order consistency', () => {
         })
       })
 
-      expect(transcript.reconcileCompactionMessages()).toEqual({ compacted: 2, retracted: 2 })
+      expect(transcript.reconcileCompactionMessages()).toEqual({
+        compacted: 2,
+        retracted: 2,
+        failed: 0
+      })
       expect(JSON.parse(transcript.getMessage(summarizedMarkerId)?.metadata ?? '{}')).toMatchObject(
         {
           compactionStatus: 'compacted',
@@ -576,7 +580,51 @@ describeIfSqlite('Session transcript and Tape order consistency', () => {
           })
         ])
       )
-      expect(transcript.reconcileCompactionMessages()).toEqual({ compacted: 0, retracted: 0 })
+      expect(transcript.reconcileCompactionMessages()).toEqual({
+        compacted: 0,
+        retracted: 0,
+        failed: 0
+      })
+    } finally {
+      connection.close()
+    }
+  })
+
+  it('continues reconciling later markers after one marker transaction fails', () => {
+    const connection = new MainDatabaseCtor(':memory:')
+    try {
+      const database = new SessionDatabaseCtor(connection)
+      const tape = new SessionTapeCtor(database)
+      const transcript = new SessionTranscriptCtor(database, tape, undefined, tape)
+      const failedMarkerId = transcript.createCompactionMessage('s1', 1, 'compacting', null, {
+        compactionAttemptId: 'committed-attempt'
+      })
+      tape.appendAnchor({
+        sessionId: 's1',
+        name: 'compaction/auto',
+        state: {
+          compactionAttemptId: 'committed-attempt',
+          summary: 'durable summary',
+          cursorOrderSeq: 2
+        },
+        createdAt: 100
+      })
+      const staleMarkerId = transcript.createCompactionMessage('s1', 2, 'compacting', null, {
+        compactionAttemptId: 'stale-attempt'
+      })
+      vi.spyOn(transcript, 'updateCompactionMessage').mockImplementationOnce(() => {
+        throw new Error('transaction failed')
+      })
+
+      expect(transcript.reconcileCompactionMessages()).toEqual({
+        compacted: 0,
+        retracted: 1,
+        failed: 1
+      })
+      expect(JSON.parse(transcript.getMessage(failedMarkerId)?.metadata ?? '{}')).toMatchObject({
+        compactionStatus: 'compacting'
+      })
+      expect(transcript.getMessage(staleMarkerId)).toBeNull()
     } finally {
       connection.close()
     }

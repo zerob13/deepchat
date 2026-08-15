@@ -392,7 +392,6 @@ export class CompactionRuntimeCoordinator {
           })
       )
     } catch (error) {
-      this.assertCurrent(sessionId, expectedInstance)
       this.deps.messageStore.deleteMessage(compactionMessageId)
       this.deps.messageProjection.refresh(sessionId, compactionMessageId)
       this.emit(
@@ -406,7 +405,6 @@ export class CompactionRuntimeCoordinator {
       throw error
     }
 
-    this.assertCurrent(sessionId, expectedInstance)
     if (result.anchorCommitted && result.outcome !== 'unchanged') {
       this.deps.messageStore.updateCompactionMessage(
         compactionMessageId,

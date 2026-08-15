@@ -74,6 +74,8 @@ export class DeepChatAgentHarness
     this.services.runtime.markToolRegistryChanged()
   }
 
+  readonly reconcileAfterDatabaseReopen = (): void => this.services.reconcileAfterDatabaseReopen()
+
   createAcpAgentInstanceDependencies(
     input: Parameters<AcpAgentInstanceDependencyFactory>[0]
   ): ReturnType<AcpAgentInstanceDependencyFactory> {

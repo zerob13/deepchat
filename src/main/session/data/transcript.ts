@@ -906,37 +906,47 @@ export class SessionTranscript {
     return recoveredCount
   }
 
-  reconcileCompactionMessages(): { compacted: number; retracted: number } {
-    if (!this.compactionAnchors) return { compacted: 0, retracted: 0 }
+  reconcileCompactionMessages(): { compacted: number; retracted: number; failed: number } {
+    if (!this.compactionAnchors) return { compacted: 0, retracted: 0, failed: 0 }
 
     let compacted = 0
     let retracted = 0
+    let failed = 0
     for (const row of this.database.deepchatMessagesTable.getCompactionRecoveryCandidates()) {
-      const metadata = parseMessageMetadata(row.metadata)
-      const compactionAttemptId = normalizeCompactionAttemptId(metadata.compactionAttemptId)
-      const anchor = compactionAttemptId
-        ? this.compactionAnchors.getReconstructionAnchorByCompactionAttemptId(
-            row.session_id,
-            compactionAttemptId
+      try {
+        const metadata = parseMessageMetadata(row.metadata)
+        const compactionAttemptId = normalizeCompactionAttemptId(metadata.compactionAttemptId)
+        const anchor = compactionAttemptId
+          ? this.compactionAnchors.getReconstructionAnchorByCompactionAttemptId(
+              row.session_id,
+              compactionAttemptId
+            )
+          : undefined
+
+        if (anchor && compactionAttemptId) {
+          this.updateCompactionMessage(
+            row.id,
+            'compacted',
+            summaryUpdatedAtFromCompactionAnchor(anchor),
+            { compactionAttemptId }
           )
-        : undefined
+          compacted += 1
+          continue
+        }
 
-      if (anchor && compactionAttemptId) {
-        this.updateCompactionMessage(
-          row.id,
-          'compacted',
-          summaryUpdatedAtFromCompactionAnchor(anchor),
-          { compactionAttemptId }
+        this.deleteMessageWithReason(row.id, 'stale_compaction_marker_recovered')
+        retracted += 1
+      } catch (error) {
+        failed += 1
+        logger.warn(
+          'Failed to reconcile compaction marker',
+          { sessionId: row.session_id, messageId: row.id },
+          error
         )
-        compacted += 1
-        continue
       }
-
-      this.deleteMessageWithReason(row.id, 'stale_compaction_marker_recovered')
-      retracted += 1
     }
 
-    return { compacted, retracted }
+    return { compacted, retracted, failed }
   }
 
   backfillMessageRow(row: DeepChatMessageRow): void {
