@@ -108,6 +108,16 @@ const setupStore = async (options: SetupStoreOptions = {}) => {
       emitSeq: 0,
       latestAnchorEntryId: null
     }),
+    getContextOccupancy: vi.fn().mockResolvedValue({
+      freshness: 'unavailable',
+      source: null,
+      occupiedTokens: null,
+      contextWindowTokens: null,
+      requestSeq: null,
+      manifestEntryId: null,
+      providerAttemptEntryId: null,
+      measuredAt: null
+    }),
     onUpdated: vi.fn((listener: (payload: any) => void) => {
       sessionListeners.push(listener)
       return () => undefined
@@ -1889,6 +1899,128 @@ describe('sessionStore streaming cleanup', () => {
 
     expect(store.activeSession.value?.status).toBe('working')
     expect(invalidateRecentSessionView).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes context occupancy on activation and generation settlement', async () => {
+    const { store, sessionClient, emitSessionStatusChange } = await setupStore()
+    sessionClient.getContextOccupancy.mockResolvedValue({
+      freshness: 'current',
+      source: 'provider',
+      occupiedTokens: 750,
+      contextWindowTokens: 1_000,
+      requestSeq: 2,
+      manifestEntryId: 10,
+      providerAttemptEntryId: 11,
+      measuredAt: 100
+    })
+
+    await store.applyBootstrapShell({ activeSessionId: 'session-a' })
+    await vi.waitFor(() => {
+      expect(store.activeContextOccupancy.value?.occupiedTokens).toBe(750)
+    })
+
+    sessionClient.getContextOccupancy.mockClear()
+    emitSessionStatusChange({ sessionId: 'session-a', status: 'generating', version: 1 })
+    expect(sessionClient.getContextOccupancy).not.toHaveBeenCalled()
+
+    emitSessionStatusChange({ sessionId: 'session-a', status: 'idle', version: 2 })
+    expect(sessionClient.getContextOccupancy).toHaveBeenCalledWith('session-a')
+  })
+
+  it('does not refresh context occupancy for a stale settled-status event', async () => {
+    const { store, sessionClient, emitSessionStatusChange } = await setupStore()
+    await store.applyBootstrapShell({ activeSessionId: 'session-a' })
+    sessionClient.getContextOccupancy.mockClear()
+
+    emitSessionStatusChange({ sessionId: 'session-a', status: 'generating', version: 2 })
+    emitSessionStatusChange({ sessionId: 'session-a', status: 'idle', version: 1 })
+
+    expect(sessionClient.getContextOccupancy).not.toHaveBeenCalled()
+  })
+
+  it('refreshes context occupancy after a buffered compaction replacement', async () => {
+    const snapshot = createDeferred<any>()
+    const { store, sessionClient, emitSessionCompactionChange } = await setupStore()
+    sessionClient.getCompactionSnapshot.mockReturnValueOnce(snapshot.promise)
+
+    await store.applyBootstrapShell({ activeSessionId: 'session-a' })
+    sessionClient.getContextOccupancy.mockClear()
+    emitSessionCompactionChange({
+      sessionId: 'session-a',
+      status: 'compacted',
+      cursorOrderSeq: 7,
+      summaryUpdatedAt: null,
+      boundaryReason: 'summary_unavailable',
+      emitSeq: 2,
+      latestAnchorEntryId: 20
+    })
+    expect(sessionClient.getContextOccupancy).not.toHaveBeenCalled()
+
+    snapshot.resolve({
+      state: {
+        status: 'idle',
+        cursorOrderSeq: 1,
+        summaryUpdatedAt: null,
+        boundaryReason: null
+      },
+      emitSeq: 1,
+      latestAnchorEntryId: null
+    })
+    await vi.waitFor(() => {
+      expect(sessionClient.getContextOccupancy).toHaveBeenCalledWith('session-a')
+    })
+  })
+
+  it('refreshes context occupancy after a successful model update', async () => {
+    const { store, sessionClient } = await setupStore()
+    await store.applyBootstrapShell({ activeSessionId: 'session-1' })
+    sessionClient.getContextOccupancy.mockClear()
+
+    await store.setSessionModel('session-1', 'anthropic', 'claude-3-7-sonnet')
+
+    expect(sessionClient.getContextOccupancy).toHaveBeenCalledWith('session-1')
+  })
+
+  it('rejects late context occupancy responses across session switches', async () => {
+    const first = createDeferred<any>()
+    const second = createDeferred<any>()
+    const { store, sessionClient } = await setupStore()
+    sessionClient.getContextOccupancy.mockReset()
+    sessionClient.getContextOccupancy
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+
+    await store.applyBootstrapShell({ activeSessionId: 'session-a' })
+    await store.applyBootstrapShell({ activeSessionId: 'session-b' })
+    first.resolve({
+      freshness: 'current',
+      source: 'provider',
+      occupiedTokens: 900,
+      contextWindowTokens: 1_000,
+      requestSeq: 1,
+      manifestEntryId: 10,
+      providerAttemptEntryId: 11,
+      measuredAt: 100
+    })
+    await Promise.resolve()
+    expect(store.activeContextOccupancy.value).toBeNull()
+
+    second.resolve({
+      freshness: 'stale',
+      source: 'estimated',
+      occupiedTokens: 300,
+      contextWindowTokens: 2_000,
+      requestSeq: 2,
+      manifestEntryId: 20,
+      providerAttemptEntryId: null,
+      measuredAt: 200
+    })
+    await vi.waitFor(() => {
+      expect(store.activeContextOccupancy.value).toMatchObject({
+        freshness: 'stale',
+        occupiedTokens: 300
+      })
+    })
   })
 
   it('buffers compaction events until the active-session snapshot is applied', async () => {

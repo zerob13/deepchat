@@ -102,6 +102,12 @@ export interface TapeProviderContextPressureRecord {
   }
 }
 
+export interface TapeProviderAttemptRecord {
+  readonly entryId: number
+  readonly createdAt: number
+  readonly attempt: TapeProviderAttemptReadEvent
+}
+
 export interface TapeProviderAttemptCacheMetrics {
   lastTokenCacheHitRate: number | null
   lastCacheReadTokens: number | null

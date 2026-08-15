@@ -5,6 +5,7 @@ import {
   TAPE_PROVIDER_ATTEMPT_EVENT_NAME,
   TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION,
   type TapeProviderAttemptInput,
+  type TapeProviderAttemptRecord,
   type TapeProviderContextPressureRecord
 } from '../domain/providerAttempt'
 import type { TapeApplicationProviders } from '../ports/application'
@@ -21,6 +22,32 @@ export class TapeProviderAttemptService
     return this.providers
       .getEntryStore()
       .getMaxEventSourceSeq(sessionId, TAPE_PROVIDER_ATTEMPT_EVENT_NAME, 'runtime_event', messageId)
+  }
+
+  getLatestProviderAttemptForRequest(
+    sessionId: string,
+    messageId: string,
+    requestSeq: number
+  ): TapeProviderAttemptRecord | null {
+    const row = this.providers
+      .getEntryStore()
+      .getLatestEventBySource(
+        sessionId,
+        TAPE_PROVIDER_ATTEMPT_EVENT_NAME,
+        'runtime_event',
+        messageId,
+        requestSeq
+      )
+    if (!row) return null
+
+    const attempt = parseTapeProviderAttemptEvent(row)
+    return attempt
+      ? {
+          entryId: row.entry_id,
+          createdAt: row.created_at,
+          attempt
+        }
+      : null
   }
 
   getPendingProviderContextPressure(

@@ -863,6 +863,11 @@ export class TapeViewReplayService {
       .sort((left, right) => right.requestSeq - left.requestSeq || right.entryId - left.entryId)
   }
 
+  getLatestViewManifestForSession(sessionId: string): DeepChatTapeViewManifestRecord | null {
+    const row = this.table.getLatestViewManifestEvent(sessionId)
+    return row ? this.toViewManifestRecord(row) : null
+  }
+
   listViewManifestsByMessageRequest(
     sessionId: string,
     messageId: string,

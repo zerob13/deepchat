@@ -22,6 +22,7 @@ import { RuntimeHookSink } from '@/agent/deepchat/runtime/runtimeHookSink'
 import { SessionIdentityService } from '@/agent/deepchat/runtime/sessionIdentityService'
 import { SessionLifecycleCoordinator } from '@/agent/deepchat/runtime/sessionLifecycleCoordinator'
 import { SessionSettingsCoordinator } from '@/agent/deepchat/runtime/sessionSettingsCoordinator'
+import { ContextOccupancyCoordinator } from '@/agent/deepchat/runtime/contextOccupancyCoordinator'
 import { SessionStateResolver } from '@/agent/deepchat/runtime/sessionStateResolver'
 import { SessionStatusPublisher } from '@/agent/deepchat/runtime/sessionStatusPublisher'
 import { SkillContextMaterializer } from '@/agent/deepchat/runtime/skillContextMaterializer'
@@ -236,6 +237,11 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
       await memory.beginSessionAgentReassignment(sessionId),
     finishSessionAgentReassignment: (sessionId) => memory.finishSessionAgentReassignment(sessionId),
     readPersistedProjectDir: (sessionId) => database.newSessionsTable?.get(sessionId)?.project_dir
+  })
+  const contextOccupancy = new ContextOccupancyCoordinator({
+    runtime,
+    sessionSettings,
+    tape: tapeService
   })
   const promptAssembly = new PromptAssemblyService({
     registry: runtime,
@@ -586,6 +592,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     interactionCoordinator,
     pendingInputAdmission,
     compaction,
+    contextOccupancy,
     transcriptMutation,
     memoryIngestionObserver: memory,
     toolSurfaceDiagnostics,

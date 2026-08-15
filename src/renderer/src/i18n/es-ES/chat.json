@@ -127,6 +127,13 @@
     "noopDescription": "Aún no hay historial de conversación nuevo que compactar.",
     "failedTitle": "La compactación ha fallado"
   },
+  "contextOccupancy": {
+    "label": "Uso del contexto",
+    "details": "{used} de {capacity} tokens",
+    "provider": "Medido por el proveedor",
+    "estimated": "Estimado desde la vista de solicitud",
+    "stale": "Obsoleto tras cambiar el modelo, la ventana o la compactación"
+  },
   "rateLimit": {
     "queueTooltip": "{count} peticiones en cola, intervalo de {interval}s",
     "readyTooltip": "Listo para enviar, intervalo de {interval}s",

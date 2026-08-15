@@ -127,6 +127,13 @@
     "noopDescription": "Non c'è ancora nuova cronologia della conversazione da comprimere.",
     "failedTitle": "Compressione non riuscita"
   },
+  "contextOccupancy": {
+    "label": "Utilizzo del contesto",
+    "details": "{used} di {capacity} token",
+    "provider": "Misurato dal provider",
+    "estimated": "Stimato dalla vista della richiesta",
+    "stale": "Obsoleto dopo una modifica a modello, finestra o compressione"
+  },
   "rateLimit": {
     "queueTooltip": "{count} richieste in coda, intervallo di {interval} secondi",
     "readyTooltip": "Puoi inviare la richiesta, intervallo di {interval} secondi",

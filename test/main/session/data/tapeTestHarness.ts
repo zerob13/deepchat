@@ -396,6 +396,20 @@ function createTapeTableMock() {
             entry.source_seq === sourceSeq
         )
     ),
+    getLatestEventBySource: vi.fn(
+      (sessionId: string, name: string, sourceType: string, sourceId: string, sourceSeq: number) =>
+        entries
+          .filter(
+            (entry) =>
+              entry.session_id === sessionId &&
+              entry.kind === 'event' &&
+              entry.name === name &&
+              entry.source_type === sourceType &&
+              entry.source_id === sourceId &&
+              entry.source_seq === sourceSeq
+          )
+          .at(-1)
+    ),
     getEventsBySourceId: vi.fn(
       (sessionId: string, name: string, sourceType: string, sourceId: string) =>
         entries.filter(

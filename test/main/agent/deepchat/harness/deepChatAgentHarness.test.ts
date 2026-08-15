@@ -612,6 +612,26 @@ function createMockSqlitePresenter() {
               entry.source_seq === sourceSeq
           )
       ),
+      getLatestEventBySource: vi.fn(
+        (
+          sessionId: string,
+          name: string,
+          sourceType: string,
+          sourceId: string,
+          sourceSeq: number
+        ) =>
+          tapeEntries
+            .filter(
+              (entry) =>
+                entry.session_id === sessionId &&
+                entry.kind === 'event' &&
+                entry.name === name &&
+                entry.source_type === sourceType &&
+                entry.source_id === sourceId &&
+                entry.source_seq === sourceSeq
+            )
+            .at(-1)
+      ),
       getEventsBySourceId: vi.fn(
         (sessionId: string, name: string, sourceType: string, sourceId: string) =>
           tapeEntries.filter(
@@ -8623,7 +8643,11 @@ describe('DeepChatAgentHarness', () => {
       await agent.initSession('s1', { providerId: 'openai', modelId: 'gpt-4' })
       await agent.processMessage('s1', 'Hello')
 
-      expect(applyCompaction).toHaveBeenCalledWith(compactionIntent, expect.any(AbortSignal))
+      expect(applyCompaction).toHaveBeenCalledWith(
+        compactionIntent,
+        expect.any(AbortSignal),
+        expect.any(Function)
+      )
     })
 
     it('injects request trace context when trace debug is enabled', async () => {

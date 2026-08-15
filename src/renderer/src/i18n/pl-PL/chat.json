@@ -127,6 +127,13 @@
     "noopDescription": "Nie ma jeszcze nowej historii konwersacji, którą można by skompaktować.",
     "failedTitle": "Zagęszczanie nie powiodło się"
   },
+  "contextOccupancy": {
+    "label": "Użycie kontekstu",
+    "details": "{used} z {capacity} tokenów",
+    "provider": "Zmierzono przez dostawcę",
+    "estimated": "Oszacowano z widoku żądania",
+    "stale": "Nieaktualne po zmianie modelu, okna lub kompresji"
+  },
   "rateLimit": {
     "queueTooltip": "Żądania {count} w kolejce, interwał {interval}",
     "readyTooltip": "Gotowy do wysłania, interwał {interval}s",

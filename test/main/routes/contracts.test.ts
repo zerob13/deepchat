@@ -45,6 +45,7 @@ import {
   sessionsDeactivateRoute,
   sessionsGetActiveRoute,
   sessionsGetCompactionSnapshotRoute,
+  sessionsGetContextOccupancyRoute,
   sessionsListRoute,
   sessionsQueuePendingInputRoute,
   sessionsRestoreRoute,
@@ -1405,6 +1406,40 @@ describe('main kernel contracts', () => {
       emitSeq: 7,
       latestAnchorEntryId: 19
     })
+
+    expect(
+      sessionsGetContextOccupancyRoute.output.parse({
+        freshness: 'current',
+        source: 'provider',
+        occupiedTokens: 24_000,
+        contextWindowTokens: 32_000,
+        requestSeq: 3,
+        manifestEntryId: 20,
+        providerAttemptEntryId: 21,
+        measuredAt: 123
+      })
+    ).toEqual({
+      freshness: 'current',
+      source: 'provider',
+      occupiedTokens: 24_000,
+      contextWindowTokens: 32_000,
+      requestSeq: 3,
+      manifestEntryId: 20,
+      providerAttemptEntryId: 21,
+      measuredAt: 123
+    })
+    expect(() =>
+      sessionsGetContextOccupancyRoute.output.parse({
+        freshness: 'unavailable',
+        source: 'estimated',
+        occupiedTokens: 0,
+        contextWindowTokens: 32_000,
+        requestSeq: 3,
+        manifestEntryId: 20,
+        providerAttemptEntryId: null,
+        measuredAt: 123
+      })
+    ).toThrow()
 
     expect(
       sessionsCompactionChangedEvent.payload.parse({

@@ -15,7 +15,8 @@ import type {
   SessionWithState,
   CreateSessionInput,
   SendMessageInput,
-  SessionCompactionSnapshot
+  SessionCompactionSnapshot,
+  SessionContextOccupancySnapshot
 } from '@shared/types/agent-interface'
 import {
   normalizeOrchestrationPolicy,
@@ -350,6 +351,7 @@ export const useSessionStore = defineStore('session', () => {
   let sessionByIdsErrorRevision: number | null = null
   let activationNavigationRequestId = 0
   let compactionSyncRequestId = 0
+  let contextOccupancyRequestId = 0
   let activeCompactionSync: ActiveCompactionSync | null = null
   let newConversationProjectDirIntentId = 0
   let sessionFetchPromise: Promise<void> | null = null
@@ -359,6 +361,7 @@ export const useSessionStore = defineStore('session', () => {
   const activeSessionSummary = ref<UIActiveSessionSummary | null>(null)
   const activeSessionId = ref<string | null>(null)
   const activeCompactionSnapshot = ref<SessionCompactionSnapshot | null>(null)
+  const activeContextOccupancy = ref<SessionContextOccupancySnapshot | null>(null)
   const searchIntents = shallowReactive(new Map<string, boolean>())
   const newConversationProjectDirIntent = ref<NewConversationProjectDirIntent | null>(null)
   const groupMode = ref<GroupMode>(DEFAULT_GROUP_MODE)
@@ -395,6 +398,9 @@ export const useSessionStore = defineStore('session', () => {
       emitSeq: payload.emitSeq,
       latestAnchorEntryId: payload.latestAnchorEntryId
     }
+    if (payload.status === 'compacted') {
+      synchronizeContextOccupancy(payload.sessionId)
+    }
   }
 
   const handleCompactionChanged = (payload: SessionCompactionChangedPayload): void => {
@@ -413,6 +419,25 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     applyCompactionEvent(payload)
+  }
+
+  const synchronizeContextOccupancy = (sessionId: string): void => {
+    const requestId = ++contextOccupancyRequestId
+    void sessionClient
+      .getContextOccupancy(sessionId)
+      .then((snapshot) => {
+        if (activeSessionId.value !== sessionId || contextOccupancyRequestId !== requestId) {
+          return
+        }
+        activeContextOccupancy.value = snapshot
+      })
+      .catch((snapshotError) => {
+        if (activeSessionId.value !== sessionId || contextOccupancyRequestId !== requestId) {
+          return
+        }
+        activeContextOccupancy.value = null
+        console.warn('[sessionStore] Failed to read context occupancy:', snapshotError)
+      })
   }
 
   const synchronizeCompactionState = (sessionId: string): void => {
@@ -473,8 +498,13 @@ export const useSessionStore = defineStore('session', () => {
       compactionSyncRequestId += 1
       activeCompactionSync = null
       activeCompactionSnapshot.value = null
+      contextOccupancyRequestId += 1
+      activeContextOccupancy.value = null
     } else if (changed || !activeCompactionSync) {
+      contextOccupancyRequestId += 1
+      activeContextOccupancy.value = null
       synchronizeCompactionState(sessionId)
+      synchronizeContextOccupancy(sessionId)
     }
   }
 
@@ -718,11 +748,11 @@ export const useSessionStore = defineStore('session', () => {
     agentStore.setSelectedAgent(targetAgentId)
   }
 
-  const applySessionStatus = (sessionId: string, status: string, version?: number): void => {
+  const applySessionStatus = (sessionId: string, status: string, version?: number): boolean => {
     if (version !== undefined) {
       const observed = observedSessionStatuses.get(sessionId)
       if (observed && version < observed.version) {
-        return
+        return false
       }
       observedSessionStatuses.set(sessionId, {
         version,
@@ -759,6 +789,7 @@ export const useSessionStore = defineStore('session', () => {
         status: nextStatus
       }
     }
+    return true
   }
 
   const applyConfirmedOrchestrationPolicy = (
@@ -1283,6 +1314,7 @@ export const useSessionStore = defineStore('session', () => {
       commitSessionSnapshot(updated)
       if (activeSessionId.value === sessionId) {
         applyRestoredSession(updated)
+        synchronizeContextOccupancy(sessionId)
       }
       await completeOnboardingStep('switch-model')
     } catch (updateError) {
@@ -1492,7 +1524,10 @@ export const useSessionStore = defineStore('session', () => {
       pageRouter.goToNewThread()
     },
     onStatusChanged: (sessionId, status, version) => {
-      applySessionStatus(sessionId, status, version)
+      const applied = applySessionStatus(sessionId, status, version)
+      if (applied && activeSessionId.value === sessionId && status !== 'generating') {
+        synchronizeContextOccupancy(sessionId)
+      }
     },
     onCompactionChanged: handleCompactionChanged
   })
@@ -1504,6 +1539,7 @@ export const useSessionStore = defineStore('session', () => {
     activeSessionId,
     activeCompactionSnapshot,
     activeCompactionState,
+    activeContextOccupancy,
     newConversationProjectDirIntent,
     groupMode,
     loading,
@@ -1527,6 +1563,7 @@ export const useSessionStore = defineStore('session', () => {
     createSession,
     sendMessage,
     setSessionModel,
+    synchronizeContextOccupancy,
     applyConfirmedOrchestrationPolicy,
     selectSession,
     closeSession,

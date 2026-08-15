@@ -311,6 +311,13 @@
     "noopDescription": "まだ圧縮できる新しい会話履歴がありません。",
     "failedTitle": "圧縮に失敗しました"
   },
+  "contextOccupancy": {
+    "label": "コンテキスト使用量",
+    "details": "{capacity} トークン中 {used}",
+    "provider": "プロバイダーによる実測",
+    "estimated": "リクエストビューからの推定",
+    "stale": "モデル、ウィンドウ、または圧縮の変更後の古い値"
+  },
   "newThread": {
     "title": "作成して探索"
   },

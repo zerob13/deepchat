@@ -8,6 +8,7 @@ import type {
   SessionAgentContextUpdate,
   SessionCompactionSnapshot,
   SessionCompactionState,
+  SessionContextOccupancySnapshot,
   SessionGenerationSettings,
   ToolInteractionResponse,
   ToolInteractionResult
@@ -298,6 +299,10 @@ export class DeepChatAgentHarness
 
   async getSessionCompactionSnapshot(sessionId: string): Promise<SessionCompactionSnapshot> {
     return await this.services.compaction.getSnapshot(sessionId)
+  }
+
+  async getSessionContextOccupancy(sessionId: string): Promise<SessionContextOccupancySnapshot> {
+    return await this.services.contextOccupancy.getSnapshot(sessionId)
   }
 
   async compactSession(

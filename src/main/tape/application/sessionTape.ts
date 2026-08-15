@@ -92,6 +92,7 @@ import {
 import type {
   TapeAnchorResult,
   TapeBackfillResult,
+  TapeContextOccupancyEvidence,
   TapeForkHandle,
   TapeInfo,
   TapeMigrationState,
@@ -256,6 +257,23 @@ export class SessionTape
     modelId: string
   ): TapeProviderContextPressureRecord | null {
     return this.providerAttempts.getPendingProviderContextPressure(sessionId, providerId, modelId)
+  }
+
+  getContextOccupancyEvidence(sessionId: string): TapeContextOccupancyEvidence {
+    const manifest = this.viewReplay.getLatestViewManifestForSession(sessionId)
+    return {
+      manifest,
+      providerAttempt:
+        manifest?.integrity === 'valid'
+          ? this.providerAttempts.getLatestProviderAttemptForRequest(
+              sessionId,
+              manifest.messageId,
+              manifest.requestSeq
+            )
+          : null,
+      latestReconstructionAnchorEntryId:
+        this.providers.getEntryStore().getLatestReconstructionAnchor(sessionId)?.entry_id ?? null
+    }
   }
 
   commitRunStarted(input: CommitExecutionRunStartedInput): ExecutionJournalCommitReceipt {

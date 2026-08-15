@@ -31,6 +31,7 @@ import type {
   SendMessageInput,
   SessionCompactionSnapshot,
   SessionCompactionState,
+  SessionContextOccupancySnapshot,
   SessionGenerationSettings,
   SessionKind,
   SessionLightweightListResult,
@@ -252,6 +253,7 @@ export type SessionTurnRuntimeSession =
         getSnapshot(): Promise<SessionCompactionSnapshot>
         compact(): Promise<{ compacted: boolean; state: SessionCompactionState }>
       }
+      getContextOccupancy(): Promise<SessionContextOccupancySnapshot>
       isPendingQueueResumeAvailable(): Promise<boolean>
       resumePendingQueue(): Promise<boolean>
       retryPendingQueueInput(itemId: string): Promise<{ accepted: boolean; started: boolean }>
@@ -340,6 +342,7 @@ export interface SessionTurnPort {
   editUserMessage(sessionId: string, messageId: string, text: string): Promise<ChatMessageRecord>
   getSessionCompactionState(sessionId: string): Promise<SessionCompactionState>
   getSessionCompactionSnapshot(sessionId: string): Promise<SessionCompactionSnapshot>
+  getSessionContextOccupancy(sessionId: string): Promise<SessionContextOccupancySnapshot>
   compactSession(sessionId: string): Promise<{ compacted: boolean; state: SessionCompactionState }>
   clearSessionMessages(sessionId: string): Promise<void>
   cancelGeneration(sessionId: string): Promise<void>

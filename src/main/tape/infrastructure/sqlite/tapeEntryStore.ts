@@ -968,6 +968,29 @@ export class DeepChatTapeEntriesTable
       .all(sessionId, name, sourceType, sourceId, sourceSeq) as DeepChatTapeEntryRow[]
   }
 
+  getLatestEventBySource(
+    sessionId: string,
+    name: string,
+    sourceType: DeepChatTapeSourceType,
+    sourceId: string,
+    sourceSeq: number
+  ): DeepChatTapeEntryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = ?
+           AND source_type = ?
+           AND source_id = ?
+           AND source_seq = ?
+         ORDER BY entry_id DESC
+         LIMIT 1`
+      )
+      .get(sessionId, name, sourceType, sourceId, sourceSeq) as DeepChatTapeEntryRow | undefined
+  }
+
   getEventsBySourceId(
     sessionId: string,
     name: string,
@@ -1039,6 +1062,21 @@ export class DeepChatTapeEntriesTable
 
   getByEntryId(sessionId: string, entryId: number): DeepChatTapeEntryRow | undefined {
     return this.getByEntryIds(sessionId, [entryId])[0]
+  }
+
+  getLatestViewManifestEvent(sessionId: string): DeepChatTapeEntryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = 'view/assembled'
+           AND source_type = 'runtime_event'
+         ORDER BY entry_id DESC
+         LIMIT 1`
+      )
+      .get(sessionId) as DeepChatTapeEntryRow | undefined
   }
 
   getMessageSourceEntries(sessionId: string, messageId: string): DeepChatTapeEntryRow[] {

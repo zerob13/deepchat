@@ -127,6 +127,13 @@
     "noopDescription": "Pada masa ini tiada sejarah perbualan baharu untuk dimampatkan.",
     "failedTitle": "Mampatan gagal"
   },
+  "contextOccupancy": {
+    "label": "Penggunaan konteks",
+    "details": "{used} daripada {capacity} token",
+    "provider": "Diukur oleh penyedia",
+    "estimated": "Dianggarkan daripada paparan permintaan",
+    "stale": "Lapuk selepas perubahan model, tetingkap atau mampatan"
+  },
   "rateLimit": {
     "queueTooltip": "Terdapat permintaan {count} dalam baris gilir, dengan selang {interval} saat",
     "readyTooltip": "Permintaan boleh dihantar dengan selang {interval} saat",

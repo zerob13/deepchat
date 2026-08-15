@@ -127,6 +127,13 @@
     "noopDescription": "Chưa có lịch sử hội thoại mới nào được thu gọn.",
     "failedTitle": "Nén không thành công"
   },
+  "contextOccupancy": {
+    "label": "Mức dùng ngữ cảnh",
+    "details": "{used} trên {capacity} token",
+    "provider": "Do nhà cung cấp đo",
+    "estimated": "Ước tính từ chế độ xem yêu cầu",
+    "stale": "Đã cũ sau khi đổi mô hình, cửa sổ hoặc nén"
+  },
   "rateLimit": {
     "queueTooltip": "Yêu cầu {count} trong hàng đợi, khoảng thời gian {interval}",
     "readyTooltip": "Sẵn sàng gửi, khoảng thời gian {interval}",

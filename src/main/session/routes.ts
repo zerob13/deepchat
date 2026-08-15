@@ -25,6 +25,7 @@ import {
   sessionsGetAgentsRoute,
   sessionsGetAgentTransferImpactRoute,
   sessionsGetCompactionSnapshotRoute,
+  sessionsGetContextOccupancyRoute,
   sessionsGetDisabledAgentToolsRoute,
   sessionsGetGenerationSettingsRoute,
   sessionsGetLightweightByIdsRoute,
@@ -520,6 +521,15 @@ export function createSessionRoutes(deps: {
         const input = sessionsGetCompactionSnapshotRoute.input.parse(rawInput)
         return sessionsGetCompactionSnapshotRoute.output.parse(
           await deps.turn.getSessionCompactionSnapshot(input.sessionId)
+        )
+      }
+    ],
+    [
+      sessionsGetContextOccupancyRoute.name,
+      async (rawInput) => {
+        const input = sessionsGetContextOccupancyRoute.input.parse(rawInput)
+        return sessionsGetContextOccupancyRoute.output.parse(
+          await deps.turn.getSessionContextOccupancy(input.sessionId)
         )
       }
     ],

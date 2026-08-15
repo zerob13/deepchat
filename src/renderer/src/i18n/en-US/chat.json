@@ -212,6 +212,13 @@
     "noopDescription": "There is no new conversation history to compact yet.",
     "failedTitle": "Compaction failed"
   },
+  "contextOccupancy": {
+    "label": "Context usage",
+    "details": "{used} of {capacity} tokens",
+    "provider": "Provider measured",
+    "estimated": "Estimated from the request view",
+    "stale": "Stale after a model, window, or compaction change"
+  },
   "rateLimit": {
     "queueTooltip": "{count} requests in queue, {interval}s interval",
     "readyTooltip": "Ready to send, {interval}s interval",

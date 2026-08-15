@@ -311,6 +311,13 @@
     "noopDescription": "עדיין אין היסטוריית שיחה חדשה לדחיסה.",
     "failedTitle": "הדחיסה נכשלה"
   },
+  "contextOccupancy": {
+    "label": "שימוש בהקשר",
+    "details": "{used} מתוך {capacity} טוקנים",
+    "provider": "נמדד על ידי הספק",
+    "estimated": "הוערך מתצוגת הבקשה",
+    "stale": "מיושן לאחר שינוי מודל, חלון או דחיסה"
+  },
   "newThread": {
     "title": "בנו וגלו"
   },

@@ -8,6 +8,7 @@ import type {
   SendMessageInput,
   SessionCompactionSnapshot,
   SessionCompactionState,
+  SessionContextOccupancySnapshot,
   ToolInteractionResponse,
   ToolInteractionResult
 } from '@shared/types/agent-interface'
@@ -420,6 +421,24 @@ export class SessionTurn implements SessionTurnPort, SessionInitialTurnPort {
       }
     }
     return await runtime.compaction.getSnapshot()
+  }
+
+  async getSessionContextOccupancy(sessionId: string): Promise<SessionContextOccupancySnapshot> {
+    this.requireSession(sessionId)
+    const runtime = this.dependencies.runtime.resolveSession(toAppSessionId(sessionId))
+    if (runtime.kind === 'acp') {
+      return {
+        freshness: 'unavailable',
+        source: null,
+        occupiedTokens: null,
+        contextWindowTokens: null,
+        requestSeq: null,
+        manifestEntryId: null,
+        providerAttemptEntryId: null,
+        measuredAt: null
+      }
+    }
+    return await runtime.getContextOccupancy()
   }
 
   async compactSession(

@@ -1,0 +1,258 @@
+import { describe, expect, it, vi } from 'vitest'
+import type { DeepChatTapeViewManifestRecord } from '@shared/types/tape-view-manifest'
+import type { TapeContextOccupancyEvidence } from '@/tape/application/contracts'
+import type { TapeProviderAttemptRecord } from '@/tape/domain/providerAttempt'
+import { ContextOccupancyCoordinator } from '@/agent/deepchat/runtime/contextOccupancyCoordinator'
+
+const SESSION_ID = 'session-1'
+
+function createManifestRecord(
+  overrides: {
+    providerId?: string
+    modelId?: string
+    contextLength?: number
+    estimatedPromptTokens?: number
+    toolReserveTokens?: number
+    reconstructionAnchorEntryId?: number | null
+    integrity?: 'valid' | 'invalid' | 'unverified'
+  } = {}
+): DeepChatTapeViewManifestRecord {
+  return {
+    sessionId: SESSION_ID,
+    messageId: 'message-1',
+    requestSeq: 3,
+    entryId: 101,
+    createdAt: 1_000,
+    integrity: overrides.integrity ?? 'valid',
+    manifest: {
+      messageId: 'message-1',
+      requestSeq: 3,
+      reconstructionAnchorEntryId: overrides.reconstructionAnchorEntryId ?? 42,
+      tokenBudget: {
+        contextLength: overrides.contextLength ?? 1_000,
+        estimatedPromptTokens: overrides.estimatedPromptTokens ?? 400,
+        toolReserveTokens: overrides.toolReserveTokens ?? 50
+      },
+      meta: {
+        providerId: overrides.providerId ?? 'openai',
+        modelId: overrides.modelId ?? 'gpt-4'
+      }
+    } as DeepChatTapeViewManifestRecord['manifest']
+  }
+}
+
+function createProviderAttempt(
+  overrides: {
+    messageId?: string
+    requestSeq?: number
+    providerId?: string
+    modelId?: string
+    status?: 'completed' | 'context_overflow' | 'aborted' | 'error'
+    inputTokens?: number
+    cacheReadTokens?: number | null
+    usage?: 'present' | 'missing'
+  } = {}
+): TapeProviderAttemptRecord {
+  const inputTokens = overrides.inputTokens ?? 720
+  return {
+    entryId: 102,
+    createdAt: 1_100,
+    attempt: {
+      schemaVersion: 1,
+      messageId: overrides.messageId ?? 'message-1',
+      requestSeq: overrides.requestSeq ?? 3,
+      providerId: overrides.providerId ?? 'openai',
+      modelId: overrides.modelId ?? 'gpt-4',
+      status: overrides.status ?? 'completed',
+      stopReason: 'complete',
+      usage:
+        overrides.usage === 'missing'
+          ? null
+          : {
+              inputTokens,
+              outputTokens: 20,
+              totalTokens: inputTokens + 20,
+              cacheReadTokens: overrides.cacheReadTokens ?? 500,
+              cacheWriteTokens: null
+            },
+      cacheHitRate: null,
+      contextPressure: null
+    }
+  }
+}
+
+function setup(
+  overrides: {
+    manifest?: DeepChatTapeViewManifestRecord | null
+    providerAttempt?: TapeProviderAttemptRecord | null
+    latestAnchorEntryId?: number | null
+    activeProviderId?: string
+    activeModelId?: string
+    configuredContextLength?: number
+    requestedMaxTokens?: number
+    providerContextLimitTokens?: number
+    providerPromptLimitTokens?: number
+    hydrated?: boolean
+  } = {}
+) {
+  const instance = {
+    getContextWindowObservation: vi.fn(() => {
+      const providerContextLimitTokens = overrides.providerContextLimitTokens
+      const providerPromptLimitTokens = overrides.providerPromptLimitTokens
+      return providerContextLimitTokens === undefined && providerPromptLimitTokens === undefined
+        ? undefined
+        : { providerContextLimitTokens, providerPromptLimitTokens }
+    })
+  }
+  const state = {
+    status: 'idle',
+    providerId: overrides.activeProviderId ?? 'openai',
+    modelId: overrides.activeModelId ?? 'gpt-4',
+    permissionMode: 'full_access'
+  }
+  const evidence: TapeContextOccupancyEvidence = {
+    manifest:
+      overrides.manifest === undefined ? createManifestRecord() : overrides.manifest,
+    providerAttempt:
+      overrides.providerAttempt === undefined ? createProviderAttempt() : overrides.providerAttempt,
+    latestReconstructionAnchorEntryId:
+      overrides.latestAnchorEntryId === undefined ? 42 : overrides.latestAnchorEntryId
+  }
+  const dependencies = {
+    runtime: {
+      getHydratedScope: vi.fn(() =>
+        overrides.hydrated === false
+          ? undefined
+          : {
+              instance,
+              state: () => state,
+              isCurrent: () => true
+            }
+      )
+    },
+    sessionSettings: {
+      getEffectiveGenerationSettings: vi.fn(async () => ({
+        contextLength: overrides.configuredContextLength ?? 1_000,
+        maxTokens: overrides.requestedMaxTokens ?? 100
+      }))
+    },
+    tape: {
+      getContextOccupancyEvidence: vi.fn(() => evidence)
+    }
+  }
+  return {
+    coordinator: new ContextOccupancyCoordinator(dependencies as never),
+    dependencies
+  }
+}
+
+describe('ContextOccupancyCoordinator', () => {
+  it('uses exact provider input usage without adding cache-read detail', async () => {
+    const { coordinator } = setup({
+      providerAttempt: createProviderAttempt({ inputTokens: 720, cacheReadTokens: 600 })
+    })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toEqual({
+      freshness: 'current',
+      source: 'provider',
+      occupiedTokens: 720,
+      contextWindowTokens: 1_000,
+      requestSeq: 3,
+      manifestEntryId: 101,
+      providerAttemptEntryId: 102,
+      measuredAt: 1_100
+    })
+  })
+
+  it('preserves a provider-reported zero input measurement', async () => {
+    const { coordinator } = setup({
+      providerAttempt: createProviderAttempt({ inputTokens: 0, cacheReadTokens: 0 })
+    })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      source: 'provider',
+      occupiedTokens: 0,
+      providerAttemptEntryId: 102
+    })
+  })
+
+  it('uses the manifest estimate when final-attempt usage is unavailable', async () => {
+    const { coordinator } = setup({
+      manifest: createManifestRecord({ estimatedPromptTokens: 430, toolReserveTokens: 70 }),
+      providerAttempt: createProviderAttempt({ usage: 'missing' })
+    })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      freshness: 'current',
+      source: 'estimated',
+      occupiedTokens: 500,
+      providerAttemptEntryId: null,
+      measuredAt: 1_000
+    })
+  })
+
+  it('does not use usage from a different request or provider', async () => {
+    const { coordinator } = setup({
+      providerAttempt: createProviderAttempt({ requestSeq: 2, providerId: 'anthropic' })
+    })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      source: 'estimated',
+      occupiedTokens: 450,
+      providerAttemptEntryId: null
+    })
+  })
+
+  it.each([
+    ['provider', { activeProviderId: 'anthropic' }],
+    ['model', { activeModelId: 'gpt-5' }],
+    ['effective window', { configuredContextLength: 2_000 }],
+    ['reconstruction anchor', { latestAnchorEntryId: 43 }]
+  ])('marks evidence stale after a %s change', async (_label, overrides) => {
+    const { coordinator } = setup(overrides)
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      freshness: 'stale'
+    })
+  })
+
+  it('uses a matching provider limit to prove the request window is current', async () => {
+    const { coordinator } = setup({
+      configuredContextLength: 2_000,
+      providerContextLimitTokens: 1_000
+    })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      freshness: 'current',
+      contextWindowTokens: 1_000
+    })
+  })
+
+  it('does not become stale merely because ordinary output was appended after the request', async () => {
+    const manifest = createManifestRecord()
+    manifest.manifest.latestEntryId = 50
+    const { coordinator } = setup({ manifest })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      freshness: 'current'
+    })
+  })
+
+  it.each([
+    ['missing manifest', { manifest: null }],
+    ['invalid newest manifest', { manifest: createManifestRecord({ integrity: 'invalid' }) }],
+    ['nonpositive window', { manifest: createManifestRecord({ contextLength: 0 }) }],
+    ['unhydrated runtime', { hydrated: false }]
+  ])('returns unavailable for %s', async (_label, overrides) => {
+    const { coordinator } = setup(overrides)
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toEqual({
+      freshness: 'unavailable',
+      source: null,
+      occupiedTokens: null,
+      contextWindowTokens: null,
+      requestSeq: null,
+      manifestEntryId: null,
+      providerAttemptEntryId: null,
+      measuredAt: null
+    })
+  })
+})

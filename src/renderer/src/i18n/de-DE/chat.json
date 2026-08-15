@@ -127,6 +127,13 @@
     "noopDescription": "Es gibt noch keinen neuen Chatverlauf, der komprimiert werden muss.",
     "failedTitle": "Komprimierung fehlgeschlagen"
   },
+  "contextOccupancy": {
+    "label": "Kontextnutzung",
+    "details": "{used} von {capacity} Tokens",
+    "provider": "Vom Anbieter gemessen",
+    "estimated": "Aus der Anfrageansicht geschätzt",
+    "stale": "Veraltet nach Modell-, Fenster- oder Komprimierungsänderung"
+  },
   "rateLimit": {
     "queueTooltip": "{count} Anfragen in der Warteschlange, Intervall {interval} Sekunden",
     "readyTooltip": "Bereit zum Senden, Intervall {interval} Sekunden",

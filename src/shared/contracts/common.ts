@@ -137,6 +137,30 @@ export const SessionCompactionSnapshotSchema = z.object({
   emitSeq: z.number().int().nonnegative(),
   latestAnchorEntryId: z.number().int().positive().nullable()
 })
+const SessionContextOccupancyEvidenceSchema = z.object({
+  source: z.enum(['provider', 'estimated']),
+  occupiedTokens: z.number().int().nonnegative(),
+  contextWindowTokens: z.number().int().positive(),
+  requestSeq: z.number().int().positive(),
+  manifestEntryId: z.number().int().positive(),
+  providerAttemptEntryId: z.number().int().positive().nullable(),
+  measuredAt: TimestampMsSchema
+})
+export const SessionContextOccupancySnapshotSchema = z.discriminatedUnion('freshness', [
+  SessionContextOccupancyEvidenceSchema.extend({
+    freshness: z.enum(['current', 'stale'])
+  }),
+  z.object({
+    freshness: z.literal('unavailable'),
+    source: z.null(),
+    occupiedTokens: z.null(),
+    contextWindowTokens: z.null(),
+    requestSeq: z.null(),
+    manifestEntryId: z.null(),
+    providerAttemptEntryId: z.null(),
+    measuredAt: z.null()
+  })
+])
 
 export const DeepChatSubagentMetaSchema = z
   .object({

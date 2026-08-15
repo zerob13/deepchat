@@ -1494,6 +1494,17 @@ describe('renderer api clients', () => {
     })
   })
 
+  it('reads context occupancy through the session route', async () => {
+    const bridge = createBridge()
+    const sessionClient = createSessionClient(bridge)
+
+    await sessionClient.getContextOccupancy('session-1')
+
+    expect(bridge.invoke).toHaveBeenCalledWith('sessions.getContextOccupancy', {
+      sessionId: 'session-1'
+    })
+  })
+
   it('routes memory client calls through the shared registry names', async () => {
     const bridge = createBridge()
     const memoryClient = createMemoryClient(bridge)

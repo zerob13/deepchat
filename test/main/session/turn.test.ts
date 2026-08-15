@@ -105,6 +105,16 @@ function createHarness(
       state: { status: 'idle', cursorOrderSeq: 4, summaryUpdatedAt: 200 }
     })
   }
+  const getContextOccupancy = vi.fn().mockResolvedValue({
+    freshness: 'current',
+    source: 'provider',
+    occupiedTokens: 750,
+    contextWindowTokens: 1_000,
+    requestSeq: 2,
+    manifestEntryId: 10,
+    providerAttemptEntryId: 11,
+    measuredAt: 100
+  })
   const isPendingQueueResumeAvailable = vi.fn().mockResolvedValue(true)
   const resumePendingQueue = vi.fn().mockResolvedValue(true)
   const retryPendingQueueInput = vi.fn().mockResolvedValue({ accepted: true, started: false })
@@ -119,6 +129,7 @@ function createHarness(
           cancel,
           snapshot,
           compaction,
+          getContextOccupancy,
           isPendingQueueResumeAvailable,
           resumePendingQueue,
           retryPendingQueueInput
@@ -175,6 +186,7 @@ function createHarness(
     cancel,
     snapshot,
     compaction,
+    getContextOccupancy,
     isPendingQueueResumeAvailable,
     resumePendingQueue,
     retryPendingQueueInput,
@@ -617,6 +629,16 @@ describe('SessionTurn', () => {
       emitSeq: 0,
       latestAnchorEntryId: null
     })
+    await expect(harness.coordinator.getSessionContextOccupancy('s1')).resolves.toEqual({
+      freshness: 'unavailable',
+      source: null,
+      occupiedTokens: null,
+      contextWindowTokens: null,
+      requestSeq: null,
+      manifestEntryId: null,
+      providerAttemptEntryId: null,
+      measuredAt: null
+    })
     await expect(harness.coordinator.compactSession('s1')).rejects.toThrow(
       'Agent acp-coder does not support manual compaction.'
     )
@@ -641,6 +663,11 @@ describe('SessionTurn', () => {
       emitSeq: 4,
       latestAnchorEntryId: 12
     })
+    await expect(harness.coordinator.getSessionContextOccupancy('s1')).resolves.toMatchObject({
+      freshness: 'current',
+      occupiedTokens: 750
+    })
+    expect(harness.getContextOccupancy).toHaveBeenCalledOnce()
     await expect(harness.coordinator.compactSession('s1')).resolves.toMatchObject({
       compacted: true
     })

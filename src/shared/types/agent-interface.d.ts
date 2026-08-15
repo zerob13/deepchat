@@ -45,6 +45,31 @@ export interface SessionCompactionSnapshot {
   latestAnchorEntryId: number | null
 }
 
+export type SessionContextOccupancyFreshness = 'current' | 'stale' | 'unavailable'
+export type SessionContextOccupancySource = 'provider' | 'estimated'
+
+export type SessionContextOccupancySnapshot =
+  | {
+      freshness: 'current' | 'stale'
+      source: SessionContextOccupancySource
+      occupiedTokens: number
+      contextWindowTokens: number
+      requestSeq: number
+      manifestEntryId: number
+      providerAttemptEntryId: number | null
+      measuredAt: number
+    }
+  | {
+      freshness: 'unavailable'
+      source: null
+      occupiedTokens: null
+      contextWindowTokens: null
+      requestSeq: null
+      manifestEntryId: null
+      providerAttemptEntryId: null
+      measuredAt: null
+    }
+
 export interface SessionGenerationSettings {
   systemPrompt: string
   temperature: number

@@ -1981,6 +1981,7 @@ export async function createMainProcessControl(dependencies: {
                 getSnapshot: () => handle.deepchat.getCompactionSnapshot(),
                 compact: () => handle.deepchat.compact()
               },
+              getContextOccupancy: () => handle.deepchat.getContextOccupancy(),
               isPendingQueueResumeAvailable: () => handle.deepchat.isPendingQueueResumeAvailable(),
               resumePendingQueue: () => handle.deepchat.resumePendingQueue(),
               retryPendingQueueInput: (itemId) => handle.deepchat.retryPendingQueueInput(itemId)

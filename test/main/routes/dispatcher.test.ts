@@ -507,6 +507,16 @@ function createRuntime() {
       emitSeq: 7,
       latestAnchorEntryId: 19
     }),
+    getSessionContextOccupancy: vi.fn().mockResolvedValue({
+      freshness: 'current',
+      source: 'provider',
+      occupiedTokens: 24_000,
+      contextWindowTokens: 32_000,
+      requestSeq: 3,
+      manifestEntryId: 20,
+      providerAttemptEntryId: 21,
+      measuredAt: 123
+    }),
     compactSession: vi.fn().mockResolvedValue({
       compacted: true,
       state: {
@@ -4528,6 +4538,25 @@ describe('dispatchDeepchatRoute', () => {
       },
       emitSeq: 7,
       latestAnchorEntryId: 19
+    })
+
+    const contextOccupancy = await dispatchDeepchatRoute(
+      runtime,
+      'sessions.getContextOccupancy',
+      { sessionId: 'session-1' },
+      createRendererRouteContext(88, 3)
+    )
+
+    expect(sessionTurnPort.getSessionContextOccupancy).toHaveBeenCalledWith('session-1')
+    expect(contextOccupancy).toEqual({
+      freshness: 'current',
+      source: 'provider',
+      occupiedTokens: 24_000,
+      contextWindowTokens: 32_000,
+      requestSeq: 3,
+      manifestEntryId: 20,
+      providerAttemptEntryId: 21,
+      measuredAt: 123
     })
 
     const retryResult = await dispatchDeepchatRoute(

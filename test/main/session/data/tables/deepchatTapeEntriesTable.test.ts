@@ -96,6 +96,97 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
     db.close()
   })
 
+  it('reads the latest request evidence through session and source indexes', () => {
+    const { db, table } = createTable()
+
+    const firstManifest = table.appendEvent({
+      sessionId: 's1',
+      name: 'view/assembled',
+      source: { type: 'runtime_event', id: 'message-1', seq: 1 },
+      data: { manifest: { requestSeq: 1 } },
+      createdAt: 100
+    })
+    const latestManifest = table.appendEvent({
+      sessionId: 's1',
+      name: 'view/assembled',
+      source: { type: 'runtime_event', id: 'message-2', seq: 2 },
+      data: { manifest: { requestSeq: 2 } },
+      createdAt: 101
+    })
+    table.appendEvent({
+      sessionId: 's2',
+      name: 'view/assembled',
+      source: { type: 'runtime_event', id: 'message-other', seq: 1 },
+      data: { manifest: { requestSeq: 1 } },
+      createdAt: 102
+    })
+    const firstAttempt = table.appendEvent({
+      sessionId: 's1',
+      name: 'provider/attempt_completed',
+      source: { type: 'runtime_event', id: 'message-2', seq: 2 },
+      data: { physicalAttempt: 1 },
+      createdAt: 103
+    })
+    const finalAttempt = table.appendEvent({
+      sessionId: 's1',
+      name: 'provider/attempt_completed',
+      source: { type: 'runtime_event', id: 'message-2', seq: 2 },
+      data: { physicalAttempt: 2 },
+      createdAt: 104
+    })
+
+    expect(firstManifest.entry_id).toBeLessThan(latestManifest.entry_id)
+    expect(table.getLatestViewManifestEvent('s1')?.entry_id).toBe(latestManifest.entry_id)
+    expect(firstAttempt.entry_id).toBeLessThan(finalAttempt.entry_id)
+    expect(
+      table.getLatestEventBySource(
+        's1',
+        'provider/attempt_completed',
+        'runtime_event',
+        'message-2',
+        2
+      )?.entry_id
+    ).toBe(finalAttempt.entry_id)
+
+    const viewPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = 'view/assembled'
+           AND source_type = 'runtime_event'
+         ORDER BY entry_id DESC
+         LIMIT 1`
+      )
+      .all('s1') as Array<{ detail: string }>
+    expect(viewPlan.some((row) => /idx_deepchat_tape_entries_session_name/i.test(row.detail))).toBe(
+      true
+    )
+
+    const attemptPlan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT *
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND kind = 'event'
+           AND name = ?
+           AND source_type = ?
+           AND source_id = ?
+           AND source_seq = ?
+         ORDER BY entry_id DESC
+         LIMIT 1`
+      )
+      .all('s1', 'provider/attempt_completed', 'runtime_event', 'message-2', 2) as Array<{
+      detail: string
+    }>
+    expect(
+      attemptPlan.some((row) => /idx_deepchat_tape_entries_session_source/i.test(row.detail))
+    ).toBe(true)
+
+    db.close()
+  })
+
   it('reserves Tool Surface provenance names for the dedicated writer', () => {
     const { db, table } = createTable()
 

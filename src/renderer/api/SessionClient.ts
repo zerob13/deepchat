@@ -32,6 +32,7 @@ import {
   sessionsGetAgentsRoute,
   sessionsGetAgentTransferImpactRoute,
   sessionsGetCompactionSnapshotRoute,
+  sessionsGetContextOccupancyRoute,
   sessionsGetDisabledAgentToolsRoute,
   sessionsGetLightweightByIdsRoute,
   sessionsGetGenerationSettingsRoute,
@@ -365,6 +366,10 @@ export function createSessionClient(bridge: DeepchatBridge = getDeepchatBridge()
     return await bridge.invoke(sessionsGetCompactionSnapshotRoute.name, { sessionId })
   }
 
+  async function getContextOccupancy(sessionId: string) {
+    return await bridge.invoke(sessionsGetContextOccupancyRoute.name, { sessionId })
+  }
+
   async function exportSession(
     sessionId: string,
     format: 'markdown' | 'html' | 'txt' | 'nowledge-mem'
@@ -624,6 +629,7 @@ export function createSessionClient(bridge: DeepchatBridge = getDeepchatBridge()
     clearSessionMessages,
     compactSession,
     getCompactionSnapshot,
+    getContextOccupancy,
     exportSession,
     deleteSession,
     getAgentTransferImpact,

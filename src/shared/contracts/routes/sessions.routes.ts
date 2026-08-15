@@ -29,6 +29,7 @@ import {
   SendMessageInputSchema,
   SessionCompactionSnapshotSchema,
   SessionCompactionStateSchema,
+  SessionContextOccupancySnapshotSchema,
   SessionGenerationSettingsSchema,
   SessionGenerationSettingsPatchSchema,
   SubmissionIdSchema,
@@ -586,6 +587,14 @@ export const sessionsGetCompactionSnapshotRoute = defineRouteContract({
     sessionId: EntityIdSchema
   }),
   output: SessionCompactionSnapshotSchema
+})
+
+export const sessionsGetContextOccupancyRoute = defineRouteContract({
+  name: 'sessions.getContextOccupancy',
+  input: z.object({
+    sessionId: EntityIdSchema
+  }),
+  output: SessionContextOccupancySnapshotSchema
 })
 
 export const sessionsExportRoute = defineRouteContract({

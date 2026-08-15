@@ -35,6 +35,13 @@ export interface TapeEntryStore {
     sourceId: string,
     sourceSeq: number
   ): DeepChatTapeEntryRow[]
+  getLatestEventBySource(
+    sessionId: string,
+    name: string,
+    sourceType: DeepChatTapeSourceType,
+    sourceId: string,
+    sourceSeq: number
+  ): DeepChatTapeEntryRow | undefined
   getEventsBySourceId(
     sessionId: string,
     name: string,
@@ -44,6 +51,7 @@ export interface TapeEntryStore {
   getBySessionExcludingContext(sessionId: string): DeepChatTapeEntryRow[]
   getByEntryIds(sessionId: string, entryIds: readonly number[]): DeepChatTapeEntryRow[]
   getMessageSourceEntries(sessionId: string, messageId: string): DeepChatTapeEntryRow[]
+  getLatestViewManifestEvent(sessionId: string): DeepChatTapeEntryRow | undefined
   getViewManifestEventsByMessage(sessionId: string, messageId: string): DeepChatTapeEntryRow[]
   getMaxEventSourceSeq(
     sessionId: string,

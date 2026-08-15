@@ -311,6 +311,13 @@
     "noopDescription": "아직 압축할 새 대화 기록이 없습니다.",
     "failedTitle": "압축 실패"
   },
+  "contextOccupancy": {
+    "label": "컨텍스트 사용량",
+    "details": "{capacity} 토큰 중 {used}",
+    "provider": "프로바이더 측정값",
+    "estimated": "요청 뷰에서 추정",
+    "stale": "모델, 창 또는 압축 변경 후의 오래된 값"
+  },
   "newThread": {
     "title": "만들고 탐색하기"
   },
