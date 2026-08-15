@@ -569,6 +569,7 @@ describe('DeepChatContextCoordinator', () => {
 
   it('does not rebuild or fit pressure context when there is no compaction intent', async () => {
     const assembleCheckpoint = vi.fn()
+    const rebuildAfterCompaction = vi.fn()
     const fit = vi.fn()
     const messages: ChatMessage[] = [{ role: 'user', content: 'unchanged' }]
 
@@ -587,6 +588,7 @@ describe('DeepChatContextCoordinator', () => {
       prepareCompaction: async () => ({ applied: false as const }),
       assembleCheckpoint,
       getSummaryCursorOrderSeq: () => 1,
+      rebuildAfterCompaction,
       fit,
       measure: (candidate) => JSON.stringify(candidate).length,
       assertCurrent: vi.fn()
@@ -594,6 +596,7 @@ describe('DeepChatContextCoordinator', () => {
 
     expect(recovered).toEqual({ messages })
     expect(assembleCheckpoint).not.toHaveBeenCalled()
+    expect(rebuildAfterCompaction).not.toHaveBeenCalled()
     expect(fit).not.toHaveBeenCalled()
   })
 
@@ -630,6 +633,11 @@ describe('DeepChatContextCoordinator', () => {
         }
       },
       getSummaryCursorOrderSeq: (summary) => summary.cursor,
+      rebuildAfterCompaction: ({ requestMessages }) => [
+        requestMessages[0],
+        contextContributions.checkpoint.message!,
+        ...requestMessages.slice(2)
+      ],
       fit: ({ messages, reserveTokens, minimumProtectedTailCount }) => {
         order.push(`fit:${reserveTokens}:${minimumProtectedTailCount}`)
         return messages.filter(
@@ -685,6 +693,10 @@ describe('DeepChatContextCoordinator', () => {
         contributions: []
       }),
       getSummaryCursorOrderSeq: (summary) => summary.cursor,
+      rebuildAfterCompaction: ({ requestMessages }) => [
+        contextContributions.checkpoint.message!,
+        ...requestMessages.slice(1)
+      ],
       fit: ({ messages: candidate }) => candidate,
       measure: (candidate) => JSON.stringify(candidate).length,
       assertCurrent: vi.fn()

@@ -101,7 +101,7 @@ export interface ContextPressureRecovery<TSummary> {
     reserveTokens: number
     minimumProtectedTailCount: number
   }): ChatMessage[]
-  rebuildAfterCompaction?(input: {
+  rebuildAfterCompaction(input: {
     summary: TSummary
     requestMessages: ChatMessage[]
   }): ChatMessage[]
@@ -773,16 +773,10 @@ export class DeepChatContextCoordinator {
     input.contextContributions.checkpoint = checkpoint
     let fittedMessages: ChatMessage[]
     try {
-      const messages = input.rebuildAfterCompaction
-        ? input.rebuildAfterCompaction({
-            summary: compaction.summary,
-            requestMessages: input.requestMessages
-          })
-        : this.replaceCheckpointMessage(
-            input.requestMessages,
-            previousCheckpoint.message,
-            checkpoint.message
-          )
+      const messages = input.rebuildAfterCompaction({
+        summary: compaction.summary,
+        requestMessages: input.requestMessages
+      })
       fittedMessages = input.fit({
         messages,
         reserveTokens: input.requestedMaxTokens + input.toolReserveTokens,
@@ -1714,27 +1708,5 @@ export class DeepChatContextCoordinator {
   private getLeadingSystemPrompt(messages: ChatMessage[]): string | null {
     const first = messages[0]
     return first?.role === 'system' && typeof first.content === 'string' ? first.content : null
-  }
-
-  private replaceCheckpointMessage(
-    messages: ChatMessage[],
-    previous: ChatMessage | null,
-    next: ChatMessage | null
-  ): ChatMessage[] {
-    const result = [...messages]
-    const searchOffset = result[0]?.role === 'system' ? 1 : 0
-    const hasPrevious =
-      Boolean(previous) &&
-      result[searchOffset]?.role === 'user' &&
-      result[searchOffset]?.content === previous?.content
-
-    if (hasPrevious && next) {
-      result[searchOffset] = next
-    } else if (hasPrevious) {
-      result.splice(searchOffset, 1)
-    } else if (next) {
-      result.splice(searchOffset, 0, next)
-    }
-    return result
   }
 }
