@@ -166,6 +166,71 @@ assemble candidate View
 After a successful provider response, the sequence-level overflow latch resets. A later tool step
 may run the state machine again until the Run-level recovery ceiling is reached.
 
+## Follow-up Correctness Contract (2026-08-15)
+
+The implementation recorded below correctly made boundary progress independent from summary
+availability, but a fourth-round implementation audit found that its shrink proof occurs after
+`commitSummaryBoundary`. Restoring the caller's in-memory projection after a failed proof does not
+roll back the durable cursor and anchor. The ordinary pre-turn path also has no equivalent proof.
+Consequently, a checkpoint that is equal to or larger than the provider-visible history it replaces
+can become durable and create positive feedback into the next pressure estimate.
+
+The follow-up keeps the existing Tape, cursor, anchor, summary-gap, recall, and ViewManifest model.
+It changes the durable summary commit rule rather than adding a second compaction mechanism.
+
+### Durable Summary Shrink Proof
+
+- `contextLength` must be finite and greater than zero before pressure or compaction arithmetic is
+  allowed. Invalid model metadata fails explicitly instead of producing a per-turn compaction loop.
+- A semantic-summary anchor may be committed only when the exact next checkpoint is strictly
+  smaller than the provider-visible context it replaces:
+
+  ```text
+  tokens(next checkpoint)
+    < tokens(current checkpoint) + tokens(newly hidden visible turns)
+  ```
+
+- Both sides use the normal provider-message projection and its shared message-token estimator.
+  The comparison is not made against raw transcript text or the bare generated summary.
+- `current checkpoint` is reconstructed with the prior summary and the real current reconstruction
+  anchor. A null placeholder must not omit model-visible anchor text from either the pressure
+  projection or the shrink proof.
+- `next checkpoint` is built through the canonical checkpoint builder, so coverage, provenance,
+  recall guidance, and future compatible checkpoint text all count toward its cost.
+- `newly hidden visible turns` includes only summaryable turns removed from the current View by this
+  cursor advance. Pending summary-gap records are not counted again because they were already
+  outside that View.
+- Equality is rejection. If the generated checkpoint does not prove strict shrinkage, the semantic
+  summary is not committed; the existing boundary-only transaction is used with reason
+  `summary_rejected_larger`.
+- `summary_unavailable` and `summary_rejected_larger` are one summary-gap reason family for gap
+  merging, later successful-summary recovery, and deterministic model-facing recall guidance. A
+  shared allowlist/predicate owns that family so persistence and checkpoint rendering cannot drift.
+- Abort remains fail-closed and commits neither a semantic summary nor a boundary-only fallback.
+
+This commit-time rule applies to automatic, pressure-recovery, resume, and manual callers. A caller
+may retain its post-rebuild progress check as defense in depth, but that check is not a transaction
+rollback mechanism and is not the authority for accepting a semantic summary.
+
+### Frozen Architecture And Scope
+
+- Tape remains the append-only authority; compaction changes the selected read set, not historical
+  facts. Summary remains an optional derivative with provenance and raw-recall paths.
+- The existing cursor plus reconstruction-anchor design remains the compaction engine. This
+  follow-up does not introduce pointer-based tails, retained-tail copies, surface replacement as a
+  fact, prompt replay after tool side effects, a model-controlled reset/handoff tool, or durable
+  replacement of raw tool-result facts.
+- The first implementation slice is the durable shrink proof, the shared summary-gap reason family,
+  and invalid-context-length rejection. Checkpoint provenance follows immediately so its text is
+  automatically governed by the same proof.
+- Marker reconciliation, renderer state synchronization, and silent-overflow observations require
+  small state-machine designs before implementation. Usage accounting, context-occupancy reporting,
+  and selective first-user pinning each require a separate design gate at their implementation
+  stage.
+- First-user pinning, when designed, is a selective View contribution rather than a cursor hole. It
+  uses the latest effective user fact and must not wrap that original instruction in the
+  derivative-content warning used for summaries or tool output.
+
 ## Compatibility
 
 - Existing reconstruction anchors containing a summary remain valid and retain their hash and
@@ -218,6 +283,13 @@ may run the state machine again until the Run-level recovery ceiling is reached.
     anchor reads remain backward compatible.
 12. Focused runtime, Session/Tape, provider-loop, ToolOutputGuard, and harness tests pass, followed by
     formatting, i18n validation, lint, type checking, and the relevant broader main-process suite.
+13. No semantic-summary anchor is durably committed unless its canonical checkpoint is strictly
+    smaller than the canonical current checkpoint plus the newly hidden visible turns.
+14. A non-shrinking generated summary advances only through the existing boundary-only path with
+    `summary_rejected_larger`, retaining the same gap merge, recovery, provenance, and recall
+    behavior as `summary_unavailable`.
+15. A non-finite or non-positive context length fails explicitly before compaction budget arithmetic
+    instead of causing a repeated compaction loop.
 
 ## Implementation Record
 
@@ -235,6 +307,11 @@ The canonical post-implementation contracts live in:
 Validation covers summary success/failure/abort/CAS races, cursor-only state, strict protected-tail
 fitting, repeated bounded recovery, usage-anchor invalidation, closed/open tool units, harness
 replay, ViewManifest provenance, and Session/Tape compatibility.
+
+The 2026-08-15 follow-up does not invalidate this historical completion record. It adds a stricter
+commit-time invariant after discovering that the original retry-projection check could restore only
+in-memory state after the durable summary boundary had already committed. Its active execution
+sequence and design gates are recorded in `plan.md`.
 
 ## Non-Goals
 

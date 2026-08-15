@@ -5,6 +5,10 @@
 Implementation complete on `fix/tape-context-compaction`. Repository delivery follows the normal
 review workflow; this plan records only the implementation and validation contract.
 
+The original implementation slices and completion summary below are retained as a historical
+record. Follow-up correctness and product work is active on `feat/compaction` under the dated plan
+added after that summary.
+
 ## Implementation Slices
 
 ### 1. Separate Boundary Progress From Summary Success
@@ -83,6 +87,118 @@ review workflow; this plan records only the implementation and validation contra
   fallback for fitted projections and malformed cache usage.
 - Canonical behavior is documented in `docs/architecture/tape-system.md` and
   `docs/architecture/agent-system.md`.
+
+## Follow-up Compaction Correctness And Product Completion (2026-08-15)
+
+### Frozen Decisions
+
+- Keep the existing append-only Tape, monotonic reconstruction cursor, anchor, selective View,
+  summary-gap, raw recall, and request-level ViewManifest architecture.
+- A summary is a provenance-bearing derivative and may be absent. It never replaces or deletes the
+  source facts it describes.
+- Do not introduce pointer-based or copied retained tails, durable tool-result replacement, surface
+  replacement as a fact, prompt replay after tool effects, model-controlled reset/handoff, or a
+  second compaction engine.
+- Recovery remains bounded and may continue only after durable boundary progress or a measurably
+  smaller protocol-valid projection. Free View reductions remain ahead of model-backed summary in
+  the existing request-pressure ladder.
+
+### Ordered Follow-up Slices
+
+#### 0. Correct The Durable Contract
+
+- Preserve the original completion record while documenting the difference between an in-memory
+  retry-projection restore and a durable anchor rollback.
+- Freeze the commit-time shrink formula, the summary-gap reason family, scope, implementation order,
+  and the design gates below before changing runtime behavior.
+
+#### 1. Reject Non-Shrinking Semantic Checkpoints
+
+- Validate that model context length is finite and greater than zero before using it for pressure
+  or compaction arithmetic.
+- In `applyCompaction`, before `commitSummaryBoundary`, compare the canonical next checkpoint with
+  the canonical current checkpoint plus only the newly hidden provider-visible turns.
+- Build the current checkpoint with the real reconstruction anchor, not a null placeholder. Use the
+  shared provider-message token estimator on both sides and require strict shrinkage.
+- On rejection, reuse `commitBoundaryOnly` with `summary_rejected_larger`; do not persist the
+  generated summary.
+- Treat `summary_rejected_larger` and `summary_unavailable` through one shared summary-gap predicate
+  in pending-gap recovery, consecutive-gap merge, and checkpoint/recall rendering.
+- Add focused regression coverage for smaller, equal, and larger checkpoints; prior checkpoint and
+  gap inputs; abort; and invalid context lengths.
+
+#### 2. Add Checkpoint Provenance Text
+
+- Render the source coverage already present on the reconstruction anchor in the canonical
+  checkpoint and point the model to `tape_search` / `tape_context` for raw recall.
+- Keep the text deterministic and bounded. Do not fabricate an order range when the anchor does not
+  carry one.
+- Rely on slice 1's canonical checkpoint comparison so provenance overhead cannot bypass the shrink
+  guarantee.
+
+#### 3. Reconcile Compaction Markers After A Crash
+
+- First define the small durable state machine. Provision one `compactionAttemptId` before work and
+  correlate marker, intent, anchor, and later usage records with that identity.
+- On startup, reconcile incomplete markers against durable Tape anchors. Preserve `status: 'sent'`
+  as transport state rather than reinterpreting it as compaction truth; handle legacy markers
+  without an attempt ID conservatively through normal retraction/correction facts.
+
+#### 4. Expose Race-Free Renderer Compaction State
+
+- Add `boundaryReason` to the shared state as a value derived from the latest anchor, without
+  inventing a fourth live status or a separate UI authority.
+- Define a per-session, process-lifetime monotonic `emitSeq` owned outside replaceable runtime
+  instances. Atomically return `state + emitSeq + latestAnchorEntryId` from the snapshot path.
+- The renderer subscribes and buffers first, reads the snapshot second, then discards buffered
+  events at or below the snapshot sequence and applies newer events in order.
+
+#### 5. Record Silent Overflow Without Replaying Completed Work
+
+- Design an attempt-local durable observation for successful responses whose provider-reported
+  prompt usage exceeds the context window and for near-empty `length` stops at the window edge.
+- Use DeepChat's provider usage contract: cache-read tokens are details within input tokens, not an
+  additional bucket, and physical-attempt usage must not be replaced by a logical-round aggregate.
+- Consume the observation at the next pre-turn boundary; a newer reconstruction anchor settles it.
+  Do not create a background queue and do not replay an already completed response or user prompt.
+
+#### 6. Account For Compaction Model Usage
+
+- Design this as a vertical capture-to-reporting slice. Capture every summary call that returns
+  usage, including successful map-reduce chunks whose enclosing compaction later fails.
+- Associate records with `compactionAttemptId`, provider, model, and a dedicated category before
+  removing aggregate-statistics exclusions.
+- Record unavailable usage as unknown. Never estimate it as billed usage or write zero values that
+  contaminate cache-hit denominators.
+
+#### 7. Add A Context-Occupancy Read Model
+
+- Design a renderer read model from provider prompt usage when current, conservative View estimates
+  otherwise, and an explicit stale state.
+- Do not repurpose `useContextLength`; it measures composer draft plus selected files, not occupied
+  conversation context.
+
+#### 8. Add Selective First-User Pinning
+
+- Design the current Tape incarnation's first effective user fact as an explicit protected View
+  contribution while keeping the reconstruction cursor contiguous.
+- Order provider context as system, pinned first user, checkpoint, retained tail, then active turn.
+  Record the pinned source entry in ViewManifest and include it in the protected budget.
+- Use the latest effective edit of the original user fact. Do not apply the untrusted derivative
+  fence used for summary or tool output to an authoritative user instruction.
+
+#### Independent Cleanup
+
+- Remove or rename dead compaction settings UI and composer-token helpers only after confirming each
+  has no live consumer. Keep cleanup independent from correctness slices.
+
+### Design Gates
+
+Slices 1 and 2 have implementation-level contracts and may proceed consecutively. Slices 3–5 each
+need their small state transition and persistence contract written immediately before coding.
+Slices 6–8 stop for a separate design review at their stage because their accounting, read-model,
+and selective-View consequences are broader. This follow-up plan fixes scope and order; it does not
+pretend those later designs are already implementation-ready.
 
 ## Test Matrix
 
