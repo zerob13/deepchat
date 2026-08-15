@@ -72,7 +72,7 @@ function isViewEntryRef(
     (reason !== null && SCHEMA_V3_ENTRY_REASONS.has(reason))
   const hasValidPinnedFirstUserShape =
     reason !== 'pinned_first_user' ||
-    (schemaVersion >= 3 &&
+    (schemaVersion >= 4 &&
       typeof value.entryId === 'number' &&
       isPositiveInteger(value.entryId) &&
       typeof value.messageId === 'string' &&

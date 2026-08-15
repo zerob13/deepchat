@@ -1010,6 +1010,7 @@ describe('tapeViewManifest', () => {
 
     expect(verifyTapeViewManifestHash(manifest)).toBe('valid')
     expect(normalizeStoredTapeViewManifest(manifest, 's1')).toEqual(manifest)
+    expect(normalizeStoredTapeViewManifest({ ...manifest, schemaVersion: 3 }, 's1')).toBeNull()
     expect(
       normalizeStoredTapeViewManifest(
         { ...manifest, contextBuilderVersion: 'cache-aware-v1' },
