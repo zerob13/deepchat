@@ -307,6 +307,11 @@ secret。连续 gap 合并为最新边界上的一个区间；旧有效 summary 
 不能伪装成该边界新生成的 summary。两类 gap 都保留 Tape recall 指引并在后续成功 summary 时回填；
 取消 summary 时不提交边界。
 
+成功 summary 的 checkpoint 仅在 owning reconstruction anchor 带合法 `range` 时渲染稳定的
+orderSeq coverage 和 `tape_search` / `tape_context` recall 指引；legacy、仅有 `priorSummary` 或无
+range anchor 不推测来源。provenance 与 summary 一起进入 synthetic contribution hash 和收缩比较，
+不能成为未计预算的隐式 prompt。
+
 active turn 不能通过重放原 user prompt 恢复，因为 tool 可能已经产生外部副作用。运行时只能压缩
 assistant tool-call 与其全部结果均已闭合的 unit，保留 call/result 配对，并保护 runtime Skill、provider
 replay 和 projection identity。第一阶段还保护最新闭合 unit，避免模型因丢失直接行动依据而重复有副作用的

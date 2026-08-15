@@ -1479,7 +1479,27 @@ describe('CompactionService', () => {
       entryId: 8,
       name: 'compaction/auto',
       createdAt: 100,
+      state: {
+        summary: 'phase summary',
+        cursorOrderSeq: 7,
+        range: { fromOrderSeq: 2, toOrderSeq: 6 }
+      }
+    })
+    const rangeLessCheckpoint = buildContextCheckpoint('phase summary', {
+      entryId: 8,
+      name: 'compaction/auto',
+      createdAt: 100,
       state: { summary: 'phase summary', cursorOrderSeq: 7 }
+    })
+    const priorSummaryCheckpoint = buildContextCheckpoint('phase summary', {
+      entryId: 8,
+      name: 'compaction/auto',
+      createdAt: 100,
+      state: {
+        priorSummary: 'phase summary',
+        cursorOrderSeq: 7,
+        range: { fromOrderSeq: 2, toOrderSeq: 6 }
+      }
     })
     const unrelatedCheckpoint = buildContextCheckpoint('legacy summary', {
       entryId: 9,
@@ -1491,6 +1511,15 @@ describe('CompactionService', () => {
     expect(sourcedCheckpoint.contributions).toEqual([
       expect.objectContaining({ reason: 'summary_checkpoint', sourceEntryIds: [8] })
     ])
+    expect(String(sourcedCheckpoint.message?.content)).toContain(
+      'This summary covers Session Tape orderSeq 2 through 6.'
+    )
+    expect(String(sourcedCheckpoint.message?.content)).toContain('tape_search or tape_context')
+    expect(sourcedCheckpoint.contributions[0]?.contentHash).not.toBe(
+      rangeLessCheckpoint.contributions[0]?.contentHash
+    )
+    expect(String(rangeLessCheckpoint.message?.content)).not.toContain('Summary Provenance')
+    expect(String(priorSummaryCheckpoint.message?.content)).not.toContain('Summary Provenance')
     const unrelatedContribution = unrelatedCheckpoint.contributions.find(
       (contribution) => contribution.reason === 'summary_checkpoint'
     )
