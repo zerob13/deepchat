@@ -144,6 +144,35 @@ added after that summary.
   as transport state rather than reinterpreting it as compaction truth; handle legacy markers
   without an attempt ID conservatively through normal retraction/correction facts.
 
+##### Marker Recovery State Machine
+
+- Provision a UUID once, when `prepareCompaction` returns an intent. The immutable ID follows every
+  application of that intent into the synthetic marker and either the summarized or boundary-only
+  reconstruction anchor. It is a correlation key, not an authorization token, and no error text,
+  provider response, or secret is copied into it or the anchor.
+- The durable transitions are `prepared -> marker(compacting) -> anchor committed ->
+  marker(compacted)`. Marker insertion/update and Tape indicator/retraction use one transcript
+  transaction; summary state plus reconstruction anchor use one CAS transaction. Do not create a
+  cross-owner transaction. A crash may therefore leave a sent `compacting` marker on either side of
+  the anchor commit, and the reconstruction anchor is the settlement authority.
+- Startup reads only valid sent assistant rows whose metadata identifies a `compacting` compaction
+  marker, using a partial SQLite index rather than scanning the sent transcript. Resolve an
+  attempt-bearing reconstruction anchor by `(sessionId, compactionAttemptId)` through an indexed
+  Tape lookup; a later reset or handoff must not erase proof that this attempt committed.
+- If that related anchor exists, materialize the transcript row as `compacted`; derive
+  `summaryUpdatedAt` from a summary-bearing anchor and otherwise keep it null. If no matching anchor
+  exists, retract and remove the marker through the normal transcript-delete path. A valid legacy
+  marker without an attempt ID is always retracted because its outcome cannot be proven. Malformed
+  unrelated metadata is not guessed into the compaction state machine.
+- Reconciliation is idempotent: finalized rows no longer match the recovery query, removed rows are
+  absent, and Tape writes retain their existing provenance idempotency. Per-session runtime
+  serialization permits at most one unsettled attempt; if corrupt duplicate rows exist, apply the
+  same anchor comparison independently and never mutate or delete an anchor.
+- Test both crash boundaries (before and after anchor commit), summary and boundary-only anchors,
+  legacy and mismatched identities, duplicate startup execution, transaction failure, and query
+  planning against the partial recovery index. Normal completion and abort behavior remain
+  unchanged.
+
 #### 4. Expose Race-Free Renderer Compaction State
 
 - Add `boundaryReason` to the shared state as a value derived from the latest anchor, without
