@@ -11,7 +11,11 @@ import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { ProviderExecutionPort } from '@shared/types/provider'
 import type { SessionTranscript } from '@/session/data/transcript'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
-import type { SessionSettingsStore, SessionSummaryState } from '@/session/data/settings'
+import type {
+  SessionSettingsStore,
+  SessionSummaryState,
+  SummaryTapeAnchorInput
+} from '@/session/data/settings'
 import {
   buildHistoryTurns,
   buildUserMessageContent,
@@ -23,7 +27,13 @@ import {
   normalizeUserInput,
   type HistoryTurn
 } from './contextBuilder'
-import { buildContextCheckpoint } from './contextContributions'
+import {
+  buildContextCheckpoint,
+  isSummaryGapReason,
+  SUMMARY_REJECTED_LARGER_REASON,
+  SUMMARY_UNAVAILABLE_REASON,
+  type SummaryGapReason
+} from './contextContributions'
 import { createDeepSeekResponsesReplayProjector } from '@/provider/deepseekResponsesAdapter'
 import { redactRuntimeErrorForLog } from './runtimeErrorLogging'
 
@@ -63,6 +73,8 @@ export type CompactionIntent = {
   previousState: SessionSummaryState
   targetCursorOrderSeq: number
   summaryBlocks: string[]
+  currentCheckpointTokenEstimate: number
+  newlyHiddenVisibleTokenEstimate: number
   currentModel: ModelSpec
   reserveTokens: number
   anchorName?: string
@@ -151,6 +163,12 @@ function calculateRetainedTailTokenTarget(params: {
     RETAINED_TAIL_TOKEN_CAP,
     floorNonNegative(inputBudget * RETAINED_TAIL_INPUT_RATIO)
   )
+}
+
+function assertValidContextLength(contextLength: number): void {
+  if (!Number.isFinite(contextLength) || contextLength <= 0) {
+    throw new RangeError('Compaction requires a finite, positive model context length.')
+  }
 }
 
 function selectRetainedTail(
@@ -531,6 +549,7 @@ export class CompactionService {
     intent: CompactionIntent,
     signal?: AbortSignal
   ): Promise<CompactionExecutionResult> {
+    assertValidContextLength(intent.currentModel.contextLength)
     let nextSummary: string | null = null
     try {
       throwIfAbortRequested(signal)
@@ -554,14 +573,21 @@ export class CompactionService {
     }
 
     throwIfAbortRequested(signal)
-    return nextSummary
-      ? this.commitSummaryBoundary(intent, nextSummary)
-      : this.commitBoundaryOnly(intent)
+    if (!nextSummary) {
+      return this.commitBoundaryOnly(intent)
+    }
+
+    const summaryAnchor = this.buildSummaryAnchor(intent, nextSummary)
+    if (!this.isSummaryCheckpointSmaller(intent, nextSummary, summaryAnchor)) {
+      return this.commitBoundaryOnly(intent, SUMMARY_REJECTED_LARGER_REASON)
+    }
+    return this.commitSummaryBoundary(intent, nextSummary, summaryAnchor)
   }
 
   private commitSummaryBoundary(
     intent: CompactionIntent,
-    nextSummary: string
+    nextSummary: string,
+    summaryAnchor: SummaryTapeAnchorInput
   ): CompactionExecutionResult {
     const summaryUpdatedAt = Date.now()
     const updatedState: SessionSummaryState = {
@@ -573,11 +599,7 @@ export class CompactionService {
       intent.sessionId,
       intent.previousState,
       updatedState,
-      this.buildAnchor(intent, {
-        summary: nextSummary,
-        cursorOrderSeq: updatedState.summaryCursorOrderSeq,
-        range: intent.summaryRange ?? null
-      })
+      summaryAnchor
     )
     return {
       outcome: this.resolveStoredOutcome(intent.previousState, compareAndSet.currentState),
@@ -585,7 +607,10 @@ export class CompactionService {
     }
   }
 
-  private commitBoundaryOnly(intent: CompactionIntent): CompactionExecutionResult {
+  private commitBoundaryOnly(
+    intent: CompactionIntent,
+    reason: SummaryGapReason = SUMMARY_UNAVAILABLE_REASON
+  ): CompactionExecutionResult {
     const previousAnchor = this.sessionStore.getReconstructionAnchorPromptState(intent.sessionId)
     const previousCursor =
       typeof previousAnchor?.state.cursorOrderSeq === 'number' &&
@@ -594,7 +619,7 @@ export class CompactionService {
         : null
     const previousGap =
       previousCursor === intent.previousState.summaryCursorOrderSeq &&
-      previousAnchor?.state.reason === 'summary_unavailable'
+      isSummaryGapReason(previousAnchor?.state.reason)
         ? normalizeOrderSeqRange(previousAnchor.state.summaryGap)
         : null
     const currentGap =
@@ -617,7 +642,7 @@ export class CompactionService {
       updatedState,
       this.buildAnchor(intent, {
         cursorOrderSeq: updatedState.summaryCursorOrderSeq,
-        reason: 'summary_unavailable',
+        reason,
         summaryGap,
         ...(intent.previousState.summaryText
           ? { priorSummary: intent.previousState.summaryText }
@@ -630,14 +655,38 @@ export class CompactionService {
     }
   }
 
+  private buildSummaryAnchor(
+    intent: CompactionIntent,
+    nextSummary: string
+  ): SummaryTapeAnchorInput {
+    return this.buildAnchor(intent, {
+      summary: nextSummary,
+      cursorOrderSeq: Math.max(1, intent.targetCursorOrderSeq),
+      range: intent.summaryRange ?? null
+    })
+  }
+
+  private isSummaryCheckpointSmaller(
+    intent: CompactionIntent,
+    nextSummary: string,
+    summaryAnchor: SummaryTapeAnchorInput
+  ): boolean {
+    const checkpoint = buildContextCheckpoint(nextSummary, {
+      entryId: 0,
+      name: summaryAnchor.name,
+      state: summaryAnchor.state,
+      createdAt: 0
+    }).message
+    const nextCheckpointTokenEstimate = checkpoint ? estimateMessagesTokens([checkpoint]) : 0
+    const replacedTokenEstimate =
+      intent.currentCheckpointTokenEstimate + intent.newlyHiddenVisibleTokenEstimate
+    return nextCheckpointTokenEstimate < replacedTokenEstimate
+  }
+
   private buildAnchor(
     intent: CompactionIntent,
     reconstructionState: Record<string, unknown>
-  ): {
-    name: string
-    state: Record<string, unknown>
-    meta: Record<string, unknown>
-  } {
+  ): SummaryTapeAnchorInput {
     return {
       name: intent.anchorName ?? 'compaction/auto',
       state: {
@@ -685,11 +734,12 @@ export class CompactionService {
     force?: boolean
     anchorName?: string
   }): CompactionIntent | null {
+    assertValidContextLength(params.contextLength)
     const summaryState = this.sessionStore.getSummaryState(params.sessionId)
     const reconstructionAnchor =
       this.sessionStore.getReconstructionAnchorPromptState(params.sessionId)
     const pendingSummaryGap =
-      reconstructionAnchor?.state.reason === 'summary_unavailable' &&
+      isSummaryGapReason(reconstructionAnchor?.state.reason) &&
       reconstructionAnchor.state.cursorOrderSeq === summaryState.summaryCursorOrderSeq
         ? normalizeOrderSeqRange(reconstructionAnchor.state.summaryGap)
         : null
@@ -726,7 +776,13 @@ export class CompactionService {
       return null
     }
 
-    const checkpoint = buildContextCheckpoint(summaryState.summaryText, null).message
+    const checkpoint = buildContextCheckpoint(
+      summaryState.summaryText,
+      reconstructionAnchor
+    ).message
+    const currentCheckpointTokenEstimate = checkpoint
+      ? estimateMessagesTokens([checkpoint])
+      : 0
     const projectedHistory = turns.flatMap((turn) => turn.messages)
     const projectedPrompt = [
       ...(params.systemPrompt
@@ -794,6 +850,11 @@ export class CompactionService {
       previousState: summaryState,
       targetCursorOrderSeq: Math.max(1, nextCursor),
       summaryBlocks,
+      currentCheckpointTokenEstimate,
+      newlyHiddenVisibleTokenEstimate: summaryableTurns.reduce(
+        (total, turn) => total + turn.tokens,
+        0
+      ),
       currentModel: this.getCurrentModelSpec(
         params.providerId,
         params.modelId,

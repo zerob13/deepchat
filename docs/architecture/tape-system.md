@@ -293,16 +293,19 @@ provider candidate
   -> compact 较旧的已闭合超大 tool result，保留最新闭合 unit 的完整证据
   -> 仍有压力：允许 compact 最新闭合 unit
   -> 仍有压力：尝试 semantic summary
-  -> summary 不可用：原子写 boundary-only reconstruction anchor
+  -> canonical checkpoint 严格小于它替换的当前 checkpoint + 新隐藏 View 时才提交
+  -> summary 不可用或不收缩：原子写 boundary-only reconstruction anchor
   -> 从 Tape 与当前内存 active turn 重建 View
   -> semantic recovery 仅在新 View 严格更小时生效
   -> 必要时缩小 output reserve 做一次 strict retry
   -> 每个通过 fit/change 或显式 output-reduction guard 的新 payload 创建新的 requestSeq / ViewManifest
 ```
 
-boundary-only anchor 使用稳定的 `summary_unavailable` reason 和有界 `summaryGap` coverage；不保存
-provider error、stack、时间戳或 secret。连续 gap 合并为最新边界上的一个区间；旧有效 summary 只以
-`priorSummary` 作为部分上下文，不能伪装成该边界新生成的 summary。取消 summary 时不提交边界。
+boundary-only anchor 使用 allowlisted 的 `summary_unavailable` 或
+`summary_rejected_larger` reason 和有界 `summaryGap` coverage；不保存 provider error、stack、时间戳或
+secret。连续 gap 合并为最新边界上的一个区间；旧有效 summary 只以 `priorSummary` 作为部分上下文，
+不能伪装成该边界新生成的 summary。两类 gap 都保留 Tape recall 指引并在后续成功 summary 时回填；
+取消 summary 时不提交边界。
 
 active turn 不能通过重放原 user prompt 恢复，因为 tool 可能已经产生外部副作用。运行时只能压缩
 assistant tool-call 与其全部结果均已闭合的 unit，保留 call/result 配对，并保护 runtime Skill、provider

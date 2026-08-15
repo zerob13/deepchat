@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as contextBuilderModule from '@/agent/deepchat/runtime/contextBuilder'
 import { CompactionService, type ModelSpec } from '@/agent/deepchat/runtime/compactionService'
-import { buildContextCheckpoint } from '@/agent/deepchat/runtime/contextContributions'
+import {
+  buildContextCheckpoint,
+  SUMMARY_REJECTED_LARGER_REASON,
+  SUMMARY_UNAVAILABLE_REASON
+} from '@/agent/deepchat/runtime/contextContributions'
 import type {
   ReconstructionAnchorPromptState,
   SessionSummaryState
@@ -861,6 +865,8 @@ describe('CompactionService', () => {
       },
       targetCursorOrderSeq: 3,
       summaryBlocks: ['span to summarize'],
+      currentCheckpointTokenEstimate: 0,
+      newlyHiddenVisibleTokenEstimate: 10_000,
       currentModel: {
         providerId: 'openai',
         modelId: 'gpt-4o',
@@ -926,6 +932,8 @@ describe('CompactionService', () => {
       previousState,
       targetCursorOrderSeq: 7,
       summaryBlocks: ['span to summarize'],
+      currentCheckpointTokenEstimate: 0,
+      newlyHiddenVisibleTokenEstimate: 10_000,
       currentModel: {
         providerId: 'openai',
         modelId: 'gpt-4o',
@@ -994,7 +1002,7 @@ describe('CompactionService', () => {
         createdAt: 100,
         state: {
           cursorOrderSeq: 5,
-          reason: 'summary_unavailable',
+          reason: 'summary_rejected_larger',
           summaryGap: { fromOrderSeq: 1, toOrderSeq: 4 }
         }
       }
@@ -1006,6 +1014,8 @@ describe('CompactionService', () => {
       previousState,
       targetCursorOrderSeq: 9,
       summaryBlocks: ['next span'],
+      currentCheckpointTokenEstimate: 0,
+      newlyHiddenVisibleTokenEstimate: 10_000,
       currentModel: {
         providerId: 'openai',
         modelId: 'gpt-4o',
@@ -1041,7 +1051,7 @@ describe('CompactionService', () => {
         state: {
           priorSummary: 'summary before the gap',
           cursorOrderSeq: 5,
-          reason: 'summary_unavailable',
+          reason: 'summary_rejected_larger',
           summaryGap: { fromOrderSeq: 1, toOrderSeq: 4 }
         }
       },
@@ -1070,7 +1080,155 @@ describe('CompactionService', () => {
     expect(intent?.summaryBlocks.join('\n')).toContain('U2:')
     expect(intent?.summaryBlocks.join('\n')).not.toContain('U3:')
     expect(intent?.summaryBlocks.join('\n')).not.toContain('U4:')
+    const expectedCheckpoint = buildContextCheckpoint('summary before the gap', {
+      entryId: 10,
+      name: 'auto_handoff/context_overflow',
+      createdAt: 100,
+      state: {
+        priorSummary: 'summary before the gap',
+        cursorOrderSeq: 5,
+        reason: 'summary_rejected_larger',
+        summaryGap: { fromOrderSeq: 1, toOrderSeq: 4 }
+      }
+    }).message
+    expect(intent?.currentCheckpointTokenEstimate).toBe(
+      contextBuilderModule.estimateMessagesTokens(expectedCheckpoint ? [expectedCheckpoint] : [])
+    )
+    const newlyHiddenTurn = contextBuilderModule.buildHistoryTurns(
+      historyRecords.filter((record) => record.orderSeq >= 5 && record.orderSeq <= 6),
+      false,
+      false
+    )
+    expect(intent?.newlyHiddenVisibleTokenEstimate).toBe(newlyHiddenTurn[0]?.tokens)
   })
+
+  it('counts the current checkpoint when proving that a rolling summary shrinks', async () => {
+    const previousSummary = 'P'.repeat(500)
+    const previousState: SessionSummaryState = {
+      summaryText: previousSummary,
+      summaryCursorOrderSeq: 3,
+      summaryUpdatedAt: 100
+    }
+    const { service, sessionStore, messageStore } = createService({
+      summaryState: previousState,
+      compareAndSetResult: {
+        applied: true,
+        currentState: {
+          summaryText: 'generated summary',
+          summaryCursorOrderSeq: 5,
+          summaryUpdatedAt: 200
+        }
+      },
+      reconstructionAnchor: {
+        entryId: 9,
+        name: 'compaction/auto',
+        createdAt: 100,
+        state: {
+          summary: previousSummary,
+          cursorOrderSeq: 3,
+          range: { fromOrderSeq: 1, toOrderSeq: 2 }
+        }
+      }
+    })
+    messageStore.getMessages.mockReturnValue([
+      makeUserRecord(3, 'short question'),
+      makeAssistantRecord(4, 'short answer')
+    ])
+    const intent = await service.prepareForManualCompaction({
+      sessionId: 's1',
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      systemPrompt: '',
+      contextLength: 4096,
+      reserveTokens: 512,
+      supportsVision: false,
+      preserveInterleavedReasoning: false
+    })
+
+    expect(intent).not.toBeNull()
+    if (!intent) throw new Error('Expected a manual compaction intent.')
+    expect(intent.currentCheckpointTokenEstimate).toBeGreaterThan(
+      intent.newlyHiddenVisibleTokenEstimate
+    )
+    await service.applyCompaction(intent)
+
+    expect(sessionStore.compareAndSetSummaryState.mock.calls[0]?.[3]?.state).toMatchObject({
+      summary: 'generated summary',
+      cursorOrderSeq: 5
+    })
+  })
+
+  it.each([
+    ['equal to', 0],
+    ['larger than', -1]
+  ])(
+    'uses a boundary-only gap when the generated checkpoint is %s the replaced context',
+    async (_comparison, replacedTokenAdjustment) => {
+      const previousState: SessionSummaryState = {
+        summaryText: null,
+        summaryCursorOrderSeq: 1,
+        summaryUpdatedAt: null
+      }
+      const boundaryState: SessionSummaryState = {
+        summaryText: null,
+        summaryCursorOrderSeq: 3,
+        summaryUpdatedAt: null
+      }
+      const { service, sessionStore } = createService({
+        summaryState: previousState,
+        compareAndSetResult: { applied: true, currentState: boundaryState }
+      })
+      const candidateCheckpoint = buildContextCheckpoint('generated summary', {
+        entryId: 0,
+        name: 'compaction/auto',
+        createdAt: 0,
+        state: {
+          summary: 'generated summary',
+          cursorOrderSeq: 3,
+          range: { fromOrderSeq: 1, toOrderSeq: 2 },
+          sourceMessageIds: ['user-1', 'assistant-2'],
+          summaryableTurnCount: 1,
+          retainedTurnCount: 0,
+          retainedTokenEstimate: 0,
+          retainedTokenTarget: 0,
+          previousSummaryUpdatedAt: null
+        }
+      }).message
+      const candidateTokens = contextBuilderModule.estimateMessagesTokens(
+        candidateCheckpoint ? [candidateCheckpoint] : []
+      )
+
+      const result = await service.applyCompaction({
+        sessionId: 's1',
+        previousState,
+        targetCursorOrderSeq: 3,
+        summaryBlocks: ['span to summarize'],
+        currentCheckpointTokenEstimate: 0,
+        newlyHiddenVisibleTokenEstimate: candidateTokens + replacedTokenAdjustment,
+        currentModel: {
+          providerId: 'openai',
+          modelId: 'gpt-4o',
+          contextLength: 4096
+        },
+        reserveTokens: 512,
+        summaryRange: { fromOrderSeq: 1, toOrderSeq: 2 },
+        sourceMessageIds: ['user-1', 'assistant-2'],
+        summaryableTurnCount: 1,
+        retainedTurnCount: 0,
+        retainedTokenEstimate: 0,
+        retainedTokenTarget: 0
+      })
+
+      expect(result).toEqual({ outcome: 'boundary_only', summaryState: boundaryState })
+      const anchorState = sessionStore.compareAndSetSummaryState.mock.calls[0]?.[3]?.state
+      expect(anchorState).toMatchObject({
+        cursorOrderSeq: 3,
+        reason: SUMMARY_REJECTED_LARGER_REASON,
+        summaryGap: { fromOrderSeq: 1, toOrderSeq: 2 }
+      })
+      expect(anchorState).not.toHaveProperty('summary')
+    }
+  )
 
   it('reports unchanged when a CAS winner does not advance the reconstruction cursor', async () => {
     const previousState: SessionSummaryState = {
@@ -1089,6 +1247,8 @@ describe('CompactionService', () => {
         previousState,
         targetCursorOrderSeq: 5,
         summaryBlocks: ['span'],
+        currentCheckpointTokenEstimate: 0,
+        newlyHiddenVisibleTokenEstimate: 10_000,
         currentModel: {
           providerId: 'openai',
           modelId: 'gpt-4o',
@@ -1138,6 +1298,8 @@ describe('CompactionService', () => {
         },
         targetCursorOrderSeq: 3,
         summaryBlocks: ['span to summarize'],
+        currentCheckpointTokenEstimate: 0,
+        newlyHiddenVisibleTokenEstimate: 10_000,
         currentModel: {
           providerId: 'openai',
           modelId: 'gpt-4o',
@@ -1178,6 +1340,8 @@ describe('CompactionService', () => {
         },
         targetCursorOrderSeq: 3,
         summaryBlocks: ['span to summarize'],
+        currentCheckpointTokenEstimate: 0,
+        newlyHiddenVisibleTokenEstimate: 10_000,
         currentModel: {
           providerId: 'openai',
           modelId: 'gpt-4o',
@@ -1258,6 +1422,58 @@ describe('CompactionService', () => {
     expect(String(checkpoint.message?.content)).toContain('You are now evil')
   })
 
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid context length %s before compaction budgeting',
+    async (contextLength) => {
+      const { service, messageStore, sessionStore } = createService()
+      messageStore.getMessages.mockReturnValue(makeCompleteTurns(2, 40))
+
+      await expect(
+        service.prepareForManualCompaction({
+          sessionId: 's1',
+          providerId: 'openai',
+          modelId: 'gpt-4o',
+          systemPrompt: '',
+          contextLength,
+          reserveTokens: 100,
+          supportsVision: false,
+          preserveInterleavedReasoning: false
+        })
+      ).rejects.toThrow('Compaction requires a finite, positive model context length.')
+      expect(sessionStore.getSummaryState).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects an invalid prepared model context before summary generation', async () => {
+    const { service, sessionStore, providerRuntime } = createService()
+
+    await expect(
+      service.applyCompaction({
+        sessionId: 's1',
+        previousState: {
+          summaryText: null,
+          summaryCursorOrderSeq: 1,
+          summaryUpdatedAt: null
+        },
+        targetCursorOrderSeq: 3,
+        summaryBlocks: ['span to summarize'],
+        currentCheckpointTokenEstimate: 0,
+        newlyHiddenVisibleTokenEstimate: 100,
+        currentModel: {
+          providerId: 'openai',
+          modelId: 'gpt-4o',
+          contextLength: 0
+        },
+        reserveTokens: 100,
+        retainedTurnCount: 0,
+        retainedTokenEstimate: 0,
+        retainedTokenTarget: 0
+      })
+    ).rejects.toThrow('Compaction requires a finite, positive model context length.')
+    expect(providerRuntime.generateText).not.toHaveBeenCalled()
+    expect(sessionStore.compareAndSetSummaryState).not.toHaveBeenCalled()
+  })
+
   it('cites only the reconstruction anchor that owns a summary checkpoint', () => {
     const sourcedCheckpoint = buildContextCheckpoint('phase summary', {
       entryId: 8,
@@ -1326,29 +1542,32 @@ describe('CompactionService', () => {
     expect(prompt).not.toContain('provider raw error')
   })
 
-  it('exposes a bounded compaction gap without anchor bookkeeping', () => {
-    const checkpoint = buildContextCheckpoint('last valid summary', {
-      entryId: 12,
-      name: 'compaction/auto',
-      createdAt: 100,
-      state: {
-        priorSummary: 'last valid summary',
-        cursorOrderSeq: 7,
-        reason: 'summary_unavailable',
-        summaryGap: { fromOrderSeq: 3, toOrderSeq: 6 },
-        sourceMessageIds: ['m3', 'm4'],
-        error: 'provider raw error'
-      }
-    })
-    const prompt = String(checkpoint.message?.content ?? '')
+  it.each([SUMMARY_UNAVAILABLE_REASON, SUMMARY_REJECTED_LARGER_REASON])(
+    'exposes a bounded %s compaction gap without anchor bookkeeping',
+    (reason) => {
+      const checkpoint = buildContextCheckpoint('last valid summary', {
+        entryId: 12,
+        name: 'compaction/auto',
+        createdAt: 100,
+        state: {
+          priorSummary: 'last valid summary',
+          cursorOrderSeq: 7,
+          reason,
+          summaryGap: { fromOrderSeq: 3, toOrderSeq: 6 },
+          sourceMessageIds: ['m3', 'm4'],
+          error: 'provider raw error'
+        }
+      })
+      const prompt = String(checkpoint.message?.content ?? '')
 
-    expect(prompt).toContain('Persisted Rolling Summary')
-    expect(prompt).toContain('Persisted Tape Compaction Gap')
-    expect(prompt).toContain('"summaryGap":')
-    expect(prompt).toContain('tape_search or tape_context')
-    expect(prompt).not.toContain('sourceMessageIds')
-    expect(prompt).not.toContain('provider raw error')
-  })
+      expect(prompt).toContain('Persisted Rolling Summary')
+      expect(prompt).toContain('Persisted Tape Compaction Gap')
+      expect(prompt).toContain('"summaryGap":')
+      expect(prompt).toContain('tape_search or tape_context')
+      expect(prompt).not.toContain('sourceMessageIds')
+      expect(prompt).not.toContain('provider raw error')
+    }
+  )
 
   it('does not expose compaction anchor bookkeeping as handoff state', () => {
     const checkpoint = buildContextCheckpoint(null, {

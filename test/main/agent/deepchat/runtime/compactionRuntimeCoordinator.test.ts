@@ -90,6 +90,8 @@ function createIntent(previousSummaryUpdatedAt: number | null = null): Compactio
     },
     targetCursorOrderSeq: 5,
     summaryBlocks: ['Summarize this history'],
+    currentCheckpointTokenEstimate: 0,
+    newlyHiddenVisibleTokenEstimate: 10_000,
     currentModel: {
       providerId: 'openai',
       modelId: 'gpt-5',
