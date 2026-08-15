@@ -306,6 +306,8 @@
   "compaction": {
     "compacting": "דחיסת ההקשר מתבצעת...",
     "compacted": "ההקשר נדחס",
+    "compactedWithoutSummary": "ההקשר נדחס ללא סיכום",
+    "compactedWithoutLargerSummary": "ההקשר נדחס מבלי להשתמש בסיכום גדול יותר",
     "commandDescription": "דחיסת הקשר השיחה",
     "noopTitle": "אין הקשר לדחיסה",
     "noopDescription": "עדיין אין היסטוריית שיחה חדשה לדחיסה.",

@@ -122,6 +122,8 @@
   "compaction": {
     "compacting": "Compressione contesto...",
     "compacted": "Contesto compresso",
+    "compactedWithoutSummary": "Il contesto è stato compresso senza un riepilogo",
+    "compactedWithoutLargerSummary": "Il contesto è stato compresso senza usare un riepilogo più grande",
     "commandDescription": "Comprimi il contesto della sessione",
     "noopTitle": "Nessun contesto da comprimere",
     "noopDescription": "Non c'è ancora nuova cronologia della conversazione da comprimere.",

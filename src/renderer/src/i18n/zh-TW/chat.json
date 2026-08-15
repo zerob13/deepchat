@@ -122,6 +122,8 @@
   "compaction": {
     "compacting": "正在壓縮上下文...",
     "compacted": "上下文已壓縮",
+    "compactedWithoutSummary": "上下文已壓縮，但未產生摘要",
+    "compactedWithoutLargerSummary": "上下文已壓縮，未採用體積更大的摘要",
     "commandDescription": "壓縮會話上下文",
     "noopTitle": "沒有可壓縮的上下文",
     "noopDescription": "目前還沒有新的對話歷史需要壓縮。",

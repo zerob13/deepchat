@@ -1065,10 +1065,23 @@ describe('SessionTranscript', () => {
       )
 
       store.updateCompactionMessage('compaction-message', 'compacted', 2000, {
-        compactionAttemptId: 'compaction-attempt-1'
+        compactionAttemptId: 'compaction-attempt-1',
+        boundaryReason: 'summary_unavailable'
       })
 
       expect(transaction).toHaveBeenCalled()
+      expect(sqlitePresenter.deepchatMessagesTable.updateContentAndStatus).toHaveBeenCalledWith(
+        'compaction-message',
+        expect.any(String),
+        'sent',
+        JSON.stringify({
+          messageType: 'compaction',
+          compactionStatus: 'compacted',
+          compactionAttemptId: 'compaction-attempt-1',
+          compactionBoundaryReason: 'summary_unavailable',
+          summaryUpdatedAt: 2000
+        })
+      )
       expect(appendEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           name: 'message/compaction_indicator',

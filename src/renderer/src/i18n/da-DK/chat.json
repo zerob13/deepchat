@@ -306,6 +306,8 @@
   "compaction": {
     "compacting": "Komprimerer kontekst...",
     "compacted": "Konteksten blev komprimeret",
+    "compactedWithoutSummary": "Konteksten blev komprimeret uden et resumé",
+    "compactedWithoutLargerSummary": "Konteksten blev komprimeret uden at bruge et større resumé",
     "commandDescription": "Komprimer samtalekontekst",
     "noopTitle": "Ingen kontekst at komprimere",
     "noopDescription": "Der er endnu ingen ny samtalehistorik at komprimere.",

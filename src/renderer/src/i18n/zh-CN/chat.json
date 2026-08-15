@@ -207,6 +207,8 @@
   "compaction": {
     "compacting": "正在压缩上下文...",
     "compacted": "上下文已压缩",
+    "compactedWithoutSummary": "上下文已压缩，但未生成摘要",
+    "compactedWithoutLargerSummary": "上下文已压缩，未采用体积更大的摘要",
     "commandDescription": "压缩会话上下文",
     "noopTitle": "没有可压缩的上下文",
     "noopDescription": "当前还没有新的对话历史需要压缩。",

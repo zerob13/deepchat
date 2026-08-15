@@ -559,6 +559,7 @@ describeIfSqlite('Session transcript and Tape order consistency', () => {
       expect(JSON.parse(transcript.getMessage(boundaryMarkerId)?.metadata ?? '{}')).toMatchObject({
         compactionStatus: 'compacted',
         compactionAttemptId: 'boundary-attempt',
+        compactionBoundaryReason: 'summary_unavailable',
         summaryUpdatedAt: null
       })
       expect(transcript.getMessage(staleMarkerId)).toBeNull()

@@ -122,6 +122,8 @@
   "compaction": {
     "compacting": "Memampatkan konteks...",
     "compacted": "Konteks dimampatkan",
+    "compactedWithoutSummary": "Konteks dimampatkan tanpa ringkasan",
+    "compactedWithoutLargerSummary": "Konteks dimampatkan tanpa menggunakan ringkasan yang lebih besar",
     "commandDescription": "Mampatkan konteks sesi",
     "noopTitle": "Tiada konteks boleh mampat",
     "noopDescription": "Pada masa ini tiada sejarah perbualan baharu untuk dimampatkan.",

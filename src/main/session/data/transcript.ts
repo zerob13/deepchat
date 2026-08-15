@@ -7,6 +7,7 @@ import type {
   MessageMetadata,
   MessagePageCursor,
   MessageTraceRecord,
+  SessionCompactionBoundaryReason,
   UserMessageContent,
   AssistantMessageBlock
 } from '@shared/types/agent-interface'
@@ -46,12 +47,17 @@ const MAX_COMPACTION_ATTEMPT_ID_CHARACTERS = 128
 
 type CompactionMessageOptions = {
   compactionAttemptId: string
+  boundaryReason?: SessionCompactionBoundaryReason | null
 }
 
 function normalizeCompactionAttemptId(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
   return normalized && normalized.length <= MAX_COMPACTION_ATTEMPT_ID_CHARACTERS ? normalized : null
+}
+
+function normalizeCompactionBoundaryReason(value: unknown): SessionCompactionBoundaryReason | null {
+  return value === 'summary_unavailable' || value === 'summary_rejected_larger' ? value : null
 }
 
 function parseTapeAnchorState(row: DeepChatTapeEntryRow): Record<string, unknown> | null {
@@ -286,7 +292,12 @@ export class SessionTranscript {
       content: JSON.stringify(this.buildCompactionBlocks(status)),
       status: 'sent',
       metadata: JSON.stringify(
-        this.buildCompactionMetadata(status, summaryUpdatedAt, options.compactionAttemptId)
+        this.buildCompactionMetadata(
+          status,
+          summaryUpdatedAt,
+          options.compactionAttemptId,
+          options.boundaryReason
+        )
       )
     })
     this.appendLiveTapeFacts(id)
@@ -478,7 +489,12 @@ export class SessionTranscript {
         JSON.stringify(this.buildCompactionBlocks(status)),
         'sent',
         JSON.stringify(
-          this.buildCompactionMetadata(status, summaryUpdatedAt, options.compactionAttemptId)
+          this.buildCompactionMetadata(
+            status,
+            summaryUpdatedAt,
+            options.compactionAttemptId,
+            options.boundaryReason
+          )
         )
       )
       this.appendLiveTapeFacts(messageId)
@@ -931,7 +947,12 @@ export class SessionTranscript {
             row.id,
             'compacted',
             summaryUpdatedAtFromCompactionAnchor(anchor),
-            { compactionAttemptId }
+            {
+              compactionAttemptId,
+              boundaryReason: normalizeCompactionBoundaryReason(
+                parseTapeAnchorState(anchor)?.reason
+              )
+            }
           )
           compacted += 1
           continue
@@ -1127,12 +1148,14 @@ export class SessionTranscript {
   private buildCompactionMetadata(
     status: 'compacting' | 'compacted',
     summaryUpdatedAt: number | null,
-    compactionAttemptId: string
+    compactionAttemptId: string,
+    boundaryReason: SessionCompactionBoundaryReason | null = null
   ): MessageMetadata {
     return {
       messageType: 'compaction',
       compactionStatus: status,
       compactionAttemptId,
+      compactionBoundaryReason: boundaryReason,
       summaryUpdatedAt
     }
   }

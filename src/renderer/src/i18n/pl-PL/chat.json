@@ -122,6 +122,8 @@
   "compaction": {
     "compacting": "Zagęszczanie kontekstu...",
     "compacted": "Kontekst został zagęszczony",
+    "compactedWithoutSummary": "Kontekst został skompaktowany bez podsumowania",
+    "compactedWithoutLargerSummary": "Kontekst został skompaktowany bez użycia większego podsumowania",
     "commandDescription": "Zwarty kontekst rozmowy",
     "noopTitle": "Brak kontekstu do kompaktowania",
     "noopDescription": "Nie ma jeszcze nowej historii konwersacji, którą można by skompaktować.",

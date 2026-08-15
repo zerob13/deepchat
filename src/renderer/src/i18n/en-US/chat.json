@@ -207,6 +207,8 @@
   "compaction": {
     "compacting": "Compacting context...",
     "compacted": "Context was compacted",
+    "compactedWithoutSummary": "Context was compacted without a summary",
+    "compactedWithoutLargerSummary": "Context was compacted without using a larger summary",
     "commandDescription": "Compact conversation context",
     "noopTitle": "No context to compact",
     "noopDescription": "There is no new conversation history to compact yet.",

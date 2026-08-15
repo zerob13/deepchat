@@ -122,6 +122,8 @@
   "compaction": {
     "compacting": "Bağlam sıkıştırılıyor...",
     "compacted": "Bağlam sıkıştırıldı",
+    "compactedWithoutSummary": "Bağlam özet olmadan sıkıştırıldı",
+    "compactedWithoutLargerSummary": "Bağlam daha büyük bir özet kullanılmadan sıkıştırıldı",
     "commandDescription": "Kompakt konuşma bağlamı",
     "noopTitle": "Sıkıştırılacak bağlam yok",
     "noopDescription": "Henüz sıkıştırılacak yeni bir konuşma geçmişi yok.",

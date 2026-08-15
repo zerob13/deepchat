@@ -122,6 +122,8 @@
   "compaction": {
     "compacting": "Mengompresi konteks...",
     "compacted": "Konteks dikompresi",
+    "compactedWithoutSummary": "Konteks dikompresi tanpa ringkasan",
+    "compactedWithoutLargerSummary": "Konteks dikompresi tanpa menggunakan ringkasan yang lebih besar",
     "commandDescription": "Kompres konteks sesi",
     "noopTitle": "Tidak ada konteks yang dapat dikompres",
     "noopDescription": "Saat ini tidak ada riwayat percakapan baru untuk dikompres.",

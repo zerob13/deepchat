@@ -306,6 +306,8 @@
   "compaction": {
     "compacting": "컨텍스트를 압축하는 중...",
     "compacted": "컨텍스트가 압축되었습니다",
+    "compactedWithoutSummary": "요약 없이 컨텍스트가 압축되었습니다",
+    "compactedWithoutLargerSummary": "더 큰 요약을 사용하지 않고 컨텍스트가 압축되었습니다",
     "commandDescription": "대화 컨텍스트 압축",
     "noopTitle": "압축할 컨텍스트가 없습니다",
     "noopDescription": "아직 압축할 새 대화 기록이 없습니다.",

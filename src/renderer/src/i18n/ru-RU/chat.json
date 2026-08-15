@@ -306,6 +306,8 @@
   "compaction": {
     "compacting": "Сжатие контекста...",
     "compacted": "Контекст сжат",
+    "compactedWithoutSummary": "Контекст сжат без сводки",
+    "compactedWithoutLargerSummary": "Контекст сжат без использования более объёмной сводки",
     "commandDescription": "Сжать контекст беседы",
     "noopTitle": "Нет контекста для сжатия",
     "noopDescription": "Пока нет новой истории разговора для сжатия.",

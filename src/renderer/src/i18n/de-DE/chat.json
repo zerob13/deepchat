@@ -122,6 +122,8 @@
   "compaction": {
     "compacting": "Kontext wird komprimiert...",
     "compacted": "Kontext wurde komprimiert",
+    "compactedWithoutSummary": "Der Kontext wurde ohne Zusammenfassung komprimiert",
+    "compactedWithoutLargerSummary": "Der Kontext wurde komprimiert, ohne eine größere Zusammenfassung zu verwenden",
     "commandDescription": "Chat-Kontext komprimieren",
     "noopTitle": "Kein Kontext zum Komprimieren",
     "noopDescription": "Es gibt noch keinen neuen Chatverlauf, der komprimiert werden muss.",

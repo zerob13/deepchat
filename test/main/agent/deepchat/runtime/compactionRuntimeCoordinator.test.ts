@@ -146,6 +146,10 @@ function createHarness(options?: {
     state: Record<string, unknown>
     createdAt: number
   } | null = null
+  const reconstructionAnchorsByAttempt = new Map<
+    string,
+    NonNullable<typeof reconstructionAnchor>
+  >()
   const publishedEvents: Array<{ event: string; payload: unknown }> = []
   const messageStore: CompactionRuntimeCoordinatorDependencies['messageStore'] = {
     createCompactionMessage: vi.fn().mockReturnValue('compaction-message'),
@@ -167,6 +171,10 @@ function createHarness(options?: {
         : undefined
     ),
     getReconstructionAnchorPromptState: vi.fn(() => reconstructionAnchor),
+    getReconstructionAnchorPromptStateByCompactionAttemptId: vi.fn(
+      (_sessionId, compactionAttemptId) =>
+        reconstructionAnchorsByAttempt.get(compactionAttemptId) ?? null
+    ),
     getSummaryState: vi.fn(() => ({ ...summaryState })),
     resetSummaryState: vi.fn(() => {
       summaryState = {
@@ -318,6 +326,10 @@ function createHarness(options?: {
     },
     setReconstructionAnchor: (next: typeof reconstructionAnchor) => {
       reconstructionAnchor = next
+      const compactionAttemptId = next?.state.compactionAttemptId
+      if (next && typeof compactionAttemptId === 'string') {
+        reconstructionAnchorsByAttempt.set(compactionAttemptId, next)
+      }
     },
     toolResolver,
     transitionStatus
@@ -605,7 +617,7 @@ describe('CompactionRuntimeCoordinator', () => {
       'compaction-message',
       'compacted',
       1,
-      { compactionAttemptId: 'compaction-attempt-1' }
+      { compactionAttemptId: 'compaction-attempt-1', boundaryReason: null }
     )
     expect(initialInstance?.getCompactionState()).toEqual({
       status: 'compacted',
@@ -712,11 +724,67 @@ describe('CompactionRuntimeCoordinator', () => {
       'compaction-message',
       'compacted',
       200,
-      { compactionAttemptId: 'compaction-attempt-1' }
+      { compactionAttemptId: 'compaction-attempt-1', boundaryReason: null }
     )
     expect(publishedEvents.map(({ payload }) => payload)).toEqual([
       expect.objectContaining({ status: 'compacting' })
     ])
+  })
+
+  it('settles a boundary-only marker from its attempt anchor after a newer anchor', async () => {
+    const {
+      applyCompaction,
+      coordinator,
+      messageStore,
+      setReconstructionAnchor,
+      setSummaryState
+    } = createHarness()
+    const intent = createIntent()
+    const boundaryState = {
+      summaryText: null,
+      summaryCursorOrderSeq: intent.targetCursorOrderSeq,
+      summaryUpdatedAt: null
+    }
+    applyCompaction.mockImplementationOnce(async () => {
+      setSummaryState(boundaryState)
+      setReconstructionAnchor({
+        entryId: 42,
+        name: 'compaction/context_pressure',
+        state: {
+          compactionAttemptId: intent.compactionAttemptId,
+          cursorOrderSeq: intent.targetCursorOrderSeq,
+          reason: 'summary_rejected_larger'
+        },
+        createdAt: 200
+      })
+      setReconstructionAnchor({
+        entryId: 43,
+        name: 'compaction/context_pressure',
+        state: {
+          compactionAttemptId: 'newer-compaction-attempt',
+          cursorOrderSeq: intent.targetCursorOrderSeq + 1,
+          reason: 'summary_unavailable'
+        },
+        createdAt: 201
+      })
+      return {
+        outcome: 'boundary_only',
+        anchorCommitted: true,
+        summaryState: boundaryState
+      }
+    })
+
+    await coordinator.apply(SESSION_ID, intent)
+
+    expect(messageStore.updateCompactionMessage).toHaveBeenCalledWith(
+      'compaction-message',
+      'compacted',
+      null,
+      {
+        compactionAttemptId: 'compaction-attempt-1',
+        boundaryReason: 'summary_rejected_larger'
+      }
+    )
   })
 
   it('retracts a failed marker before fencing a stale runtime completion', async () => {

@@ -436,6 +436,7 @@ export interface MessageMetadata {
   messageType?: 'compaction' | 'workflow_result'
   compactionStatus?: 'compacting' | 'compacted'
   compactionAttemptId?: string
+  compactionBoundaryReason?: SessionCompactionBoundaryReason | null
   summaryUpdatedAt?: number | null
   workflowRunId?: string
   workflowResultDeliveryId?: string

@@ -417,6 +417,8 @@ provider replay.
   occurred in its own Tape incarnation.
 - [x] Reject new zero context-window settings and normalize legacy/model-catalog zero values to the
   established runtime default before pressure or compaction arithmetic.
+- [x] Persist each settled marker's boundary-only reason from its same-attempt Tape anchor and render
+  the two reason substates without inferring history from a nullable summary timestamp.
 - [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
   performance, security, naming, regression coverage, and maintenance cost before committing it.
 

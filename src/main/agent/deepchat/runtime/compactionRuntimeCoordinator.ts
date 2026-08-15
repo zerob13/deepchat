@@ -65,7 +65,11 @@ type CompactionServicePort = Pick<
 
 type CompactionSessionStore = Pick<
   SessionSettingsStore,
-  'get' | 'getReconstructionAnchorPromptState' | 'getSummaryState' | 'resetSummaryState'
+  | 'get'
+  | 'getReconstructionAnchorPromptState'
+  | 'getReconstructionAnchorPromptStateByCompactionAttemptId'
+  | 'getSummaryState'
+  | 'resetSummaryState'
 >
 
 type CompactionTranscript = TapeTranscriptReader &
@@ -405,24 +409,33 @@ export class CompactionRuntimeCoordinator {
       throw error
     }
 
+    const projectedState =
+      result.outcome !== 'unchanged'
+        ? this.projectSummaryState(sessionId, result.summaryState, 'compacted')
+        : this.projectSummaryState(sessionId, result.summaryState)
     if (result.anchorCommitted && result.outcome !== 'unchanged') {
       this.deps.messageStore.updateCompactionMessage(
         compactionMessageId,
         'compacted',
         result.summaryState.summaryUpdatedAt,
-        { compactionAttemptId: intent.compactionAttemptId }
+        {
+          compactionAttemptId: intent.compactionAttemptId,
+          boundaryReason:
+            result.outcome === 'boundary_only'
+              ? this.resolveBoundaryReason(
+                  this.deps.sessionStore.getReconstructionAnchorPromptStateByCompactionAttemptId(
+                    sessionId,
+                    intent.compactionAttemptId
+                  )?.state.reason
+                )
+              : null
+        }
       )
     } else {
       this.deps.messageStore.deleteMessage(compactionMessageId)
     }
     this.deps.messageProjection.refresh(sessionId, compactionMessageId)
-    this.emit(
-      sessionId,
-      result.outcome !== 'unchanged'
-        ? this.projectSummaryState(sessionId, result.summaryState, 'compacted')
-        : this.projectSummaryState(sessionId, result.summaryState),
-      expectedInstance
-    )
+    this.emit(sessionId, projectedState, expectedInstance)
     return result.summaryState
   }
 

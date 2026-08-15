@@ -306,6 +306,8 @@
   "compaction": {
     "compacting": "Compactage du contexte...",
     "compacted": "Le contexte a été compacté",
+    "compactedWithoutSummary": "Le contexte a été compacté sans résumé",
+    "compactedWithoutLargerSummary": "Le contexte a été compacté sans utiliser un résumé plus volumineux",
     "commandDescription": "Compacter le contexte de conversation",
     "noopTitle": "Aucun contexte à compacter",
     "noopDescription": "Il n'y a pas encore de nouvel historique de conversation à compacter.",
