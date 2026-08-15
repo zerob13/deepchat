@@ -357,12 +357,35 @@ provider replay.
 
 #### 8. Add Selective First-User Pinning
 
-- Design the current Tape incarnation's first effective user fact as an explicit protected View
-  contribution while keeping the reconstruction cursor contiguous.
-- Order provider context as system, pinned first user, checkpoint, retained tail, then active turn.
-  Record the pinned source entry in ViewManifest and include it in the protected budget.
-- Use the latest effective edit of the original user fact. Do not apply the untrusted derivative
-  fence used for summary or tool output to an authoritative user instruction.
+- Introduce `cache_aware_context_v2` / `cache-aware-v2` as the default policy while retaining the
+  complete v1 policy and parser contract. V2 alone opts the cache-aware builders into pinning, so a
+  stored or explicitly requested v1 policy is never silently reinterpreted.
+- Reuse the effective `historyRecords` already prepared for chat and resume. Select the earliest
+  surviving user record, which is already the latest ranked edit; a retracted first user naturally
+  exposes the next one. Tape generation reset, not `summary/reset`, defines a new incarnation. Do
+  not add an incarnation lookup or another full-Tape fold on the request path.
+- Materialize the user through the canonical historical record projector. Remove that record from
+  ordinary history turns and order the View as system, pinned user, checkpoint, retained tail, then
+  active turn. Do not duplicate a new active input or a resume owner that is already part of the
+  protected active turn.
+- Carry a typed authoritative pin descriptor in View metadata and the Run's pending View context.
+  It contains the effective message record and a canonical hash of the exact provider-visible pin;
+  it is not a `DeepChatTapeViewSyntheticContribution` and is never persisted as a new message fact.
+- Add `pinned_first_user` to the manifest reason allowlist. Initial selection resolves the latest
+  effective message entry through the existing source maps and records it as both `entryId` and the
+  sole `sourceEntryIds` value. Tool-loop/recovery request refs use the same descriptor only when an
+  exact pinned-message hash is still present, avoiding false provenance after any future projection
+  change.
+- Extend cache-aware preflight and strict-retry fitting to recognize the v2 pin between system and
+  checkpoint as protected leading input. Include it in fixed-token and physical-window checks;
+  shed optional memory/directives and complete tail turns first, then fail closed if the protected
+  set cannot fit. Never truncate or silently discard the pinned instruction.
+- Keep the original user trust level. The pin receives neither the derivative-content fence nor a
+  historical-quotation wrapper. Existing attachment projection and historical Skill markers remain
+  unchanged.
+- Focused coverage must prove v2/v1 policy selection, provider order, latest effective edit and
+  retraction behavior, no duplication before or after the cursor, `summary/reset` non-incarnation,
+  protected overflow, resume behavior, tool-loop fitting, and manifest source/hash provenance.
 
 #### Independent Cleanup
 
