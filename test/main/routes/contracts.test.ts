@@ -1077,6 +1077,13 @@ describe('main kernel contracts', () => {
     })
   })
 
+  it('rejects a zero session context window at the route boundary', () => {
+    expect(() => SessionGenerationSettingsPatchSchema.parse({ contextLength: 0 })).toThrow()
+    expect(SessionGenerationSettingsPatchSchema.parse({ contextLength: 1 })).toEqual({
+      contextLength: 1
+    })
+  })
+
   it('accepts auto approve in session permission mode contracts', () => {
     expect(
       sessionsSetPermissionModeRoute.input.parse({

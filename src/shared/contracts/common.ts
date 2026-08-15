@@ -175,7 +175,7 @@ export const SessionGenerationSettingsSchema = z.object({
   systemPrompt: z.string(),
   temperature: z.number(),
   topP: z.number().min(0.1).max(1).optional(),
-  contextLength: z.number().int(),
+  contextLength: z.number().int().positive(),
   maxTokens: z.number().int(),
   timeout: z.number().int(),
   thinkingBudget: z.number().int().optional(),

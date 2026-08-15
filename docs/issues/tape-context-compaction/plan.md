@@ -415,6 +415,8 @@ provider replay.
 - [x] Exclude source-session compaction indicators from transcript forks; the target Session may
   inherit user and assistant facts, but it must not claim a compaction attempt or anchor that never
   occurred in its own Tape incarnation.
+- [x] Reject new zero context-window settings and normalize legacy/model-catalog zero values to the
+  established runtime default before pressure or compaction arithmetic.
 - [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
   performance, security, naming, regression coverage, and maintenance cost before committing it.
 
