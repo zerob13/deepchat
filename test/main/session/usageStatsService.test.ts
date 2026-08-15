@@ -4,6 +4,12 @@ import { SessionTape } from '@/tape/application/sessionTape'
 import { DASHBOARD_STATS_BACKFILL_KEY, type UsageStatsRecordInput } from '@/session/usageStats'
 import { UsageStatsService } from '@/session/usageStatsService'
 import type { PermissionMode } from '@shared/types/agent-interface'
+import type { DeepChatTapeEntryRow } from '@/tape/domain/entry'
+import {
+  buildTapeCompactionModelCallEvent,
+  parseTapeCompactionModelCallEvent,
+  TAPE_COMPACTION_MODEL_CALL_EVENT_NAME
+} from '@/tape/domain/compactionUsage'
 
 vi.mock('@/events', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/events')>()
@@ -148,6 +154,7 @@ function createMockSqlitePresenter() {
   const sessions = new Map<string, SessionRow>()
   const messages = new Map<string, MessageRow>()
   const usageStats = new Map<string, UsageStatsRow>()
+  const tapeEntries: DeepChatTapeEntryRow[] = []
 
   const deepchatSessionsTable = {
     create(sessionId: string, providerId: string, modelId: string, permissionMode: PermissionMode) {
@@ -246,6 +253,7 @@ function createMockSqlitePresenter() {
   const deepchatUsageStatsTable = {
     upsert(input: UsageStatsRecordInput) {
       const usageId = input.usageId ?? input.messageId ?? ''
+      const existing = usageStats.get(usageId)
       usageStats.set(usageId, {
         usage_id: usageId,
         message_id: input.messageId ?? usageId,
@@ -263,7 +271,7 @@ function createMockSqlitePresenter() {
         cached_input_tokens: input.cachedInputTokens === undefined ? 0 : input.cachedInputTokens,
         cache_write_input_tokens:
           input.cacheWriteInputTokens === undefined ? 0 : input.cacheWriteInputTokens,
-        source: input.source,
+        source: existing?.source === 'live' ? 'live' : input.source,
         created_at: input.createdAt,
         updated_at: input.updatedAt
       })
@@ -386,8 +394,14 @@ function createMockSqlitePresenter() {
       return Array.from(buckets.entries()).map(([id, rows]) => ({
         id,
         eventCount: rows.length,
-        knownUsageCount: rows.filter((row) => row.total_tokens !== null).length,
-        unknownUsageCount: rows.filter((row) => row.total_tokens === null).length,
+        knownUsageCount: rows.filter(
+          (row) =>
+            row.input_tokens !== null || row.output_tokens !== null || row.total_tokens !== null
+        ).length,
+        unknownUsageCount: rows.filter(
+          (row) =>
+            row.input_tokens === null && row.output_tokens === null && row.total_tokens === null
+        ).length,
         inputTokens: rows.reduce((total, row) => total + (row.input_tokens ?? 0), 0),
         outputTokens: rows.reduce((total, row) => total + (row.output_tokens ?? 0), 0),
         totalTokens: rows.reduce((total, row) => total + (row.total_tokens ?? 0), 0)
@@ -395,7 +409,35 @@ function createMockSqlitePresenter() {
     }
   }
 
+  const compactionUsageReader = {
+    listCompactionModelCallsPage(
+      cursor: { sessionId: string; entryId: number } | null,
+      limit: number
+    ) {
+      return tapeEntries
+        .filter(
+          (row) =>
+            row.kind === 'event' &&
+            row.name === TAPE_COMPACTION_MODEL_CALL_EVENT_NAME &&
+            (!cursor ||
+              row.session_id > cursor.sessionId ||
+              (row.session_id === cursor.sessionId && row.entry_id > cursor.entryId))
+        )
+        .sort(
+          (left, right) =>
+            left.session_id.localeCompare(right.session_id) || left.entry_id - right.entry_id
+        )
+        .slice(0, limit)
+        .map((row) => ({
+          sessionId: row.session_id,
+          entryId: row.entry_id,
+          event: parseTapeCompactionModelCallEvent(row)
+        }))
+    }
+  }
+
   return {
+    compactionUsageReader,
     deepchatSessionsTable,
     deepchatMessagesTable,
     deepchatAssistantBlocksTable: {
@@ -425,7 +467,30 @@ function createMockSqlitePresenter() {
     },
     deepchatTapeEntriesTable: {
       ensureBootstrapAnchor: vi.fn(),
-      append: vi.fn()
+      append: vi.fn(),
+      listEventsByNamePage(
+        name: string,
+        cursor: { sessionId: string; entryId: number } | null,
+        limit: number
+      ) {
+        return tapeEntries
+          .filter(
+            (row) =>
+              row.kind === 'event' &&
+              row.name === name &&
+              (!cursor ||
+                row.session_id > cursor.sessionId ||
+                (row.session_id === cursor.sessionId && row.entry_id > cursor.entryId))
+          )
+          .sort(
+            (left, right) =>
+              left.session_id.localeCompare(right.session_id) || left.entry_id - right.entry_id
+          )
+          .slice(0, limit)
+      },
+      testAppendEvent(row: DeepChatTapeEntryRow) {
+        tapeEntries.push(row)
+      }
     },
     deepchatUsageStatsTable,
     newSessionsTable: {
@@ -453,10 +518,15 @@ describe('UsageStatsService', () => {
   function createService() {
     const sqlitePresenter = createMockSqlitePresenter()
     const providerSettings = createMockProviderSettings()
-    const service = new UsageStatsService(sqlitePresenter, providerSettings as any, {
-      get: (key) => providerSettings.getSetting(key),
-      set: (key, value) => providerSettings.setSetting(key, value)
-    })
+    const service = new UsageStatsService(
+      sqlitePresenter,
+      providerSettings as any,
+      {
+        get: (key) => providerSettings.getSetting(key),
+        set: (key, value) => providerSettings.setSetting(key, value)
+      },
+      sqlitePresenter.compactionUsageReader
+    )
 
     return {
       service,
@@ -541,6 +611,66 @@ describe('UsageStatsService', () => {
     await service.startBackfill()
 
     expect(sqlitePresenter.deepchatUsageStatsTable.count()).toBe(0)
+  })
+
+  it('rebuilds compaction usage from valid Tape facts without treating missing totals as zero', async () => {
+    const { service, sqlitePresenter } = createService()
+    const event = buildTapeCompactionModelCallEvent(
+      {
+        sessionId: 'session-1',
+        compactionMessageId: 'marker-1',
+        compactionAttemptId: 'attempt-1',
+        providerCallId: 'call-1',
+        providerId: 'openai',
+        modelId: 'gpt-4o',
+        status: 'completed',
+        usage: { inputTokens: 100, outputTokens: 20, totalTokens: null },
+        startedAt: 10,
+        completedAt: 20
+      },
+      1
+    )
+    sqlitePresenter.deepchatTapeEntriesTable.testAppendEvent({
+      session_id: 'session-1',
+      entry_id: 2,
+      kind: 'event',
+      name: 'compaction/model_call_completed',
+      source_type: 'runtime_event',
+      source_id: 'attempt-1',
+      source_seq: 1,
+      provenance_key: 'compaction-model-call:attempt-1:call-1',
+      payload_json: JSON.stringify({ name: 'compaction/model_call_completed', data: event }),
+      meta_json: '{}',
+      created_at: 20
+    })
+    sqlitePresenter.deepchatTapeEntriesTable.testAppendEvent({
+      session_id: 'session-1',
+      entry_id: 3,
+      kind: 'event',
+      name: 'compaction/model_call_completed',
+      source_type: 'runtime_event',
+      source_id: 'invalid-attempt',
+      source_seq: 1,
+      provenance_key: 'invalid',
+      payload_json: '{}',
+      meta_json: '{}',
+      created_at: 21
+    })
+
+    await service.startBackfill()
+
+    expect(sqlitePresenter.deepchatUsageStatsTable.count()).toBe(1)
+    expect(sqlitePresenter.deepchatUsageStatsTable.getCategoryBreakdownRows()).toEqual([
+      {
+        id: 'compaction',
+        eventCount: 1,
+        knownUsageCount: 1,
+        unknownUsageCount: 0,
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 0
+      }
+    ])
   })
 
   it('keeps concurrent backfill requests single-flight', async () => {

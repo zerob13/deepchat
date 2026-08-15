@@ -268,9 +268,11 @@ rollback mechanism and is not the authority for accepting a semantic summary.
   call. It contains only the compaction attempt/message correlation, call identity and sequence,
   actual provider/model, terminal status, timestamps, and provider-returned usage. It never stores
   prompts, summary text, provider errors, credentials, or inferred prices.
-- A call that returns usage records exactly those input, output, and total token counts. A call that
-  throws, is aborted, or returns no valid usage records `usage: null`. Missing usage means unknown:
-  it is not estimated, normalized to zero, or included in token and cache-rate denominators.
+- A call that returns usage records each valid measured input, output, and total component
+  independently. A missing component remains null, and total is never synthesized from input plus
+  output. A call that throws, is aborted, or returns no valid measured component records
+  `usage: null`. Missing usage means unknown: it is not estimated, normalized to zero, or included
+  in token and cache-rate denominators.
 - Observation happens as soon as a provider response returns, before summary sanitization or the
   enclosing map-reduce operation can fail. Therefore successful chunks remain billable evidence
   even when a later chunk fails, the generated summary is rejected as non-shrinking, the boundary

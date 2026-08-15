@@ -929,7 +929,8 @@ export async function createMainProcessControl(dependencies: {
   usageStatsService = new UsageStatsService(
     sessionData.database,
     providerSettings,
-    dependencies.settingsStore
+    dependencies.settingsStore,
+    sessionData.tapeStore
   )
   const desktopSettings = new DesktopSettings(
     dependencies.settingsStore,

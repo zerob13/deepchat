@@ -17,6 +17,7 @@ import type {
   TapeProviderContextPressureRecord
 } from '../domain/providerAttempt'
 import type {
+  TapeCompactionModelCallEvent,
   TapeCompactionModelCallInput,
   TapeCompactionModelCallReceipt
 } from '../domain/compactionUsage'
@@ -237,6 +238,19 @@ export interface TapeProviderAttemptReader {
 
 export interface TapeCompactionModelCallWriter {
   appendCompactionModelCall(input: TapeCompactionModelCallInput): TapeCompactionModelCallReceipt
+}
+
+export interface TapeCompactionModelCallCandidate {
+  sessionId: string
+  entryId: number
+  event: TapeCompactionModelCallEvent | null
+}
+
+export interface TapeCompactionModelCallReader {
+  listCompactionModelCallsPage(
+    cursor: { sessionId: string; entryId: number } | null,
+    limit: number
+  ): TapeCompactionModelCallCandidate[]
 }
 
 export interface ExecutionJournalWriter {

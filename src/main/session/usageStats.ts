@@ -8,7 +8,7 @@ import type { TapeCompactionModelCallEvent } from '@/tape/domain/compactionUsage
 
 import { providerDbLoader } from '@/provider/providerDbLoader'
 
-export const DASHBOARD_STATS_BACKFILL_KEY = 'dashboardStatsBackfillV1'
+export const DASHBOARD_STATS_BACKFILL_KEY = 'dashboardStatsBackfillV2'
 export const DASHBOARD_BACKFILL_STALE_MS = 10 * 60 * 1000
 
 export type UsageStatsSource = 'backfill' | 'live'

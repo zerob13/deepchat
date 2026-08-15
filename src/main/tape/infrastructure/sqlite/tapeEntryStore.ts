@@ -1011,6 +1011,48 @@ export class DeepChatTapeEntriesTable
       .all(sessionId, name, sourceType, sourceId) as DeepChatTapeEntryRow[]
   }
 
+  listEventsByNamePage(
+    name: string,
+    cursor: { sessionId: string; entryId: number } | null,
+    limit: number
+  ): DeepChatTapeEntryRow[] {
+    if (!Number.isSafeInteger(limit) || limit <= 0) {
+      throw new Error('Tape event page limit must be a positive safe integer.')
+    }
+    if (
+      cursor &&
+      (!cursor.sessionId || !Number.isSafeInteger(cursor.entryId) || cursor.entryId <= 0)
+    ) {
+      throw new Error('Tape event page cursor is invalid.')
+    }
+    const baseQuery = `SELECT *
+      FROM deepchat_tape_entries
+      WHERE kind = 'event' AND name = ?`
+    if (!cursor) {
+      return this.db
+        .prepare(
+          `${baseQuery}
+           ORDER BY session_id ASC, entry_id ASC
+           LIMIT ?`
+        )
+        .all(name, limit) as DeepChatTapeEntryRow[]
+    }
+    return this.db
+      .prepare(
+        `${baseQuery}
+         AND (session_id > ? OR (session_id = ? AND entry_id > ?))
+         ORDER BY session_id ASC, entry_id ASC
+         LIMIT ?`
+      )
+      .all(
+        name,
+        cursor.sessionId,
+        cursor.sessionId,
+        cursor.entryId,
+        limit
+      ) as DeepChatTapeEntryRow[]
+  }
+
   getBySessionExcludingContext(sessionId: string): DeepChatTapeEntryRow[] {
     return this.db
       .prepare(

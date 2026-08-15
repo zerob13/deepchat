@@ -48,6 +48,11 @@ export interface TapeEntryStore {
     sourceType: DeepChatTapeSourceType,
     sourceId: string
   ): DeepChatTapeEntryRow[]
+  listEventsByNamePage(
+    name: string,
+    cursor: { sessionId: string; entryId: number } | null,
+    limit: number
+  ): DeepChatTapeEntryRow[]
   getBySessionExcludingContext(sessionId: string): DeepChatTapeEntryRow[]
   getByEntryIds(sessionId: string, entryIds: readonly number[]): DeepChatTapeEntryRow[]
   getMessageSourceEntries(sessionId: string, messageId: string): DeepChatTapeEntryRow[]

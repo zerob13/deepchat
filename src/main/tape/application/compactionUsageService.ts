@@ -6,7 +6,11 @@ import {
   type TapeCompactionModelCallReceipt
 } from '../domain/compactionUsage'
 import type { TapeApplicationProviders } from '../ports/application'
-import type { TapeCompactionModelCallWriter } from '../ports/capabilities'
+import type {
+  TapeCompactionModelCallCandidate,
+  TapeCompactionModelCallReader,
+  TapeCompactionModelCallWriter
+} from '../ports/capabilities'
 
 type TapeCompactionUsageProviders = Pick<TapeApplicationProviders, 'getEntryStore'>
 
@@ -14,8 +18,24 @@ function provenanceKey(input: TapeCompactionModelCallInput): string {
   return `compaction-model-call:${input.compactionAttemptId}:${input.providerCallId}`
 }
 
-export class TapeCompactionUsageService implements TapeCompactionModelCallWriter {
+export class TapeCompactionUsageService
+  implements TapeCompactionModelCallReader, TapeCompactionModelCallWriter
+{
   constructor(private readonly providers: TapeCompactionUsageProviders) {}
+
+  listCompactionModelCallsPage(
+    cursor: { sessionId: string; entryId: number } | null,
+    limit: number
+  ): TapeCompactionModelCallCandidate[] {
+    return this.providers
+      .getEntryStore()
+      .listEventsByNamePage(TAPE_COMPACTION_MODEL_CALL_EVENT_NAME, cursor, limit)
+      .map((row) => ({
+        sessionId: row.session_id,
+        entryId: row.entry_id,
+        event: parseTapeCompactionModelCallEvent(row)
+      }))
+  }
 
   appendCompactionModelCall(input: TapeCompactionModelCallInput): TapeCompactionModelCallReceipt {
     const table = this.providers.getEntryStore()

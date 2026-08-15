@@ -9,6 +9,8 @@ import type { DeepChatTapeEntryRow, TapeEventAppendInput } from '@/tape/domain/e
 import { SessionTranscript } from '@/session/data/transcript'
 import { SessionTape } from '@/tape/application/sessionTape'
 import { SessionDatabase } from '@/session/data/database'
+import { UsageStatsService } from '@/session/usageStatsService'
+import { DASHBOARD_STATS_BACKFILL_KEY, buildCompactionUsageStatsRecord } from '@/session/usageStats'
 import { itIfSqlite, DatabaseCtor } from '../session/data/tapeTestHarness'
 
 function input(
@@ -74,6 +76,25 @@ function createService() {
       }
       rows.push(row)
       return row
+    },
+    listEventsByNamePage(
+      name: string,
+      cursor: { sessionId: string; entryId: number } | null,
+      limit: number
+    ) {
+      return rows
+        .filter(
+          (row) =>
+            row.name === name &&
+            (!cursor ||
+              row.session_id > cursor.sessionId ||
+              (row.session_id === cursor.sessionId && row.entry_id > cursor.entryId))
+        )
+        .sort(
+          (left, right) =>
+            left.session_id.localeCompare(right.session_id) || left.entry_id - right.entry_id
+        )
+        .slice(0, limit)
     }
   }
   return {
@@ -136,6 +157,28 @@ describe('compaction model call Tape usage', () => {
     expect(second.event.callSeq).toBe(2)
     expect(replay).toEqual(first)
     expect(rows).toHaveLength(2)
+  })
+
+  it('pages typed facts past a malformed event without stalling the cursor', () => {
+    const { rows, service } = createService()
+    service.appendCompactionModelCall(input())
+    service.appendCompactionModelCall(input({ providerCallId: 'call-2' }))
+    service.appendCompactionModelCall(input({ providerCallId: 'call-3' }))
+    rows[1] = { ...rows[1], payload_json: '{}' }
+
+    const firstPage = service.listCompactionModelCallsPage(null, 2)
+    const secondPage = service.listCompactionModelCallsPage(
+      { sessionId: firstPage[1].sessionId, entryId: firstPage[1].entryId },
+      2
+    )
+
+    expect(firstPage).toMatchObject([
+      { sessionId: 'session-1', entryId: 1, event: { providerCallId: 'call-1' } },
+      { sessionId: 'session-1', entryId: 2, event: null }
+    ])
+    expect(secondPage).toMatchObject([
+      { sessionId: 'session-1', entryId: 3, event: { providerCallId: 'call-3' } }
+    ])
   })
 
   it('rejects malformed usage rather than normalizing it to zero', () => {
@@ -245,6 +288,13 @@ itIfSqlite('aggregates independently measured compaction usage fields with real 
     transcript.recordCompactionModelCall(
       input({ providerCallId: 'call-2', usage: null, status: 'error' })
     )
+    database.deepchatUsageStatsTable.upsert(
+      buildCompactionUsageStatsRecord({
+        sessionId: 'session-1',
+        event: buildTapeCompactionModelCallEvent(input(), 1),
+        source: 'backfill'
+      })
+    )
 
     expect(database.deepchatUsageStatsTable.getProviderBreakdownRows()).toEqual([
       {
@@ -267,7 +317,74 @@ itIfSqlite('aggregates independently measured compaction usage fields with real 
         totalTokens: 0
       }
     ])
+    expect(
+      db.prepare("SELECT source FROM deepchat_usage_stats WHERE provider_call_id = 'call-1'").get()
+    ).toEqual({ source: 'live' })
   } finally {
     db.close()
   }
 })
+
+itIfSqlite(
+  'rebuilds paginated compaction usage projections from append-only Tape facts',
+  async () => {
+    const db = new DatabaseCtor(':memory:')
+    try {
+      const database = new SessionDatabase({ getDatabase: () => db })
+      database.deepchatTapeEntriesTable.createTable()
+      database.deepchatUsageStatsTable.createTable()
+      database.deepchatMessagesTable.createTable()
+      database.deepchatSessionsTable.createTable()
+      const tape = new SessionTape(database)
+      const transcript = new SessionTranscript(database, tape)
+
+      for (const sessionId of ['session-a', 'session-b']) {
+        for (let index = 0; index < 26; index += 1) {
+          transcript.recordCompactionModelCall(
+            input({
+              sessionId,
+              compactionAttemptId: `attempt-${sessionId}`,
+              providerCallId: `call-${index}`,
+              usage:
+                index === 25
+                  ? { inputTokens: 10, outputTokens: 2, totalTokens: null }
+                  : { inputTokens: 100, outputTokens: 20, totalTokens: 120 }
+            })
+          )
+        }
+      }
+      database.deepchatUsageStatsTable.deleteAll()
+
+      const settingsValues = new Map<string, unknown>()
+      const service = new UsageStatsService(
+        database,
+        { getProviders: () => [], getProviderById: () => undefined } as never,
+        {
+          get: <T>(key: string) => settingsValues.get(key) as T,
+          set: (key: string, value: unknown) => settingsValues.set(key, value)
+        },
+        tape
+      )
+      await service.startBackfill()
+
+      expect(database.deepchatUsageStatsTable.count()).toBe(52)
+      expect(database.deepchatUsageStatsTable.getCategoryBreakdownRows()).toEqual([
+        {
+          id: 'compaction',
+          eventCount: 52,
+          knownUsageCount: 52,
+          unknownUsageCount: 0,
+          inputTokens: 5020,
+          outputTokens: 1004,
+          totalTokens: 6000
+        }
+      ])
+      expect(settingsValues.get(DASHBOARD_STATS_BACKFILL_KEY)).toMatchObject({
+        status: 'completed',
+        processedCount: 52
+      })
+    } finally {
+      db.close()
+    }
+  }
+)

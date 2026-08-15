@@ -60,6 +60,7 @@ import type {
   TapeMessageFactWriter,
   TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
+  TapeCompactionModelCallReader,
   TapeCompactionModelCallWriter,
   TapeToolSurfaceViewReader,
   TapeToolSurfaceViewWriter,
@@ -135,6 +136,7 @@ export class SessionTape
     TapeMessageFactWriter,
     TapeProviderAttemptReader,
     TapeProviderAttemptWriter,
+    TapeCompactionModelCallReader,
     TapeCompactionModelCallWriter,
     TapeNonContextEntryReader,
     TapeReconciliationPort,
@@ -245,6 +247,13 @@ export class SessionTape
 
   appendCompactionModelCall(input: TapeCompactionModelCallInput): TapeCompactionModelCallReceipt {
     return this.compactionUsage.appendCompactionModelCall(input)
+  }
+
+  listCompactionModelCallsPage(
+    cursor: { sessionId: string; entryId: number } | null,
+    limit: number
+  ) {
+    return this.compactionUsage.listCompactionModelCallsPage(cursor, limit)
   }
 
   getMaxProviderAttemptRequestSeq(sessionId: string, messageId: string): number {

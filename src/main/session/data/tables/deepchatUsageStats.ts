@@ -306,7 +306,10 @@ export class DeepChatUsageStatsTable extends BaseTable {
           total_tokens = excluded.total_tokens,
           cached_input_tokens = excluded.cached_input_tokens,
           cache_write_input_tokens = excluded.cache_write_input_tokens,
-          source = excluded.source,
+          source = CASE
+            WHEN deepchat_usage_stats.source = 'live' THEN 'live'
+            ELSE excluded.source
+          END,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at`
       )
