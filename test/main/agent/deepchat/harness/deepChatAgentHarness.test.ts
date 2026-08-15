@@ -6166,6 +6166,35 @@ describe('DeepChatAgentHarness', () => {
         { role: 'assistant', content: 'First reply' },
         { role: 'user', content: 'Second message' }
       ])
+
+      for await (const _event of callArgs.coreStream(
+        callArgs.run.messages,
+        callArgs.modelId,
+        callArgs.modelConfig,
+        callArgs.temperature,
+        callArgs.maxTokens,
+        callArgs.run.resources.toolDefinitions
+      )) {
+        void _event
+      }
+      const manifestRow = sqlitePresenter.deepchatTapeEntriesTable
+        .getBySession('s1')
+        .find((row: any) => row.kind === 'event' && row.name === 'view/assembled')
+      const manifest = JSON.parse(manifestRow.payload_json).data.manifest
+      expect(manifest).toMatchObject({
+        policy: 'cache_aware_context_v2',
+        contextBuilderVersion: 'cache-aware-v2'
+      })
+      expect(
+        manifest.included.find((ref: any) => ref.reason === 'pinned_first_user')
+      ).toMatchObject({
+        messageId: 'prev-user',
+        orderSeq: 1,
+        role: 'user',
+        source: 'tape',
+        sourceEntryIds: [expect.any(Number)],
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      })
     })
 
     it.each([
@@ -6374,7 +6403,7 @@ describe('DeepChatAgentHarness', () => {
       const callArgs = (processStream as ReturnType<typeof vi.fn>).mock.calls[0][0]
       expect(callArgs.run.messages[0].role).toBe('system')
       expect(callArgs.run.messages[0].content).not.toContain('## Conversation Summary')
-      expect(callArgs.run.messages[1]).toMatchObject({
+      expect(callArgs.run.messages[2]).toMatchObject({
         role: 'user',
         content: expect.stringContaining('Persisted Rolling Summary')
       })
@@ -6507,9 +6536,9 @@ describe('DeepChatAgentHarness', () => {
       expect(manifests[0]).toMatchObject({
         schemaVersion: 4,
         taskType: 'chat',
-        policy: 'cache_aware_context_v1',
+        policy: 'cache_aware_context_v2',
         policyVersion: 1,
-        contextBuilderVersion: 'cache-aware-v1',
+        contextBuilderVersion: 'cache-aware-v2',
         meta: {
           traceDebugEnabled: true
         }
@@ -6842,9 +6871,9 @@ describe('DeepChatAgentHarness', () => {
       expect(JSON.parse(recoveredManifestRow.payload_json).data.manifest).toMatchObject({
         requestSeq: 4,
         taskType: 'chat',
-        policy: 'cache_aware_context_v1',
+        policy: 'cache_aware_context_v2',
         policyVersion: 1,
-        contextBuilderVersion: 'cache-aware-v1'
+        contextBuilderVersion: 'cache-aware-v2'
       })
     })
 
@@ -12816,7 +12845,7 @@ describe('DeepChatAgentHarness', () => {
       )
 
       expect(providerMessages).toEqual(runMessages)
-      expect(selectedHistoryRefs).toHaveLength(providerMessages.length - 2)
+      expect(selectedHistoryRefs).toHaveLength(providerMessages.length - 3)
       expect(manifest.excluded.some((ref: any) => ref.reason === 'out_of_budget')).toBe(true)
     })
 
@@ -12888,7 +12917,12 @@ describe('DeepChatAgentHarness', () => {
 
       const providerMessages = providerCoreStream.mock.calls[0][0]
       const providerSystemPrompt = String(providerMessages[0]?.content ?? '')
-      const providerCheckpoint = String(providerMessages[1]?.content ?? '')
+      const providerCheckpoint = String(
+        providerMessages.find(
+          (message: any) =>
+            message.role === 'user' && String(message.content).includes('Persisted Rolling Summary')
+        )?.content ?? ''
+      )
       const providerActiveUser = String(providerMessages.at(-1)?.content ?? '')
       expect(llmProvider.generateText).toHaveBeenCalled()
       expect(providerSystemPrompt).not.toContain('PRESSURE_RECONSTRUCTION_CONTENT')
@@ -13625,10 +13659,12 @@ describe('DeepChatAgentHarness', () => {
       expect(llmProvider.generateText).toHaveBeenCalled()
       expect(providerCoreStream).toHaveBeenCalledTimes(1)
       expect(providerMessages[0].content).toBe(baseSystemPrompt)
-      expect(providerMessages[1]).toMatchObject({
-        role: 'user',
-        content: expect.stringContaining('Persisted Rolling Summary')
-      })
+      expect(
+        providerMessages.some(
+          (message: any) =>
+            message.role === 'user' && String(message.content).includes('Persisted Rolling Summary')
+        )
+      ).toBe(true)
       expect(providerMaxTokens).toBeGreaterThan(0)
       expect(totalRequestTokens).toBeLessThanOrEqual(getUsableContextLength(8192))
     })

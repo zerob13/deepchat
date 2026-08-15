@@ -225,11 +225,22 @@ synthetic contribution、anchor、token budget provenance；contract-bearing Dee
 记录自己的 view；不得依赖无法复现的隐式 context builder 状态。summary、reconstruction 和 Memory
 生成的 synthetic user contribution 只记录 source entry ID 与 content hash，不在 manifest 中复制原文。
 
-Contract-bearing DeepChat child 使用 `cache_aware_context_v1` / `cache-aware-v1`、schema version 5 和
-manifest hash version 3。普通 interactive chat 与 ACP compatibility 继续写 schema version 4，不构造或
-执行 ExecutionContract；schema version 1-4 与其历史 hash 语义继续兼容读取且不得原地重写。
-`legacy_context_v1` 与 `legacy-v1` builder 同样保留兼容路径。tool loop 和 context pressure 必须继承
-初始 projection 的 synthetic provenance，不能退化为仅按 message role 猜测来源。
+新的 cache-aware View 使用 `cache_aware_context_v2` / `cache-aware-v2`。它从同一次 effective Tape
+projection 选择当前 incarnation 第一条有效 user fact，按 system、pinned first user、checkpoint、retained
+tail、active turn 的顺序构造请求；pin 不复制或改写 Tape，也不改变连续 reconstruction cursor。该
+authoritative ref 必须携带最新 effective source entry、message/order identity 与精确 provider-message
+hash；写入前还必须用 Run-local raw source-content hash 校验 effective source。只有该消息仍位于受保护
+前缀时才能跨 tool loop 或 context pressure 继承。缺失 Tape source、前缀漂移、raw source-content hash
+变化或 protected budget 无法容纳时失败关闭，不得伪装成 synthetic provenance 或把其他同文消息归因
+给首条 user fact。初始 View 固定该 Run 的 pin identity；后续 recovery 只能验证并继承，不能从变化后
+的 history 重新选择另一个 pin，初始无 pin 时也不能在同一 Run 中临时引入。
+
+Contract-bearing DeepChat child 使用对应请求的 cache-aware builder、schema version 5 和 manifest hash
+version 3。普通 interactive chat 与 ACP compatibility 继续写 schema version 4，不构造或执行
+ExecutionContract；schema version 1-4 与其历史 hash 语义继续兼容读取且不得原地重写。
+`cache_aware_context_v1` / `cache-aware-v1` 与 `legacy_context_v1` / `legacy-v1` builder 均保留显式兼容
+路径。tool loop 和 context pressure 必须继承初始 projection 的 synthetic 与 pinned provenance，不能
+退化为仅按 message role 或内容相等猜测来源。
 
 每个 schema-v5 manifest 内嵌一个与 provider payload 同时构造的 immutable `ExecutionContract`，包含：
 

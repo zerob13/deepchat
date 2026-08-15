@@ -75,6 +75,7 @@ export type TapeViewManifestAssemblySources = {
   reconstructionAnchorEntryIds: number[]
   reconstructionAnchorEntryId: number | null
   entryIdByMessageId: Map<string, number>
+  messageContentHashByMessageId: Map<string, string>
   toolCallEntryIdByToolId: Map<string, number>
   toolResultEntryIdByToolId: Map<string, number>
 }

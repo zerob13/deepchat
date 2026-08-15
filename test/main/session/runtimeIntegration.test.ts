@@ -1685,7 +1685,7 @@ describe('Integration: multi-turn context', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     await assignment.updateSessionGenerationSettings(session.id, {
-      contextLength: 2048,
+      contextLength: 2560,
       maxTokens: 128
     })
 
@@ -1723,9 +1723,10 @@ describe('Integration: multi-turn context', () => {
       (message: any) => message.role === 'user'
     )
 
-    expect(secondCallContents).not.toContain(firstPrompt)
+    expect(secondCallContents).toContain(firstPrompt)
     expect(secondCallContents).not.toContain(firstResponse)
-    expect(estimateMessagesTokens(secondCallMessages) + 128).toBeLessThanOrEqual(2048)
+    expect(estimateMessagesTokens(secondCallMessages) + 128).toBeLessThanOrEqual(2560)
+    expect(secondCallUserMessages[0]).toEqual({ role: 'user', content: firstPrompt })
     expect(secondCallUserMessages[secondCallUserMessages.length - 1].content).toEqual(
       expect.stringContaining('[Attached File 1]')
     )

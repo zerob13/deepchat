@@ -33,6 +33,7 @@ import type {
 } from '@shared/types/provider-attempt'
 import type {
   DeepChatTapeSkillContext,
+  DeepChatTapeViewContextBuilderVersion,
   DeepChatTapeViewPolicy,
   DeepChatTapeViewSyntheticContribution,
   DeepChatTapeViewTaskType,
@@ -183,7 +184,7 @@ export interface ProviderAttemptManifestContext<TSelection> {
   supportsVision: boolean
   supportsAudioInput: boolean
   traceDebugEnabled: boolean
-  contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
+  contextBuilderVersion: DeepChatTapeViewContextBuilderVersion
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
 }
 
@@ -200,7 +201,7 @@ export interface ProviderAttemptManifestInput<TSelection> {
   supportsVision: boolean
   supportsAudioInput: boolean
   traceDebugEnabled: boolean
-  contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
+  contextBuilderVersion: DeepChatTapeViewContextBuilderVersion
   syntheticContributions?: DeepChatTapeViewSyntheticContribution[]
   executionContract?: DeepChatExecutionContract
   runId?: string
@@ -242,7 +243,7 @@ export interface ProviderAttemptExecutionContractBuildInput {
   temperature: number
   maxTokens: number
   tools: MCPToolDefinition[]
-  contextBuilderVersion: 'legacy-v1' | 'cache-aware-v1'
+  contextBuilderVersion: DeepChatTapeViewContextBuilderVersion
 }
 
 export interface ProviderAttemptExecutionContractPort {
