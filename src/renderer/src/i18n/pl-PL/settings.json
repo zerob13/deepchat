@@ -904,6 +904,15 @@
       "providerDescription": "Uszeregowane według łącznej liczby tokenów.",
       "modelTitle": "Najlepsze modele",
       "modelDescription": "10 najlepszych modeli według łącznej liczby tokenów.",
+      "categoryTitle": "Użycie według aktywności",
+      "categoryDescription": "Oddziela użycie w rozmowach od wewnętrznych wywołań modelu służących do kompresji kontekstu.",
+      "category": {
+        "chat": "Rozmowa",
+        "compaction": "Kompresja kontekstu"
+      },
+      "chatEvents": "Liczba wiadomości: {count}",
+      "compactionEvents": "Liczba wywołań modelu: {count}",
+      "unknownUsage": "Liczba użyć o nieznanym typie: {count}",
       "messages": "Komunikaty {count}",
       "empty": "Nie ma jeszcze danych dotyczących podziału."
     },

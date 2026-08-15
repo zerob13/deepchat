@@ -1159,7 +1159,37 @@ describe('main kernel contracts', () => {
       DEEPCHAT_ROUTE_CATALOG['sessions.getUsageDashboard'].output.parse({
         dashboard
       })
-    ).toEqual({ dashboard })
+    ).toEqual({ dashboard: { ...dashboard, categoryBreakdown: [] } })
+
+    expect(
+      DEEPCHAT_ROUTE_CATALOG['sessions.getUsageDashboard'].output.parse({
+        dashboard: {
+          ...dashboard,
+          categoryBreakdown: [
+            {
+              id: 'compaction',
+              eventCount: 2,
+              knownUsageCount: 1,
+              unknownUsageCount: 1,
+              inputTokens: 100,
+              outputTokens: 20,
+              totalTokens: 120
+            }
+          ]
+        }
+      })
+    ).toMatchObject({
+      dashboard: {
+        categoryBreakdown: [
+          {
+            id: 'compaction',
+            eventCount: 2,
+            knownUsageCount: 1,
+            unknownUsageCount: 1
+          }
+        ]
+      }
+    })
 
     expect(() =>
       DEEPCHAT_ROUTE_CATALOG['sessions.getUsageDashboard'].output.parse({

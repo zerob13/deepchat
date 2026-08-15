@@ -143,6 +143,7 @@ function createHarness(options?: {
     deleteMessage: vi.fn(),
     getMessages: vi.fn().mockReturnValue([]),
     getNextOrderSeq: vi.fn().mockReturnValue(7),
+    recordCompactionModelCall: vi.fn(),
     updateCompactionMessage: vi.fn()
   }
   const sessionStore: CompactionRuntimeCoordinatorDependencies['sessionStore'] = {
@@ -585,7 +586,11 @@ describe('CompactionRuntimeCoordinator', () => {
       }
     })
 
-    expect(applyCompaction).toHaveBeenCalledWith(intent, expect.any(AbortSignal))
+    expect(applyCompaction).toHaveBeenCalledWith(
+      intent,
+      expect.any(AbortSignal),
+      expect.any(Function)
+    )
     expect(messageStore.updateCompactionMessage).toHaveBeenCalledWith(
       'compaction-message',
       'compacted',
@@ -602,6 +607,44 @@ describe('CompactionRuntimeCoordinator', () => {
       expect.objectContaining({ status: 'compacting', cursorOrderSeq: 5 }),
       expect.objectContaining({ status: 'compacted', cursorOrderSeq: 5 })
     ])
+  })
+
+  it('persists each observed summary call against the compaction marker identity', async () => {
+    const { applyCompaction, coordinator, messageStore } = createHarness()
+    const intent = createIntent()
+    applyCompaction.mockImplementationOnce(async (_intent, _signal, observeModelCall) => {
+      observeModelCall?.({
+        sessionId: 'incorrect-session',
+        compactionAttemptId: 'incorrect-attempt',
+        providerCallId: 'provider-call-1',
+        providerId: 'assistant-provider',
+        modelId: 'summary-model',
+        status: 'completed',
+        usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+        startedAt: 10,
+        completedAt: 20
+      })
+      return {
+        outcome: 'unchanged',
+        anchorCommitted: false,
+        summaryState: intent.previousState
+      }
+    })
+
+    await coordinator.apply(SESSION_ID, intent)
+
+    expect(messageStore.recordCompactionModelCall).toHaveBeenCalledWith({
+      sessionId: SESSION_ID,
+      compactionMessageId: 'compaction-message',
+      compactionAttemptId: intent.compactionAttemptId,
+      providerCallId: 'provider-call-1',
+      providerId: 'assistant-provider',
+      modelId: 'summary-model',
+      status: 'completed',
+      usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+      startedAt: 10,
+      completedAt: 20
+    })
   })
 
   it('removes the local marker when another compaction attempt wins the anchor CAS', async () => {

@@ -904,6 +904,15 @@
       "providerDescription": "Diurutkan berdasarkan total token.",
       "modelTitle": "Peringkat model",
       "modelDescription": "10 model teratas berdasarkan total token.",
+      "categoryTitle": "Penggunaan berdasarkan aktivitas",
+      "categoryDescription": "Pisahkan penggunaan percakapan dari panggilan model internal untuk pemadatan konteks.",
+      "category": {
+        "chat": "Percakapan",
+        "compaction": "Pemadatan konteks"
+      },
+      "chatEvents": "{count} pesan",
+      "compactionEvents": "{count} panggilan model",
+      "unknownUsage": "{count} penggunaan tidak diketahui",
       "messages": "{count} pesan",
       "empty": "Belum ada data detail untuk ditampilkan."
     },

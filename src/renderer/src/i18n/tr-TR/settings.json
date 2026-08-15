@@ -904,6 +904,15 @@
       "providerDescription": "Toplam token sayısına göre sıralanır.",
       "modelTitle": "En iyi modeller",
       "modelDescription": "Toplam token sayısına göre en iyi 10 model.",
+      "categoryTitle": "Etkinliğe göre kullanım",
+      "categoryDescription": "Konuşma kullanımını bağlam sıkıştırmaya yönelik dahili model çağrılarından ayırır.",
+      "category": {
+        "chat": "Konuşma",
+        "compaction": "Bağlam sıkıştırma"
+      },
+      "chatEvents": "{count} mesaj",
+      "compactionEvents": "{count} model çağrısı",
+      "unknownUsage": "{count} kullanım bilinmiyor",
       "messages": "{count} mesajları",
       "empty": "Henüz arıza verisi yok."
     },

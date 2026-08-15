@@ -26,6 +26,10 @@ import type {
   TapeProviderContextPressureRecord
 } from '../domain/providerAttempt'
 import type {
+  TapeCompactionModelCallInput,
+  TapeCompactionModelCallReceipt
+} from '../domain/compactionUsage'
+import type {
   TapeSkillMaterializationInput,
   TapeSkillMaterializationRef,
   TapeSkillMaterializationReceipt
@@ -56,6 +60,7 @@ import type {
   TapeMessageFactWriter,
   TapeProviderAttemptReader,
   TapeProviderAttemptWriter,
+  TapeCompactionModelCallWriter,
   TapeToolSurfaceViewReader,
   TapeToolSurfaceViewWriter,
   ExecutionJournalAuditReader,
@@ -103,6 +108,7 @@ import {
   type AgentTapeViewErrorCode
 } from './lineageService'
 import { TapeProviderAttemptService } from './providerAttemptService'
+import { TapeCompactionUsageService } from './compactionUsageService'
 import { TapeRecallService } from './recallService'
 import { TapeReconcilerService } from './reconcilerService'
 import { TapeViewReplayService } from './viewReplayService'
@@ -128,6 +134,7 @@ export class SessionTape
     TapeMessageFactWriter,
     TapeProviderAttemptReader,
     TapeProviderAttemptWriter,
+    TapeCompactionModelCallWriter,
     TapeNonContextEntryReader,
     TapeReconciliationPort,
     TapeViewManifestReader,
@@ -157,6 +164,7 @@ export class SessionTape
   private readonly recall: TapeRecallService
   private readonly lineage: TapeLineageService
   private readonly providerAttempts: TapeProviderAttemptService
+  private readonly compactionUsage: TapeCompactionUsageService
   private readonly executionJournal: ExecutionJournalService
   private readonly viewReplay: TapeViewReplayService
   private readonly toolSurfaceProvenance: ToolSurfaceProvenanceService
@@ -168,6 +176,7 @@ export class SessionTape
     this.facts = new TapeFactService(this.providers)
     this.lineage = new TapeLineageService(this.providers)
     this.providerAttempts = new TapeProviderAttemptService(this.providers)
+    this.compactionUsage = new TapeCompactionUsageService(this.providers)
     this.executionJournal = new ExecutionJournalService(
       () => database.deepchatExecutionJournalStore
     )
@@ -231,6 +240,10 @@ export class SessionTape
 
   appendProviderAttempt(input: TapeProviderAttemptInput): void {
     this.providerAttempts.appendProviderAttempt(input)
+  }
+
+  appendCompactionModelCall(input: TapeCompactionModelCallInput): TapeCompactionModelCallReceipt {
+    return this.compactionUsage.appendCompactionModelCall(input)
   }
 
   getMaxProviderAttemptRequestSeq(sessionId: string, messageId: string): number {

@@ -540,6 +540,15 @@
       "providerDescription": "Classés par nombre total de jetons.",
       "modelTitle": "Classement des modèles",
       "modelDescription": "Les 10 meilleurs modèles par nombre total de jetons.",
+      "categoryTitle": "Utilisation par activité",
+      "categoryDescription": "Distingue l’utilisation des conversations des appels internes au modèle pour la compaction du contexte.",
+      "category": {
+        "chat": "Conversation",
+        "compaction": "Compaction du contexte"
+      },
+      "chatEvents": "{count} messages",
+      "compactionEvents": "{count} appels au modèle",
+      "unknownUsage": "{count} utilisations inconnues",
       "messages": "{count} messages",
       "empty": "Aucune donnée de répartition à afficher pour le moment."
     },

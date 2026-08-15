@@ -904,6 +904,15 @@
       "providerDescription": "Ranked by total tokens.",
       "modelTitle": "Top models",
       "modelDescription": "Top 10 models by total tokens.",
+      "categoryTitle": "Usage by activity",
+      "categoryDescription": "Separate conversation usage from internal context-compaction model calls.",
+      "category": {
+        "chat": "Conversation",
+        "compaction": "Context compaction"
+      },
+      "chatEvents": "{count} messages",
+      "compactionEvents": "{count} model calls",
+      "unknownUsage": "{count} usage unknown",
       "messages": "{count} messages",
       "empty": "No breakdown data yet."
     },

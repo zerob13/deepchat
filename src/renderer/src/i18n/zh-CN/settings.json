@@ -904,6 +904,15 @@
       "providerDescription": "按总 token 排序。",
       "modelTitle": "模型排行",
       "modelDescription": "按总 token 排序的前 10 个模型。",
+      "categoryTitle": "按活动查看用量",
+      "categoryDescription": "将对话用量与用于上下文压缩的内部模型调用分开统计。",
+      "category": {
+        "chat": "对话",
+        "compaction": "上下文压缩"
+      },
+      "chatEvents": "{count} 条消息",
+      "compactionEvents": "{count} 次模型调用",
+      "unknownUsage": "{count} 条用量未知",
       "messages": "{count} 条消息",
       "empty": "暂时还没有可展示的明细数据。"
     },

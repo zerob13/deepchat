@@ -540,6 +540,15 @@
       "providerDescription": "מדורג לפי סך האסימונים.",
       "modelTitle": "דירוג מודלים",
       "modelDescription": "10 המודלים המובילים לפי סך האסימונים.",
+      "categoryTitle": "שימוש לפי פעילות",
+      "categoryDescription": "הפרדת השימוש בשיחות מקריאות פנימיות למודל לצמצום ההקשר.",
+      "category": {
+        "chat": "שיחה",
+        "compaction": "צמצום הקשר"
+      },
+      "chatEvents": "{count} הודעות",
+      "compactionEvents": "{count} קריאות למודל",
+      "unknownUsage": "{count} שימושים לא ידועים",
       "messages": "{count} הודעות",
       "empty": "עדיין אין נתוני פירוט להצגה."
     },

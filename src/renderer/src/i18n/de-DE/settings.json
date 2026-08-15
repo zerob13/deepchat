@@ -904,6 +904,15 @@
       "providerDescription": "Nach Gesamtzahl der Tokens sortiert.",
       "modelTitle": "Modell-Ranking",
       "modelDescription": "Top 10 Modelle nach Gesamtzahl der Tokens.",
+      "categoryTitle": "Nutzung nach Aktivität",
+      "categoryDescription": "Trennt die Konversationsnutzung von internen Modellaufrufen zur Kontextkomprimierung.",
+      "category": {
+        "chat": "Konversation",
+        "compaction": "Kontextkomprimierung"
+      },
+      "chatEvents": "{count} Nachrichten",
+      "compactionEvents": "{count} Modellaufrufe",
+      "unknownUsage": "{count} mit unbekannter Nutzung",
       "messages": "{count} Nachrichten",
       "empty": "Noch keine Detaildaten zum Anzeigen."
     },

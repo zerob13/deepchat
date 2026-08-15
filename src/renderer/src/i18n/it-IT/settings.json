@@ -904,6 +904,15 @@
       "providerDescription": "Classificati per numero totale di token.",
       "modelTitle": "Classifica modelli",
       "modelDescription": "I 10 migliori modelli per numero totale di token.",
+      "categoryTitle": "Utilizzo per attività",
+      "categoryDescription": "Separa l’utilizzo delle conversazioni dalle chiamate interne al modello per la compattazione del contesto.",
+      "category": {
+        "chat": "Conversazione",
+        "compaction": "Compattazione del contesto"
+      },
+      "chatEvents": "{count} messaggi",
+      "compactionEvents": "{count} chiamate al modello",
+      "unknownUsage": "{count} utilizzi sconosciuti",
       "messages": "{count} messaggi",
       "empty": "Nessun dettaglio disponibile per ora."
     },

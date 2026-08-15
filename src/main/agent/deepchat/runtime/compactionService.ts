@@ -97,6 +97,26 @@ export type CompactionExecutionResult = {
   summaryState: SessionSummaryState
 }
 
+export type CompactionModelCallObservation = {
+  sessionId: string
+  compactionAttemptId: string
+  providerCallId: string
+  providerId: string
+  modelId: string
+  status: 'completed' | 'error' | 'aborted'
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+  } | null
+  startedAt: number
+  completedAt: number
+}
+
+export type CompactionModelCallObserver = (
+  observation: CompactionModelCallObservation
+) => void
+
 type OrderSeqRange = NonNullable<CompactionIntent['summaryRange']>
 
 type CompactionSettings = {
@@ -554,7 +574,8 @@ export class CompactionService {
 
   async applyCompaction(
     intent: CompactionIntent,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    observeModelCall?: CompactionModelCallObserver
   ): Promise<CompactionExecutionResult> {
     assertValidContextLength(intent.currentModel.contextLength)
     let nextSummary: string | null = null
@@ -566,7 +587,9 @@ export class CompactionService {
         summaryBlocks: intent.summaryBlocks,
         currentModel: intent.currentModel,
         reserveTokens: intent.reserveTokens,
-        signal
+        signal,
+        compactionAttemptId: intent.compactionAttemptId,
+        observeModelCall
       })
       throwIfAbortRequested(signal)
     } catch (error) {
@@ -978,11 +1001,13 @@ export class CompactionService {
 
   private async generateRollingSummary(params: {
     sessionId: string
+    compactionAttemptId: string
     previousSummary: string | null
     summaryBlocks: string[]
     currentModel: ModelSpec
     reserveTokens: number
     signal?: AbortSignal
+    observeModelCall?: CompactionModelCallObserver
   }): Promise<string> {
     throwIfAbortRequested(params.signal)
     const currentModel = params.currentModel
@@ -1008,7 +1033,12 @@ export class CompactionService {
       previousSummary: params.previousSummary,
       model: preferredModel,
       reserveTokens: params.reserveTokens,
-      signal: params.signal
+      signal: params.signal,
+      callContext: {
+        sessionId: params.sessionId,
+        compactionAttemptId: params.compactionAttemptId,
+        observeModelCall: params.observeModelCall
+      }
     })
   }
 
@@ -1019,6 +1049,11 @@ export class CompactionService {
       model: ModelSpec
       reserveTokens: number
       signal?: AbortSignal
+      callContext: {
+        sessionId: string
+        compactionAttemptId: string
+        observeModelCall?: CompactionModelCallObserver
+      }
     }
   ): Promise<string> {
     throwIfAbortRequested(options.signal)
@@ -1042,7 +1077,8 @@ export class CompactionService {
         options.reserveTokens,
         options.previousSummary,
         normalizedBlocks.join('\n\n'),
-        options.signal
+        options.signal,
+        options.callContext
       )
     }
 
@@ -1066,7 +1102,8 @@ export class CompactionService {
             options.reserveTokens,
             options.previousSummary,
             joinedSplitBlocks,
-            options.signal
+            options.signal,
+            options.callContext
           )
         }
 
@@ -1094,6 +1131,11 @@ export class CompactionService {
       model: ModelSpec
       reserveTokens: number
       signal?: AbortSignal
+      callContext: {
+        sessionId: string
+        compactionAttemptId: string
+        observeModelCall?: CompactionModelCallObserver
+      }
     }
   ): Promise<string> {
     throwIfAbortRequested(options.signal)
@@ -1106,7 +1148,8 @@ export class CompactionService {
           options.reserveTokens,
           null,
           chunk.join('\n\n'),
-          options.signal
+          options.signal,
+          options.callContext
         )
       )
     }
@@ -1203,7 +1246,12 @@ export class CompactionService {
     reserveTokens: number,
     previousSummary: string | null,
     spanText: string,
-    signal?: AbortSignal
+    signal: AbortSignal | undefined,
+    callContext: {
+      sessionId: string
+      compactionAttemptId: string
+      observeModelCall?: CompactionModelCallObserver
+    }
   ): Promise<string> {
     throwIfAbortRequested(signal)
     const prompt = this.buildSummaryPrompt(previousSummary, spanText)
@@ -1213,22 +1261,87 @@ export class CompactionService {
       await this.providerRuntime.executeWithRateLimit(model.providerId)
     }
     throwIfAbortRequested(signal)
-    const response = await awaitWithAbort(
-      this.providerRuntime.generateText(
-        model.providerId,
-        prompt,
-        model.modelId,
-        0.2,
-        this.getSummaryOutputTokens(reserveTokens),
-        { signal }
-      ),
-      signal
-    )
+    const providerCallId = randomUUID()
+    const startedAt = Date.now()
+    let response: Awaited<ReturnType<ProviderExecutionPort['generateText']>>
+    try {
+      response = await awaitWithAbort(
+        this.providerRuntime.generateText(
+          model.providerId,
+          prompt,
+          model.modelId,
+          0.2,
+          this.getSummaryOutputTokens(reserveTokens),
+          { signal }
+        ),
+        signal
+      )
+    } catch (error) {
+      this.notifyModelCall(callContext.observeModelCall, {
+        sessionId: callContext.sessionId,
+        compactionAttemptId: callContext.compactionAttemptId,
+        providerCallId,
+        providerId: model.providerId,
+        modelId: model.modelId,
+        status: signal?.aborted || isAbortError(error) ? 'aborted' : 'error',
+        usage: null,
+        startedAt,
+        completedAt: Math.max(startedAt, Date.now())
+      })
+      throw error
+    }
+    this.notifyModelCall(callContext.observeModelCall, {
+      sessionId: callContext.sessionId,
+      compactionAttemptId: callContext.compactionAttemptId,
+      providerCallId,
+      providerId: model.providerId,
+      modelId: model.modelId,
+      status: 'completed',
+      usage: this.normalizeModelCallUsage(response.totalUsage),
+      startedAt,
+      completedAt: Math.max(startedAt, Date.now())
+    })
     throwIfAbortRequested(signal)
     const summary = sanitizeSummaryContent(response.content || '')
     if (!summary) {
       throw new Error('Compaction summary generation returned empty content.')
     }
     return summary
+  }
+
+  private normalizeModelCallUsage(
+    usage: Awaited<ReturnType<ProviderExecutionPort['generateText']>>['totalUsage']
+  ): CompactionModelCallObservation['usage'] {
+    if (
+      !usage ||
+      !Number.isSafeInteger(usage.prompt_tokens) ||
+      usage.prompt_tokens < 0 ||
+      !Number.isSafeInteger(usage.completion_tokens) ||
+      usage.completion_tokens < 0 ||
+      !Number.isSafeInteger(usage.total_tokens) ||
+      usage.total_tokens < 0
+    ) {
+      return null
+    }
+    return {
+      inputTokens: usage.prompt_tokens,
+      outputTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens
+    }
+  }
+
+  private notifyModelCall(
+    observer: CompactionModelCallObserver | undefined,
+    observation: CompactionModelCallObservation
+  ): void {
+    if (!observer) return
+    try {
+      observer(observation)
+    } catch (error) {
+      console.warn(
+        `[CompactionService] Failed to persist model-call usage for session ${observation.sessionId}.`,
+        redactRuntimeErrorForLog(error)
+      )
+    }
   }
 }

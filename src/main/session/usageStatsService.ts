@@ -58,7 +58,9 @@ export class UsageStatsService {
     const mostActiveDay = usageStatsTable.getMostActiveDay()
     const recordingStartedAt = usageStatsTable.getRecordingStartedAt()
     const cacheHitRate =
-      summaryRow.inputTokens > 0 ? summaryRow.cachedInputTokens / summaryRow.inputTokens : 0
+      summaryRow.cacheMeasuredInputTokens > 0
+        ? summaryRow.cachedInputTokens / summaryRow.cacheMeasuredInputTokens
+        : 0
 
     const dateFrom = new Date()
     dateFrom.setHours(0, 0, 0, 0)
@@ -88,6 +90,7 @@ export class UsageStatsService {
         cachedInputTokens: row.cachedInputTokens
       }))
     )
+    const categoryBreakdown = usageStatsTable.getCategoryBreakdownRows()
 
     return {
       recordingStartedAt,
@@ -105,6 +108,7 @@ export class UsageStatsService {
       calendar,
       providerBreakdown,
       modelBreakdown,
+      categoryBreakdown,
       rtk: await rtkRuntimeService.getDashboardData(
         this.settings.get<boolean>(RTK_ENABLED_SETTING_KEY) !== false
       )

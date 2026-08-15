@@ -497,6 +497,16 @@ export interface UsageDashboardBreakdownItem {
   cachedInputTokens: number
 }
 
+export interface UsageDashboardCategoryItem {
+  id: 'chat' | 'compaction'
+  eventCount: number
+  knownUsageCount: number
+  unknownUsageCount: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+}
+
 export type RtkHealthStatus = 'checking' | 'healthy' | 'unhealthy'
 export type RtkRuntimeSource = 'bundled' | 'system' | 'none'
 export type RtkFailureStage = 'resolve' | 'version' | 'rewrite' | 'smoke' | 'gain' | 'runtime'
@@ -543,6 +553,7 @@ export interface UsageDashboardData {
   calendar: UsageDashboardCalendarDay[]
   providerBreakdown: UsageDashboardBreakdownItem[]
   modelBreakdown: UsageDashboardBreakdownItem[]
+  categoryBreakdown: UsageDashboardCategoryItem[]
   rtk: UsageDashboardRtkData
 }
 

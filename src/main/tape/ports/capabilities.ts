@@ -17,6 +17,10 @@ import type {
   TapeProviderContextPressureRecord
 } from '../domain/providerAttempt'
 import type {
+  TapeCompactionModelCallInput,
+  TapeCompactionModelCallReceipt
+} from '../domain/compactionUsage'
+import type {
   TapeSkillMaterializationInput,
   TapeSkillMaterializationRef,
   TapeSkillMaterializationReceipt
@@ -228,6 +232,10 @@ export interface TapeProviderAttemptReader {
     providerId: string,
     modelId: string
   ): TapeProviderContextPressureRecord | null
+}
+
+export interface TapeCompactionModelCallWriter {
+  appendCompactionModelCall(input: TapeCompactionModelCallInput): TapeCompactionModelCallReceipt
 }
 
 export interface ExecutionJournalWriter {

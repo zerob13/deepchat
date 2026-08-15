@@ -904,6 +904,15 @@
       "providerDescription": "Xếp hạng theo tổng số token.",
       "modelTitle": "Người mẫu hàng đầu",
       "modelDescription": "10 mẫu hàng đầu theo tổng số token.",
+      "categoryTitle": "Mức sử dụng theo hoạt động",
+      "categoryDescription": "Tách mức sử dụng hội thoại khỏi các lệnh gọi mô hình nội bộ để nén ngữ cảnh.",
+      "category": {
+        "chat": "Hội thoại",
+        "compaction": "Nén ngữ cảnh"
+      },
+      "chatEvents": "{count} tin nhắn",
+      "compactionEvents": "{count} lượt gọi mô hình",
+      "unknownUsage": "{count} lượt không rõ mức sử dụng",
       "messages": "Tin nhắn {count}",
       "empty": "Chưa có dữ liệu phân tích."
     },

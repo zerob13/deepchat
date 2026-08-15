@@ -1291,14 +1291,25 @@ function usageToLlmResponse(
       }
     | undefined
 ): LLMResponse['totalUsage'] | undefined {
-  if (!usage) {
+  if (
+    !usage ||
+    typeof usage.inputTokens !== 'number' ||
+    !Number.isFinite(usage.inputTokens) ||
+    usage.inputTokens < 0 ||
+    typeof usage.outputTokens !== 'number' ||
+    !Number.isFinite(usage.outputTokens) ||
+    usage.outputTokens < 0 ||
+    typeof usage.totalTokens !== 'number' ||
+    !Number.isFinite(usage.totalTokens) ||
+    usage.totalTokens < 0
+  ) {
     return undefined
   }
 
   return {
-    prompt_tokens: usage.inputTokens ?? 0,
-    completion_tokens: usage.outputTokens ?? 0,
-    total_tokens: usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
+    prompt_tokens: usage.inputTokens,
+    completion_tokens: usage.outputTokens,
+    total_tokens: usage.totalTokens
   }
 }
 

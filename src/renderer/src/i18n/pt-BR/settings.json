@@ -540,6 +540,15 @@
       "providerDescription": "Classificados pelo total de tokens.",
       "modelTitle": "Ranking por modelo",
       "modelDescription": "Os 10 melhores modelos pelo total de tokens.",
+      "categoryTitle": "Uso por atividade",
+      "categoryDescription": "Separa o uso em conversas das chamadas internas ao modelo para compactação de contexto.",
+      "category": {
+        "chat": "Conversa",
+        "compaction": "Compactação de contexto"
+      },
+      "chatEvents": "{count} mensagens",
+      "compactionEvents": "{count} chamadas ao modelo",
+      "unknownUsage": "{count} usos desconhecidos",
       "messages": "{count} mensagens",
       "empty": "Ainda não há dados detalhados para exibir."
     },

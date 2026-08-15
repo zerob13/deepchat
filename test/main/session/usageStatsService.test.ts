@@ -70,16 +70,21 @@ type MessageRow = {
 }
 
 type UsageStatsRow = {
+  usage_id: string
   message_id: string
+  usage_category: 'chat' | 'compaction'
+  compaction_attempt_id: string | null
+  provider_call_id: string | null
+  provider_call_seq: number | null
   session_id: string
   usage_date: string
   provider_id: string
   model_id: string
-  input_tokens: number
-  output_tokens: number
-  total_tokens: number
-  cached_input_tokens: number
-  cache_write_input_tokens: number
+  input_tokens: number | null
+  output_tokens: number | null
+  total_tokens: number | null
+  cached_input_tokens: number | null
+  cache_write_input_tokens: number | null
   source: 'backfill' | 'live'
   created_at: number
   updated_at: number
@@ -92,14 +97,20 @@ function aggregateUsageRows(rows: UsageStatsRow[]) {
   let outputTokens = 0
   let totalTokens = 0
   let cachedInputTokens = 0
+  let cacheMeasuredInputTokens = 0
 
   for (const row of rows) {
-    messageCount += 1
-    sessionIds.add(row.session_id)
-    inputTokens += row.input_tokens
-    outputTokens += row.output_tokens
-    totalTokens += row.total_tokens
-    cachedInputTokens += row.cached_input_tokens
+    messageCount += row.usage_category === 'chat' ? 1 : 0
+    if (row.usage_category === 'chat') {
+      sessionIds.add(row.session_id)
+    }
+    inputTokens += row.input_tokens ?? 0
+    outputTokens += row.output_tokens ?? 0
+    totalTokens += row.total_tokens ?? 0
+    cachedInputTokens += row.cached_input_tokens ?? 0
+    if (row.cached_input_tokens !== null) {
+      cacheMeasuredInputTokens += row.input_tokens ?? 0
+    }
   }
 
   return {
@@ -108,7 +119,8 @@ function aggregateUsageRows(rows: UsageStatsRow[]) {
     inputTokens,
     outputTokens,
     totalTokens,
-    cachedInputTokens
+    cachedInputTokens,
+    cacheMeasuredInputTokens
   }
 }
 
@@ -233,30 +245,41 @@ function createMockSqlitePresenter() {
 
   const deepchatUsageStatsTable = {
     upsert(input: UsageStatsRecordInput) {
-      usageStats.set(input.messageId, {
-        message_id: input.messageId,
+      const usageId = input.usageId ?? input.messageId ?? ''
+      usageStats.set(usageId, {
+        usage_id: usageId,
+        message_id: input.messageId ?? usageId,
+        usage_category: input.category ?? 'chat',
+        compaction_attempt_id: input.compactionAttemptId ?? null,
+        provider_call_id: input.providerCallId ?? null,
+        provider_call_seq: input.providerCallSeq ?? null,
         session_id: input.sessionId,
         usage_date: input.usageDate,
         provider_id: input.providerId,
         model_id: input.modelId,
-        input_tokens: input.inputTokens,
-        output_tokens: input.outputTokens,
-        total_tokens: input.totalTokens,
-        cached_input_tokens: input.cachedInputTokens,
-        cache_write_input_tokens: input.cacheWriteInputTokens,
+        input_tokens: input.inputTokens === undefined ? 0 : input.inputTokens,
+        output_tokens: input.outputTokens === undefined ? 0 : input.outputTokens,
+        total_tokens: input.totalTokens === undefined ? 0 : input.totalTokens,
+        cached_input_tokens: input.cachedInputTokens === undefined ? 0 : input.cachedInputTokens,
+        cache_write_input_tokens:
+          input.cacheWriteInputTokens === undefined ? 0 : input.cacheWriteInputTokens,
         source: input.source,
         created_at: input.createdAt,
         updated_at: input.updatedAt
       })
     },
     getByMessageId(messageId: string) {
-      return usageStats.get(messageId) ?? null
+      return (
+        Array.from(usageStats.values()).find(
+          (row) => row.message_id === messageId && row.usage_category === 'chat'
+        ) ?? null
+      )
     },
     count() {
       return usageStats.size
     },
     getRecordingStartedAt() {
-      const rows = Array.from(usageStats.values())
+      const rows = Array.from(usageStats.values()).filter((row) => row.usage_category === 'chat')
       if (rows.length === 0) {
         return null
       }
@@ -269,6 +292,7 @@ function createMockSqlitePresenter() {
       const buckets = new Map<string, number>()
 
       for (const row of usageStats.values()) {
+        if (row.usage_category !== 'chat') continue
         buckets.set(row.usage_date, (buckets.get(row.usage_date) ?? 0) + 1)
       }
 
@@ -298,7 +322,7 @@ function createMockSqlitePresenter() {
       >()
 
       for (const row of usageStats.values()) {
-        if (row.usage_date < dateFrom) {
+        if (row.usage_category !== 'chat' || row.usage_date < dateFrom) {
           continue
         }
 
@@ -311,11 +335,11 @@ function createMockSqlitePresenter() {
           cachedInputTokens: 0
         }
 
-        current.messageCount += 1
-        current.inputTokens += row.input_tokens
-        current.outputTokens += row.output_tokens
-        current.totalTokens += row.total_tokens
-        current.cachedInputTokens += row.cached_input_tokens
+        current.messageCount += row.usage_category === 'chat' ? 1 : 0
+        current.inputTokens += row.input_tokens ?? 0
+        current.outputTokens += row.output_tokens ?? 0
+        current.totalTokens += row.total_tokens ?? 0
+        current.cachedInputTokens += row.cached_input_tokens ?? 0
         buckets.set(row.usage_date, current)
       }
 
@@ -351,6 +375,23 @@ function createMockSqlitePresenter() {
           (left, right) => right.totalTokens - left.totalTokens || left.id.localeCompare(right.id)
         )
         .slice(0, limit)
+    },
+    getCategoryBreakdownRows() {
+      const buckets = new Map<'chat' | 'compaction', UsageStatsRow[]>()
+      for (const row of usageStats.values()) {
+        const list = buckets.get(row.usage_category) ?? []
+        list.push(row)
+        buckets.set(row.usage_category, list)
+      }
+      return Array.from(buckets.entries()).map(([id, rows]) => ({
+        id,
+        eventCount: rows.length,
+        knownUsageCount: rows.filter((row) => row.total_tokens !== null).length,
+        unknownUsageCount: rows.filter((row) => row.total_tokens === null).length,
+        inputTokens: rows.reduce((total, row) => total + (row.input_tokens ?? 0), 0),
+        outputTokens: rows.reduce((total, row) => total + (row.output_tokens ?? 0), 0),
+        totalTokens: rows.reduce((total, row) => total + (row.total_tokens ?? 0), 0)
+      }))
     }
   }
 
@@ -475,6 +516,31 @@ describe('UsageStatsService', () => {
     }
     expect(status.status).toBe('completed')
     expect(status.finishedAt).toBeGreaterThan(0)
+  })
+
+  it('does not treat compaction transcript markers as chat usage during backfill', async () => {
+    const { service, sqlitePresenter } = createService()
+    sqlitePresenter.deepchatSessionsTable.create('session-1', 'openai', 'gpt-4o', 'full_access')
+    sqlitePresenter.deepchatMessagesTable.insert({
+      id: 'compaction-marker',
+      sessionId: 'session-1',
+      orderSeq: 1,
+      role: 'assistant',
+      content: '[]',
+      status: 'sent',
+      metadata: JSON.stringify({
+        messageType: 'compaction',
+        compactionStatus: 'compacted',
+        compactionAttemptId: 'attempt-1',
+        summaryUpdatedAt: 1
+      }),
+      createdAt: Date.UTC(2026, 2, 10, 8, 0, 0),
+      updatedAt: Date.UTC(2026, 2, 10, 8, 0, 1)
+    })
+
+    await service.startBackfill()
+
+    expect(sqlitePresenter.deepchatUsageStatsTable.count()).toBe(0)
   })
 
   it('keeps concurrent backfill requests single-flight', async () => {
@@ -679,6 +745,115 @@ describe('UsageStatsService', () => {
     expect(dashboard.summary.mostActiveDay).toEqual({
       date: '2026-03-03',
       messageCount: 2
+    })
+  })
+
+  it('reports compaction separately without changing chat activity or cache rate', async () => {
+    const { service, sqlitePresenter } = createService()
+    const base = {
+      sessionId: 'session-1',
+      usageDate: '2026-03-03',
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      source: 'live' as const,
+      createdAt: Date.UTC(2026, 2, 3, 8, 0, 0),
+      updatedAt: Date.UTC(2026, 2, 3, 8, 0, 1)
+    }
+    sqlitePresenter.deepchatUsageStatsTable.upsert({
+      ...base,
+      usageId: 'message-1',
+      messageId: 'message-1',
+      category: 'chat',
+      compactionAttemptId: null,
+      providerCallId: null,
+      providerCallSeq: null,
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120,
+      cachedInputTokens: 25,
+      cacheWriteInputTokens: 0
+    })
+    sqlitePresenter.deepchatUsageStatsTable.upsert({
+      ...base,
+      usageId: 'compaction:attempt-1:call-1',
+      messageId: 'compaction-message',
+      category: 'compaction',
+      compactionAttemptId: 'attempt-1',
+      providerCallId: 'call-1',
+      providerCallSeq: 1,
+      inputTokens: 200,
+      outputTokens: 30,
+      totalTokens: 230,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null
+    })
+    sqlitePresenter.deepchatUsageStatsTable.upsert({
+      ...base,
+      usageId: 'compaction:attempt-1:call-2',
+      messageId: 'compaction-message',
+      category: 'compaction',
+      compactionAttemptId: 'attempt-1',
+      providerCallId: 'call-2',
+      providerCallSeq: 2,
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null
+    })
+    sqlitePresenter.deepchatUsageStatsTable.upsert({
+      ...base,
+      sessionId: 'compaction-only-session',
+      usageId: 'compaction:attempt-2:call-1',
+      messageId: 'compaction-message-2',
+      category: 'compaction',
+      compactionAttemptId: 'attempt-2',
+      providerCallId: 'call-1',
+      providerCallSeq: 1,
+      inputTokens: 50,
+      outputTokens: 10,
+      totalTokens: 60,
+      cachedInputTokens: null,
+      cacheWriteInputTokens: null
+    })
+
+    const dashboard = await service.getDashboard()
+
+    expect(dashboard.summary).toMatchObject({
+      messageCount: 1,
+      sessionCount: 1,
+      inputTokens: 350,
+      outputTokens: 60,
+      totalTokens: 410,
+      cachedInputTokens: 25,
+      cacheHitRate: 0.25,
+      mostActiveDay: { date: '2026-03-03', messageCount: 1 }
+    })
+    expect(dashboard.categoryBreakdown).toEqual([
+      {
+        id: 'chat',
+        eventCount: 1,
+        knownUsageCount: 1,
+        unknownUsageCount: 0,
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120
+      },
+      {
+        id: 'compaction',
+        eventCount: 3,
+        knownUsageCount: 2,
+        unknownUsageCount: 1,
+        inputTokens: 250,
+        outputTokens: 40,
+        totalTokens: 290
+      }
+    ])
+    expect(dashboard.calendar.find((day) => day.date === '2026-03-03')).toMatchObject({
+      messageCount: 1,
+      inputTokens: 100,
+      outputTokens: 20,
+      totalTokens: 120
     })
   })
 

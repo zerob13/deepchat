@@ -473,6 +473,15 @@
       "providerDescription": "Rangeret efter samlet antal tokens.",
       "modelTitle": "Modelrangliste",
       "modelDescription": "Top 10 modeller efter samlet antal tokens.",
+      "categoryTitle": "Forbrug efter aktivitet",
+      "categoryDescription": "Adskil samtaleforbrug fra interne modelkald til kontekstkomprimering.",
+      "category": {
+        "chat": "Samtale",
+        "compaction": "Kontekstkomprimering"
+      },
+      "chatEvents": "{count} beskeder",
+      "compactionEvents": "{count} modelkald",
+      "unknownUsage": "{count} med ukendt forbrug",
       "messages": "{count} beskeder",
       "empty": "Der er endnu ingen fordelingsdata."
     },

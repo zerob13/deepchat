@@ -540,6 +540,15 @@
       "providerDescription": "بر اساس مجموع توکن‌ها رتبه‌بندی شده است.",
       "modelTitle": "رتبه‌بندی مدل‌ها",
       "modelDescription": "۱۰ مدل برتر بر اساس مجموع توکن‌ها.",
+      "categoryTitle": "مصرف بر اساس فعالیت",
+      "categoryDescription": "مصرف مکالمه را از فراخوانی‌های داخلی مدل برای فشرده‌سازی زمینه جدا می‌کند.",
+      "category": {
+        "chat": "مکالمه",
+        "compaction": "فشرده‌سازی زمینه"
+      },
+      "chatEvents": "{count} پیام",
+      "compactionEvents": "{count} فراخوانی مدل",
+      "unknownUsage": "{count} مورد با مصرف نامشخص",
       "messages": "{count} پیام",
       "empty": "هنوز داده‌ای برای نمایش جزئیات وجود ندارد."
     },

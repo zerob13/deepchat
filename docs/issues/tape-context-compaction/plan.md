@@ -273,8 +273,9 @@ provider replay.
 
 - Design this as a vertical capture-to-reporting slice. Capture every summary call that returns
   usage, including successful map-reduce chunks whose enclosing compaction later fails.
-- Associate records with `compactionAttemptId`, provider, model, and a dedicated category before
-  removing aggregate-statistics exclusions.
+- Associate records with `compactionAttemptId`, provider, model, and a dedicated category. Keep
+  synthetic transcript markers excluded from ordinary message backfill; only their physical
+  provider-call facts enter the compaction category.
 - Record unavailable usage as unknown. Never estimate it as billed usage or write zero values that
   contaminate cache-hit denominators.
 

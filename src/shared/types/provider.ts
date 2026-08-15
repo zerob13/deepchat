@@ -279,7 +279,7 @@ export interface ProviderRuntimePort {
     temperature?: number,
     maxTokens?: number,
     options?: { signal?: AbortSignal }
-  ): Promise<{ content: string }>
+  ): Promise<LLMResponse>
   stopStream(eventId: string): Promise<void>
   check(providerId: string, modelId?: string): Promise<{ isOk: boolean; errorMsg: string | null }>
   getKeyStatus(providerId: string): Promise<KeyStatus | null>

@@ -75,6 +75,7 @@ type CompactionTranscript = TapeTranscriptReader &
     | 'createCompactionMessageAtOrderSeq'
     | 'deleteMessage'
     | 'getNextOrderSeq'
+    | 'recordCompactionModelCall'
     | 'updateCompactionMessage'
   >
 
@@ -379,7 +380,17 @@ export class CompactionRuntimeCoordinator {
 
     let result: Awaited<ReturnType<CompactionService['applyCompaction']>>
     try {
-      result = await this.deps.compactionService.applyCompaction(intent, options?.signal)
+      result = await this.deps.compactionService.applyCompaction(
+        intent,
+        options?.signal,
+        (observation) =>
+          this.deps.messageStore.recordCompactionModelCall({
+            ...observation,
+            sessionId,
+            compactionMessageId,
+            compactionAttemptId: intent.compactionAttemptId
+          })
+      )
     } catch (error) {
       this.assertCurrent(sessionId, expectedInstance)
       this.deps.messageStore.deleteMessage(compactionMessageId)
