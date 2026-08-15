@@ -316,15 +316,44 @@ provider replay.
   actual model chosen by `generateRollingSummary`, including a configured assistant model.
 - Focused tests cover one-call success, direct missing usage, thrown/aborted calls, recursive
   map-reduce accumulation, successful chunks before a later failure, actual assistant-model
-  attribution, idempotent observation replay, marker retraction independence, v32 migration, chat
+  attribution, idempotent observation replay, marker retraction independence, v68 migration, chat
   message-count compatibility, category reporting, and cache-rate denominator exclusion.
 
 #### 7. Add A Context-Occupancy Read Model
 
-- Design a renderer read model from provider prompt usage when current, conservative View estimates
-  otherwise, and an explicit stale state.
-- Do not repurpose `useContextLength`; it measures composer draft plus selected files, not occupied
-  conversation context.
+- Report the most recent durable provider request, not a speculative next-request reconstruction.
+  The request identity and effective context-window denominator come from the session's latest valid
+  ViewManifest. Do not repurpose `useContextLength`; it measures composer draft plus selected files,
+  not provider-visible conversation context.
+- Prefer `inputTokens` from the final completed physical provider attempt for the exact manifest
+  message/request identity and matching provider/model. Cache reads are already included in input
+  and must not be added. If valid usage is absent, conservatively use
+  `estimatedPromptTokens + toolReserveTokens`; never represent missing usage as zero or fall back
+  from a malformed final physical attempt to an earlier retry.
+- Return a typed snapshot with `current | stale | unavailable` freshness, `provider | estimated`
+  source when available, occupied/window token counts, request identity, evidence entry IDs, and
+  evidence time. Derive percentages in the renderer and preserve values above 100% as provider
+  evidence even if the progress fill is visually clamped.
+- Mark evidence current only when the active DeepChat provider/model, recomputed effective context
+  window, and latest reconstruction-anchor entry still match the manifest. A model/window change,
+  missing process-local provider-limit observation after restart, or a newer reconstruction boundary
+  makes it explicitly stale. A missing/invalid manifest and every direct ACP session are
+  unavailable, never zero. An invalid newest manifest must not reveal an older request as current.
+- Add indexed readers for the latest session ViewManifest and the final attempt of its exact
+  request. Reuse the indexed latest-anchor reader. The snapshot path must not load the complete
+  Tape, fold the transcript, or parse included/excluded View payloads to calculate occupancy.
+- Use an additive GET route rather than a second runtime state machine. Refresh the active renderer
+  snapshot on activation, settled generation status, compaction replacement, and successful local
+  model/window updates. Guard requests with a renderer-local generation so late responses cannot
+  cross session or refresh boundaries. Do not add a streaming occupancy event or wall-clock
+  revision.
+- Render a compact status-bar percentage only when evidence is available. The tooltip identifies
+  provider-measured versus estimated input, shows occupied/window token counts, and labels stale
+  evidence. Unavailable evidence stays absent rather than displaying a misleading `0%`.
+- Focused tests cover exact-attempt selection, cache-read non-duplication, estimate fallback,
+  provider/model/window and anchor staleness, malformed/absent evidence, provider-side values above
+  the window, ACP unavailability, indexed query shape, late renderer responses, session switching,
+  and current/estimated/stale status-bar presentation.
 
 #### 8. Add Selective First-User Pinning
 

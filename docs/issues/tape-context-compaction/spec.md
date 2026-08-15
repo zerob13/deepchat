@@ -295,6 +295,56 @@ rollback mechanism and is not the authority for accepting a semantic summary.
   that do not return usage remain truthfully unknown; this slice does not broaden provider claims
   or synthesize unavailable cache details.
 
+### Context Occupancy Read Model
+
+Context occupancy describes the most recent provider request whose selected read set is recorded by
+a durable ViewManifest. It is not a reconstruction of a hypothetical next request, and it does not
+include unsent composer text or selected-file estimates. Normal assistant output appended after a
+request therefore does not rewrite that request's measurement; the next provider request replaces
+the read model with new evidence.
+
+- The latest `view/assembled` fact for the session is the request identity and denominator
+  authority when its manifest integrity is valid. Its `tokenBudget.contextLength` is the effective
+  model window used for that request, including provider limits observed by the runtime. A missing,
+  invalid, non-positive, or malformed latest manifest makes the result unavailable rather than
+  falling back to an older request or fabricating zero.
+- The preferred numerator is `usage.inputTokens` from the final physical
+  `provider/attempt_completed` fact for the exact manifest `messageId` and `requestSeq`, but only
+  when that attempt completed and its provider/model identity matches the manifest. Cache-read
+  tokens are detail inside `inputTokens` and are never added again. A malformed final physical
+  attempt falls back to the manifest estimate, not an earlier physical attempt.
+- When exact prompt usage is absent or invalid, the conservative fallback is the ViewManifest's
+  `estimatedPromptTokens + toolReserveTokens`, using checked safe-integer arithmetic. Missing
+  provider usage is not converted to zero and does not change the persisted provider-attempt fact.
+- The read model carries `freshness: current | stale | unavailable`, `source: provider | estimated`
+  when available, occupied and context-window tokens, request identity, evidence entry IDs, and the
+  evidence timestamp. Percentages are derived from the two token counts. Evidence may exceed the
+  window after a provider-side silent overflow; storage does not clamp that fact, although a visual
+  progress fill may clamp its width.
+- Evidence is current only while the manifest provider/model and effective context window match the
+  active DeepChat runtime and its latest reconstruction-anchor entry is still the manifest's
+  reconstruction anchor. A model/window change, runtime loss of a provider-limit observation, or a
+  newer compaction/reset/handoff boundary makes otherwise valid evidence stale until another
+  provider request is assembled. Stale evidence remains visible and explicitly labeled; it is not
+  silently promoted to a current estimate.
+- A missing or invalid manifest yields unavailable. Direct ACP sessions, which do not own the
+  DeepChat ViewManifest/provider-attempt pipeline, also return unavailable instead of a fabricated
+  zero-percent value.
+
+The read path performs one indexed latest-manifest lookup, one indexed request-scoped
+provider-attempt lookup, and the existing latest reconstruction-anchor lookup. It never loads or
+folds the full session Tape and never loads the source rows named by the manifest's
+included/excluded provenance merely to compute the numerator. Malformed facts fail closed to
+estimate or unavailable without mutating Tape.
+
+The public API is an additive typed snapshot route. The renderer pulls it when a session becomes
+active, after a generation settles, after a compaction-state replacement, and after a local
+model/window update. A renderer-local request generation prevents a late response from a prior
+session or prior refresh from replacing newer state. There is no high-frequency occupancy event and
+no wall-clock ordering protocol: provider attempts and ViewManifests are already durable low-rate
+facts, while the existing generation and compaction lifecycle events are sufficient invalidation
+signals.
+
 ## Compatibility
 
 - Existing reconstruction anchors containing a summary remain valid and retain their hash and
@@ -315,6 +365,9 @@ rollback mechanism and is not the authority for accepting a semantic summary.
 - Usage statistics schema migration preserves every legacy row as chat usage and keeps existing
   dashboard token totals and message-activity meaning. New category data is additive at the public
   dashboard contract. Unknown compaction usage contributes an event count but no token value.
+- Context occupancy adds a snapshot route and renderer read model without changing existing session,
+  compaction, ViewManifest, or provider-attempt schemas. Historical sessions without valid request
+  evidence remain usable and simply report occupancy as unavailable.
 
 ## Security And Privacy
 
