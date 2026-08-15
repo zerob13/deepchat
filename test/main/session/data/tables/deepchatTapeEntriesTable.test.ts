@@ -4,6 +4,7 @@ import {
   TOOL_SURFACE_TAPE_EVENT_NAMES
 } from '@/tape/domain/toolSurfaceFacts'
 import { buildTapeProviderAttemptEvent } from '@/tape/domain/providerAttempt'
+import { TapeProviderAttemptService } from '@/tape/application/providerAttemptService'
 
 const sqliteModule = await import('better-sqlite3-multiple-ciphers').catch(() => null)
 const tableModule = sqliteModule ? await import('@/session/data/tables/deepchatTapeEntries') : null
@@ -120,14 +121,14 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
       data: { manifest: { requestSeq: 1 } },
       createdAt: 102
     })
-    const firstAttempt = table.appendEvent({
+    const firstAttempt = table.appendProviderAttemptEvent({
       sessionId: 's1',
       name: 'provider/attempt_completed',
       source: { type: 'runtime_event', id: 'message-2', seq: 2 },
       data: { physicalAttempt: 1 },
       createdAt: 103
     })
-    const finalAttempt = table.appendEvent({
+    const finalAttempt = table.appendProviderAttemptEvent({
       sessionId: 's1',
       name: 'provider/attempt_completed',
       source: { type: 'runtime_event', id: 'message-2', seq: 2 },
@@ -266,7 +267,11 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
       ['s1', 'provider/attempt_completed', 'a2', 11],
       ['s2', 'provider/attempt_completed', 'a1', 13]
     ] as const) {
-      table.appendEvent({
+      const append =
+        name === 'provider/attempt_completed'
+          ? table.appendProviderAttemptEvent.bind(table)
+          : table.appendEvent.bind(table)
+      append({
         sessionId,
         name,
         source: { type: 'runtime_event', id: sourceId, seq: sourceSeq },
@@ -280,6 +285,53 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
     expect(
       table.getMaxEventSourceSeq('s1', 'provider/attempt_completed', 'runtime_event', 'missing')
     ).toBe(0)
+
+    db.close()
+  })
+
+  it('round-trips silent pressure through the authoritative writer and store', () => {
+    const { db, table } = createTable()
+    const service = new TapeProviderAttemptService({
+      getEntryStore: () => table,
+      getProviderAttemptStore: () => table
+    })
+
+    const written = service.appendProviderAttempt({
+      sessionId: 's1',
+      messageId: 'message-1',
+      logicalRound: 1,
+      requestSeq: 1,
+      physicalAttempt: 1,
+      requestOrigin: 'chat',
+      attemptOrigin: 'initial',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      status: 'completed',
+      stopReason: 'max_tokens',
+      failureClassification: null,
+      retryDecision: 'none',
+      httpStatus: null,
+      errorCode: null,
+      retryDelayMs: null,
+      usage: { inputTokens: 990, outputTokens: 0, totalTokens: 990 },
+      contextPressure: {
+        kind: 'zero_output_length_at_limit',
+        contextWindowTokens: 1_000,
+        thresholdTokens: 990
+      }
+    })
+
+    expect(service.getPendingProviderContextPressure('s1', 'provider-1', 'model-1')).toMatchObject({
+      entryId: written.entry_id,
+      attempt: {
+        messageId: 'message-1',
+        contextPressure: {
+          kind: 'zero_output_length_at_limit',
+          contextWindowTokens: 1_000,
+          thresholdTokens: 990
+        }
+      }
+    })
 
     db.close()
   })
@@ -312,7 +364,7 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
         }
       })
     const appendAttempt = (data: Record<string, unknown>) =>
-      table.appendEvent({
+      table.appendProviderAttemptEvent({
         sessionId: 's1',
         name: 'provider/attempt_completed',
         data

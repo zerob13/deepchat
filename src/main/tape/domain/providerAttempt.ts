@@ -229,6 +229,7 @@ function normalizeContextPressure(
   const thresholdTokens = observation.thresholdTokens as number
   const kind = observation.kind as DeepChatProviderContextPressureKind
   if (
+    thresholdTokens > contextWindowTokens ||
     (kind === 'successful_prompt_overflow' &&
       (outcome.stopReason !== 'complete' ||
         thresholdTokens !== contextWindowTokens ||
@@ -236,7 +237,6 @@ function normalizeContextPressure(
     (kind === 'zero_output_length_at_limit' &&
       (outcome.stopReason !== 'max_tokens' ||
         outcome.usage.outputTokens !== 0 ||
-        thresholdTokens !== Math.max(1, Math.floor(contextWindowTokens * 0.99)) ||
         outcome.usage.inputTokens < thresholdTokens))
   ) {
     return undefined
@@ -496,12 +496,11 @@ export function parseTapeProviderAttemptEvent(
     stopReason: base.stopReason,
     usage: base.usage
   })
-  if (contextPressure === undefined) return null
 
   return {
     schemaVersion: TAPE_PROVIDER_ATTEMPT_SCHEMA_VERSION,
     ...detailed,
-    contextPressure
+    contextPressure: contextPressure ?? null
   }
 }
 

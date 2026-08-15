@@ -409,6 +409,9 @@ provider replay.
   fields without inventing totals.
 - [x] Hydrate occupancy snapshots directly so renderer request ordering cannot create a cold-session
   blind spot.
+- [x] Treat each persisted provider-pressure threshold as durable observation data: validate it
+  against its physical attempt without reapplying the current detector policy, and degrade malformed
+  pressure to null without discarding the provider-attempt fact or reviving older cache metrics.
 - [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
   performance, security, naming, regression coverage, and maintenance cost before committing it.
 

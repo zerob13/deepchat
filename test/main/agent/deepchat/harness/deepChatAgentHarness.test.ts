@@ -11785,7 +11785,7 @@ describe('DeepChatAgentHarness', () => {
     }
 
     function appendSilentContextPressure(providerId = 'openai', modelId = 'gpt-4') {
-      return sqlitePresenter.deepchatTapeEntriesTable.appendEvent({
+      return sqlitePresenter.deepchatTapeEntriesTable.appendProviderAttemptEvent({
         sessionId: 's1',
         name: 'provider/attempt_completed',
         data: buildTapeProviderAttemptEvent({

@@ -97,19 +97,47 @@ describe('provider attempt context pressure', () => {
         thresholdTokens: 999
       }
     }
-  ])('rejects malformed schema v3 pressure data: %#', ({ contextPressure }) => {
-    const malformed = { ...completedAttempt() } as Record<string, unknown>
-    if (contextPressure === undefined) {
-      delete malformed.contextPressure
-    } else {
-      malformed.contextPressure = contextPressure
-    }
+  ])(
+    'ignores malformed schema v3 pressure data without discarding the attempt: %#',
+    ({ contextPressure }) => {
+      const malformed = { ...completedAttempt() } as Record<string, unknown>
+      if (contextPressure === undefined) {
+        delete malformed.contextPressure
+      } else {
+        malformed.contextPressure = contextPressure
+      }
 
-    expect(parseTapeProviderAttemptEvent(row(malformed))).toBeNull()
-  })
+      expect(parseTapeProviderAttemptEvent(row(malformed))).toEqual({
+        ...malformed,
+        contextPressure: null
+      })
+    }
+  )
 
   it('accepts an explicit null pressure observation', () => {
     const attempt = { ...completedAttempt(), contextPressure: null }
+
+    expect(parseTapeProviderAttemptEvent(row(attempt))).toEqual(attempt)
+  })
+
+  it('preserves a valid historical zero-output threshold without reapplying current policy', () => {
+    const attempt = {
+      ...completedAttempt(),
+      stopReason: 'max_tokens',
+      usage: {
+        inputTokens: 980,
+        outputTokens: 0,
+        totalTokens: 980,
+        cacheReadTokens: 900,
+        cacheWriteTokens: null
+      },
+      cacheHitRate: 900 / 980,
+      contextPressure: {
+        kind: 'zero_output_length_at_limit',
+        contextWindowTokens: 1_000,
+        thresholdTokens: 980
+      }
+    }
 
     expect(parseTapeProviderAttemptEvent(row(attempt))).toEqual(attempt)
   })
