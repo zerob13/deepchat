@@ -55,7 +55,6 @@ export class ContextOccupancyCoordinator {
     }
 
     let configuredContextLength: number
-    let requestedMaxTokens: number
     try {
       const settings = await this.deps.sessionSettings.getEffectiveGenerationSettings(
         sessionId,
@@ -63,23 +62,12 @@ export class ContextOccupancyCoordinator {
       )
       if (!scope.isCurrent()) return unavailableContextOccupancy()
       configuredContextLength = settings.contextLength
-      requestedMaxTokens = settings.maxTokens
     } catch {
       return unavailableContextOccupancy()
     }
 
     const latestState = scope.state()
     if (!latestState) return unavailableContextOccupancy()
-    const observation = scope.instance.getContextWindowObservation(
-      latestState.providerId,
-      latestState.modelId
-    )
-    const effectiveContextLength = resolveEffectiveContextBudget({
-      configuredContextLength,
-      requestedMaxTokens,
-      providerContextLimitTokens: observation?.providerContextLimitTokens,
-      providerPromptLimitTokens: observation?.providerPromptLimitTokens
-    }).contextLength
     const evidence = this.deps.tape.getContextOccupancyEvidence(sessionId)
     const manifestRecord = evidence.manifest
     if (!manifestRecord || manifestRecord.integrity !== 'valid') {
@@ -87,6 +75,16 @@ export class ContextOccupancyCoordinator {
     }
 
     const { manifest } = manifestRecord
+    const observation = scope.instance.getContextWindowObservation(
+      latestState.providerId,
+      latestState.modelId
+    )
+    const effectiveContextLength = resolveEffectiveContextBudget({
+      configuredContextLength,
+      requestedMaxTokens: manifest.tokenBudget.requestedMaxTokens,
+      providerContextLimitTokens: observation?.providerContextLimitTokens,
+      providerPromptLimitTokens: observation?.providerPromptLimitTokens
+    }).contextLength
     const contextWindowTokens = manifest.tokenBudget.contextLength
     if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens <= 0) {
       return unavailableContextOccupancy()

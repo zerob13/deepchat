@@ -11,6 +11,7 @@ function createManifestRecord(
     providerId?: string
     modelId?: string
     contextLength?: number
+    requestedMaxTokens?: number
     estimatedPromptTokens?: number
     toolReserveTokens?: number
     reconstructionAnchorEntryId?: number | null
@@ -30,6 +31,7 @@ function createManifestRecord(
       reconstructionAnchorEntryId: overrides.reconstructionAnchorEntryId ?? 42,
       tokenBudget: {
         contextLength: overrides.contextLength ?? 1_000,
+        requestedMaxTokens: overrides.requestedMaxTokens ?? 100,
         estimatedPromptTokens: overrides.estimatedPromptTokens ?? 400,
         toolReserveTokens: overrides.toolReserveTokens ?? 50
       },
@@ -230,6 +232,20 @@ describe('ContextOccupancyCoordinator', () => {
     await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
       freshness: 'current',
       contextWindowTokens: 1_000
+    })
+  })
+
+  it('recomputes a request-limited window from the manifest output budget', async () => {
+    const { coordinator } = setup({
+      manifest: createManifestRecord({ contextLength: 1_050, requestedMaxTokens: 50 }),
+      configuredContextLength: 2_000,
+      requestedMaxTokens: 100,
+      providerPromptLimitTokens: 1_000
+    })
+
+    await expect(coordinator.getSnapshot(SESSION_ID)).resolves.toMatchObject({
+      freshness: 'current',
+      contextWindowTokens: 1_050
     })
   })
 
