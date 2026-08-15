@@ -2184,7 +2184,9 @@ describe('sessionStore streaming cleanup', () => {
     const snapshot = createDeferred<any>()
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const { store, sessionClient, emitSessionCompactionChange } = await setupStore()
-    sessionClient.getCompactionSnapshot.mockReturnValueOnce(snapshot.promise)
+    sessionClient.getCompactionSnapshot
+      .mockReturnValueOnce(snapshot.promise)
+      .mockRejectedValueOnce(new Error('snapshot retry failed'))
 
     await store.applyBootstrapShell({ activeSessionId: 'session-a' })
     emitSessionCompactionChange({
@@ -2199,6 +2201,7 @@ describe('sessionStore streaming cleanup', () => {
     snapshot.reject(new Error('snapshot failed'))
 
     await vi.waitFor(() => {
+      expect(sessionClient.getCompactionSnapshot).toHaveBeenCalledTimes(2)
       expect(store.activeCompactionSnapshot.value).toEqual({
         state: {
           status: 'compacted',
@@ -2221,7 +2224,39 @@ describe('sessionStore streaming cleanup', () => {
       latestAnchorEntryId: 40
     })
     expect(store.activeCompactionSnapshot.value?.emitSeq).toBe(4)
+    expect(
+      warnSpy.mock.calls.filter(
+        ([message]) => message === '[sessionStore] Failed to synchronize compaction state:'
+      )
+    ).toHaveLength(1)
     warnSpy.mockRestore()
+  })
+
+  it('recovers a compaction snapshot after one transient failure', async () => {
+    const { store, sessionClient } = await setupStore()
+    sessionClient.getCompactionSnapshot.mockReset()
+    sessionClient.getCompactionSnapshot
+      .mockRejectedValueOnce(new Error('temporary IPC failure'))
+      .mockResolvedValueOnce({
+        state: {
+          status: 'compacted',
+          cursorOrderSeq: 7,
+          summaryUpdatedAt: 100,
+          boundaryReason: null
+        },
+        emitSeq: 3,
+        latestAnchorEntryId: 30
+      })
+
+    await store.applyBootstrapShell({ activeSessionId: 'session-a' })
+
+    await vi.waitFor(() => {
+      expect(sessionClient.getCompactionSnapshot).toHaveBeenCalledTimes(2)
+      expect(store.activeCompactionSnapshot.value).toMatchObject({
+        state: { cursorOrderSeq: 7 },
+        emitSeq: 3
+      })
+    })
   })
 
   it('purges message tracking when a session is permanently removed', async () => {

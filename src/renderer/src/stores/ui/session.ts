@@ -98,6 +98,8 @@ const DEFAULT_GROUP_MODE: GroupMode = 'project'
 const DEFAULT_SESSION_PAGE_SIZE = 30
 const CONTEXT_OCCUPANCY_RETRY_DELAY_MS = 250
 const CONTEXT_OCCUPANCY_MAX_ATTEMPTS = 2
+const COMPACTION_SNAPSHOT_RETRY_DELAY_MS = 250
+const COMPACTION_SNAPSHOT_MAX_ATTEMPTS = 2
 const NO_PROJECT_GROUP_ID = '__no_project__'
 const SESSION_TITLE_COLLATOR = new Intl.Collator(undefined, {
   numeric: true,
@@ -463,43 +465,43 @@ export const useSessionStore = defineStore('session', () => {
     activeCompactionSync = sync
     activeCompactionSnapshot.value = null
 
-    void sessionClient
-      .getCompactionSnapshot(sessionId)
-      .then((snapshot) => {
-        if (
-          activeCompactionSync !== sync ||
-          activeSessionId.value !== sessionId ||
-          compactionSyncRequestId !== requestId
-        ) {
-          return
-        }
+    const ownsSync = (): boolean =>
+      activeCompactionSync === sync &&
+      activeSessionId.value === sessionId &&
+      compactionSyncRequestId === requestId
+    const applyBufferedEvents = (): void => {
+      sync.bufferedEvents.sort((left, right) => left.emitSeq - right.emitSeq)
+      for (const event of sync.bufferedEvents) {
+        applyCompactionEvent(event)
+      }
+      sync.bufferedEvents.length = 0
+    }
 
-        activeCompactionSnapshot.value = snapshot
-        sync.bufferedEvents.sort((left, right) => left.emitSeq - right.emitSeq)
-        for (const event of sync.bufferedEvents) {
-          applyCompactionEvent(event)
-        }
-        sync.bufferedEvents.length = 0
-        sync.snapshotPending = false
-      })
-      .catch((snapshotError) => {
-        if (
-          activeCompactionSync !== sync ||
-          activeSessionId.value !== sessionId ||
-          compactionSyncRequestId !== requestId
-        ) {
+    void (async () => {
+      let snapshotError: unknown
+      for (let attempt = 1; attempt <= COMPACTION_SNAPSHOT_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const snapshot = await sessionClient.getCompactionSnapshot(sessionId)
+          if (!ownsSync()) return
+          activeCompactionSnapshot.value = snapshot
+          applyBufferedEvents()
+          sync.snapshotPending = false
           return
+        } catch (error) {
+          if (!ownsSync()) return
+          snapshotError = error
+          if (attempt < COMPACTION_SNAPSHOT_MAX_ATTEMPTS) {
+            await new Promise((resolve) => setTimeout(resolve, COMPACTION_SNAPSHOT_RETRY_DELAY_MS))
+            if (!ownsSync()) return
+          }
         }
+      }
 
-        sync.bufferedEvents.sort((left, right) => left.emitSeq - right.emitSeq)
-        for (const event of sync.bufferedEvents) {
-          applyCompactionEvent(event)
-        }
-        sync.bufferedEvents.length = 0
-        sync.snapshotPending = false
-        activeCompactionSync = null
-        console.warn('[sessionStore] Failed to synchronize compaction state:', snapshotError)
-      })
+      applyBufferedEvents()
+      sync.snapshotPending = false
+      activeCompactionSync = null
+      console.warn('[sessionStore] Failed to synchronize compaction state:', snapshotError)
+    })()
   }
 
   const setActiveSessionId = (sessionId: string | null): void => {
