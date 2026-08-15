@@ -419,6 +419,8 @@ provider replay.
   established runtime default before pressure or compaction arithmetic.
 - [x] Persist each settled marker's boundary-only reason from its same-attempt Tape anchor and render
   the two reason substates without inferring history from a nullable summary timestamp.
+- [x] Keep stale occupancy evidence in the tooltip, but clear its live percentage and fill; mark
+  current View-derived estimates distinctly from provider measurements.
 - [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
   performance, security, naming, regression coverage, and maintenance cost before committing it.
 

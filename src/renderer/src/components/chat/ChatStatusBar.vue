@@ -1450,13 +1450,19 @@ const contextOccupancyRatio = computed(() => {
   const snapshot = contextOccupancy.value
   return snapshot ? snapshot.occupiedTokens / snapshot.contextWindowTokens : 0
 })
-const contextOccupancyPercent = computed(
-  () => `${Math.max(0, Math.round(contextOccupancyRatio.value * 100))}%`
-)
-const contextOccupancyFillWidth = computed(
-  () => `${Math.min(100, Math.max(0, contextOccupancyRatio.value * 100))}%`
+const contextOccupancyPercent = computed(() => {
+  const snapshot = contextOccupancy.value
+  if (snapshot?.freshness === 'stale') return '—'
+  const percent = `${Math.max(0, Math.round(contextOccupancyRatio.value * 100))}%`
+  return snapshot?.source === 'estimated' ? `≈${percent}` : percent
+})
+const contextOccupancyFillWidth = computed(() =>
+  contextOccupancy.value?.freshness === 'stale'
+    ? '0%'
+    : `${Math.min(100, Math.max(0, contextOccupancyRatio.value * 100))}%`
 )
 const contextOccupancyFillClass = computed(() => {
+  if (contextOccupancy.value?.freshness === 'stale') return 'bg-muted-foreground/40'
   if (contextOccupancyRatio.value >= 1) return 'bg-destructive'
   if (contextOccupancyRatio.value >= 0.8) return 'bg-amber-500'
   return 'bg-primary/70'

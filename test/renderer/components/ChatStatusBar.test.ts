@@ -869,7 +869,7 @@ describe('ChatStatusBar model and session panels', () => {
     expect(occupancy.attributes('title')).toContain('chat.contextOccupancy.provider')
   })
 
-  it('labels stale estimates and preserves overflow text while clamping the fill', async () => {
+  it('does not present a stale estimate as current occupancy', async () => {
     const { wrapper } = await setup({
       hasActiveSession: true,
       contextOccupancy: {
@@ -885,12 +885,31 @@ describe('ChatStatusBar model and session panels', () => {
     })
 
     const occupancy = wrapper.get('[data-testid="context-occupancy"]')
-    expect(occupancy.text()).toContain('125%')
+    expect(occupancy.text()).toContain('—')
+    expect(occupancy.text()).not.toContain('125%')
     expect(occupancy.attributes('data-freshness')).toBe('stale')
     expect(occupancy.attributes('data-source')).toBe('estimated')
     expect(occupancy.attributes('title')).toContain('chat.contextOccupancy.stale')
-    expect(occupancy.get('span > span').attributes('style')).toContain('width: 100%')
+    expect(occupancy.get('span > span').attributes('style')).toContain('width: 0%')
     expect(occupancy.find('[data-icon="lucide:clock-3"]').exists()).toBe(true)
+  })
+
+  it('visually distinguishes a current estimate from provider-measured occupancy', async () => {
+    const { wrapper } = await setup({
+      hasActiveSession: true,
+      contextOccupancy: {
+        freshness: 'current',
+        source: 'estimated',
+        occupiedTokens: 750,
+        contextWindowTokens: 1_000,
+        requestSeq: 2,
+        manifestEntryId: 10,
+        providerAttemptEntryId: null,
+        measuredAt: 100
+      }
+    })
+
+    expect(wrapper.get('[data-testid="context-occupancy"]').text()).toContain('≈75%')
   })
 
   it('hides unavailable context occupancy', async () => {
