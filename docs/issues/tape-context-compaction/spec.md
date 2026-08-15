@@ -388,6 +388,35 @@ recent execution detail.
   continues to rely on each manifest's stored provider-message hash and policy identity rather than
   silently reinterpreting v1 evidence with v2 selection semantics.
 
+### Post-Implementation Seam Hardening
+
+The selective pin, durable marker, accounting, and occupancy slices share the following additional
+cross-slice invariants:
+
+- Cache-aware v2 compaction treats the pinned first user as visible fixed input. It includes the
+  canonical pinned projection in pressure arithmetic and retained-input accounting, but excludes
+  the pinned record from summary input, summary provenance, and the token count credited as newly
+  hidden. The cursor remains a continuous left boundary and may pass the pinned row; the View policy
+  selectively re-injects that row with manifest provenance rather than creating a cursor hole. A
+  committed summary must therefore shrink the complete provider-visible View rather than only the
+  unpinned history projection.
+- `provider/attempt_completed` and `compaction/model_call_completed` are append-only internal
+  observations with exact dedicated writers; generic Tape append capabilities cannot forge either
+  event name. Compaction model-call events are also excluded from the default effective View and Tape
+  search projection. Existing provider-attempt read-model semantics remain unchanged.
+- Marker settlement is durable cleanup keyed by message and compaction attempt, not authority to
+  mutate an obsolete runtime instance. Instance-generation fences still protect in-memory state and
+  renderer events, while marker finalization/retraction proceeds after an originating instance is
+  replaced. Restart reconciliation isolates failures per marker and reruns after any database
+  maintenance operation that closes or replaces the Session database.
+- `deepchat_usage_stats` remains rebuildable from Tape. Backfill scans valid compaction model-call
+  events through an indexed, bounded page reader and idempotently recreates their projection rows.
+  Provider-returned input, output, and total token fields are validated independently: measured
+  components are retained, an absent total is never synthesized, and a call with no valid measured
+  components remains `usage: null`.
+- Context occupancy hydrates the requested DeepChat runtime scope itself. Its correctness never
+  depends on a renderer issuing the compaction snapshot request first.
+
 ## Compatibility
 
 - Existing reconstruction anchors containing a summary remain valid and retain their hash and

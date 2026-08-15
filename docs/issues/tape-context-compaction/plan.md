@@ -392,6 +392,23 @@ provider replay.
 - Remove or rename dead compaction settings UI and composer-token helpers only after confirming each
   has no live consumer. Keep cleanup independent from correctness slices.
 
+### Post-Implementation Seam Hardening (2026-08-15)
+
+- [ ] Align cache-aware v2 pin accounting with compaction: include the fixed pin in trigger and
+  retained-input arithmetic, remove it from summary input/provenance without creating a cursor hole,
+  and protect the strict-shrink proof with a pin regression.
+- [ ] Exclude internal compaction usage observations from effective View/search; reserve both
+  provider-attempt and compaction-model-call event names for exact persistence writers without
+  changing existing provider-attempt read-model semantics.
+- [ ] Settle compaction markers independently of obsolete runtime instances, isolate startup
+  reconciliation failures per row, and rerun restart reconciliation after Session database reopen.
+- [ ] Make compaction usage a rebuildable projection, preserving independently measured token
+  fields without inventing totals.
+- [ ] Hydrate occupancy snapshots directly so renderer request ordering cannot create a cold-session
+  blind spot.
+- [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
+  performance, security, naming, regression coverage, and maintenance cost before committing it.
+
 ### Design Gates
 
 Slices 1 and 2 have implementation-level contracts and may proceed consecutively. Slices 3–5 each
