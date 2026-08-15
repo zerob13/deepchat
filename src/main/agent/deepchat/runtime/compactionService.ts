@@ -10,6 +10,7 @@ import type {
 } from '@shared/types/agent-interface'
 import type { ChatMessage } from '@shared/types/core/chat-message'
 import type { ProviderExecutionPort } from '@shared/types/provider'
+import type { DeepChatTapeViewPinnedFirstUser } from '@shared/types/tape-view-manifest'
 import type { SessionTranscript } from '@/session/data/transcript'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type {
@@ -18,6 +19,7 @@ import type {
   SummaryTapeAnchorInput
 } from '@/session/data/settings'
 import {
+  buildPinnedFirstUser,
   buildHistoryTurns,
   buildUserMessageContent,
   createUserChatMessage,
@@ -26,6 +28,7 @@ import {
   formatApprovedMcpAppModelContext,
   isContextHistoryRecord,
   normalizeUserInput,
+  type ContextPinnedFirstUser,
   type HistoryTurn
 } from './contextBuilder'
 import {
@@ -89,6 +92,7 @@ export type CompactionIntent = {
   retainedTurnCount: number
   retainedTokenEstimate: number
   retainedTokenTarget: number
+  pinnedFirstUserTokenEstimate?: number
 }
 
 export type CompactionExecutionResult = {
@@ -420,10 +424,16 @@ export class CompactionService {
     )
       .filter(isContextHistoryRecord)
       .sort((a, b) => a.orderSeq - b.orderSeq)
+    const pinnedFirstUser = buildPinnedFirstUser(
+      historyRecords,
+      params.supportsVision,
+      params.supportsAudioInput === true
+    )
 
     return this.prepareCompaction({
       ...params,
       records: historyRecords,
+      pinnedFirstUser,
       minimumRetainedTurnCount: settings.retainRecentPairs,
       triggerThreshold: settings.triggerThreshold,
       projectedMessages: [
@@ -483,10 +493,24 @@ export class CompactionService {
       }
       return isContextHistoryRecord(record)
     })
+    const targetIndex = resumeRecords.findIndex((record) => record.id === params.messageId)
+    let ownerUserMessageId: string | undefined
+    for (let index = targetIndex; index >= 0; index -= 1) {
+      if (resumeRecords[index]?.role === 'user') {
+        ownerUserMessageId = resumeRecords[index].id
+        break
+      }
+    }
 
     return this.prepareCompaction({
       ...params,
       records: resumeRecords,
+      pinnedFirstUser: buildPinnedFirstUser(
+        resumeRecords,
+        params.supportsVision,
+        params.supportsAudioInput === true,
+        ownerUserMessageId
+      ),
       minimumRetainedTurnCount: settings.retainRecentPairs + 1,
       triggerThreshold: settings.triggerThreshold,
       projectedMessages: [],
@@ -507,6 +531,7 @@ export class CompactionService {
     preserveInterleavedReasoning: boolean
     preserveEmptyInterleavedReasoning?: boolean
     projectedMessages: ChatMessage[]
+    pinnedFirstUser?: DeepChatTapeViewPinnedFirstUser | null
     historyRecords?: ChatMessageRecord[]
     signal?: AbortSignal
   }): Promise<CompactionIntent | null> {
@@ -525,10 +550,21 @@ export class CompactionService {
     )
       .filter(isContextHistoryRecord)
       .sort((a, b) => a.orderSeq - b.orderSeq)
+    const pinnedFirstUser =
+      params.pinnedFirstUser === null
+        ? null
+        : buildPinnedFirstUser(
+            historyRecords,
+            params.supportsVision,
+            params.supportsAudioInput === true,
+            undefined,
+            params.pinnedFirstUser
+          )
 
     return this.prepareCompaction({
       ...params,
       records: historyRecords,
+      pinnedFirstUser,
       minimumRetainedTurnCount: settings.retainRecentPairs,
       triggerThreshold: settings.triggerThreshold,
       projectedMessages: params.projectedMessages,
@@ -563,6 +599,11 @@ export class CompactionService {
     return this.prepareCompaction({
       ...params,
       records: historyRecords,
+      pinnedFirstUser: buildPinnedFirstUser(
+        historyRecords,
+        params.supportsVision,
+        params.supportsAudioInput === true
+      ),
       minimumRetainedTurnCount: 0,
       retainedTokenTarget: 0,
       triggerThreshold: 0,
@@ -729,6 +770,9 @@ export class CompactionService {
         retainedTurnCount: floorNonNegative(intent.retainedTurnCount),
         retainedTokenEstimate: floorNonNegative(intent.retainedTokenEstimate),
         retainedTokenTarget: floorNonNegative(intent.retainedTokenTarget),
+        pinnedFirstUserTokenEstimate: floorNonNegative(
+          intent.pinnedFirstUserTokenEstimate ?? 0
+        ),
         previousSummaryUpdatedAt: intent.previousState.summaryUpdatedAt
       },
       meta: {
@@ -760,6 +804,7 @@ export class CompactionService {
     preserveInterleavedReasoning: boolean
     preserveEmptyInterleavedReasoning?: boolean
     records: ChatMessageRecord[]
+    pinnedFirstUser?: ContextPinnedFirstUser | null
     minimumRetainedTurnCount: number
     retainedTokenTarget?: number
     triggerThreshold: number
@@ -776,16 +821,24 @@ export class CompactionService {
       reconstructionAnchor.state.cursorOrderSeq === summaryState.summaryCursorOrderSeq
         ? normalizeOrderSeqRange(reconstructionAnchor.state.summaryGap)
         : null
+    const pinnedFirstUserRecord = params.pinnedFirstUser?.record ?? null
+    const canonicalPinnedFirstUserMessages = params.pinnedFirstUser
+      ? [params.pinnedFirstUser.message]
+      : []
+    const pinnedFirstUserTokenEstimate = estimateMessagesTokens(canonicalPinnedFirstUserMessages)
     const pendingGapRecords = pendingSummaryGap
       ? params.records.filter(
           (record) =>
+            record.id !== pinnedFirstUserRecord?.id &&
             record.orderSeq >= pendingSummaryGap.fromOrderSeq &&
             record.orderSeq <= pendingSummaryGap.toOrderSeq &&
             record.orderSeq < summaryState.summaryCursorOrderSeq
         )
       : []
     const scopedRecords = params.records.filter(
-      (record) => record.orderSeq >= summaryState.summaryCursorOrderSeq
+      (record) =>
+        record.id !== pinnedFirstUserRecord?.id &&
+        record.orderSeq >= summaryState.summaryCursorOrderSeq
     )
     if (scopedRecords.length === 0) {
       return null
@@ -821,6 +874,7 @@ export class CompactionService {
       ...(params.systemPrompt
         ? [{ role: 'system' as const, content: params.systemPrompt }]
         : []),
+      ...canonicalPinnedFirstUserMessages,
       ...(checkpoint ? [checkpoint] : []),
       ...projectedHistory,
       ...params.projectedMessages
@@ -836,15 +890,17 @@ export class CompactionService {
       }
     }
 
+    const retainedTokenTarget =
+      params.retainedTokenTarget ??
+      calculateRetainedTailTokenTarget({
+        contextLength: params.contextLength,
+        reserveTokens: params.reserveTokens,
+        extraReserveTokens: params.extraReserveTokens ?? 0
+      })
     const retainedTail = selectRetainedTail(
       turns,
       params.minimumRetainedTurnCount,
-      params.retainedTokenTarget ??
-        calculateRetainedTailTokenTarget({
-          contextLength: params.contextLength,
-          reserveTokens: params.reserveTokens,
-          extraReserveTokens: params.extraReserveTokens ?? 0
-        })
+      Math.max(0, retainedTokenTarget - pinnedFirstUserTokenEstimate)
     )
     if (retainedTail.summaryableTurns.length === 0) {
       return null
@@ -902,8 +958,10 @@ export class CompactionService {
         summaryableTurns.length +
         (pendingGapRecords.length > 0 ? Math.max(1, pendingGapTurnCount) : 0),
       retainedTurnCount: rawTailTurns.length,
-      retainedTokenEstimate: retainedTail.retainedTokenEstimate,
-      retainedTokenTarget: retainedTail.retainedTokenTarget
+      retainedTokenEstimate:
+        retainedTail.retainedTokenEstimate + pinnedFirstUserTokenEstimate,
+      retainedTokenTarget,
+      pinnedFirstUserTokenEstimate
     }
   }
 

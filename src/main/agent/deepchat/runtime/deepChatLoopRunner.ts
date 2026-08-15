@@ -2499,6 +2499,7 @@ export class DeepChatLoopRunner {
                 params.contextContributions,
                 params.pinnedFirstUser?.contentHash
               ),
+              pinnedFirstUser: params.pinnedFirstUser ?? null,
               historyRecords,
               signal: params.signal
             }),

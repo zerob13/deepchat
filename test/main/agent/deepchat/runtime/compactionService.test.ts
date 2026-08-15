@@ -236,7 +236,9 @@ describe('CompactionService', () => {
     const { service, messageStore } = createService()
 
     messageStore.getMessages.mockReturnValue([
-      makeUserRecord(1, 'Review the attachment', [
+      makeUserRecord(1, 'Pinned original task'),
+      makeAssistantRecord(2, 'Pinned task acknowledged'),
+      makeUserRecord(3, 'Review the attachment', [
         {
           name: 'spec.md',
           path: '/tmp/spec.md',
@@ -250,11 +252,11 @@ describe('CompactionService', () => {
           content: 'data:image/png;base64,AAAA'
         }
       ]),
-      makeAssistantRecord(2, 'Acknowledged '.repeat(30)),
-      makeUserRecord(3, 'Second turn '.repeat(20)),
-      makeAssistantRecord(4, 'Second reply '.repeat(20)),
-      makeUserRecord(5, 'Third turn '.repeat(20)),
-      makeAssistantRecord(6, 'Third reply '.repeat(20))
+      makeAssistantRecord(4, 'Acknowledged '.repeat(30)),
+      makeUserRecord(5, 'Second turn '.repeat(20)),
+      makeAssistantRecord(6, 'Second reply '.repeat(20)),
+      makeUserRecord(7, 'Third turn '.repeat(20)),
+      makeAssistantRecord(8, 'Third reply '.repeat(20))
     ])
 
     const intent = await service.prepareForNextUserTurn({
@@ -270,12 +272,16 @@ describe('CompactionService', () => {
     })
 
     expect(intent).not.toBeNull()
-    expect(intent?.summaryBlocks[0]).toContain('[Attached File 1]')
-    expect(intent?.summaryBlocks[0]).toContain('path: /tmp/spec.md')
-    expect(intent?.summaryBlocks[0]).toContain('content: [omitted; use read if needed]')
-    expect(intent?.summaryBlocks[0]).not.toContain('Detailed file body')
-    expect(intent?.summaryBlocks[0]).toContain('[Attached Image 1]')
-    expect(intent?.summaryBlocks[0]).not.toContain('data:image/png')
+    const summaryInput = intent?.summaryBlocks.join('\n') ?? ''
+    expect(summaryInput).not.toContain('Pinned original task')
+    expect(summaryInput).toContain('[Attached File 1]')
+    expect(summaryInput).toContain('path: /tmp/spec.md')
+    expect(summaryInput).toContain('content: [omitted; use read if needed]')
+    expect(summaryInput).not.toContain('Detailed file body')
+    expect(summaryInput).toContain('[Attached Image 1]')
+    expect(summaryInput).not.toContain('data:image/png')
+    expect(intent?.sourceMessageIds).not.toContain('user-1')
+    expect(intent?.sourceMessageIds).toContain('user-3')
   })
 
   it('returns null when auto compaction is disabled', async () => {
@@ -468,8 +474,9 @@ describe('CompactionService', () => {
     expect(intent?.targetCursorOrderSeq).toBe(5)
     expect(intent).toMatchObject({
       retainedTurnCount: 0,
-      retainedTokenEstimate: 0,
-      retainedTokenTarget: 0
+      retainedTokenEstimate: 80,
+      retainedTokenTarget: 0,
+      pinnedFirstUserTokenEstimate: 80
     })
   })
 
@@ -512,6 +519,42 @@ describe('CompactionService', () => {
 
     expect(noIntentAtFullBudget).toBeNull()
     expect(intentAtEightyPercent).not.toBeNull()
+  })
+
+  it('counts a pinned first user when evaluating pressure after the cursor passes it', async () => {
+    const { service, messageStore } = createService({
+      summaryState: {
+        summaryText: 'existing summary',
+        summaryCursorOrderSeq: 3,
+        summaryUpdatedAt: 100
+      },
+      sessionConfig: {
+        autoCompactionTriggerThreshold: 80,
+        autoCompactionRetainRecentPairs: 0
+      }
+    })
+    messageStore.getMessages.mockReturnValue([
+      makeUserRecord(1, 'P'.repeat(2200)),
+      makeAssistantRecord(2, 'ack'),
+      makeUserRecord(3, 'short follow-up'),
+      makeAssistantRecord(4, 'short answer')
+    ])
+
+    const intent = await service.prepareForNextUserTurn({
+      sessionId: 's1',
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      systemPrompt: '',
+      contextLength: 3000,
+      reserveTokens: 0,
+      supportsVision: false,
+      preserveInterleavedReasoning: false,
+      newUserContent: { text: 'next', files: [] }
+    })
+
+    expect(intent).not.toBeNull()
+    expect(intent?.pinnedFirstUserTokenEstimate).toBeGreaterThan(2000)
+    expect(intent?.sourceMessageIds).toEqual(['user-3', 'assistant-4'])
   })
 
   it('uses the configured recent-pair setting as a minimum complete-turn floor', async () => {
@@ -869,6 +912,61 @@ describe('CompactionService', () => {
     expect(intent?.anchorName).toBe('auto_handoff/context_overflow')
     expect(intent?.retainedTokenTarget).toBe(125)
     expect(intent?.retainedTurnCount).toBe(2)
+  })
+
+  it('preserves an unpinned v1 pressure-recovery projection', async () => {
+    const { service, messageStore } = createService({
+      sessionConfig: { autoCompactionRetainRecentPairs: 0 }
+    })
+    messageStore.getMessages.mockReturnValue(makeCompleteTurns(3, 80))
+
+    const intent = await service.prepareForContextPressureRecovery({
+      sessionId: 's1',
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      systemPrompt: '',
+      contextLength: 1000,
+      reserveTokens: 100,
+      supportsVision: false,
+      preserveInterleavedReasoning: false,
+      projectedMessages: [],
+      pinnedFirstUser: null
+    })
+
+    expect(intent?.pinnedFirstUserTokenEstimate).toBe(0)
+    expect(intent?.sourceMessageIds).toContain('user-1')
+  })
+
+  it('rejects pressure recovery when the run-local pin content has changed', async () => {
+    const originalRecords = makeCompleteTurns(3, 80)
+    const pinned = contextBuilderModule.buildPinnedFirstUser(originalRecords, false, false)
+    if (!pinned) throw new Error('Expected a pinned first user.')
+    const changedRecords = [
+      makeUserRecord(1, 'changed first user'),
+      ...originalRecords.slice(1)
+    ]
+    const { service, messageStore } = createService()
+    messageStore.getMessages.mockReturnValue(changedRecords)
+
+    await expect(
+      service.prepareForContextPressureRecovery({
+        sessionId: 's1',
+        providerId: 'openai',
+        modelId: 'gpt-4o',
+        systemPrompt: '',
+        contextLength: 1000,
+        reserveTokens: 100,
+        supportsVision: false,
+        preserveInterleavedReasoning: false,
+        projectedMessages: [],
+        pinnedFirstUser: {
+          messageId: pinned.record.id,
+          orderSeq: pinned.record.orderSeq,
+          sourceContentHash: pinned.sourceContentHash,
+          contentHash: pinned.contentHash
+        }
+      })
+    ).rejects.toThrow('Pinned initial user instruction changed during the active Run.')
   })
 
   it('retains the configured recent pairs plus the resume target turn', async () => {
@@ -1301,9 +1399,9 @@ describe('CompactionService', () => {
       historyRecords
     })
 
-    expect(intent?.summaryRange).toEqual({ fromOrderSeq: 1, toOrderSeq: 6 })
-    expect(intent?.sourceMessageIds).toEqual(historyRecords.slice(0, 6).map((record) => record.id))
-    expect(intent?.summaryBlocks.join('\n')).toContain('U0:')
+    expect(intent?.summaryRange).toEqual({ fromOrderSeq: 2, toOrderSeq: 6 })
+    expect(intent?.sourceMessageIds).toEqual(historyRecords.slice(1, 6).map((record) => record.id))
+    expect(intent?.summaryBlocks.join('\n')).not.toContain('U0:')
     expect(intent?.summaryBlocks.join('\n')).toContain('U2:')
     expect(intent?.summaryBlocks.join('\n')).not.toContain('U3:')
     expect(intent?.summaryBlocks.join('\n')).not.toContain('U4:')
@@ -1462,6 +1560,60 @@ describe('CompactionService', () => {
       expect(anchorState).not.toHaveProperty('summary')
     }
   )
+
+  it('does not count pinned first-user tokens as hidden when proving checkpoint shrinkage', async () => {
+    const previousState: SessionSummaryState = {
+      summaryText: null,
+      summaryCursorOrderSeq: 1,
+      summaryUpdatedAt: null
+    }
+    const boundaryState: SessionSummaryState = {
+      summaryText: null,
+      summaryCursorOrderSeq: 5,
+      summaryUpdatedAt: null
+    }
+    const { service, messageStore, sessionStore } = createService({
+      summaryState: previousState,
+      compareAndSetResult: { applied: true, currentState: boundaryState },
+      sessionConfig: { autoCompactionRetainRecentPairs: 0 }
+    })
+    messageStore.getMessages.mockReturnValue([
+      makeUserRecord(1, 'P'.repeat(2000)),
+      makeAssistantRecord(2, 'ack'),
+      makeUserRecord(3, 'short follow-up'),
+      makeAssistantRecord(4, 'short answer')
+    ])
+
+    const intent = await service.prepareForManualCompaction({
+      sessionId: 's1',
+      providerId: 'openai',
+      modelId: 'gpt-4o',
+      systemPrompt: '',
+      contextLength: 10_000,
+      reserveTokens: 0,
+      supportsVision: false,
+      preserveInterleavedReasoning: false
+    })
+
+    expect(intent).not.toBeNull()
+    if (!intent) throw new Error('Expected a manual compaction intent.')
+    expect(intent.pinnedFirstUserTokenEstimate).toBeGreaterThan(1000)
+    expect(intent.newlyHiddenVisibleTokenEstimate).toBeLessThan(100)
+    expect(intent.sourceMessageIds).not.toContain('user-1')
+
+    const result = await service.applyCompaction(intent)
+
+    expect(result).toEqual({
+      outcome: 'boundary_only',
+      anchorCommitted: true,
+      summaryState: boundaryState
+    })
+    expect(sessionStore.compareAndSetSummaryState.mock.calls[0]?.[3]?.state).toMatchObject({
+      cursorOrderSeq: 5,
+      reason: SUMMARY_REJECTED_LARGER_REASON,
+      summaryGap: { fromOrderSeq: 2, toOrderSeq: 4 }
+    })
+  })
 
   it('reports unchanged when a CAS winner does not advance the reconstruction cursor', async () => {
     const previousState: SessionSummaryState = {

@@ -1740,7 +1740,7 @@ function buildCacheAwareMetadata(input: {
   }
 }
 
-function buildPinnedFirstUser(
+export function buildPinnedFirstUser(
   records: ChatMessageRecord[],
   supportsVision: boolean,
   supportsAudioInput: boolean,
