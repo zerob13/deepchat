@@ -834,7 +834,10 @@ export class SessionTranscript {
   ): number {
     const sourceRows = this.database.deepchatMessagesTable
       .getBySessionUpToOrderSeq(sourceSessionId, maxOrderSeq)
-      .filter((row) => row.status === 'sent')
+      .filter(
+        (row) =>
+          row.status === 'sent' && parseMessageMetadata(row.metadata).messageType !== 'compaction'
+      )
     const sourceRecords = this.toRecords(sourceRows)
 
     let nextOrderSeq = 1

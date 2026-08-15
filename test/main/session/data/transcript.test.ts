@@ -26,6 +26,7 @@ function createMockSqlitePresenter() {
       updateMetadata: vi.fn(),
       updateContentAndStatus: vi.fn(),
       getBySession: vi.fn().mockReturnValue([]),
+      getBySessionUpToOrderSeq: vi.fn().mockReturnValue([]),
       getPendingAssistantBySession: vi.fn().mockReturnValue([]),
       hasBySession: vi.fn().mockReturnValue(false),
       listPageBySession: vi.fn().mockReturnValue([]),
@@ -937,6 +938,43 @@ describe('SessionTranscript', () => {
     it('returns 1 when no messages exist', () => {
       sqlitePresenter.deepchatMessagesTable.getMaxOrderSeq.mockReturnValue(0)
       expect(store.getNextOrderSeq('s1')).toBe(1)
+    })
+  })
+
+  describe('cloneSentMessagesToSession', () => {
+    it('keeps compaction indicators out of the forked transcript', () => {
+      sqlitePresenter.deepchatMessagesTable.getBySessionUpToOrderSeq.mockReturnValue([
+        createMessageRow({ id: 'user-1', order_seq: 1 }),
+        createMessageRow({
+          id: 'compaction-1',
+          order_seq: 2,
+          role: 'assistant',
+          content: '[]',
+          metadata: JSON.stringify({
+            messageType: 'compaction',
+            compactionStatus: 'compacted',
+            compactionAttemptId: 'source-attempt'
+          })
+        }),
+        createMessageRow({
+          id: 'assistant-1',
+          order_seq: 3,
+          role: 'assistant',
+          content: '[]'
+        })
+      ])
+
+      expect(store.cloneSentMessagesToSession('source', 'fork', 3)).toBe(2)
+      expect(sqlitePresenter.deepchatMessagesTable.insert).toHaveBeenCalledTimes(2)
+      expect(sqlitePresenter.deepchatMessagesTable.insert.mock.calls).toEqual([
+        [expect.objectContaining({ sessionId: 'fork', orderSeq: 1, role: 'user' })],
+        [expect.objectContaining({ sessionId: 'fork', orderSeq: 2, role: 'assistant' })]
+      ])
+      expect(sqlitePresenter.deepchatMessagesTable.insert).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.stringContaining('source-attempt')
+        })
+      )
     })
   })
 

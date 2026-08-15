@@ -412,6 +412,9 @@ provider replay.
 - [x] Treat each persisted provider-pressure threshold as durable observation data: validate it
   against its physical attempt without reapplying the current detector policy, and degrade malformed
   pressure to null without discarding the provider-attempt fact or reviving older cache metrics.
+- [x] Exclude source-session compaction indicators from transcript forks; the target Session may
+  inherit user and assistant facts, but it must not claim a compaction attempt or anchor that never
+  occurred in its own Tape incarnation.
 - [ ] Review each completed slice for hidden side effects, compatibility, failure behavior,
   performance, security, naming, regression coverage, and maintenance cost before committing it.
 
