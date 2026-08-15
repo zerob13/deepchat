@@ -231,6 +231,32 @@ rollback mechanism and is not the authority for accepting a semantic summary.
   uses the latest effective user fact and must not wrap that original instruction in the
   derivative-content warning used for summaries or tool output.
 
+### Silent Provider Pressure Observation
+
+- Detect silent pressure only from the usage and terminal stop of one physical provider attempt.
+  Logical-round usage aggregates are reporting projections and cannot trigger recovery. DeepChat
+  `inputTokens` already includes cache reads; `cacheReadTokens` is detail and is never added again.
+- A completed `complete` attempt records pressure when its input usage is greater than the positive
+  safe-integer effective context window used for that request. A completed `max_tokens` attempt
+  records pressure only when output usage is zero and input usage fills at least 99% of that window,
+  with the threshold clamped to at least one token. Routes that bypass DeepChat context budgeting
+  and attempts without valid usage record no observation.
+- Persist the already-evaluated decision as an additive nullable field on the existing append-only
+  `provider/attempt_completed` fact. The observation carries an allowlisted kind, the attempt-local
+  window, and the exact threshold used; the fact's usage, provider/model, and physical-attempt
+  identity remain the evidence. Historical schema versions read as no observation.
+- At the next pre-turn boundary, only an unsettled observation for the current provider and model
+  can force the existing context-pressure compaction path. The prior response and its tool effects
+  are never replayed, and no background queue or mutable consumed bit is introduced.
+- An observation is unsettled exactly while its Tape entry is newer than the latest reconstruction
+  anchor. Any later reconstruction anchor settles all older observations because it proves the
+  read set was reconstructed after those facts. A model switch neither forces compaction nor
+  mutates the old observation; switching back may use it unless a newer anchor already settled it.
+- If automatic compaction is disabled or no boundary can advance, the observation remains pending.
+  Each new turn performs at most one indexed lookup and one ordinary compaction preparation; it
+  cannot spin. Provider-attempt persistence remains fail-open so a diagnostics write failure cannot
+  turn an already completed provider response into a user-visible failure.
+
 ## Compatibility
 
 - Existing reconstruction anchors containing a summary remain valid and retain their hash and
@@ -290,6 +316,9 @@ rollback mechanism and is not the authority for accepting a semantic summary.
     behavior as `summary_unavailable`.
 15. A non-finite or non-positive context length fails explicitly before compaction budget arithmetic
     instead of causing a repeated compaction loop.
+16. A physical attempt that meets either silent-pressure signature appends one idempotent provider
+    attempt fact, never replays completed work, and can force at most one next-turn compaction
+    preparation until a later reconstruction anchor settles it.
 
 ## Implementation Record
 

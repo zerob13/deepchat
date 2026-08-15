@@ -233,6 +233,42 @@ legacy anchor reasons, and the normal compacting-to-compacted transition.
 - Consume the observation at the next pre-turn boundary; a newer reconstruction anchor settles it.
   Do not create a background queue and do not replay an already completed response or user prompt.
 
+##### Silent Pressure State And Persistence Contract
+
+- The detector runs when one physical provider attempt settles, before its existing
+  `provider/attempt_completed` fact is appended. It uses that attempt's status, stop reason, and
+  usage plus the positive safe-integer effective context window captured from the same request
+  preflight. It emits `successful_prompt_overflow` only for `status=completed`,
+  `stopReason=complete`, and `inputTokens > contextWindowTokens`. It emits
+  `zero_output_length_at_limit` only for `status=completed`, `stopReason=max_tokens`,
+  `outputTokens=0`, and `inputTokens >= max(1, floor(contextWindowTokens * 0.99))`. Cache-read
+  detail is not added to input.
+- Provider-attempt schema v3 adds nullable `contextPressure: { kind, contextWindowTokens,
+  thresholdTokens }`. The observation is the durable decision; top-level usage and attempt identity
+  are its evidence. v1/v2 facts parse with `contextPressure=null`. The existing provenance key
+  remains unchanged, so retry/replay idempotence still binds one physical attempt to one fact.
+- Add an indexed Tape query for the newest valid pressure-bearing attempt after a supplied entry ID,
+  scoped to session, provider, and model. The application reader supplies the latest reconstruction
+  anchor's `entry_id` as that lower bound. This avoids transcript scans and avoids loading a long
+  session's provider-attempt history. Malformed or unknown observation kinds do not trigger work.
+- Pre-turn preparation reads this pending observation only after Tape readiness is established. If
+  present, `prepareForNextUserTurn` retains the configured tail but bypasses its percentage trigger
+  and uses `auto_handoff/context_overflow`; the existing automatic-compaction enabled setting still
+  applies. Normal marker, CAS, boundary-only fallback, and memory-observer behavior are reused.
+- A committed reconstruction anchor with `entry_id` greater than the observation settles it without
+  mutating either fact. One anchor settles every older matching observation. A threshold compaction,
+  boundary-only compaction, reset, or handoff can therefore settle stale pressure naturally. If no
+  intent can advance, the next turn may inspect the same fact once but starts no retry loop.
+- Detection and persistence are fail-open: an append failure is logged through the existing provider
+  outcome path and cannot invalidate a completed answer. No response, user prompt, or side-effecting
+  tool call is replayed for either signature. This is DeepChat's product policy; unlike pi's length
+  recovery, `max_tokens` does not request an automatic continuation.
+
+Focused coverage must prove both signatures, exact boundary negatives, cache-read non-duplication,
+per-physical-attempt isolation across retries, v1/v2 compatibility, idempotent append, indexed
+lookup, anchor settlement, model scoping, disabled/no-progress behavior, and next-turn force without
+provider replay.
+
 #### 6. Account For Compaction Model Usage
 
 - Design this as a vertical capture-to-reporting slice. Capture every summary call that returns
