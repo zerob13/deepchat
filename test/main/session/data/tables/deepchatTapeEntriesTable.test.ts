@@ -97,7 +97,7 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
     db.close()
   })
 
-  it('reads the latest request evidence through session and source indexes', () => {
+  it('reads the latest request evidence through indexed lookups', () => {
     const { db, table } = createTable()
 
     const firstManifest = table.appendEvent({
@@ -125,6 +125,7 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
       sessionId: 's1',
       name: 'provider/attempt_completed',
       source: { type: 'runtime_event', id: 'message-2', seq: 2 },
+      provenanceKey: 'provider-attempt:s1:message-2:2:1',
       data: { physicalAttempt: 1 },
       createdAt: 103
     })
@@ -132,6 +133,7 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
       sessionId: 's1',
       name: 'provider/attempt_completed',
       source: { type: 'runtime_event', id: 'message-2', seq: 2 },
+      provenanceKey: 'provider-attempt:s1:message-2:2:2',
       data: { physicalAttempt: 2 },
       createdAt: 104
     })
@@ -161,9 +163,12 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
          LIMIT 1`
       )
       .all('s1') as Array<{ detail: string }>
-    expect(viewPlan.some((row) => /idx_deepchat_tape_entries_session_name/i.test(row.detail))).toBe(
-      true
-    )
+    expect(
+      viewPlan.some((row) => /\bSEARCH deepchat_tape_entries\b.*\bUSING INDEX\b/i.test(row.detail))
+    ).toBe(true)
+    expect(
+      viewPlan.some((row) => /\bSCAN deepchat_tape_entries\b(?!.*USING INDEX)/i.test(row.detail))
+    ).toBe(false)
 
     const attemptPlan = db
       .prepare(
@@ -182,8 +187,13 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
       detail: string
     }>
     expect(
-      attemptPlan.some((row) => /idx_deepchat_tape_entries_session_source/i.test(row.detail))
+      attemptPlan.some((row) =>
+        /\bSEARCH deepchat_tape_entries\b.*\bUSING INDEX\b/i.test(row.detail)
+      )
     ).toBe(true)
+    expect(
+      attemptPlan.some((row) => /\bSCAN deepchat_tape_entries\b(?!.*USING INDEX)/i.test(row.detail))
+    ).toBe(false)
 
     db.close()
   })
@@ -363,11 +373,11 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
           thresholdTokens: 1_000
         }
       })
-    const appendAttempt = (data: Record<string, unknown>) =>
+    const appendAttempt = (data: object) =>
       table.appendProviderAttemptEvent({
         sessionId: 's1',
         name: 'provider/attempt_completed',
-        data
+        data: { ...data }
       })
 
     const legacy = { ...buildAttempt('provider-1', 'model-1'), schemaVersion: 2 } as Record<
