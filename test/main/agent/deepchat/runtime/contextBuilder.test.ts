@@ -2403,6 +2403,7 @@ describe('cache-aware context assembly', () => {
       makeUserRecord(1, 'first owner'),
       { ...makeAssistantRecord(2, 'partial answer', 'pending'), id: 'first-target' }
     ]
+    const firstOwner = firstTurnRecords[0]
     const firstTurn = buildCacheAwareResumeContextWithMetadata(
       's1',
       'first-target',
@@ -2415,6 +2416,12 @@ describe('cache-aware context assembly', () => {
         historyRecords: firstTurnRecords,
         summaryCursorOrderSeq: 3,
         pinFirstUser: true,
+        runPinnedFirstUser: {
+          messageId: firstOwner.id,
+          orderSeq: firstOwner.orderSeq,
+          sourceContentHash: hashJsonData(firstOwner.content),
+          contentHash: hashJsonData({ role: 'user', content: 'first owner' })
+        },
         contextContributions: createCacheAwareContributions({ summary: 'Earlier progress' })
       }
     )
@@ -2428,6 +2435,29 @@ describe('cache-aware context assembly', () => {
     ])
     expect(firstTurn.messages.filter((message) => message.content === 'first owner')).toHaveLength(1)
     expect(firstTurn.metadata.pinnedFirstUser).toBeUndefined()
+    expect(() =>
+      buildCacheAwareResumeContextWithMetadata(
+        's1',
+        'first-target',
+        'System',
+        10_000,
+        100,
+        createMockMessageStore(firstTurnRecords),
+        false,
+        {
+          historyRecords: firstTurnRecords,
+          summaryCursorOrderSeq: 3,
+          pinFirstUser: true,
+          runPinnedFirstUser: {
+            messageId: firstOwner.id,
+            orderSeq: firstOwner.orderSeq,
+            sourceContentHash: hashJsonData(firstOwner.content),
+            contentHash: '0'.repeat(64)
+          },
+          contextContributions: createCacheAwareContributions({ summary: 'Earlier progress' })
+        }
+      )
+    ).toThrow(/changed during the active Run/)
   })
 
   it('protects the pinned user during provider-loop fitting and fails if fixed input cannot fit', () => {

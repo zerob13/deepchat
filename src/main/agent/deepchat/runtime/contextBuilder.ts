@@ -1751,7 +1751,7 @@ export function buildPinnedFirstUser(
   for (const candidate of records) {
     if (
       candidate.role !== 'user' ||
-      candidate.id === excludedRecordId ||
+      (candidate.id === excludedRecordId && candidate.id !== expected?.messageId) ||
       (expected && candidate.id !== expected.messageId)
     ) {
       continue
@@ -1798,6 +1798,9 @@ export function buildPinnedFirstUser(
       pinned.contentHash !== expected.contentHash)
   ) {
     throw new Error('Pinned initial user instruction changed during the active Run.')
+  }
+  if (record.id === excludedRecordId) {
+    return null
   }
   return pinned
 }
