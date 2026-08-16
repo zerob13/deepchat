@@ -697,7 +697,7 @@ describe('CompactionRuntimeCoordinator', () => {
     expect(messageStore.deleteMessage).toHaveBeenCalledWith('compaction-message')
   })
 
-  it('finalizes a committed marker before fencing a stale runtime completion', async () => {
+  it('finalizes a committed marker without mutating a replacement runtime', async () => {
     const { applyCompaction, coordinator, initialInstance, messageStore, publishedEvents, runtime } =
       createHarness()
     const completion = createDeferred<{
@@ -726,7 +726,11 @@ describe('CompactionRuntimeCoordinator', () => {
       }
     })
 
-    await expect(applying).rejects.toMatchObject({ name: 'StaleDeepChatAgentInstanceError' })
+    await expect(applying).resolves.toMatchObject({
+      summaryText: 'durable summary',
+      summaryCursorOrderSeq: 5,
+      summaryUpdatedAt: 200
+    })
     expect(messageStore.updateCompactionMessage).toHaveBeenCalledWith(
       'compaction-message',
       'compacted',
@@ -736,6 +740,7 @@ describe('CompactionRuntimeCoordinator', () => {
     expect(publishedEvents.map(({ payload }) => payload)).toEqual([
       expect.objectContaining({ status: 'compacting' })
     ])
+    expect(replacement.getCompactionState()).toBeUndefined()
   })
 
   it('settles a boundary-only marker from its attempt anchor after a newer anchor', async () => {
@@ -794,9 +799,17 @@ describe('CompactionRuntimeCoordinator', () => {
     )
   })
 
-  it('retracts a failed marker before fencing a stale runtime completion', async () => {
-    const { applyCompaction, coordinator, initialInstance, messageStore, runtime } = createHarness()
+  it('retracts a failed marker without masking the failure after runtime replacement', async () => {
+    const {
+      applyCompaction,
+      coordinator,
+      initialInstance,
+      messageStore,
+      publishedEvents,
+      runtime
+    } = createHarness()
     const completion = createDeferred<never>()
+    const failure = new Error('provider failed')
     applyCompaction.mockImplementationOnce(async () => await completion.promise)
 
     const applying = coordinator.apply(SESSION_ID, createIntent(), undefined, initialInstance)
@@ -804,10 +817,14 @@ describe('CompactionRuntimeCoordinator', () => {
     runtime.evict(toAppSessionId(SESSION_ID))
     const replacement = runtime.getOrHydrate(toAppSessionId(SESSION_ID))
     replacement.setRuntimeState(createRuntimeState())
-    completion.reject(new Error('provider failed'))
+    completion.reject(failure)
 
-    await expect(applying).rejects.toMatchObject({ name: 'StaleDeepChatAgentInstanceError' })
+    await expect(applying).rejects.toBe(failure)
     expect(messageStore.deleteMessage).toHaveBeenCalledWith('compaction-message')
+    expect(publishedEvents.map(({ payload }) => payload)).toEqual([
+      expect.objectContaining({ status: 'compacting' })
+    ])
+    expect(replacement.getCompactionState()).toBeUndefined()
   })
 
   it('does not settle idle after the operation controller loses ownership', async () => {

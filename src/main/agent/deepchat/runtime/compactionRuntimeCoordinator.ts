@@ -335,7 +335,8 @@ export class CompactionRuntimeCoordinator {
     options?: ApplyCompactionOptions,
     expectedInstance = this.instance(sessionId)
   ): Promise<SessionSummaryState> {
-    this.assertCurrent(sessionId, expectedInstance)
+    const scope = this.deps.registry.scopeFor(toAppSessionId(sessionId), expectedInstance)
+    scope.assertCurrent()
     if (!intent) {
       return this.deps.sessionStore.getSummaryState(sessionId)
     }
@@ -391,11 +392,13 @@ export class CompactionRuntimeCoordinator {
     } catch (error) {
       this.deps.messageStore.deleteMessage(compactionMessageId)
       this.deps.messageProjection.refresh(sessionId, compactionMessageId)
-      this.emit(
-        sessionId,
-        this.projectSummaryState(sessionId, intent.previousState),
-        expectedInstance
-      )
+      if (scope.isCurrent()) {
+        this.emit(
+          sessionId,
+          this.projectSummaryState(sessionId, intent.previousState),
+          expectedInstance
+        )
+      }
       if (isAbortError(error) || options?.signal?.aborted) {
         throwIfAbortRequested(options?.signal)
       }
@@ -428,7 +431,9 @@ export class CompactionRuntimeCoordinator {
       this.deps.messageStore.deleteMessage(compactionMessageId)
     }
     this.deps.messageProjection.refresh(sessionId, compactionMessageId)
-    this.emit(sessionId, projectedState, expectedInstance)
+    if (scope.isCurrent()) {
+      this.emit(sessionId, projectedState, expectedInstance)
+    }
     return result.summaryState
   }
 
