@@ -55,7 +55,7 @@ async function mountMarkstream(content: string) {
       deferNodesUntilVisible: false,
       viewportPriority: false,
       nodeVirtual: false,
-      codeRenderer: 'pre'
+      renderCodeBlocksAsPre: true
     }
   })
   await settleRenderer()
@@ -78,7 +78,6 @@ describe('Markstream DOM contracts used by MarkdownRenderer delegation', () => {
           deferNodesUntilVisible: false,
           viewportPriority: false,
           nodeVirtual: false,
-          codeRenderer: 'monaco',
           codeBlockStream: true
         }
       })
@@ -110,7 +109,6 @@ describe('Markstream DOM contracts used by MarkdownRenderer delegation', () => {
         deferNodesUntilVisible: false,
         viewportPriority: false,
         nodeVirtual: false,
-        codeRenderer: 'monaco',
         codeBlockStream: true
       }
     })

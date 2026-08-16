@@ -196,7 +196,7 @@
                 />
               </div>
               <template v-if="diffData">
-                <div class="dc-overscroll-contain min-h-0 overflow-auto">
+                <div class="markstream-vue dc-overscroll-contain min-h-0 overflow-auto">
                   <CodeBlockNode
                     :node="{
                       type: 'code_block',

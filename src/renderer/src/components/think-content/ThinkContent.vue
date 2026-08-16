@@ -85,8 +85,8 @@ setCustomComponents(customId, {
   code_block: (_props) => {
     const isMermaid = _props.node.language === 'mermaid'
     if (isMermaid) {
-      // 对于 Mermaid 代码块，直接返回 MermaidNode 组件
-      return h(PreCodeNode.vue, {
+      // Keep diagrams as readable source in the compact thinking surface.
+      return h(PreCodeNode, {
         ..._props
       })
     }
@@ -104,7 +104,7 @@ setCustomComponents(customId, {
     )
   },
   mermaid: (_props) =>
-    h(PreCodeNode.vue, {
+    h(PreCodeNode, {
       ..._props
     })
 })

@@ -1,5 +1,7 @@
 <template>
-  <MermaidBlockNode v-if="isMermaid" :node="mermaidNode" />
+  <div v-if="isMermaid" class="markstream-vue">
+    <MermaidBlockNode :node="mermaidNode" />
+  </div>
   <div v-else class="m-4 rounded-lg border border-border overflow-hidden shadow-sm">
     <div class="flex justify-between items-center p-2 bg-muted text-xs">
       <span class="flex items-center space-x-2">

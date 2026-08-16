@@ -345,6 +345,7 @@ describe('MessageBlockToolCall', () => {
 
     const codeBlock = wrapper.findComponent({ name: 'CodeBlockNode' })
     expect(codeBlock.exists()).toBe(true)
+    expect(codeBlock.element.parentElement?.classList.contains('markstream-vue')).toBe(true)
     expect(codeBlock.props('node')).toMatchObject({
       diff: true,
       language: 'typescript',
