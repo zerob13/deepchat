@@ -2565,26 +2565,35 @@ export class DeepChatLoopRunner {
           this.ports.sessionStore.getReconstructionAnchorPromptState(params.sessionId)
         ),
       getSummaryCursorOrderSeq: (summaryState) => summaryState.summaryCursorOrderSeq,
-      fit: ({ messages, reserveTokens, minimumProtectedTailCount }) =>
+      fit: ({
+        messages,
+        reserveTokens,
+        minimumProtectedTailCount,
+        pinnedFirstUserContentHash
+      }) =>
         fitRequestMessagesToContextWindow({
           messages,
           contextLength: params.contextLength,
           reserveTokens,
           minimumProtectedTailCount,
           contextContributions: params.contextContributions,
-          pinnedFirstUserContentHash: params.pinnedFirstUser?.contentHash
+          pinnedFirstUserContentHash
         }),
       rebuildAfterCompaction: ({ summary, requestMessages }) => {
+        const unchanged = () => ({
+          messages: requestMessages,
+          pinnedFirstUserContentHash: params.pinnedFirstUser?.contentHash
+        })
         if (
           !compactedHistoryRecords?.some((record) => record.id === params.messageId)
         ) {
-          return requestMessages
+          return unchanged()
         }
         const leadingMessage = requestMessages[0]
         let currentSystemMessage = ''
         if (leadingMessage?.role === 'system') {
           if (typeof leadingMessage.content !== 'string') {
-            return requestMessages
+            return unchanged()
           }
           currentSystemMessage = leadingMessage.content
         }
@@ -2592,7 +2601,7 @@ export class DeepChatLoopRunner {
         // below by the in-flight request. Keep those mutations provisional; the final fitter
         // updates the canonical contributions from the exact View that recovery accepts.
         const provisionalRebuildContext = { ...params.contextContributions }
-        const rebuiltMessages = buildTapeResumeView({
+        const rebuilt = buildTapeResumeView({
           sessionId: params.sessionId,
           assistantMessageId: params.messageId,
           systemPrompt: currentSystemMessage,
@@ -2614,18 +2623,24 @@ export class DeepChatLoopRunner {
               params.interleavedReasoning.preserveEmptyReasoningContent === true,
             providerReplayProjector: params.providerReplayProjector
           }
-        }).messages
+        })
+        const rebuiltMessages = rebuilt.messages
         const activeTurnStart = requestMessages.findLastIndex((message) => message.role === 'user')
         const rebuiltActiveTurnStart = rebuiltMessages.findLastIndex(
           (message) => message.role === 'user'
         )
         if (activeTurnStart < 0 || rebuiltActiveTurnStart < 0) {
-          return requestMessages
+          return unchanged()
         }
-        return [
-          ...rebuiltMessages.slice(0, rebuiltActiveTurnStart),
-          ...requestMessages.slice(activeTurnStart)
-        ]
+        // The active owner can itself be the Run pin. In that case the rebuilt View intentionally
+        // has no separate pinned prefix, so fitting must use the rebuilt View's authority.
+        return {
+          messages: [
+            ...rebuiltMessages.slice(0, rebuiltActiveTurnStart),
+            ...requestMessages.slice(activeTurnStart)
+          ],
+          pinnedFirstUserContentHash: rebuilt.metadata.pinnedFirstUser?.contentHash
+        }
       },
       measure: estimateMessagesTokens,
       assertCurrent: () =>

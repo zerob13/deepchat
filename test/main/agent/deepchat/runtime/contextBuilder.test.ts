@@ -2435,6 +2435,16 @@ describe('cache-aware context assembly', () => {
     ])
     expect(firstTurn.messages.filter((message) => message.content === 'first owner')).toHaveLength(1)
     expect(firstTurn.metadata.pinnedFirstUser).toBeUndefined()
+    expect(
+      fitCacheAwareMessagesToContextWindow(
+        firstTurn.messages,
+        10_000,
+        100,
+        createCacheAwareContributions({ summary: 'Earlier progress' }),
+        0,
+        firstTurn.metadata.pinnedFirstUser?.contentHash
+      )
+    ).toEqual(firstTurn.messages)
     expect(() =>
       buildCacheAwareResumeContextWithMetadata(
         's1',

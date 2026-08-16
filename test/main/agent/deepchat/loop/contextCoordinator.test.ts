@@ -638,13 +638,18 @@ describe('DeepChatContextCoordinator', () => {
         }
       },
       getSummaryCursorOrderSeq: (summary) => summary.cursor,
-      rebuildAfterCompaction: ({ requestMessages }) => [
-        requestMessages[0],
-        contextContributions.checkpoint.message!,
-        ...requestMessages.slice(2)
-      ],
-      fit: ({ messages, reserveTokens, minimumProtectedTailCount }) => {
-        order.push(`fit:${reserveTokens}:${minimumProtectedTailCount}`)
+      rebuildAfterCompaction: ({ requestMessages }) => ({
+        messages: [
+          requestMessages[0],
+          contextContributions.checkpoint.message!,
+          ...requestMessages.slice(2)
+        ],
+        pinnedFirstUserContentHash: 'rebuilt-pin-hash'
+      }),
+      fit: ({ messages, reserveTokens, minimumProtectedTailCount, pinnedFirstUserContentHash }) => {
+        order.push(
+          `fit:${reserveTokens}:${minimumProtectedTailCount}:${pinnedFirstUserContentHash}`
+        )
         return messages.filter(
           (message) => !(message.role === 'assistant' && message.content === 'old history')
         )
@@ -659,7 +664,7 @@ describe('DeepChatContextCoordinator', () => {
       'check',
       'checkpoint',
       'check',
-      'fit:120:1'
+      'fit:120:1:rebuilt-pin-hash'
     ])
     expect(recovered).toEqual({
       messages: [
@@ -698,10 +703,9 @@ describe('DeepChatContextCoordinator', () => {
         contributions: []
       }),
       getSummaryCursorOrderSeq: (summary) => summary.cursor,
-      rebuildAfterCompaction: ({ requestMessages }) => [
-        contextContributions.checkpoint.message!,
-        ...requestMessages.slice(1)
-      ],
+      rebuildAfterCompaction: ({ requestMessages }) => ({
+        messages: [contextContributions.checkpoint.message!, ...requestMessages.slice(1)]
+      }),
       fit: ({ messages: candidate }) => candidate,
       measure: (candidate) => JSON.stringify(candidate).length,
       assertCurrent: vi.fn()

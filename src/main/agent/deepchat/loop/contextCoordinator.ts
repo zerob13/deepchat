@@ -100,11 +100,12 @@ export interface ContextPressureRecovery<TSummary> {
     messages: ChatMessage[]
     reserveTokens: number
     minimumProtectedTailCount: number
+    pinnedFirstUserContentHash?: string
   }): ChatMessage[]
-  rebuildAfterCompaction(input: {
-    summary: TSummary
-    requestMessages: ChatMessage[]
-  }): ChatMessage[]
+  rebuildAfterCompaction(input: { summary: TSummary; requestMessages: ChatMessage[] }): {
+    messages: ChatMessage[]
+    pinnedFirstUserContentHash?: string
+  }
   measure(messages: ChatMessage[]): number
   assertCurrent(): void
 }
@@ -773,14 +774,15 @@ export class DeepChatContextCoordinator {
     input.contextContributions.checkpoint = checkpoint
     let fittedMessages: ChatMessage[]
     try {
-      const messages = input.rebuildAfterCompaction({
+      const rebuilt = input.rebuildAfterCompaction({
         summary: compaction.summary,
         requestMessages: input.requestMessages
       })
       fittedMessages = input.fit({
-        messages,
+        messages: rebuilt.messages,
         reserveTokens: input.requestedMaxTokens + input.toolReserveTokens,
-        minimumProtectedTailCount: input.minimumProtectedTailCount
+        minimumProtectedTailCount: input.minimumProtectedTailCount,
+        pinnedFirstUserContentHash: rebuilt.pinnedFirstUserContentHash
       })
     } catch (error) {
       input.contextContributions.checkpoint = previousCheckpoint
