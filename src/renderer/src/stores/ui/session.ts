@@ -1546,6 +1546,8 @@ export const useSessionStore = defineStore('session', () => {
     onCompactionChanged: handleCompactionChanged
   })
   registerStoreCleanup(() => {
+    compactionSyncRequestId += 1
+    activeCompactionSync = null
     contextOccupancyRequestId += 1
     sessionIpcBinding?.cleanup()
   })
