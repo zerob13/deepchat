@@ -63,6 +63,27 @@
         "yobrowser": "YoBrowser"
       }
     },
+    "toolMode": {
+      "title": "Mod",
+      "modelDefault": "Lalai model",
+      "options": {
+        "agent": "Agent",
+        "code": "Code",
+        "minimal": "Minimal"
+      },
+      "descriptions": {
+        "agent": "Gunakan set alat Agent standard.",
+        "code": "Gabungkan alat yang didayakan melalui kod. Memerlukan mod kebenaran Akses penuh.",
+        "minimal": "Permudahkan operasi fail sambil mengekalkan alat lain yang didayakan."
+      },
+      "useModelDefault": "Gunakan lalai model",
+      "saving": "Menyimpan mod...",
+      "locked": "Anda boleh menukar mod selepas respons ini selesai.",
+      "updateFailed": "Mod alat tidak dapat dikemas kini.",
+      "codeEntry": "Entri kod",
+      "codeCallable": "Boleh dipanggil dari kod",
+      "minimalTools": "Alat pengekodan"
+    },
     "fileUploadFailed": "Pemprosesan lampiran gagal",
     "fileUploadFailedDesc": "Tidak dapat memproses fail {count}: {names}",
     "fileUploadFailedMore": "Tunggu {count}",

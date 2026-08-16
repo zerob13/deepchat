@@ -63,6 +63,27 @@
         "yobrowser": "Trình duyệt Yo"
       }
     },
+    "toolMode": {
+      "title": "Chế độ",
+      "modelDefault": "Mặc định của mô hình",
+      "options": {
+        "agent": "Agent",
+        "code": "Code",
+        "minimal": "Minimal"
+      },
+      "descriptions": {
+        "agent": "Sử dụng bộ công cụ Agent tiêu chuẩn.",
+        "code": "Kết hợp các công cụ đã bật bằng mã. Yêu cầu chế độ quyền Toàn quyền truy cập.",
+        "minimal": "Đơn giản hóa thao tác tệp và giữ các công cụ đã bật khác."
+      },
+      "useModelDefault": "Dùng mặc định của mô hình",
+      "saving": "Đang lưu chế độ...",
+      "locked": "Bạn có thể đổi chế độ sau khi phản hồi này hoàn tất.",
+      "updateFailed": "Không thể cập nhật chế độ công cụ.",
+      "codeEntry": "Điểm vào mã",
+      "codeCallable": "Có thể gọi từ mã",
+      "minimalTools": "Công cụ lập trình"
+    },
     "fileUploadFailed": "Tệp đính kèm không thành công",
     "fileUploadFailedDesc": "Không thể xử lý tệp {count}: {names}",
     "fileUploadFailedMore": " và {count} khác",

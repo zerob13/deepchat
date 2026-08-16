@@ -6,6 +6,10 @@ import {
   createSkillContextTapePort,
   createSkillExecutionAuthorityTapePort
 } from '@/tape/application/capabilityAdapters'
+import type {
+  CommitNestedExecutionDispatchInput,
+  CommitNestedExecutionToolOutcomeInput
+} from '@/tape/domain/executionJournal'
 
 const MAIN_SOURCE_ROOT = path.resolve(process.cwd(), 'src/main')
 const TAPE_ROOT = path.join(MAIN_SOURCE_ROOT, 'tape')
@@ -597,8 +601,12 @@ describe('Tape layer boundaries', () => {
       materializeSkillContexts: vi.fn(),
       appendMessageRecord: vi.fn()
     }
+    const nestedExecutionJournal = {
+      commitNestedDispatch: vi.fn(),
+      commitNestedToolOutcome: vi.fn()
+    }
 
-    const loopPort = createDeepChatLoopTapePort(source)
+    const loopPort = createDeepChatLoopTapePort(source, nestedExecutionJournal)
 
     expect(Object.isFrozen(loopPort)).toBe(true)
     expect(Object.keys(loopPort).sort()).toEqual([
@@ -608,6 +616,8 @@ describe('Tape layer boundaries', () => {
       'appendViewManifest',
       'assertSkillRequestAuthority',
       'commitDispatch',
+      'commitNestedDispatch',
+      'commitNestedToolOutcome',
       'commitRunStarted',
       'commitRunTerminal',
       'commitToolOutcome',
@@ -623,6 +633,38 @@ describe('Tape layer boundaries', () => {
     ])
     expect('materializeSkillContexts' in loopPort).toBe(false)
     expect('appendMessageRecord' in loopPort).toBe(false)
+
+    const operation = {
+      runId: 'run-1',
+      requestSeq: 1,
+      providerToolCallId: 'outer-1',
+      kind: 'nested',
+      childOrdinal: 0
+    } as const
+    const nestedDispatch: CommitNestedExecutionDispatchInput = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      operation,
+      toolName: 'exec',
+      toolSource: 'agent',
+      normalizedArguments: { command: 'git status --short' },
+      target: { serverName: 'agent-filesystem', originalName: 'exec' },
+      definitionHash: 'a'.repeat(64),
+      capabilityHash: 'b'.repeat(64)
+    }
+    const nestedOutcome: CommitNestedExecutionToolOutcomeInput = {
+      sessionId: 'session-1',
+      messageId: 'message-1',
+      operation,
+      responseText: 'clean',
+      isError: false
+    }
+
+    loopPort.commitNestedDispatch(nestedDispatch)
+    loopPort.commitNestedToolOutcome(nestedOutcome)
+
+    expect(nestedExecutionJournal.commitNestedDispatch).toHaveBeenCalledWith(nestedDispatch)
+    expect(nestedExecutionJournal.commitNestedToolOutcome).toHaveBeenCalledWith(nestedOutcome)
   })
 
   it.each([
