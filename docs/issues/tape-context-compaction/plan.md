@@ -241,7 +241,7 @@ legacy anchor reasons, and the normal compacting-to-compacted transition.
   preflight. It emits `successful_prompt_overflow` only for `status=completed`,
   `stopReason=complete`, and `inputTokens > contextWindowTokens`. It emits
   `zero_output_length_at_limit` only for `status=completed`, `stopReason=max_tokens`,
-  `outputTokens=0`, and `inputTokens >= max(1, floor(contextWindowTokens * 0.99))`. Cache-read
+  `outputTokens=0`, and `inputTokens >= max(1, ceil(contextWindowTokens * 0.99))`. Cache-read
   detail is not added to input.
 - Provider-attempt schema v3 adds nullable `contextPressure: { kind, contextWindowTokens,
   thresholdTokens }`. The observation is the durable decision; top-level usage and attempt identity
