@@ -127,7 +127,7 @@ describe('compaction model call Tape usage', () => {
     expect(parseTapeCompactionModelCallEvent(unknownRow)).toEqual(unknown)
   })
 
-  it('round-trips partial usage and keeps legacy complete-usage facts readable', () => {
+  it('round-trips partial usage and rejects unpublished schema versions', () => {
     const { service } = createService()
     const partialRow = service.appendCompactionModelCall(
       input({ usage: { inputTokens: 100, outputTokens: 20, totalTokens: null } })
@@ -147,10 +147,7 @@ describe('compaction model call Tape usage', () => {
       outputTokens: 20,
       totalTokens: null
     })
-    expect(parseTapeCompactionModelCallEvent(legacyRow)).toMatchObject({
-      schemaVersion: 1,
-      usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 }
-    })
+    expect(parseTapeCompactionModelCallEvent(legacyRow)).toBeNull()
   })
 
   it('assigns monotonic attempt-local sequences and reuses an idempotent call identity', () => {
