@@ -84,12 +84,6 @@ function createHarness(
     permissionMode: 'full_access'
   })
   const compaction = {
-    getState: vi.fn().mockResolvedValue({
-      status: 'idle',
-      cursorOrderSeq: 3,
-      summaryUpdatedAt: null,
-      boundaryReason: null
-    }),
     getSnapshot: vi.fn().mockResolvedValue({
       state: {
         status: 'compacted',

@@ -274,6 +274,8 @@ describe('main kernel contracts', () => {
         'sessions.getAcpSessionCommands',
         'sessions.getAcpSessionConfigOptions',
         'sessions.getAgents',
+        'sessions.getCompactionSnapshot',
+        'sessions.getContextOccupancy',
         'sessions.getDisabledAgentTools',
         'sessions.getGenerationSettings',
         'sessions.getPermissionMode',

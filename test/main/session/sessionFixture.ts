@@ -123,7 +123,8 @@ export const createSessionFixture = (input: {
               compaction: {
                 getSnapshot: () => handle.deepchat.getCompactionSnapshot(),
                 compact: () => handle.deepchat.compact()
-              }
+              },
+              getContextOccupancy: () => handle.deepchat.getContextOccupancy()
             }
           : { ...base, kind: handle.kind }
       }
