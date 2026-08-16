@@ -859,7 +859,7 @@
       "cachedTokensCachedLabel": "En caché",
       "cachedTokensUncachedLabel": "sin caché",
       "cacheHitRate": "Tasa de aciertos de caché",
-      "cacheHitRateDescription": "token de prompt en caché divididos por el total de token de entrada.",
+      "cacheHitRateDescription": "Tokens de prompt en caché divididos por los tokens de entrada de registros de uso con métricas de caché.",
       "recordingStartedAt": "Grabación iniciada",
       "recordingStartedAtDescription": "El registro de uso más antiguo almacenado actualmente en este panel.",
       "withDeepChatDaysLabel": "dias juntos",

@@ -495,7 +495,7 @@
       "cachedTokensCachedLabel": "کش‌شده",
       "cachedTokensUncachedLabel": "بدون کش",
       "cacheHitRate": "نرخ اصابت کش",
-      "cacheHitRateDescription": "نسبت توکن‌های کش‌شدهٔ پرامپت به کل توکن‌های ورودی.",
+      "cacheHitRateDescription": "نسبت توکن‌های کش‌شدهٔ پرامپت به توکن‌های ورودیِ رکوردهای دارای سنجهٔ کش.",
       "recordingStartedAt": "شروع ثبت",
       "recordingStartedAtDescription": "قدیمی‌ترین رکورد مصرفی که اکنون در این داشبورد نگه‌داری می‌شود.",
       "withDeepChatDaysLabel": "روزهای همراهی",

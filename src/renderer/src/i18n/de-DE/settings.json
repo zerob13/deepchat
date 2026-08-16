@@ -859,7 +859,7 @@
       "cachedTokensCachedLabel": "Cache-Treffer",
       "cachedTokensUncachedLabel": "Nicht getroffen",
       "cacheHitRate": "Cache-Trefferrate",
-      "cacheHitRateDescription": "Anteil der gecachten prompt-token an den gesamten Eingabe-token.",
+      "cacheHitRateDescription": "Anteil gecachter Prompt-Tokens an den Eingabe-Tokens aus Nutzungsdatensätzen mit Cache-Messwerten.",
       "recordingStartedAt": "Statistik seit",
       "recordingStartedAtDescription": "Zeitpunkt des frühesten usage-Eintrags in der aktuellen Übersicht.",
       "withDeepChatDaysLabel": "Tage gemeinsam",

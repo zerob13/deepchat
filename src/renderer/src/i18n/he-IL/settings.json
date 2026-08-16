@@ -495,7 +495,7 @@
       "cachedTokensCachedLabel": "במטמון",
       "cachedTokensUncachedLabel": "ללא מטמון",
       "cacheHitRate": "שיעור פגיעות מטמון",
-      "cacheHitRateDescription": "טוקני פרומפט מהמטמון חלקי כלל טוקני הקלט.",
+      "cacheHitRateDescription": "טוקני פרומפט מהמטמון חלקי טוקני הקלט ברשומות שימוש הכוללות מדדי מטמון.",
       "recordingStartedAt": "תחילת הרישום",
       "recordingStartedAtDescription": "רשומת השימוש המוקדמת ביותר השמורה כעת בלוח זה.",
       "withDeepChatDaysLabel": "ימים יחד",
@@ -529,10 +529,10 @@
       "modelTitle": "דירוג מודלים",
       "modelDescription": "10 המודלים המובילים לפי סך האסימונים.",
       "categoryTitle": "שימוש לפי פעילות",
-      "categoryDescription": "הפרדת השימוש בשיחות מקריאות פנימיות למודל לצמצום ההקשר.",
+      "categoryDescription": "הפרדת השימוש בשיחות מקריאות פנימיות למודל לצורך דחיסת ההקשר.",
       "category": {
         "chat": "שיחה",
-        "compaction": "צמצום הקשר"
+        "compaction": "דחיסת הקשר"
       },
       "chatEvents": "{count} הודעות",
       "compactionEvents": "{count} קריאות למודל",

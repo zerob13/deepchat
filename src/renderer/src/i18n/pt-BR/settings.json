@@ -495,7 +495,7 @@
       "cachedTokensCachedLabel": "Em cache",
       "cachedTokensUncachedLabel": "Sem cache",
       "cacheHitRate": "Taxa de acerto do cache",
-      "cacheHitRateDescription": "Tokens de prompt em cache divididos pelo total de tokens de entrada.",
+      "cacheHitRateDescription": "Tokens de prompt em cache divididos pelos tokens de entrada dos registros com métricas de cache.",
       "recordingStartedAt": "Início do registro",
       "recordingStartedAtDescription": "O registro de uso mais antigo atualmente armazenado neste painel.",
       "withDeepChatDaysLabel": "Dias juntos",

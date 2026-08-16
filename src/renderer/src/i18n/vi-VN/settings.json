@@ -859,7 +859,7 @@
       "cachedTokensCachedLabel": "Đã lưu vào bộ nhớ đệm",
       "cachedTokensUncachedLabel": "Không được lưu vào bộ nhớ đệm",
       "cacheHitRate": "Tỷ lệ truy cập bộ đệm",
-      "cacheHitRateDescription": "prompt tokens được lưu vào bộ nhớ đệm chia cho tổng đầu vào tokens.",
+      "cacheHitRateDescription": "Token lời nhắc được lưu trong bộ đệm chia cho token đầu vào của các bản ghi có số liệu bộ đệm.",
       "recordingStartedAt": "Đã bắt đầu ghi",
       "recordingStartedAtDescription": "Bản ghi sử dụng sớm nhất hiện được lưu trữ trong bảng thông tin này.",
       "withDeepChatDaysLabel": "Ngày bên nhau",

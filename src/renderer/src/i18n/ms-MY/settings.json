@@ -859,7 +859,7 @@
       "cachedTokensCachedLabel": "tekan cache",
       "cachedTokensUncachedLabel": "rindu",
       "cacheHitRate": "Kadar hit cache",
-      "cacheHitRateDescription": "Nisbah prompt token cache kepada jumlah input token.",
+      "cacheHitRateDescription": "Token prompt cache dibahagikan dengan token input daripada rekod penggunaan yang melaporkan metrik cache.",
       "recordingStartedAt": "Masa mula statistik",
       "recordingStartedAtDescription": "Masa rekod usage terawal dalam papan kanban semasa.",
       "withDeepChatDaysLabel": "Bilangan hari persahabatan",

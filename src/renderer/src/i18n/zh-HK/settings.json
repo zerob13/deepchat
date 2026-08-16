@@ -495,7 +495,7 @@
       "cachedTokensCachedLabel": "緩存命中",
       "cachedTokensUncachedLabel": "未命中",
       "cacheHitRate": "緩存命中率",
-      "cacheHitRateDescription": "緩存 prompt token 佔總輸入 token 的比例。",
+      "cacheHitRateDescription": "緩存 prompt token 佔有緩存指標的 usage 記錄中輸入 token 的比例。",
       "recordingStartedAt": "統計開始時間",
       "recordingStartedAtDescription": "目前看板中最早一條 usage 記錄的時間。",
       "withDeepChatDaysLabel": "陪伴天數",

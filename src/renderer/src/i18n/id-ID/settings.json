@@ -859,7 +859,7 @@
       "cachedTokensCachedLabel": "cache terkena",
       "cachedTokensUncachedLabel": "rindu",
       "cacheHitRate": "Tingkat keberhasilan cache",
-      "cacheHitRateDescription": "Cache prompt token sebagai proporsi total input token.",
+      "cacheHitRateDescription": "Token prompt dalam cache dibagi token input dari catatan penggunaan yang memiliki metrik cache.",
       "recordingStartedAt": "Statistik waktu mulai",
       "recordingStartedAtDescription": "Waktu catatan penggunaan paling awal di dasbor saat ini.",
       "withDeepChatDaysLabel": "Jumlah hari persahabatan",
@@ -893,10 +893,10 @@
       "modelTitle": "Peringkat model",
       "modelDescription": "10 model teratas berdasarkan total token.",
       "categoryTitle": "Penggunaan berdasarkan aktivitas",
-      "categoryDescription": "Pisahkan penggunaan percakapan dari panggilan model internal untuk pemadatan konteks.",
+      "categoryDescription": "Pisahkan penggunaan percakapan dari panggilan model internal untuk kompresi konteks.",
       "category": {
         "chat": "Percakapan",
-        "compaction": "Pemadatan konteks"
+        "compaction": "Kompresi konteks"
       },
       "chatEvents": "{count} pesan",
       "compactionEvents": "{count} panggilan model",

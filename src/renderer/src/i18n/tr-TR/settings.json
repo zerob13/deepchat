@@ -859,7 +859,7 @@
       "cachedTokensCachedLabel": "Önbelleğe alındı",
       "cachedTokensUncachedLabel": "Önbelleğe alınmamış",
       "cacheHitRate": "Önbellek isabet oranı",
-      "cacheHitRateDescription": "Önbelleğe alınan prompt tokens toplam giriş tokens'ye bölünür.",
+      "cacheHitRateDescription": "Önbelleğe alınmış istem tokenlerinin, önbellek ölçümleri bildiren kullanım kayıtlarındaki giriş tokenlerine oranı.",
       "recordingStartedAt": "Kayıt başladı",
       "recordingStartedAtDescription": "Şu anda bu kontrol panelinde saklanan en eski kullanım kaydı.",
       "withDeepChatDaysLabel": "Birlikte geçirdiğimiz günler",

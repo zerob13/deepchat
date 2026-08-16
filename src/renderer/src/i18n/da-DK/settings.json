@@ -428,7 +428,7 @@
       "cachedTokensCachedLabel": "Cachelagret",
       "cachedTokensUncachedLabel": "Ikke cachelagret",
       "cacheHitRate": "Cachetræfrate",
-      "cacheHitRateDescription": "Cachelagrede prompt-tokens divideret med alle inputtokens.",
+      "cacheHitRateDescription": "Cachelagrede prompt-tokens divideret med inputtokens fra brugsregistreringer med cachemålinger.",
       "recordingStartedAt": "Første registrering",
       "recordingStartedAtDescription": "Den tidligste brugsregistrering, der aktuelt findes i denne oversigt.",
       "withDeepChatDaysLabel": "Dage sammen",

@@ -859,7 +859,7 @@
       "cachedTokensCachedLabel": "Buforowane",
       "cachedTokensUncachedLabel": "Nieumieszczone w pamięci podręcznej",
       "cacheHitRate": "Współczynnik trafień w pamięci podręcznej",
-      "cacheHitRateDescription": "Buforowane prompt tokens podzielone przez całkowite dane wejściowe tokens.",
+      "cacheHitRateDescription": "Tokeny promptu z pamięci podręcznej podzielone przez tokeny wejściowe z rekordów zawierających metryki pamięci podręcznej.",
       "recordingStartedAt": "Rozpoczęło się nagrywanie",
       "recordingStartedAtDescription": "Najwcześniejszy zapis użycia aktualnie przechowywany w tym panelu kontrolnym.",
       "withDeepChatDaysLabel": "Dni razem",

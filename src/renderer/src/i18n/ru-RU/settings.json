@@ -495,7 +495,7 @@
       "cachedTokensCachedLabel": "Кэш",
       "cachedTokensUncachedLabel": "Без кэша",
       "cacheHitRate": "Доля попаданий в кэш",
-      "cacheHitRateDescription": "Токены промпта из кэша, делённые на общее число входных токенов.",
+      "cacheHitRateDescription": "Токены промпта из кэша, делённые на входные токены в записях, содержащих метрики кэша.",
       "recordingStartedAt": "Начало учёта",
       "recordingStartedAtDescription": "Самая ранняя запись об использовании, которая сейчас хранится в этой панели.",
       "withDeepChatDaysLabel": "Дней вместе",

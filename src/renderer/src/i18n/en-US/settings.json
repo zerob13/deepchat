@@ -859,7 +859,7 @@
       "cachedTokensCachedLabel": "Cached",
       "cachedTokensUncachedLabel": "Uncached",
       "cacheHitRate": "Cache hit rate",
-      "cacheHitRateDescription": "Cached prompt tokens divided by total input tokens.",
+      "cacheHitRateDescription": "Cached prompt tokens divided by input tokens from usage records that report cache metrics.",
       "recordingStartedAt": "Recording started",
       "recordingStartedAtDescription": "The earliest usage record currently stored in this dashboard.",
       "withDeepChatDaysLabel": "Days together",

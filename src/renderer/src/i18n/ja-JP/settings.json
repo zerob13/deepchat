@@ -495,7 +495,7 @@
       "cachedTokensCachedLabel": "キャッシュ",
       "cachedTokensUncachedLabel": "未キャッシュ",
       "cacheHitRate": "キャッシュヒット率",
-      "cacheHitRateDescription": "キャッシュされた prompt token を総入力 token で割った割合です。",
+      "cacheHitRateDescription": "キャッシュ情報が報告された使用記録の入力 token に対する、キャッシュ済み prompt token の割合です。",
       "recordingStartedAt": "記録開始時点",
       "recordingStartedAtDescription": "このダッシュボードに現在保存されている最も古い使用記録です。",
       "withDeepChatDaysLabel": "一緒に過ごした日数",
