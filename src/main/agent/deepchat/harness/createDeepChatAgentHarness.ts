@@ -383,7 +383,7 @@ function createDeepChatRuntimeServices(deps: DeepChatHarnessDependencies): DeepC
     traceSettings,
     sessionStore,
     messageStore,
-    tape: createDeepChatLoopTapePort(tapeService),
+    tape: createDeepChatLoopTapePort(tapeService, sessionData.programmaticExecutionJournal),
     pendingInputCoordinator,
     toolResolver,
     providerPermissionCoordinator,

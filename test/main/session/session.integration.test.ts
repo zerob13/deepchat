@@ -2110,6 +2110,7 @@ describe('Session application coordinators', () => {
           isDraft: false,
           disabledAgentTools: [],
           orchestrationPolicy: 'explicit',
+          toolModeOverride: null,
           sessionKind: undefined,
           parentSessionId: undefined,
           subagentMetaJson: null

@@ -742,12 +742,14 @@ const setup = async (options: SetupOptions = {}) => {
     default: defineComponent({
       name: 'McpIndicator',
       props: {
-        showSystemPromptSection: { type: Boolean, default: false }
+        showSystemPromptSection: { type: Boolean, default: false },
+        subagentsAvailable: { type: Boolean, default: false }
       },
       template: `
         <div
           class="mcp-indicator-stub"
           :data-show-system-prompt-section="String(showSystemPromptSection)"
+          :data-subagents-available="String(subagentsAvailable)"
         >
           <div class="generation-settings-slot">
             <slot name="generation-settings" />
@@ -984,6 +986,7 @@ describe('ChatStatusBar model and session panels', () => {
     expect(trigger.text()).toContain('settings.model.modelConfig.reasoningEffort.options.medium')
     expect(trigger.attributes('aria-pressed')).toBe('false')
     expect(orchestrationClient.getCapability).toHaveBeenCalledWith({ agentId: 'deepchat' })
+    expect(wrapper.get('.mcp-indicator-stub').attributes('data-subagents-available')).toBe('true')
 
     await wrapper.get('[data-testid="proactive-collaboration-toggle"]').trigger('click')
     await flushPromises()
@@ -1009,6 +1012,7 @@ describe('ChatStatusBar model and session panels', () => {
     expect(wrapper.get('[data-testid="orchestration-capability-message"]').text()).toBe(
       'chat.orchestration.proactive.reasons.subagents_disabled'
     )
+    expect(wrapper.get('.mcp-indicator-stub').attributes('data-subagents-available')).toBe('false')
   })
 
   it('persists proactive policy through main for an active session', async () => {

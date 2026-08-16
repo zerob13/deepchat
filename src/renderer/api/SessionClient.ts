@@ -61,6 +61,7 @@ import {
   sessionsSearchHistoryRoute,
   sessionsSetAcpSessionConfigOptionRoute,
   sessionsSetModelRoute,
+  sessionsSetToolModeRoute,
   sessionsSetPermissionModeRoute,
   sessionsSetProjectDirRoute,
   sessionsSteerPendingInputRoute,
@@ -78,6 +79,7 @@ import type {
   PermissionMode,
   SendMessageInput
 } from '@shared/types/agent-interface'
+import type { ToolModeOverride } from '@shared/toolMode'
 import type {
   DeepChatTapeReplayExportOptions,
   DeepChatTapeReplaySlice
@@ -452,6 +454,14 @@ export function createSessionClient(bridge: DeepchatBridge = getDeepchatBridge()
     return result.session
   }
 
+  async function setSessionToolMode(sessionId: string, override: ToolModeOverride) {
+    const result = await bridge.invoke(sessionsSetToolModeRoute.name, {
+      sessionId,
+      override
+    })
+    return result.session
+  }
+
   async function setSessionProjectDir(sessionId: string, projectDir: string | null) {
     const result = await bridge.invoke(sessionsSetProjectDirRoute.name, {
       sessionId,
@@ -642,6 +652,7 @@ export function createSessionClient(bridge: DeepchatBridge = getDeepchatBridge()
     getPermissionMode,
     setPermissionMode,
     setSessionModel,
+    setSessionToolMode,
     setSessionProjectDir,
     getSessionGenerationSettings,
     getSessionDisabledAgentTools,

@@ -52,6 +52,7 @@ import {
   sessionsSearchHistoryRoute,
   sessionsSetAcpSessionConfigOptionRoute,
   sessionsSetModelRoute,
+  sessionsSetToolModeRoute,
   sessionsSetPermissionModeRoute,
   sessionsSetProjectDirRoute,
   sessionsSteerPendingInputRoute,
@@ -644,6 +645,15 @@ export function createSessionRoutes(deps: {
             input.providerId,
             input.modelId
           )
+        })
+      }
+    ],
+    [
+      sessionsSetToolModeRoute.name,
+      async (rawInput) => {
+        const input = sessionsSetToolModeRoute.input.parse(rawInput)
+        return sessionsSetToolModeRoute.output.parse({
+          session: await deps.assignment.setSessionToolMode(input.sessionId, input.override)
         })
       }
     ],

@@ -36,6 +36,7 @@ import { useLiveDelegationStore } from './liveDelegation'
 import { isAbortError } from '@/lib/errors'
 import { bindSessionStoreIpc, type SessionCompactionChangedPayload } from './sessionIpc'
 import { normalizeWorkspacePath } from '@shared/utils/filesystem'
+import type { ToolModeOverride } from '@shared/toolMode'
 
 export type UISessionStatus = 'completed' | 'working' | 'error' | 'none'
 
@@ -51,6 +52,7 @@ export interface UISession {
   parentSessionId: string | null
   subagentMeta: DeepChatSubagentMeta | null
   orchestrationPolicy: OrchestrationPolicy
+  toolModeOverride: ToolModeOverride
   metadata?: SessionMetadata | null
   createdAt: number
   updatedAt: number
@@ -133,6 +135,7 @@ function mapToUISession(session: SessionListItem | SessionWithState): UISession 
     parentSessionId: session.parentSessionId ?? null,
     subagentMeta: session.subagentMeta ?? null,
     orchestrationPolicy: normalizeOrchestrationPolicy(session.orchestrationPolicy),
+    toolModeOverride: session.toolModeOverride,
     ...(metadata ? { metadata } : {}),
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
@@ -1171,6 +1174,13 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  async function setSessionToolMode(override: ToolModeOverride): Promise<void> {
+    const sessionId = activeSessionId.value
+    if (!sessionId) return
+    const session = await sessionClient.setSessionToolMode(sessionId, override)
+    commitSessionSnapshot(session)
+  }
+
   async function selectSession(sessionId: string): Promise<void> {
     error.value = null
     const requestId = createActivationNavigationRequest()
@@ -1583,6 +1593,7 @@ export const useSessionStore = defineStore('session', () => {
     sendMessage,
     setSessionModel,
     synchronizeContextOccupancy,
+    setSessionToolMode,
     applyConfirmedOrchestrationPolicy,
     selectSession,
     closeSession,

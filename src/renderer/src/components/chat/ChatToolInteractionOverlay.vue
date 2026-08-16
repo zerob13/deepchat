@@ -1,8 +1,13 @@
 <template>
   <div
     :class="[
-      'relative w-full overflow-hidden text-foreground',
-      props.embedded ? 'px-2 pb-3 pt-2' : 'tool-interaction-overlay max-w-2xl rounded-xl p-4'
+      'relative flex min-h-0 w-full flex-col overflow-hidden text-foreground',
+      props.embedded
+        ? 'px-2 pb-3 pt-2'
+        : [
+            'tool-interaction-overlay max-w-2xl rounded-xl p-4',
+            isPermission ? 'max-h-[min(70vh,calc(100vh-12rem))]' : ''
+          ]
     ]"
   >
     <div v-if="!props.embedded" class="tool-interaction-overlay__backdrop" aria-hidden="true" />
@@ -12,7 +17,12 @@
     </div>
 
     <!-- Embedded: indent into the dock icon column (44px) under the shared header. -->
-    <div :class="props.embedded ? 'pl-9 pr-2.5' : ''">
+    <div
+      :class="[
+        props.embedded ? 'pl-9 pr-2.5' : '',
+        !props.embedded && isPermission ? 'flex min-h-0 flex-1 flex-col' : ''
+      ]"
+    >
       <p class="text-sm whitespace-pre-wrap break-words">
         {{ bodyText }}
       </p>
@@ -30,7 +40,16 @@
         >
       </div>
 
-      <div v-if="isPermission" class="mt-3 space-y-2">
+      <div
+        v-if="isPermission"
+        data-testid="tool-interaction-scroll-region"
+        :class="[
+          'mt-3 space-y-2',
+          props.embedded
+            ? ''
+            : 'dc-overscroll-contain min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1'
+        ]"
+      >
         <div class="rounded-md border bg-muted/50 px-3 py-2">
           <div class="text-[11px] uppercase tracking-wide text-muted-foreground">Tool</div>
           <div class="text-xs font-medium break-all">{{ interaction.toolName || '-' }}</div>
@@ -90,7 +109,7 @@
         </div>
       </div>
 
-      <div v-else class="mt-4 flex gap-2">
+      <div v-else data-testid="tool-interaction-actions" class="mt-4 flex shrink-0 gap-2">
         <DcButton
           :disabled="processing"
           variant="outline"

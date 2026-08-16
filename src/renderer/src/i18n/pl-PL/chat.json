@@ -63,6 +63,27 @@
         "yobrowser": "Twoja przeglądarka"
       }
     },
+    "toolMode": {
+      "title": "Tryb",
+      "modelDefault": "Domyślny dla modelu",
+      "options": {
+        "agent": "Agent",
+        "code": "Code",
+        "minimal": "Minimal"
+      },
+      "descriptions": {
+        "agent": "Użyj standardowego zestawu narzędzi agenta.",
+        "code": "Łącz włączone narzędzia za pomocą kodu. Wymaga trybu uprawnień Pełny dostęp.",
+        "minimal": "Upraszcza operacje na plikach, zachowując pozostałe włączone narzędzia."
+      },
+      "useModelDefault": "Użyj domyślnego dla modelu",
+      "saving": "Zapisywanie trybu...",
+      "locked": "Tryb można zmienić po zakończeniu tej odpowiedzi.",
+      "updateFailed": "Nie udało się zaktualizować trybu narzędzi.",
+      "codeEntry": "Wejście kodu",
+      "codeCallable": "Wywoływalne z kodu",
+      "minimalTools": "Narzędzia programistyczne"
+    },
     "fileUploadFailed": "Załącznik nie powiódł się",
     "fileUploadFailedDesc": "Nie można przetworzyć plików {count}: {names}",
     "fileUploadFailedMore": " i {count} więcej",
