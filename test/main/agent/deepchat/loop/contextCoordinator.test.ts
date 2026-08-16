@@ -2741,6 +2741,26 @@ describe('DeepChatContextCoordinator', () => {
       }
     },
     {
+      label: 'fractional pressure threshold rounds up',
+      contextLength: 101,
+      stopReason: 'max_tokens',
+      inputTokens: 100,
+      outputTokens: 0,
+      expected: {
+        kind: 'zero_output_length_at_limit',
+        contextWindowTokens: 101,
+        thresholdTokens: 100
+      }
+    },
+    {
+      label: 'fractional pressure threshold rejects input below 99 percent',
+      contextLength: 101,
+      stopReason: 'max_tokens',
+      inputTokens: 99,
+      outputTokens: 0,
+      expected: null
+    },
+    {
       label: 'length stop with semantic output',
       contextLength: 1_000,
       stopReason: 'max_tokens',

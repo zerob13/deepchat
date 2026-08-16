@@ -399,7 +399,7 @@ function detectProviderContextPressure(input: {
     }
   }
 
-  const thresholdTokens = Math.max(1, Math.floor(input.contextWindowTokens * 0.99))
+  const thresholdTokens = Math.max(1, Math.ceil(input.contextWindowTokens * 0.99))
   if (
     input.stopReason === 'max_tokens' &&
     input.usage.outputTokens === 0 &&
