@@ -592,7 +592,7 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
     const { db, table } = createTable()
 
     table.ensureBootstrapAnchor('s1')
-    table.appendAnchor({
+    const compactionAnchor = table.appendAnchor({
       sessionId: 's1',
       name: 'compaction/auto',
       state: {
@@ -611,7 +611,7 @@ describeIfSqlite('DeepChatTapeEntriesTable', () => {
 
     expect(table.getReconstructionAnchorByCompactionAttemptId('s1', 'attempt-1')).toMatchObject({
       name: 'compaction/auto',
-      entry_id: 2
+      entry_id: compactionAnchor.entry_id
     })
     expect(table.getReconstructionAnchorByCompactionAttemptId('s1', 'missing')).toBeUndefined()
     expect(table.getReconstructionAnchorByCompactionAttemptId('s2', 'attempt-1')).toBeUndefined()

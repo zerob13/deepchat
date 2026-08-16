@@ -1441,12 +1441,12 @@ describe('main kernel contracts', () => {
       sessionsGetContextOccupancyRoute.output.parse({
         freshness: 'unavailable',
         source: 'estimated',
-        occupiedTokens: 0,
-        contextWindowTokens: 32_000,
-        requestSeq: 3,
-        manifestEntryId: 20,
+        occupiedTokens: null,
+        contextWindowTokens: null,
+        requestSeq: null,
+        manifestEntryId: null,
         providerAttemptEntryId: null,
-        measuredAt: 123
+        measuredAt: null
       })
     ).toThrow()
 

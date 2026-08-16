@@ -2002,7 +2002,7 @@ describe('sessionStore streaming cleanup', () => {
       providerAttemptEntryId: 11,
       measuredAt: 100
     })
-    await Promise.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(store.activeContextOccupancy.value).toBeNull()
 
     second.resolve({
@@ -2050,15 +2050,20 @@ describe('sessionStore streaming cleanup', () => {
     const { store, sessionClient } = await setupStore()
     sessionClient.getContextOccupancy.mockReset()
     sessionClient.getContextOccupancy.mockRejectedValueOnce(new Error('temporary IPC failure'))
+    vi.useFakeTimers()
 
-    await store.applyBootstrapShell({ activeSessionId: 'session-a' })
-    await Promise.resolve()
-    await store.applyBootstrapShell({ activeSessionId: 'session-b' })
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    try {
+      await store.applyBootstrapShell({ activeSessionId: 'session-a' })
+      await Promise.resolve()
+      await store.applyBootstrapShell({ activeSessionId: 'session-b' })
+      await vi.runAllTimersAsync()
 
-    expect(sessionClient.getContextOccupancy).toHaveBeenCalledTimes(2)
-    expect(sessionClient.getContextOccupancy).toHaveBeenNthCalledWith(1, 'session-a')
-    expect(sessionClient.getContextOccupancy).toHaveBeenNthCalledWith(2, 'session-b')
+      expect(sessionClient.getContextOccupancy).toHaveBeenCalledTimes(2)
+      expect(sessionClient.getContextOccupancy).toHaveBeenNthCalledWith(1, 'session-a')
+      expect(sessionClient.getContextOccupancy).toHaveBeenNthCalledWith(2, 'session-b')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('buffers compaction events until the active-session snapshot is applied', async () => {

@@ -132,11 +132,14 @@ describe('compaction model call Tape usage', () => {
     const partialRow = service.appendCompactionModelCall(
       input({ usage: { inputTokens: 100, outputTokens: 20, totalTokens: null } })
     ).row
+    const legacyPayload = JSON.parse(partialRow.payload_json) as {
+      data: { schemaVersion: number; usage: { totalTokens: number | null } }
+    }
+    legacyPayload.data.schemaVersion = 1
+    legacyPayload.data.usage.totalTokens = 120
     const legacyRow: DeepChatTapeEntryRow = {
       ...partialRow,
-      payload_json: partialRow.payload_json
-        .replace('"schemaVersion":2', '"schemaVersion":1')
-        .replace('"totalTokens":null', '"totalTokens":120')
+      payload_json: JSON.stringify(legacyPayload)
     }
 
     expect(parseTapeCompactionModelCallEvent(partialRow)?.usage).toEqual({
