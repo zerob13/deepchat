@@ -404,7 +404,7 @@
             <template #item="{ element: group }">
               <div>
                 <div
-                  class="group mt-2 flex w-full items-center gap-1 rounded-md pr-1 text-xs font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent/40 hover:text-foreground focus-within:bg-accent/40 focus-within:text-foreground"
+                  class="group mt-2 flex w-full select-none items-center gap-1 rounded-md pr-1 text-xs font-medium text-muted-foreground transition-colors duration-150 hover:bg-accent/40 hover:text-foreground focus-within:bg-accent/40 focus-within:text-foreground"
                   :class="[
                     isProjectGroupDragging ? 'pointer-events-none' : '',
                     revealedWorkspaceGroupId === getGroupIdentifier(group)
@@ -437,6 +437,14 @@
                         <span class="truncate">
                           {{ getGroupLabel(group) }}
                         </span>
+                        <DcBadge
+                          v-if="isDefaultWorkspaceGroup(group)"
+                          variant="active"
+                          data-testid="window-sidebar-default-workspace-badge"
+                          class="ms-auto px-1 py-0 text-[10px]"
+                        >
+                          {{ t('settings.environments.badges.default') }}
+                        </DcBadge>
                         <span
                           v-if="isTrueEmptyWorkspaceGroup(group)"
                           data-testid="window-sidebar-empty-workspace-label"
@@ -473,7 +481,7 @@
                       v-if="isProjectDirectoryGroup(group)"
                       side="right"
                       data-testid="workspace-path-tooltip"
-                      class="max-w-72 break-all"
+                      class="max-w-72 text-wrap break-words"
                     >
                       {{ getGroupIdentifier(group) }}
                     </TooltipContent>
@@ -494,7 +502,7 @@
                         ? 'opacity-100'
                         : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
                     "
-                    @click.stop="handleNewChatForProject(getWorkspacePath(group))"
+                    @click.stop="handleNewChatForWorkspaceGroup(group)"
                   />
 
                   <DropdownMenu v-if="isActiveProjectDirectoryGroup(group)">
@@ -509,39 +517,68 @@
                         :aria-label="t('chat.sidebar.projectGroupActions')"
                       />
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" class="w-40">
-                      <DropdownMenuItem
+                    <DropdownMenuContent align="end" class="w-48">
+                      <DcDropdownActionItem
+                        icon="lucide:message-square-plus"
+                        :label="t('common.newChat')"
+                        :disabled="!canStartConversationInProjectGroup(group)"
+                        data-testid="window-sidebar-new-chat-workspace-menu-item"
+                        @select="handleNewChatForWorkspaceGroup(group)"
+                      />
+                      <DcDropdownActionItem
+                        icon="lucide:folder-open"
+                        :label="t('chat.sidebar.openWorkspaceFolder')"
+                        :disabled="!canOpenWorkspace(group) || workspaceOperationPending"
+                        data-testid="window-sidebar-open-workspace-menu-item"
+                        @select="handleOpenWorkspace(group)"
+                      />
+                      <DcDropdownActionItem
+                        icon="lucide:star"
+                        :label="t('settings.environments.actions.setDefault')"
+                        :disabled="!canSetDefaultWorkspace(group) || workspaceOperationPending"
+                        data-testid="window-sidebar-set-default-workspace-menu-item"
+                        @select="handleSetDefaultWorkspace(group)"
+                      />
+                      <DropdownMenuSeparator />
+                      <DcDropdownActionItem
+                        icon="lucide:chevrons-up"
+                        :label="t('chat.sidebar.moveProjectGroupTop')"
                         :disabled="!canMoveProjectGroup(group, -1)"
                         @select="handleMoveProjectGroup(group, 'top')"
-                      >
-                        {{ t('chat.sidebar.moveProjectGroupTop') }}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
+                      />
+                      <DcDropdownActionItem
+                        icon="lucide:chevron-up"
+                        :label="t('chat.sidebar.moveProjectGroupUp')"
                         :disabled="!canMoveProjectGroup(group, -1)"
                         @select="handleMoveProjectGroup(group, 'up')"
-                      >
-                        {{ t('chat.sidebar.moveProjectGroupUp') }}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
+                      />
+                      <DcDropdownActionItem
+                        icon="lucide:chevron-down"
+                        :label="t('chat.sidebar.moveProjectGroupDown')"
                         :disabled="!canMoveProjectGroup(group, 1)"
                         @select="handleMoveProjectGroup(group, 'down')"
-                      >
-                        {{ t('chat.sidebar.moveProjectGroupDown') }}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
+                      />
+                      <DcDropdownActionItem
+                        icon="lucide:chevrons-down"
+                        :label="t('chat.sidebar.moveProjectGroupBottom')"
                         :disabled="!canMoveProjectGroup(group, 1)"
                         @select="handleMoveProjectGroup(group, 'bottom')"
-                      >
-                        {{ t('chat.sidebar.moveProjectGroupBottom') }}
-                      </DropdownMenuItem>
+                      />
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem
+                      <DcDropdownActionItem
+                        icon="lucide:archive"
+                        :label="t('settings.environments.actions.archive')"
                         data-testid="window-sidebar-archive-workspace-menu-item"
-                        :disabled="isArchivingWorkspace"
+                        :disabled="isArchivingWorkspace || workspaceOperationPending"
                         @select="requestWorkspaceArchive(group)"
-                      >
-                        {{ t('settings.environments.actions.archive') }}
-                      </DropdownMenuItem>
+                      />
+                      <DropdownMenuSeparator />
+                      <DcDropdownActionItem
+                        icon="lucide:folders"
+                        :label="t('chat.sidebar.manageWorkspaces')"
+                        data-testid="window-sidebar-manage-workspaces-menu-item"
+                        @select="openWorkspaceSettings"
+                      />
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -673,6 +710,8 @@ import { useRouter } from 'vue-router'
 import draggable from 'vuedraggable'
 import { Icon } from '@iconify/vue'
 import { DcButton } from '@dc-ui/components/button'
+import { DcBadge } from '@dc-ui/components/badge'
+import { DcDropdownActionItem } from '@dc-ui/components/dropdown-action-item'
 import { DcEmpty } from '@dc-ui/components/empty'
 import {
   Tooltip,
@@ -693,7 +732,6 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@shadcn/components/ui/dropdown-menu'
@@ -909,10 +947,16 @@ const {
 const {
   isAddingWorkspace,
   revealedWorkspaceGroupId,
+  workspaceOperationPending,
   archiveTargetWorkspace,
   isArchivingWorkspace,
   archiveWorkspaceDialogOpen,
+  canOpenWorkspace,
+  canSetDefaultWorkspace,
+  isDefaultWorkspaceGroup,
   handleAddWorkspace,
+  handleOpenWorkspace,
+  handleSetDefaultWorkspace,
   requestWorkspaceArchive,
   handleArchiveWorkspaceConfirm
 } = useSidebarWorkspaceActions({
@@ -921,6 +965,7 @@ const {
   sessionListRef,
   searchQuery: sessionSearchQuery,
   defaultChatWorkspacePath,
+  defaultProjectPath: () => projectStore.defaultProjectPath,
   getWorkspaceEnvironment,
   t
 })
@@ -964,6 +1009,10 @@ const openSettings = () => {
   void settingsClient.openSettings()
 }
 
+const openWorkspaceSettings = () => {
+  void settingsClient.openSettings({ routeName: 'settings-environments' })
+}
+
 const openPlugins = () => {
   void router?.push({ name: 'plugins' })
 }
@@ -995,6 +1044,13 @@ const handleNewChat = async () => {
 const handleNewChatForProject = async (projectPath: string | null) => {
   await projectStore.selectProject(projectPath, 'manual')
   await startNewChat({ refresh: true, projectDir: projectPath })
+}
+
+const handleNewChatForWorkspaceGroup = async (group: SessionGroup) => {
+  if (!canStartConversationInProjectGroup(group)) {
+    return
+  }
+  await handleNewChatForProject(getWorkspacePath(group))
 }
 
 const handleAgentSelect = async (id: string | null) => {

@@ -51,9 +51,11 @@ archives or removes a manually selected draft workspace clears that selection be
 ## UI and compatibility
 
 Settings provides active/archived views and the full lifecycle surface. The project-group sidebar exposes
-active reorder and confirmed Archive; Restore and Remove remain in Settings. Drag is only a shortcut;
-keyboard/menu actions must produce the same order. All strings use i18n and the route/client/store path
-remains typed.
+new chat, open directory, set default, active reorder, confirmed Archive and a link to the full management
+surface. The default workspace group shows a Default badge, and workspace operations share one pending lock
+so overlapping snapshot mutations cannot start. Missing directories cannot be opened, made default, or used
+for new chats. Restore and Remove remain in Settings. Drag is only a shortcut; keyboard/menu actions must
+produce the same order. All strings use i18n and the route/client/store path remains typed.
 
 Existing `new_environments` usage data is migrated without losing Session/project associations. Derived usage
 rows are not the sole source of archive/remove/order truth.
