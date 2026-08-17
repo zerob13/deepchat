@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.1.1-beta.1 (2026-08-17)
+- Added virtualized tool surfaces: agents load tools on demand with search, canary performance gates, and permission-gated activation for large catalogs
+- Added a Tape Trace Inspector to audit agent runs, tool calls, and skill usage
+- Added context compaction with occupancy tracking, silent-pressure recovery, pinned context, and summary provenance
+- Added new Agent run modes (code and minimal) and workspace management in the sidebar
+- Added programmatic tool access through the CLI with bounded batches, grants, and trusted discovery
+- Upgraded Markstream code rendering to the v2 language API with normalized language and code block handling
+- Added bounded exec stdin and explicit shell dialect declaration for Agent tools
+- Fixed corrupt database retention, guard-stop terminal surfacing, Ollama runtime context budget handling, and MiniMax-M3 temperature omission
+- Improved skill lifecycle reliability, session restoration, workspace ordering, and tool execution recovery
+- 新增虚拟化工具表面：Agent 按需加载工具，支持搜索、Canary 性能门控，以及针对大型工具目录的按权限激活
+- 新增 Tape Trace Inspector，用于审计 Agent 运行、工具调用与技能使用
+- 新增上下文压缩，支持占用跟踪、静默压力恢复、固定上下文与摘要来源标记
+- 新增 Agent 运行模式（code 与 minimal）及侧边栏工作区管理
+- 新增 CLI 程序化工具访问，支持有界批次、授权授予与可信发现
+- 将 Markstream 代码渲染升级至 v2 语言 API，并规范化语言与代码块处理
+- 为 Agent 工具新增有界 exec 标准输入与显式 Shell 方言声明
+- 修复损坏数据库保留、guard-stop 终止反馈、Ollama 运行时上下文预算处理及 MiniMax-M3 温度参数遗漏
+- 改进技能生命周期可靠性、会话恢复、工作区排序与工具执行恢复
+
 ## v1.1.0 (2026-08-11)
 - Added proactive multi-Agent collaboration with live child Sessions, progress controls, result handoff, durable execution journaling, and contract-bound delegation recovery
 - Added a bundled local `deepchat` CLI for inference, media, OCR, artifacts, Agent runs, provider and model administration, Settings, Skills, and MCP operations
