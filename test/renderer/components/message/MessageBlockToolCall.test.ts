@@ -90,6 +90,14 @@ vi.mock('markstream-vue', () => ({
       showHeader: {
         type: Boolean,
         default: true
+      },
+      loading: {
+        type: Boolean,
+        default: true
+      },
+      stream: {
+        type: Boolean,
+        default: true
       }
     },
     template: '<div class="code-block-stub"></div>'
@@ -352,6 +360,8 @@ describe('MessageBlockToolCall', () => {
       originalCode: 'alpha\nbeta',
       updatedCode: 'alpha\ngamma'
     })
+    expect(codeBlock.props('loading')).toBe(false)
+    expect(codeBlock.props('stream')).toBe(false)
   })
 
   it('falls back to preformatted text for non-diff responses', async () => {

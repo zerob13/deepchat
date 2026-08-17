@@ -208,6 +208,8 @@
                       updatedCode: diffData.updatedCode
                     }"
                     :is-dark="themeStore.isDark"
+                    :loading="false"
+                    :stream="false"
                     :show-header="false"
                     class="rounded-md border bg-background text-xs p-2 h-full min-h-0"
                   />

@@ -39,6 +39,22 @@ vi.mock('markstream-vue', () => {
       content: {
         type: String,
         default: ''
+      },
+      final: {
+        type: Boolean,
+        default: false
+      },
+      smoothStreaming: {
+        type: Boolean,
+        default: true
+      },
+      codeBlockStream: {
+        type: Boolean,
+        default: true
+      },
+      codeBlockProps: {
+        type: Object,
+        default: undefined
       }
     },
     setup(props) {
@@ -46,12 +62,6 @@ vi.mock('markstream-vue', () => {
     }
   })
 
-  const CodeBlockNode = defineComponent({
-    name: 'CodeBlockNode',
-    render() {
-      return h('div')
-    }
-  })
   const PreCodeNode = defineComponent({
     name: 'PreCodeNode',
     render() {
@@ -62,20 +72,19 @@ vi.mock('markstream-vue', () => {
   return {
     default: NodeRenderer,
     NodeRenderer,
-    CodeBlockNode,
     PreCodeNode,
     setCustomComponents: setCustomComponentsMock
   }
 })
 
-const mountThinkContent = async () => {
+const mountThinkContent = async (thinking = false) => {
   vi.resetModules()
   const ThinkContent = (await import('@/components/think-content/ThinkContent.vue')).default
   const wrapper = mount(ThinkContent, {
     props: {
       label: 'Thinking',
       expanded: true,
-      thinking: false,
+      thinking,
       content: 'reasoning content'
     }
   })
@@ -98,25 +107,41 @@ describe('ThinkContent', () => {
     expect(ensureMarkdownWorkersMock).toHaveBeenCalledTimes(1)
   })
 
-  it('registers the Markstream 2 code block components directly', async () => {
+  it('uses Markstream lifecycle props for live and completed thinking', async () => {
+    const wrapper = await mountThinkContent()
+    const renderer = wrapper.getComponent({ name: 'NodeRenderer' })
+
+    expect(renderer.props()).toMatchObject({
+      final: true,
+      smoothStreaming: false,
+      codeBlockStream: false,
+      codeBlockProps: {
+        isShowPreview: false,
+        showCopyButton: false,
+        showExpandButton: false,
+        showPreviewButton: false,
+        showFontSizeButtons: false
+      }
+    })
+
+    await wrapper.setProps({ thinking: true })
+
+    expect(renderer.props()).toMatchObject({
+      final: false,
+      smoothStreaming: false,
+      codeBlockStream: true
+    })
+  })
+
+  it('keeps Mermaid source-only without overriding ordinary code blocks', async () => {
     await mountThinkContent()
 
     expect(setCustomComponentsMock).toHaveBeenCalledTimes(1)
     const [customId, components] = setCustomComponentsMock.mock.calls[0]
-    const preCode = components.code_block({ node: { language: 'mermaid' } })
-    const codeBlock = components.code_block({ node: { language: 'typescript' } })
     const mermaid = components.mermaid({ node: { language: 'mermaid' } })
 
     expect(customId).toBe('thinking-content')
-    expect(preCode.type.name).toBe('PreCodeNode')
+    expect(components.code_block).toBeUndefined()
     expect(mermaid.type.name).toBe('PreCodeNode')
-    expect(codeBlock.type.name).toBe('CodeBlockNode')
-    expect(codeBlock.props).toMatchObject({
-      isShowPreview: false,
-      showCopyButton: false,
-      showExpandButton: false,
-      showPreviewButton: false,
-      showFontSizeButtons: false
-    })
   })
 })
