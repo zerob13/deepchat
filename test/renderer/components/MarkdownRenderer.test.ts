@@ -202,7 +202,10 @@ const setup = async (props: Record<string, unknown> = {}) => {
       default: NodeRenderer,
       NodeRenderer,
       removeCustomComponents: removeCustomComponentsMock,
-      resolveLanguageId: (language?: string) => language?.trim().toLowerCase() || 'plaintext',
+      normalizeLanguageIdentifier: (language?: string) => {
+        const normalized = language?.trim().toLowerCase() ?? ''
+        return normalized === 'zsh' ? 'shell' : normalized === 'plaintext' ? 'plain' : normalized
+      },
       setCustomComponents: setCustomComponentsMock
     }
   })

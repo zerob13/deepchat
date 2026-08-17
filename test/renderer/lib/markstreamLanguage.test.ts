@@ -7,12 +7,12 @@ import {
 describe('Markstream language normalization', () => {
   it.each([
     ['/tmp/example.ts', 'typescript'],
-    ['/tmp/example.sh', 'zsh'],
+    ['/tmp/example.sh', 'shell'],
     ['/tmp/example.conf', 'ini'],
     ['/tmp/example.f90', 'fortran-free-form'],
     ['/tmp/.htaccess', 'apache'],
     ['/tmp/.gitignore', 'plaintext'],
-    ['/tmp/unknown', 'plaintext']
+    ['/tmp/unknown', 'plain']
   ])('maps %s to a stream-diffs language', (filename, expected) => {
     expect(getMarkstreamLanguageFromFilename(filename)).toBe(expected)
   })
@@ -23,5 +23,14 @@ describe('Markstream language normalization', () => {
         '```configuration:app.conf title=config\nkey=value\n```\n\n```typescript\nconst value = 1\n```'
       )
     ).toBe('```ini:app.conf title=config\nkey=value\n```\n\n```typescript\nconst value = 1\n```')
+  })
+
+  it.each([
+    ['zsh', 'shell'],
+    ['plaintext', 'plain']
+  ])('rewrites the %s fence alias to %s', (language, expected) => {
+    expect(normalizeMarkstreamCodeFenceLanguages(`\`\`\`${language}\nvalue\n\`\`\``)).toBe(
+      `\`\`\`${expected}\nvalue\n\`\`\``
+    )
   })
 })
