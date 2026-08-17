@@ -46,6 +46,7 @@
       @fork="onFork"
       @continue="onContinue"
       @trace="onTrace"
+      @tape-inspector="onTapeInspector"
       @copy-image="onCopyImage"
     />
   </div>
@@ -90,6 +91,7 @@ const emit = defineEmits<{
   fork: [messageId: string]
   continue: [conversationId: string, messageId: string]
   trace: [messageId: string]
+  tapeInspector: [messageId: string]
   editSave: [payload: { messageId: string; text: string }]
   copyImage: [
     messageId: string,
@@ -188,6 +190,7 @@ const onFork = (messageId: string) => emit('fork', messageId)
 const onContinue = (conversationId: string, messageId: string) =>
   emit('continue', conversationId, messageId)
 const onTrace = (messageId: string) => emit('trace', messageId)
+const onTapeInspector = (messageId: string) => emit('tapeInspector', messageId)
 const onEditSave = (payload: { messageId: string; text: string }) => emit('editSave', payload)
 const onCopyImage = (
   messageId: string,

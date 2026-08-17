@@ -48,7 +48,10 @@ import type {
   ProviderAttemptPersistenceStore,
   TapeBootstrapStore,
   TapeEntryStore,
+  TapeInspectorEntryScanInput,
+  TapeInspectorEntryScanResult,
   TapeMutationProjection,
+  TapeProvenanceEntryRef,
   ToolSurfacePersistenceStore,
   SkillMaterializationPersistenceStore,
   TapeTransactionRunner
@@ -79,11 +82,107 @@ export type DeepChatTapeMutationProjection = TapeMutationProjection
 
 const RECONSTRUCTION_ANCHOR_NAMES = SUMMARY_ANCHOR_NAMES
 
+interface TapeInspectorRowsQuery {
+  sql: string
+  params: Array<string | number>
+}
+
+function inspectorCursorPredicate(
+  input: TapeInspectorEntryScanInput,
+  direction: 'ASC' | 'DESC'
+): { sql: string; params: Array<string | number> } {
+  const cursor = input.cursor
+  if (!cursor) return { sql: '', params: [] }
+  if (cursor.sort !== input.sort.column) {
+    throw new Error('Tape Inspector cursor does not match the requested sort.')
+  }
+  const operator = direction === 'ASC' ? '>' : '<'
+  if (cursor.sort === 'entryId') {
+    return { sql: `AND entry_id ${operator} ?`, params: [cursor.entryId] }
+  }
+  if (cursor.sort === 'name') {
+    if (cursor.name === null) {
+      return direction === 'ASC'
+        ? {
+            sql: 'AND ((name IS NULL AND entry_id > ?) OR name IS NOT NULL)',
+            params: [cursor.entryId]
+          }
+        : {
+            sql: 'AND name IS NULL AND entry_id < ?',
+            params: [cursor.entryId]
+          }
+    }
+    return direction === 'ASC'
+      ? {
+          sql: 'AND name IS NOT NULL AND (name > ? OR (name = ? AND entry_id > ?))',
+          params: [cursor.name, cursor.name, cursor.entryId]
+        }
+      : {
+          sql: `AND (
+            name IS NULL
+            OR (name IS NOT NULL AND (name < ? OR (name = ? AND entry_id < ?)))
+          )`,
+          params: [cursor.name, cursor.name, cursor.entryId]
+        }
+  }
+  const value = cursor.sort === 'kind' ? cursor.kind : cursor.createdAt
+  const column = cursor.sort === 'kind' ? 'kind' : 'created_at'
+  return {
+    sql: `AND (${column} ${operator} ? OR (${column} = ? AND entry_id ${operator} ?))`,
+    params: [value, value, cursor.entryId]
+  }
+}
+
+export function buildTapeInspectorRowsQuery(
+  input: TapeInspectorEntryScanInput
+): TapeInspectorRowsQuery {
+  if (input.sort.column !== 'entryId' && input.mode === 'newer') {
+    throw new Error('Live newer pages require canonical entryId ordering.')
+  }
+  const direction =
+    input.sort.column === 'entryId'
+      ? input.mode === 'newer'
+        ? 'ASC'
+        : 'DESC'
+      : input.sort.direction.toUpperCase() === 'ASC'
+        ? 'ASC'
+        : 'DESC'
+  const orderColumn =
+    input.sort.column === 'entryId'
+      ? 'entry_id'
+      : input.sort.column === 'createdAt'
+        ? 'created_at'
+        : input.sort.column
+  const indexHint =
+    input.sort.column === 'entryId'
+      ? ''
+      : `INDEXED BY idx_deepchat_tape_entries_session_${
+          input.sort.column === 'createdAt' ? 'created' : input.sort.column
+        }`
+  const orderBy =
+    input.sort.column === 'entryId'
+      ? `entry_id ${direction}`
+      : `${orderColumn} ${direction}, entry_id ${direction}`
+  const cursor = inspectorCursorPredicate(input, direction)
+  return {
+    sql: `SELECT *
+          FROM deepchat_tape_entries ${indexHint}
+          WHERE session_id = ?
+            AND entry_id <= ?
+            ${cursor.sql}
+          ORDER BY ${orderBy}
+          LIMIT ?`,
+    params: [input.sessionId, input.snapshotMaxEntryId, ...cursor.params, input.limit + 1]
+  }
+}
+
 const TAPE_ENTRY_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_kind
     ON deepchat_tape_entries(session_id, kind, entry_id);
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_name
     ON deepchat_tape_entries(session_id, name, entry_id);
+  CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_created
+    ON deepchat_tape_entries(session_id, created_at, entry_id);
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_session_source
     ON deepchat_tape_entries(session_id, source_type, source_id, source_seq);
   CREATE INDEX IF NOT EXISTS idx_deepchat_tape_entries_compaction_attempt
@@ -1031,6 +1130,17 @@ export class DeepChatTapeEntriesTable
       .all(sessionId) as DeepChatTapeEntryRow[]
   }
 
+  listInspectorRows(input: TapeInspectorEntryScanInput): TapeInspectorEntryScanResult {
+    const limit = Math.min(Math.max(Math.floor(input.limit), 1), 500)
+    const query = buildTapeInspectorRowsQuery({ ...input, limit })
+    const rows = this.db.prepare(query.sql).all(...query.params) as DeepChatTapeEntryRow[]
+
+    return {
+      rows: rows.slice(0, limit),
+      hasMore: rows.length > limit
+    }
+  }
+
   getEventsBySource(
     sessionId: string,
     name: string,
@@ -1518,6 +1628,22 @@ export class DeepChatTapeEntriesTable
          LIMIT 1`
       )
       .get(sessionId, provenanceKey) as DeepChatTapeEntryRow | undefined
+  }
+
+  getEntryRefsByProvenanceKeys(
+    sessionId: string,
+    provenanceKeys: readonly string[]
+  ): TapeProvenanceEntryRef[] {
+    if (provenanceKeys.length === 0) return []
+    const placeholders = provenanceKeys.map(() => '?').join(', ')
+    return this.db
+      .prepare(
+        `SELECT entry_id AS entryId, provenance_key AS provenanceKey
+         FROM deepchat_tape_entries
+         WHERE session_id = ?
+           AND provenance_key IN (${placeholders})`
+      )
+      .all(sessionId, ...provenanceKeys) as TapeProvenanceEntryRef[]
   }
 
   getMaxEntryId(sessionId: string): number {

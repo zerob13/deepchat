@@ -1903,7 +1903,10 @@ describe('AI SDK runtime', () => {
 
     await runAiSdkGenerateText(
       context,
-      [],
+      [
+        { role: 'system', content: 'Keep the trace precise' },
+        { role: 'user', content: 'Inspect the normalized request context' }
+      ],
       'claude-opus-4-7',
       {
         apiEndpoint: 'chat'
@@ -1915,6 +1918,9 @@ describe('AI SDK runtime', () => {
     const request = mockGenerateText.mock.calls[0]?.[0] as Record<string, unknown>
     expect(request).not.toHaveProperty('temperature')
     expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
+    expect(tracePayloads[0]?.body?.instructions).toEqual(request.instructions)
+    expect(tracePayloads[0]?.body?.messages).toEqual(request.messages)
+    expect(tracePayloads[0]?.body).not.toHaveProperty('abortSignal')
   })
 
   it.each(['anthropic/claude-opus-4-7', 'claude-opus-4-7-think'])(
@@ -1938,7 +1944,7 @@ describe('AI SDK runtime', () => {
       const events = []
       for await (const event of runAiSdkCoreStream(
         context,
-        [],
+        [{ role: 'user', content: 'Inspect the streamed request context' }],
         modelId,
         {
           apiEndpoint: 'chat',
@@ -1954,6 +1960,7 @@ describe('AI SDK runtime', () => {
       const request = mockStreamText.mock.calls[0]?.[0] as Record<string, unknown>
       expect(request).not.toHaveProperty('temperature')
       expect(tracePayloads[0]?.body).not.toHaveProperty('temperature')
+      expect(tracePayloads[0]?.body?.messages).toEqual(request.messages)
       expect(events).toEqual([])
     }
   )

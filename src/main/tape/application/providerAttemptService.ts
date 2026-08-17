@@ -1,5 +1,6 @@
 import type { DeepChatTapeEntryRow } from '../domain/entry'
 import {
+  buildTapeProviderAttemptProvenanceKey,
   buildTapeProviderAttemptEvent,
   parseTapeProviderAttemptEvent,
   TAPE_PROVIDER_ATTEMPT_EVENT_NAME,
@@ -93,7 +94,7 @@ export class TapeProviderAttemptService
         id: input.messageId,
         seq: input.requestSeq
       },
-      provenanceKey: `provider-attempt:${input.sessionId}:${input.messageId}:${input.requestSeq}:${input.physicalAttempt}`,
+      provenanceKey: buildTapeProviderAttemptProvenanceKey(input),
       data: { ...buildTapeProviderAttemptEvent(input) },
       idempotent: true
     })

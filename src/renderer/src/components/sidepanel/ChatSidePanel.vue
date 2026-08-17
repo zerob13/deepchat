@@ -9,6 +9,7 @@
     :style="shellStyle"
     :data-workspace-fullscreen="String(isWorkspaceFullscreenActive)"
     :data-browser-fullscreen="String(isBrowserFullscreenActive)"
+    :data-tape-inspector-fullscreen="String(isTapeInspectorFullscreenActive)"
   >
     <aside
       v-if="props.sessionId"
@@ -72,6 +73,20 @@
           >
             {{ t('mcp.apps.title') }}
           </button>
+          <button
+            v-if="uiSettingsStore.traceDebugEnabled"
+            data-testid="tape-inspector-sidepanel-tab"
+            class="rounded-md px-2.5 py-1 text-xs transition-colors duration-200 ease-out"
+            :class="
+              sidepanelStore.activeTab === 'tape-inspector'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground'
+            "
+            type="button"
+            @click="sidepanelStore.openTapeInspector(props.sessionId)"
+          >
+            {{ t('tapeInspector.title') }}
+          </button>
         </div>
 
         <DcButton
@@ -106,6 +121,18 @@
           :is-fullscreen="isBrowserFullscreenActive"
           @toggle-fullscreen="toggleBrowserFullscreen"
         />
+        <TapeInspectorPanel
+          v-else-if="
+            sidepanelStore.activeTab === 'tape-inspector' &&
+            uiSettingsStore.traceDebugEnabled &&
+            shouldShow
+          "
+          :session-id="props.sessionId"
+          :open-request="sidepanelStore.tapeInspectorOpenRequest"
+          :is-fullscreen="isTapeInspectorFullscreenActive"
+          @toggle-fullscreen="toggleTapeInspectorFullscreen"
+          @open-message-diagnostics="inspectorDiagnosticsTarget = $event"
+        />
       </Transition>
       <div
         v-show="sidepanelStore.activeTab === 'mcp-app' && !panelContentLeaving"
@@ -114,6 +141,11 @@
         class="min-h-0 flex-1"
       />
     </aside>
+    <TraceDialog
+      :message-id="inspectorDiagnosticsTarget?.messageId ?? null"
+      :request-seq="inspectorDiagnosticsTarget?.requestSeq"
+      @close="inspectorDiagnosticsTarget = null"
+    />
   </div>
 </template>
 
@@ -124,8 +156,12 @@ import { DcButton } from '@dc-ui/components/button'
 import { createBrowserClient } from '@api/BrowserClient'
 import BrowserPanel from './BrowserPanel.vue'
 import WorkspacePanel from './WorkspacePanel.vue'
+import TapeInspectorPanel from '@/components/tape-inspector/TapeInspectorPanel.vue'
+import type { TapeInspectorMessageDiagnosticsTarget } from '@/components/tape-inspector/model'
+import TraceDialog from '@/components/trace/TraceDialog.vue'
 import { WORKSPACE_EVENTS } from '@/events'
 import { useSidepanelStore } from '@/stores/ui/sidepanel'
+import { useUiSettingsStore } from '@/stores/uiSettingsStore'
 
 const props = defineProps<{
   sessionId: string | null
@@ -134,6 +170,7 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const sidepanelStore = useSidepanelStore()
+const uiSettingsStore = useUiSettingsStore()
 const browserClient = createBrowserClient()
 const PANEL_MOTION_MS = 220
 const FULLSCREEN_MOTION_MS = 180
@@ -152,6 +189,8 @@ const isResizing = ref(false)
 const panelContentLeaving = ref(false)
 const isWorkspaceFullscreen = ref(false)
 const isBrowserFullscreen = ref(false)
+const isTapeInspectorFullscreen = ref(false)
+const inspectorDiagnosticsTarget = ref<TapeInspectorMessageDiagnosticsTarget | null>(null)
 const fullscreenMotionState = ref<'expanding' | 'collapsing' | null>(null)
 
 const isWorkspaceFullscreenActive = computed(() => {
@@ -160,8 +199,18 @@ const isWorkspaceFullscreenActive = computed(() => {
 const isBrowserFullscreenActive = computed(() => {
   return isBrowserFullscreen.value && shouldShow.value && sidepanelStore.activeTab === 'browser'
 })
+const isTapeInspectorFullscreenActive = computed(() => {
+  return (
+    isTapeInspectorFullscreen.value &&
+    shouldShow.value &&
+    sidepanelStore.activeTab === 'tape-inspector'
+  )
+})
 const isSidepanelFullscreenActive = computed(
-  () => isWorkspaceFullscreenActive.value || isBrowserFullscreenActive.value
+  () =>
+    isWorkspaceFullscreenActive.value ||
+    isBrowserFullscreenActive.value ||
+    isTapeInspectorFullscreenActive.value
 )
 
 const shellStyle = computed(() => {
@@ -244,6 +293,11 @@ const resetBrowserFullscreen = () => {
   clearFullscreenMotionHandle()
 }
 
+const resetTapeInspectorFullscreen = () => {
+  isTapeInspectorFullscreen.value = false
+  clearFullscreenMotionHandle()
+}
+
 const toggleWorkspaceFullscreen = () => {
   if (!shouldShow.value || sidepanelStore.activeTab !== 'workspace') {
     return
@@ -270,6 +324,20 @@ const toggleBrowserFullscreen = () => {
     fullscreenMotionState.value = null
   }, FULLSCREEN_MOTION_MS)
   isBrowserFullscreen.value = !isBrowserFullscreen.value
+}
+
+const toggleTapeInspectorFullscreen = () => {
+  if (!shouldShow.value || sidepanelStore.activeTab !== 'tape-inspector') {
+    return
+  }
+
+  clearFullscreenMotionHandle()
+  fullscreenMotionState.value = isTapeInspectorFullscreen.value ? 'collapsing' : 'expanding'
+  fullscreenMotionTimer = window.setTimeout(() => {
+    fullscreenMotionTimer = null
+    fullscreenMotionState.value = null
+  }, FULLSCREEN_MOTION_MS)
+  isTapeInspectorFullscreen.value = !isTapeInspectorFullscreen.value
 }
 
 const handleWorkspaceInsertFileReference = (filePath: string) => {
@@ -331,6 +399,7 @@ watch(shouldShow, (visible) => {
   if (!visible) {
     resetWorkspaceFullscreen()
     resetBrowserFullscreen()
+    resetTapeInspectorFullscreen()
   }
 
   if (visible) {
@@ -360,7 +429,23 @@ watch(
     if (activeTab !== 'browser') {
       resetBrowserFullscreen()
     }
+    if (activeTab !== 'tape-inspector') {
+      resetTapeInspectorFullscreen()
+    }
   }
+)
+
+watch(
+  () => [uiSettingsStore.traceDebugEnabled, props.sessionId, sidepanelStore.activeTab] as const,
+  ([enabled, sessionId, activeTab]) => {
+    if (activeTab !== 'tape-inspector') return
+    if (!sessionId) {
+      sidepanelStore.closePanel()
+      return
+    }
+    if (!enabled && sidepanelStore.open) sidepanelStore.openWorkspace(sessionId)
+  },
+  { immediate: true }
 )
 
 watch(
@@ -369,6 +454,8 @@ watch(
     if (!sessionId || sessionId !== previousSessionId) {
       resetWorkspaceFullscreen()
       resetBrowserFullscreen()
+      resetTapeInspectorFullscreen()
+      inspectorDiagnosticsTarget.value = null
     }
   }
 )

@@ -11,6 +11,25 @@ import type {
 } from '@shared/types/agent-interface'
 import type { DeepChatTapeReplaySlice } from '@shared/types/tape-replay'
 import type { DeepChatTapeViewManifestRecord } from '@shared/types/tape-view-manifest'
+import type {
+  ExportTapeInspectorSupportTraceInput,
+  ExportTapeInspectorSupportTraceOutput,
+  GetTapeInspectorRecordDetailInput,
+  GetTapeInspectorRecordDetailOutput,
+  ListTapeInspectorEvidenceInput,
+  ListTapeInspectorEvidenceOutput,
+  ListTapeInspectorPageInput,
+  ListTapeInspectorPageOutput,
+  ResolveTapeInspectorEvidenceEntriesInput,
+  ResolveTapeInspectorEvidenceEntriesOutput,
+  TapeInspectorEvidenceRecord,
+  TapeInspectorFactRecord,
+  TapeInspectorRecordDetail
+} from '@shared/types/tape-inspector'
+import {
+  TAPE_INSPECTOR_SUPPORT_EVIDENCE_LIMIT,
+  TAPE_INSPECTOR_SUPPORT_FACT_LIMIT
+} from '@shared/types/tape-inspector'
 import {
   DEEPCHAT_NESTED_EXECUTION_AUDIT_OPERATION_LIMIT,
   type DeepChatNestedExecutionAudit
@@ -24,6 +43,7 @@ import {
   ChatMessageRecordSchema,
   ChatMessagePageResultSchema,
   EntityIdSchema,
+  JsonValueSchema,
   MessageFileSchema,
   UserMessageInlineItemSchema,
   PermissionModeSchema,
@@ -48,6 +68,181 @@ const DeepChatTapeViewManifestRecordSchema = z.custom<DeepChatTapeViewManifestRe
 const DeepChatTapeReplaySliceSchema = z.custom<DeepChatTapeReplaySlice>().nullable()
 const ExecutionAuditIdentitySchema = z.string().min(1).max(1_024)
 const ExecutionAuditHashSchema = z.string().regex(/^[0-9a-f]{64}$/u)
+const TapeInspectorIdentitySchema = z.string().min(1).max(1_024)
+const TapeInspectorSubscriptionIdSchema = z.string().min(1).max(128)
+const TapeInspectorListTextSchema = z.string().max(1_024)
+const TapeInspectorEntryKindSchema = z.enum([
+  'event',
+  'anchor',
+  'message',
+  'tool_call',
+  'tool_result',
+  'context'
+])
+const TapeInspectorFactFamilySchema = z.enum([
+  'context',
+  'journal',
+  'contract',
+  'view',
+  'attempt',
+  'anchor',
+  'message',
+  'lineage',
+  'tool',
+  'other'
+])
+const TapeInspectorSourceTypeSchema = z.enum([
+  'session',
+  'message',
+  'assistant_block',
+  'tool_call',
+  'tool_result',
+  'runtime_event',
+  'migration',
+  'summary',
+  'fork',
+  'subagent'
+])
+const TapeInspectorEntryCursorSchema = z.discriminatedUnion('sort', [
+  z.object({
+    sort: z.literal('entryId'),
+    entryId: z.number().int().positive()
+  }),
+  z.object({
+    sort: z.literal('name'),
+    direction: z.enum(['asc', 'desc']),
+    nameHash: ExecutionAuditHashSchema,
+    entryId: z.number().int().positive(),
+    snapshotMaxEntryId: z.number().int().positive()
+  }),
+  z.object({
+    sort: z.literal('kind'),
+    direction: z.enum(['asc', 'desc']),
+    kind: TapeInspectorEntryKindSchema,
+    entryId: z.number().int().positive(),
+    snapshotMaxEntryId: z.number().int().positive()
+  }),
+  z.object({
+    sort: z.literal('createdAt'),
+    direction: z.enum(['asc', 'desc']),
+    createdAt: z.number().int().nonnegative(),
+    entryId: z.number().int().positive(),
+    snapshotMaxEntryId: z.number().int().positive()
+  })
+])
+const TapeInspectorSortSchema = z.discriminatedUnion('column', [
+  z.object({
+    column: z.literal('entryId'),
+    direction: z.literal('asc')
+  }),
+  z.object({
+    column: z.enum(['name', 'kind', 'createdAt']),
+    direction: z.enum(['asc', 'desc'])
+  })
+])
+const TapeInspectorFactsSchema = z.object({
+  toolName: TapeInspectorListTextSchema.optional(),
+  toolSource: z.enum(['agent', 'mcp']).optional(),
+  targetServer: TapeInspectorListTextSchema.optional(),
+  contentPreview: TapeInspectorListTextSchema.optional(),
+  providerId: TapeInspectorListTextSchema.optional(),
+  modelId: TapeInspectorListTextSchema.optional(),
+  status: TapeInspectorListTextSchema.optional(),
+  outcome: TapeInspectorListTextSchema.optional(),
+  stopReason: TapeInspectorListTextSchema.optional(),
+  retryDecision: TapeInspectorListTextSchema.optional(),
+  errorCode: TapeInspectorListTextSchema.optional(),
+  isError: z.boolean().optional(),
+  selectedCount: z.number().int().nonnegative().optional(),
+  droppedCount: z.number().int().nonnegative().optional(),
+  tokenBudget: z.number().finite().nonnegative().optional(),
+  estimatedTokens: z.number().finite().nonnegative().optional(),
+  usage: z
+    .object({
+      inputTokens: z.number().finite().nonnegative(),
+      outputTokens: z.number().finite().nonnegative(),
+      totalTokens: z.number().finite().nonnegative(),
+      cacheReadTokens: z.number().finite().nonnegative().optional(),
+      cacheWriteTokens: z.number().finite().nonnegative().optional()
+    })
+    .optional()
+})
+const TapeInspectorFactRecordSchema = z.object({
+  recordType: z.literal('fact'),
+  key: z.custom<`entry:${number}`>(
+    (value) => typeof value === 'string' && value.length <= 32 && /^entry:[1-9]\d*$/u.test(value)
+  ),
+  entryId: z.number().int().positive(),
+  kind: TapeInspectorEntryKindSchema,
+  family: TapeInspectorFactFamilySchema,
+  name: TapeInspectorListTextSchema.nullable(),
+  sourceType: TapeInspectorSourceTypeSchema.optional(),
+  sourceId: TapeInspectorIdentitySchema.optional(),
+  sourceSeq: z.number().int().nonnegative().optional(),
+  createdAt: z.number().int().nonnegative(),
+  runId: TapeInspectorIdentitySchema.optional(),
+  messageId: TapeInspectorIdentitySchema.optional(),
+  requestSeq: z.number().int().positive().optional(),
+  logicalRound: z.number().int().nonnegative().optional(),
+  physicalAttempt: z.number().int().nonnegative().optional(),
+  providerToolCallId: TapeInspectorIdentitySchema.optional(),
+  childOrdinal: z.number().int().nonnegative().optional(),
+  facts: TapeInspectorFactsSchema.optional(),
+  hashes: z
+    .object({
+      payloadHash: ExecutionAuditHashSchema.optional(),
+      metaHash: ExecutionAuditHashSchema.optional(),
+      manifestHash: ExecutionAuditHashSchema.optional()
+    })
+    .optional(),
+  integrity: z.enum(['valid', 'invalid', 'unverified']).optional(),
+  traceEvidenceCount: z.number().int().nonnegative().optional()
+}) satisfies z.ZodType<TapeInspectorFactRecord>
+const TapeInspectorEvidenceCursorSchema = z.object({
+  createdAt: z.number().int().nonnegative(),
+  traceId: TapeInspectorIdentitySchema
+})
+const TapeInspectorEvidenceAppendCursorSchema = z.object({
+  rowId: z.number().int().positive()
+})
+const TapeInspectorEvidenceRecordSchema = z.object({
+  recordType: z.literal('evidence'),
+  key: z.custom<`trace:${string}`>(
+    (value) =>
+      typeof value === 'string' &&
+      value.startsWith('trace:') &&
+      value.length > 6 &&
+      value.length <= 1_030
+  ),
+  traceId: TapeInspectorIdentitySchema,
+  messageId: TapeInspectorIdentitySchema,
+  requestSeq: z.number().int().nonnegative(),
+  logicalRound: z.number().int().nonnegative().optional(),
+  physicalAttempt: z.number().int().nonnegative().optional(),
+  providerId: TapeInspectorIdentitySchema,
+  modelId: TapeInspectorIdentitySchema,
+  createdAt: z.number().int().nonnegative(),
+  truncated: z.boolean()
+}) satisfies z.ZodType<TapeInspectorEvidenceRecord>
+const TapeInspectorRecordDetailSchema = z.object({
+  record: TapeInspectorFactRecordSchema,
+  disclosure: z.enum(['structured', 'metadata_only']),
+  provenance: z.object({
+    sourceType: TapeInspectorSourceTypeSchema.optional(),
+    sourceId: TapeInspectorIdentitySchema.optional(),
+    sourceSeq: z.number().int().nonnegative().optional(),
+    provenanceKey: TapeInspectorListTextSchema.optional()
+  }),
+  hashes: z.object({
+    payloadHash: ExecutionAuditHashSchema,
+    metaHash: ExecutionAuditHashSchema
+  }),
+  sizes: z.object({
+    payloadBytes: z.number().int().nonnegative(),
+    metaBytes: z.number().int().nonnegative()
+  }),
+  data: JsonValueSchema.optional()
+}) satisfies z.ZodType<TapeInspectorRecordDetail>
 const DeepChatNestedExecutionAuditSchema = z.object({
   schemaVersion: z.literal(1),
   state: z.enum(['available', 'corrupt', 'unavailable']),
@@ -474,6 +669,212 @@ export const sessionsGetTapeContextRoute = defineRouteContract({
     context: AgentTapeContextResultSchema
   })
 })
+
+const TapeInspectorPageInputCommonShape = {
+  sessionId: EntityIdSchema,
+  expectedTapeIncarnationId: TapeInspectorIdentitySchema.optional(),
+  limit: z.number().int().positive().max(200).optional(),
+  sort: TapeInspectorSortSchema.optional(),
+  filters: z
+    .object({
+      kinds: z.array(TapeInspectorEntryKindSchema).max(6).optional(),
+      families: z.array(TapeInspectorFactFamilySchema).max(10).optional(),
+      name: TapeInspectorListTextSchema.optional(),
+      namePrefix: TapeInspectorListTextSchema.optional(),
+      factStatus: TapeInspectorListTextSchema.optional(),
+      errorsOnly: z.boolean().optional(),
+      messageId: TapeInspectorIdentitySchema.optional(),
+      requestSeq: z.number().int().positive().optional()
+    })
+    .optional()
+}
+const ListTapeInspectorPageInputSchema = z.union([
+  z.object({
+    ...TapeInspectorPageInputCommonShape,
+    mode: z.literal('tail'),
+    cursor: z.undefined().optional()
+  }),
+  z.object({
+    ...TapeInspectorPageInputCommonShape,
+    expectedTapeIncarnationId: TapeInspectorIdentitySchema,
+    mode: z.enum(['older', 'newer']),
+    cursor: TapeInspectorEntryCursorSchema
+  })
+]) satisfies z.ZodType<ListTapeInspectorPageInput>
+const ListTapeInspectorPageOutputSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'),
+    tapeIncarnationId: TapeInspectorIdentitySchema,
+    snapshotMaxEntryId: z.number().int().nonnegative(),
+    records: z.array(TapeInspectorFactRecordSchema).max(200),
+    nextCursor: TapeInspectorEntryCursorSchema.nullable()
+  }),
+  z.object({
+    status: z.literal('reset'),
+    tapeIncarnationId: TapeInspectorIdentitySchema,
+    snapshotMaxEntryId: z.number().int().nonnegative()
+  })
+]) satisfies z.ZodType<ListTapeInspectorPageOutput>
+
+export const sessionsListTapeInspectorPageRoute = defineRouteContract({
+  name: 'sessions.listTapeInspectorPage',
+  input: ListTapeInspectorPageInputSchema,
+  output: ListTapeInspectorPageOutputSchema
+}) satisfies RouteContract<'sessions.listTapeInspectorPage'>
+
+const TapeInspectorEvidencePageBaseShape = {
+  sessionId: EntityIdSchema,
+  limit: z.number().int().positive().max(200).optional(),
+  messageId: TapeInspectorIdentitySchema.optional(),
+  requestSeq: z.number().int().positive().optional(),
+  physicalAttempt: z.number().int().nonnegative().nullable().optional()
+}
+const ListTapeInspectorEvidenceInputSchema = z.discriminatedUnion('mode', [
+  z.object({
+    ...TapeInspectorEvidencePageBaseShape,
+    mode: z.literal('older'),
+    cursor: TapeInspectorEvidenceCursorSchema.optional()
+  }),
+  z.object({
+    ...TapeInspectorEvidencePageBaseShape,
+    mode: z.literal('newer'),
+    cursor: TapeInspectorEvidenceAppendCursorSchema.optional()
+  })
+]) satisfies z.ZodType<ListTapeInspectorEvidenceInput>
+const ListTapeInspectorEvidenceOutputSchema = z.object({
+  records: z.array(TapeInspectorEvidenceRecordSchema).max(200),
+  nextCursor: TapeInspectorEvidenceCursorSchema.nullable(),
+  newerCursor: TapeInspectorEvidenceAppendCursorSchema.nullable()
+}) satisfies z.ZodType<ListTapeInspectorEvidenceOutput>
+
+export const sessionsListTapeInspectorEvidenceRoute = defineRouteContract({
+  name: 'sessions.listTapeInspectorEvidence',
+  input: ListTapeInspectorEvidenceInputSchema,
+  output: ListTapeInspectorEvidenceOutputSchema
+}) satisfies RouteContract<'sessions.listTapeInspectorEvidence'>
+
+const TapeInspectorEvidenceEntryIdentitySchema = z.object({
+  messageId: TapeInspectorIdentitySchema,
+  requestSeq: z.number().int().positive(),
+  physicalAttempt: z.number().int().nonnegative()
+})
+const ResolveTapeInspectorEvidenceEntriesInputSchema = z.object({
+  sessionId: EntityIdSchema,
+  expectedTapeIncarnationId: TapeInspectorIdentitySchema,
+  identities: z.array(TapeInspectorEvidenceEntryIdentitySchema).max(200)
+}) satisfies z.ZodType<ResolveTapeInspectorEvidenceEntriesInput>
+const ResolveTapeInspectorEvidenceEntriesOutputSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'),
+    tapeIncarnationId: TapeInspectorIdentitySchema,
+    resolutions: z
+      .array(
+        TapeInspectorEvidenceEntryIdentitySchema.extend({
+          entryId: z.number().int().positive().nullable()
+        })
+      )
+      .max(200)
+  }),
+  z.object({
+    status: z.literal('reset'),
+    tapeIncarnationId: TapeInspectorIdentitySchema
+  })
+]) satisfies z.ZodType<ResolveTapeInspectorEvidenceEntriesOutput>
+
+export const sessionsResolveTapeInspectorEvidenceEntriesRoute = defineRouteContract({
+  name: 'sessions.resolveTapeInspectorEvidenceEntries',
+  input: ResolveTapeInspectorEvidenceEntriesInputSchema,
+  output: ResolveTapeInspectorEvidenceEntriesOutputSchema
+}) satisfies RouteContract<'sessions.resolveTapeInspectorEvidenceEntries'>
+
+const GetTapeInspectorRecordDetailOutputSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'),
+    tapeIncarnationId: TapeInspectorIdentitySchema,
+    detail: TapeInspectorRecordDetailSchema
+  }),
+  z.object({
+    status: z.literal('not_found'),
+    tapeIncarnationId: TapeInspectorIdentitySchema
+  }),
+  z.object({
+    status: z.literal('reset'),
+    tapeIncarnationId: TapeInspectorIdentitySchema
+  })
+]) satisfies z.ZodType<GetTapeInspectorRecordDetailOutput>
+
+const GetTapeInspectorRecordDetailInputSchema = z.object({
+  sessionId: EntityIdSchema,
+  expectedTapeIncarnationId: TapeInspectorIdentitySchema,
+  entryId: z.number().int().positive()
+}) satisfies z.ZodType<GetTapeInspectorRecordDetailInput>
+
+export const sessionsGetTapeInspectorRecordDetailRoute = defineRouteContract({
+  name: 'sessions.getTapeInspectorRecordDetail',
+  input: GetTapeInspectorRecordDetailInputSchema,
+  output: GetTapeInspectorRecordDetailOutputSchema
+}) satisfies RouteContract<'sessions.getTapeInspectorRecordDetail'>
+
+const ExportTapeInspectorSupportTraceOutputSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'),
+    trace: z.object({
+      schemaVersion: z.literal(1),
+      exportedAt: z.number().int().nonnegative(),
+      sessionId: EntityIdSchema,
+      tapeIncarnationId: TapeInspectorIdentitySchema,
+      snapshotMaxEntryId: z.number().int().nonnegative(),
+      facts: z.array(TapeInspectorRecordDetailSchema).max(TAPE_INSPECTOR_SUPPORT_FACT_LIMIT),
+      evidence: z
+        .array(TapeInspectorEvidenceRecordSchema)
+        .max(TAPE_INSPECTOR_SUPPORT_EVIDENCE_LIMIT),
+      truncated: z.object({
+        facts: z.boolean(),
+        evidence: z.boolean(),
+        detailData: z.boolean()
+      })
+    })
+  }),
+  z.object({
+    status: z.literal('reset'),
+    tapeIncarnationId: TapeInspectorIdentitySchema,
+    snapshotMaxEntryId: z.number().int().nonnegative()
+  })
+]) satisfies z.ZodType<ExportTapeInspectorSupportTraceOutput>
+
+const ExportTapeInspectorSupportTraceInputSchema = z.object({
+  sessionId: EntityIdSchema,
+  expectedTapeIncarnationId: TapeInspectorIdentitySchema
+}) satisfies z.ZodType<ExportTapeInspectorSupportTraceInput>
+
+export const sessionsExportTapeInspectorSupportTraceRoute = defineRouteContract({
+  name: 'sessions.exportTapeInspectorSupportTrace',
+  input: ExportTapeInspectorSupportTraceInputSchema,
+  output: ExportTapeInspectorSupportTraceOutputSchema
+}) satisfies RouteContract<'sessions.exportTapeInspectorSupportTrace'>
+
+export const sessionsSubscribeTapeInspectorHeadRoute = defineRouteContract({
+  name: 'sessions.subscribeTapeInspectorHead',
+  input: z.object({
+    sessionId: EntityIdSchema,
+    subscriptionId: TapeInspectorSubscriptionIdSchema
+  }),
+  output: z.object({
+    subscribed: z.literal(true),
+    tapeIncarnationId: TapeInspectorIdentitySchema,
+    maxEntryId: z.number().int().nonnegative()
+  })
+}) satisfies RouteContract<'sessions.subscribeTapeInspectorHead'>
+
+export const sessionsUnsubscribeTapeInspectorHeadRoute = defineRouteContract({
+  name: 'sessions.unsubscribeTapeInspectorHead',
+  input: z.object({
+    subscriptionId: TapeInspectorSubscriptionIdSchema
+  }),
+  output: z.object({
+    unsubscribed: z.literal(true)
+  })
+}) satisfies RouteContract<'sessions.unsubscribeTapeInspectorHead'>
 
 export const sessionsListMessageTracesRoute = defineRouteContract({
   name: 'sessions.listMessageTraces',

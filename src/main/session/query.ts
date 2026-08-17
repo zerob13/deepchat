@@ -29,6 +29,19 @@ import type {
   DeepChatNestedExecutionAudit,
   DeepChatNestedExecutionAuditState
 } from '@shared/types/execution-journal-audit'
+import type {
+  ExportTapeInspectorSupportTraceInput,
+  ExportTapeInspectorSupportTraceOutput,
+  GetTapeInspectorRecordDetailInput,
+  GetTapeInspectorRecordDetailOutput,
+  ListTapeInspectorEvidenceInput,
+  ListTapeInspectorEvidenceOutput,
+  ListTapeInspectorPageInput,
+  ListTapeInspectorPageOutput,
+  ResolveTapeInspectorEvidenceEntriesInput,
+  ResolveTapeInspectorEvidenceEntriesOutput
+} from '@shared/types/tape-inspector'
+import { TAPE_INSPECTOR_SUPPORT_EVIDENCE_LIMIT } from '@shared/types/tape-inspector'
 import { ExecutionJournalCorruptionError } from '@/tape/domain/executionJournal'
 import type {
   SessionLightweightOptions,
@@ -83,6 +96,11 @@ function emptyNestedExecutionAudit(): DeepChatNestedExecutionAudit {
     operations: [],
     truncated: false
   }
+}
+
+function normalizeInspectorEvidenceLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return 100
+  return Math.min(Math.max(Math.floor(limit), 1), 200)
 }
 
 export class SessionQuery implements SessionProjectionReadPort, SessionProjectionMutationPort {
@@ -192,6 +210,57 @@ export class SessionQuery implements SessionProjectionReadPort, SessionProjectio
   ): Promise<AgentTapeContextResult> {
     this.requireSession(sessionId)
     return await this.dependencies.tape.getTapeContext(sessionId, entryIds, options)
+  }
+
+  async listTapeInspectorPage(
+    input: ListTapeInspectorPageInput
+  ): Promise<ListTapeInspectorPageOutput> {
+    this.requireSession(input.sessionId)
+    return await this.dependencies.tape.listTapeInspectorPage(input)
+  }
+
+  async resolveTapeInspectorEvidenceEntries(
+    input: ResolveTapeInspectorEvidenceEntriesInput
+  ): Promise<ResolveTapeInspectorEvidenceEntriesOutput> {
+    this.requireSession(input.sessionId)
+    return await this.dependencies.tape.resolveTapeInspectorEvidenceEntries(input)
+  }
+
+  async getTapeInspectorRecordDetail(
+    input: GetTapeInspectorRecordDetailInput
+  ): Promise<GetTapeInspectorRecordDetailOutput> {
+    this.requireSession(input.sessionId)
+    return await this.dependencies.tape.getTapeInspectorRecordDetail(input)
+  }
+
+  async exportTapeInspectorSupportTrace(
+    input: ExportTapeInspectorSupportTraceInput
+  ): Promise<ExportTapeInspectorSupportTraceOutput> {
+    this.requireSession(input.sessionId)
+    const facts = await this.dependencies.tape.exportTapeInspectorSupportFacts(input)
+    if (facts.status === 'reset') return facts
+    const evidence = await this.listTapeInspectorEvidence({
+      sessionId: input.sessionId,
+      mode: 'older',
+      limit: TAPE_INSPECTOR_SUPPORT_EVIDENCE_LIMIT
+    })
+    return {
+      status: 'ok',
+      trace: {
+        schemaVersion: 1,
+        exportedAt: Date.now(),
+        sessionId: input.sessionId,
+        tapeIncarnationId: facts.tapeIncarnationId,
+        snapshotMaxEntryId: facts.snapshotMaxEntryId,
+        facts: facts.facts,
+        evidence: [...evidence.records].reverse(),
+        truncated: {
+          facts: facts.factsTruncated,
+          evidence: evidence.nextCursor !== null,
+          detailData: facts.detailDataTruncated
+        }
+      }
+    }
   }
 
   async listTapeAnchors(
@@ -327,6 +396,53 @@ export class SessionQuery implements SessionProjectionReadPort, SessionProjectio
       truncated: row.truncated === 1,
       createdAt: row.created_at
     }))
+  }
+
+  async listTapeInspectorEvidence(
+    input: ListTapeInspectorEvidenceInput
+  ): Promise<ListTapeInspectorEvidenceOutput> {
+    this.requireSession(input.sessionId)
+    const pageInput = {
+      sessionId: input.sessionId,
+      limit: normalizeInspectorEvidenceLimit(input.limit),
+      ...(input.messageId === undefined ? {} : { messageId: input.messageId }),
+      ...(input.requestSeq === undefined ? {} : { requestSeq: input.requestSeq }),
+      ...(input.physicalAttempt === undefined ? {} : { physicalAttempt: input.physicalAttempt })
+    }
+    const page =
+      input.mode === 'older'
+        ? this.dependencies.traces.listInspectorMetadata({
+            ...pageInput,
+            mode: 'older',
+            ...(input.cursor ? { cursor: input.cursor } : {})
+          })
+        : this.dependencies.traces.listInspectorMetadata({
+            ...pageInput,
+            mode: 'newer',
+            ...(input.cursor ? { cursor: input.cursor } : {})
+          })
+    const records = page.rows.map((row) => ({
+      recordType: 'evidence' as const,
+      key: `trace:${row.id}` as const,
+      traceId: row.id,
+      messageId: row.message_id,
+      requestSeq: row.request_seq,
+      ...(row.logical_round === null ? {} : { logicalRound: row.logical_round }),
+      ...(row.physical_attempt === null ? {} : { physicalAttempt: row.physical_attempt }),
+      providerId: row.provider_id,
+      modelId: row.model_id,
+      createdAt: row.created_at,
+      truncated: row.truncated === 1
+    }))
+    const lastRow = page.rows.at(-1)
+    return {
+      records,
+      nextCursor:
+        input.mode === 'older' && page.hasMore && lastRow
+          ? { createdAt: lastRow.created_at, traceId: lastRow.id }
+          : null,
+      newerCursor: page.appendCursorRowId === null ? null : { rowId: page.appendCursorRowId }
+    }
   }
 
   async getMessageTraceCount(messageId: string): Promise<number> {

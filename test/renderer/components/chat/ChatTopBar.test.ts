@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatTopBar from '@/components/chat/ChatTopBar.vue'
 
 const stores = vi.hoisted(() => ({
@@ -32,10 +32,14 @@ const stores = vi.hoisted(() => ({
     fetchAgents: vi.fn()
   },
   sidepanel: {
-    toggleWorkspace: vi.fn()
+    toggleWorkspace: vi.fn(),
+    openTapeInspector: vi.fn()
   },
   sidebar: {
     collapsed: false
+  },
+  uiSettings: {
+    traceDebugEnabled: true
   }
 }))
 
@@ -52,6 +56,9 @@ vi.mock('@/stores/ui/sidepanel', () => ({
 }))
 vi.mock('@/stores/ui/sidebar', () => ({
   useSidebarStore: () => stores.sidebar
+}))
+vi.mock('@/stores/uiSettingsStore', () => ({
+  useUiSettingsStore: () => stores.uiSettings
 }))
 vi.mock('@renderer-notifications/rendererNotificationPort', () => ({
   notifyRenderer
@@ -173,6 +180,10 @@ const mountTopBar = () =>
     }
   })
 
+afterEach(() => {
+  stores.uiSettings.traceDebugEnabled = true
+})
+
 describe('ChatTopBar action buttons', () => {
   it('uses ghost DcButtons for workspace, share, and more actions', () => {
     const wrapper = mountTopBar()
@@ -188,6 +199,18 @@ describe('ChatTopBar action buttons', () => {
 
       expect(button?.attributes('data-variant')).toBe('ghost')
     }
+  })
+
+  it('opens the session Inspector only when diagnostics are enabled', async () => {
+    stores.uiSettings.traceDebugEnabled = true
+    const wrapper = mountTopBar()
+
+    await wrapper.get('[data-testid="open-tape-inspector-button"]').trigger('click')
+    expect(stores.sidepanel.openTapeInspector).toHaveBeenCalledWith('session-1')
+
+    stores.uiSettings.traceDebugEnabled = false
+    const hiddenWrapper = mountTopBar()
+    expect(hiddenWrapper.find('[data-testid="open-tape-inspector-button"]').exists()).toBe(false)
   })
 })
 

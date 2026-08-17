@@ -254,6 +254,9 @@ const setup = async (options: SetupOptions = {}) => {
   const uiSettingsStore = reactive({
     autoScrollEnabled: options.autoScrollEnabled ?? true
   })
+  const sidepanelStore = reactive({
+    openTapeInspector: vi.fn()
+  })
 
   const chatRespondToolInteraction = vi.fn().mockResolvedValue({ accepted: true })
   let planUpdatedListener: ((payload: any) => void) | null = null
@@ -331,6 +334,9 @@ const setup = async (options: SetupOptions = {}) => {
   }))
   vi.doMock('@/stores/uiSettingsStore', () => ({
     useUiSettingsStore: () => uiSettingsStore
+  }))
+  vi.doMock('@/stores/ui/sidepanel', () => ({
+    useSidepanelStore: () => sidepanelStore
   }))
   vi.doMock('../../../src/renderer/api/ChatClient', () => ({
     createChatClient: vi.fn(() => chatClient)
@@ -690,6 +696,7 @@ const setup = async (options: SetupOptions = {}) => {
     chatRespondToolInteraction,
     sessionClient,
     sessionStore,
+    sidepanelStore,
     notify,
     messageStore,
     pendingInputStore,
@@ -799,6 +806,14 @@ describe('ChatPage', () => {
     const { wrapper } = await setup({ messages: [assistant] })
 
     expect(wrapper.getComponent({ name: 'MessageList' }).props('traceMessageIds')).toEqual(['m1'])
+  })
+
+  it('opens the session Inspector with message identity from the message action', async () => {
+    const { wrapper, sidepanelStore } = await setup()
+
+    wrapper.getComponent({ name: 'MessageList' }).vm.$emit('tapeInspector', 'm1')
+
+    expect(sidepanelStore.openTapeInspector).toHaveBeenCalledWith('s1', { messageId: 'm1' })
   })
 
   it('passes the active session Agent to the ChatInputBox Skill scope', async () => {

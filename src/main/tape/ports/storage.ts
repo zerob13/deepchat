@@ -16,11 +16,41 @@ import type { ToolSurfaceTapeEventName } from '../domain/toolSurfaceFacts'
 import type { TapeSkillMaterializationPayload } from '../domain/skillMaterialization'
 import type { TapeProviderAttemptEventName } from '../domain/providerAttempt'
 import type { TapeCompactionModelCallEventName } from '../domain/compactionUsage'
+import type { TapeInspectorEntryCursor, TapeInspectorSort } from '@shared/types/tape-inspector'
+
+type TapeInspectorEntryScanCursor =
+  | Exclude<TapeInspectorEntryCursor, { sort: 'name' }>
+  | {
+      sort: 'name'
+      direction: 'asc' | 'desc'
+      name: string | null
+      entryId: number
+      snapshotMaxEntryId: number
+    }
 
 export interface TapeMutationProjection {
   applyAppendedEntry(row: DeepChatTapeEntryRow, previousSessionMaxEntryId: number): boolean
   invalidateSession(sessionId: string): void
   deleteBySession(sessionId: string): void
+}
+
+export interface TapeInspectorEntryScanInput {
+  sessionId: string
+  mode: 'tail' | 'older' | 'newer'
+  cursor?: TapeInspectorEntryScanCursor
+  sort: TapeInspectorSort
+  snapshotMaxEntryId: number
+  limit: number
+}
+
+export interface TapeInspectorEntryScanResult {
+  rows: DeepChatTapeEntryRow[]
+  hasMore: boolean
+}
+
+export interface TapeProvenanceEntryRef {
+  entryId: number
+  provenanceKey: string
 }
 
 /** Append/read/query persistence only. Physical deletion belongs to TapeEntryLifecycleStore. */
@@ -30,6 +60,7 @@ export interface TapeEntryStore {
   appendEvent(input: TapeEventAppendInput): DeepChatTapeEntryRow
   getBySession(sessionId: string): DeepChatTapeEntryRow[]
   getByEntryId(sessionId: string, entryId: number): DeepChatTapeEntryRow | undefined
+  listInspectorRows(input: TapeInspectorEntryScanInput): TapeInspectorEntryScanResult
   getEventsBySource(
     sessionId: string,
     name: string,
@@ -91,6 +122,10 @@ export interface TapeEntryStore {
     compactionAttemptId: string
   ): DeepChatTapeEntryRow | undefined
   getByProvenanceKey(sessionId: string, provenanceKey: string): DeepChatTapeEntryRow | undefined
+  getEntryRefsByProvenanceKeys(
+    sessionId: string,
+    provenanceKeys: readonly string[]
+  ): TapeProvenanceEntryRef[]
   getMaxEntryId(sessionId: string): number
   getMaxEntryIdExcludingContext(sessionId: string): number
   getMaxEntryIdsBySessions(sessionIds: string[]): Map<string, number>

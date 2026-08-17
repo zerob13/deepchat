@@ -17,6 +17,7 @@ import {
   sessionsEditUserMessageRoute,
   sessionsEnsureAcpDraftRoute,
   sessionsExportMessageTapeReplaySliceRoute,
+  sessionsExportTapeInspectorSupportTraceRoute,
   sessionsExportRoute,
   sessionsForkRoute,
   sessionsGetAcpSessionCommandsRoute,
@@ -27,6 +28,7 @@ import {
   sessionsGetCompactionSnapshotRoute,
   sessionsGetContextOccupancyRoute,
   sessionsGetDisabledAgentToolsRoute,
+  sessionsGetTapeInspectorRecordDetailRoute,
   sessionsGetGenerationSettingsRoute,
   sessionsGetLightweightByIdsRoute,
   sessionsGetPermissionModeRoute,
@@ -38,6 +40,11 @@ import {
   sessionsListMessageTracesRoute,
   sessionsListPendingInputsRoute,
   sessionsListRoute,
+  sessionsListTapeInspectorEvidenceRoute,
+  sessionsListTapeInspectorPageRoute,
+  sessionsResolveTapeInspectorEvidenceEntriesRoute,
+  sessionsSubscribeTapeInspectorHeadRoute,
+  sessionsUnsubscribeTapeInspectorHeadRoute,
   sessionsMoveAgentSessionsRoute,
   sessionsMoveQueuedInputRoute,
   sessionsMoveToAgentRoute,
@@ -66,6 +73,7 @@ import type { SessionPermissionPort } from '@/session/contracts'
 import type { UsageStatsService } from '@/session/usageStatsService'
 import type { AgentSessionExportService } from '@/exporter/agentSessionExporter'
 import { listAvailableAgents } from '@/agent/shared/availableAgentCatalog'
+import type { TapeInspectorHeadWatcher } from '@/tape/application/traceInspectorHeadWatcher'
 import {
   createRouteMap,
   requireRendererCaller,
@@ -93,6 +101,11 @@ export type SessionRouteProjectionPort = SessionServiceProjectionPort &
     | 'getLightweightByIds'
     | 'getSearchResults'
     | 'getTapeContext'
+    | 'listTapeInspectorPage'
+    | 'listTapeInspectorEvidence'
+    | 'resolveTapeInspectorEvidenceEntries'
+    | 'getTapeInspectorRecordDetail'
+    | 'exportTapeInspectorSupportTrace'
     | 'listMessageTraces'
     | 'listMessageViewManifests'
     | 'listNestedExecutionAudit'
@@ -115,6 +128,7 @@ export function createSessionRoutes(deps: {
   translation: Pick<SessionTranslation, 'translate'>
   usageStats: Pick<UsageStatsService, 'getDashboard'>
   rtkRuntime: { retryHealthCheck(): Promise<unknown> }
+  tapeInspectorHeadWatcher: Pick<TapeInspectorHeadWatcher, 'subscribe' | 'unsubscribe'>
 }): DeepchatRouteMap {
   const submissionCancellations = new SubmissionCancellationRegistry()
   const sessionService = new SessionService({
@@ -423,6 +437,77 @@ export function createSessionRoutes(deps: {
             input.options
           )
         })
+      }
+    ],
+    [
+      sessionsListTapeInspectorPageRoute.name,
+      async (rawInput) => {
+        const input = sessionsListTapeInspectorPageRoute.input.parse(rawInput)
+        return sessionsListTapeInspectorPageRoute.output.parse(
+          await deps.projection.listTapeInspectorPage(input)
+        )
+      }
+    ],
+    [
+      sessionsListTapeInspectorEvidenceRoute.name,
+      async (rawInput) => {
+        const input = sessionsListTapeInspectorEvidenceRoute.input.parse(rawInput)
+        return sessionsListTapeInspectorEvidenceRoute.output.parse(
+          await deps.projection.listTapeInspectorEvidence(input)
+        )
+      }
+    ],
+    [
+      sessionsResolveTapeInspectorEvidenceEntriesRoute.name,
+      async (rawInput) => {
+        const input = sessionsResolveTapeInspectorEvidenceEntriesRoute.input.parse(rawInput)
+        return sessionsResolveTapeInspectorEvidenceEntriesRoute.output.parse(
+          await deps.projection.resolveTapeInspectorEvidenceEntries(input)
+        )
+      }
+    ],
+    [
+      sessionsGetTapeInspectorRecordDetailRoute.name,
+      async (rawInput) => {
+        const input = sessionsGetTapeInspectorRecordDetailRoute.input.parse(rawInput)
+        return sessionsGetTapeInspectorRecordDetailRoute.output.parse(
+          await deps.projection.getTapeInspectorRecordDetail(input)
+        )
+      }
+    ],
+    [
+      sessionsExportTapeInspectorSupportTraceRoute.name,
+      async (rawInput) => {
+        const input = sessionsExportTapeInspectorSupportTraceRoute.input.parse(rawInput)
+        return sessionsExportTapeInspectorSupportTraceRoute.output.parse(
+          await deps.projection.exportTapeInspectorSupportTrace(input)
+        )
+      }
+    ],
+    [
+      sessionsSubscribeTapeInspectorHeadRoute.name,
+      async (rawInput, context) => {
+        const input = sessionsSubscribeTapeInspectorHeadRoute.input.parse(rawInput)
+        const caller = requireRendererCaller(context)
+        return sessionsSubscribeTapeInspectorHeadRoute.output.parse({
+          subscribed: true,
+          ...deps.tapeInspectorHeadWatcher.subscribe({
+            ...input,
+            webContentsId: caller.webContentsId
+          })
+        })
+      }
+    ],
+    [
+      sessionsUnsubscribeTapeInspectorHeadRoute.name,
+      async (rawInput, context) => {
+        const input = sessionsUnsubscribeTapeInspectorHeadRoute.input.parse(rawInput)
+        const caller = requireRendererCaller(context)
+        deps.tapeInspectorHeadWatcher.unsubscribe({
+          ...input,
+          webContentsId: caller.webContentsId
+        })
+        return sessionsUnsubscribeTapeInspectorHeadRoute.output.parse({ unsubscribed: true })
       }
     ],
     [
