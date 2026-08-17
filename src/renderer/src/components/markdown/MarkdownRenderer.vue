@@ -56,6 +56,7 @@ import { useUiSettingsStore } from '@/stores/uiSettingsStore'
 import { useMarkdownLinkNavigation } from './useMarkdownLinkNavigation'
 import type { MarkdownLinkContext } from './linkTypes'
 import { ensureMarkdownWorkers } from '@/lib/markdownWorkerLifecycle'
+import { normalizeMarkstreamCodeFenceLanguages } from '@/lib/markstreamLanguage'
 
 const props = withDefaults(
   defineProps<{
@@ -82,22 +83,11 @@ const props = withDefaults(
 const themeStore = useThemeStore()
 const uiSettingsStore = useUiSettingsStore()
 const artifactStore = useArtifactStore()
-const UNSUPPORTED_CODE_FENCE_LANGUAGES = new Set(['desktop-local-file'])
 const fallbackMessageId = `artifact-msg-${nanoid()}`
 const fallbackThreadId = `artifact-thread-${nanoid()}`
 const referenceStore = useReferenceStore()
 const sessionClient = createSessionClient()
-const normalizeCodeFenceLanguages = (content: string): string =>
-  content.replace(/(^|\n)(`{3,}|~{3,})([^\r\n]*)/g, (fence, lineStart, delimiter, info) => {
-    const [language, ...meta] = info.trim().split(/\s+/)
-    if (!UNSUPPORTED_CODE_FENCE_LANGUAGES.has(language?.toLowerCase())) {
-      return fence
-    }
-
-    return `${lineStart}${delimiter}plaintext${meta.length ? ` ${meta.join(' ')}` : ''}`
-  })
-
-const renderContent = ref(normalizeCodeFenceLanguages(props.content))
+const renderContent = ref(normalizeMarkstreamCodeFenceLanguages(props.content))
 let searchResultsPromise: ReturnType<typeof sessionClient.getSearchResults> | null = null
 let activeReferenceElement: HTMLElement | null = null
 let rendererContextRevision = 0
@@ -389,7 +379,7 @@ const updateContentSlow = useDebounceFn(
 
 const updateContent = (value: string, commitImmediately: boolean) => {
   const revision = ++contentRevision
-  const normalizedValue = normalizeCodeFenceLanguages(value)
+  const normalizedValue = normalizeMarkstreamCodeFenceLanguages(value)
 
   // Main already coalesces renderer snapshots and Markstream owns visible pacing.
   // Stream updates, including the final handoff, must not pass through a third timer.
