@@ -1,5 +1,9 @@
 import { TOOL_EXECUTION, type MCPToolDefinition } from '@shared/types/mcp'
-import { formatCommandShellForModel, type ResolvedCommandShell } from '@shared/commandShell'
+import {
+  formatCommandShellForModel,
+  formatExecCommandDescription,
+  type ResolvedCommandShell
+} from '@shared/commandShell'
 import { CODE_MODE_TOOL_SERVER_NAME } from '@shared/codeModeProtocol'
 import { LIVE_DELEGATION_AGENT_TOOL_NAME } from '@shared/agentTools'
 import { UPDATE_PLAN_TOOL_NAME } from '@shared/types/agent-plan'
@@ -152,16 +156,38 @@ export function isCodexToolFrontend(providerId: string): boolean {
   return providerId.trim().toLowerCase() === 'openai-codex'
 }
 
+function isBuiltInExecDefinition(definition: MCPToolDefinition): boolean {
+  return (
+    definition.source === 'agent' &&
+    definition.function.name === 'exec' &&
+    definition.server.name === 'agent-filesystem'
+  )
+}
+
 export function decorateExecForShell(
   definition: MCPToolDefinition,
   shell: ResolvedCommandShell
 ): MCPToolDefinition {
-  if (definition.function.name !== 'exec') return definition
+  if (!isBuiltInExecDefinition(definition)) return definition
+  const { parameters } = definition.function
+  const command = parameters.properties.command as Record<string, unknown> | undefined
   return {
     ...definition,
     function: {
       ...definition.function,
-      description: `${definition.function.description}\n\n${formatCommandShellForModel(shell)}`
+      description: `${definition.function.description}\n\n${formatCommandShellForModel(shell)}`,
+      parameters: command
+        ? {
+            ...parameters,
+            properties: {
+              ...parameters.properties,
+              command: {
+                ...command,
+                description: formatExecCommandDescription(shell)
+              }
+            }
+          }
+        : parameters
     }
   }
 }

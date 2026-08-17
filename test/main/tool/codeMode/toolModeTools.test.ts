@@ -5,9 +5,11 @@ import {
   createCodexCodeModeToolDefinitions,
   createRunCodeToolDefinition,
   createStrReplaceEditorToolDefinition,
+  decorateExecForShell,
   normalizeCodexToolName,
   renderCodeModeSdk
 } from '@/tool/codeMode/toolModeTools'
+import { WINDOWS_POWERSHELL_COMMAND_SHELL } from '../../../helpers/commandShell'
 
 const nestedTool: MCPToolDefinition = {
   execution: TOOL_EXECUTION.read,
@@ -200,5 +202,75 @@ describe('Tool Mode provider contracts', () => {
     expect(normalizeCodexToolName('mcp-demo/read-file')).toBe('mcp_demo_read_file')
     expect(normalizeCodexToolName('9patch')).toBe('_patch')
     expect(normalizeCodexToolName('exec')).toBe('exec')
+  })
+})
+
+describe('decorateExecForShell', () => {
+  const execDefinition: MCPToolDefinition = {
+    execution: TOOL_EXECUTION.write,
+    source: 'agent',
+    type: 'function',
+    function: {
+      name: 'exec',
+      description: 'Execute a shell command.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'The shell command to execute' },
+          cwd: { type: 'string', description: 'Optional working directory for command execution.' }
+        },
+        required: ['command']
+      }
+    },
+    server: { name: 'agent-filesystem', icons: '📁', description: 'Agent FileSystem tools' }
+  }
+
+  it('declares the resolved shell in both the description and the command parameter', () => {
+    const decorated = decorateExecForShell(execDefinition, WINDOWS_POWERSHELL_COMMAND_SHELL)
+
+    expect(decorated.function.description).toBe(
+      'Execute a shell command.\n\nSelected shell: Windows PowerShell (powershell.exe). It does not support && or ||; use ; for unconditional sequential execution.'
+    )
+    expect(decorated.function.parameters.properties.command).toEqual({
+      type: 'string',
+      description:
+        'The Windows PowerShell command to execute. It does not support && or ||; use ; for unconditional sequential execution.'
+    })
+    expect(decorated.function.parameters.properties.cwd).toBe(
+      execDefinition.function.parameters.properties.cwd
+    )
+    expect(execDefinition.function.parameters.properties.command).toEqual({
+      type: 'string',
+      description: 'The shell command to execute'
+    })
+  })
+
+  it('leaves MCP exec contracts untouched', () => {
+    const mcpExec: MCPToolDefinition = {
+      ...execDefinition,
+      source: 'mcp',
+      server: { name: 'remote-shell', icons: '🐚', description: 'Remote exec' }
+    }
+
+    expect(decorateExecForShell(mcpExec, WINDOWS_POWERSHELL_COMMAND_SHELL)).toBe(mcpExec)
+    expect(mcpExec.function.parameters.properties.command).toEqual({
+      type: 'string',
+      description: 'The shell command to execute'
+    })
+  })
+
+  it('returns non-exec definitions and command-less parameters untouched', () => {
+    expect(decorateExecForShell(nestedTool, WINDOWS_POWERSHELL_COMMAND_SHELL)).toBe(nestedTool)
+
+    const commandless: MCPToolDefinition = {
+      ...execDefinition,
+      function: {
+        ...execDefinition.function,
+        parameters: { type: 'object', properties: {} }
+      }
+    }
+    const decorated = decorateExecForShell(commandless, WINDOWS_POWERSHELL_COMMAND_SHELL)
+    expect(decorated.function.description).toContain('Selected shell: Windows PowerShell')
+    expect(decorated.function.parameters).toBe(commandless.function.parameters)
   })
 })
