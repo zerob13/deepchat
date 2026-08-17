@@ -12,6 +12,7 @@ import {
   hasRenderableAssistantBlocks
 } from '@/features/chat-page/model/displayMessage'
 import type { ChatMessageRecord, MessageMetadata } from '@shared/types/agent-interface'
+import { readRunStopReason } from '@shared/lib/runStopReason'
 
 type MessageStore = ReturnType<typeof useMessageStore>
 type SessionStore = ReturnType<typeof useSessionStore>
@@ -133,13 +134,17 @@ export function useDisplayMessages(options: UseDisplayMessagesOptions) {
     } as const
 
     const streamingRenderKey = assistantRenderKeyByMessageId.value[record.id]
+    const runStopReason = record.role === 'assistant' ? readRunStopReason(metadata) : undefined
     const nextMessage =
       record.role === 'assistant'
         ? ({
             ...baseMessage,
             ...(streamingRenderKey ? { renderKey: streamingRenderKey } : {}),
             role: 'assistant',
-            content: filterRenderableAssistantBlocks(messageStore.getAssistantMessageBlocks(record))
+            content: filterRenderableAssistantBlocks(
+              messageStore.getAssistantMessageBlocks(record)
+            ),
+            ...(runStopReason ? { runStopReason } : {})
           } as DisplayMessage)
         : ({
             ...baseMessage,

@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "Untergeordneten Agent öffnen" },
+    "actions": {
+      "openChild": "Untergeordneten Agent öffnen"
+    },
     "activityTitle": "Agent-Aktivität",
     "proactive": {
       "title": "Proaktive Zusammenarbeit",
@@ -616,5 +618,11 @@
         "subagents_disabled": "Aktivieren Sie Subagents für diesen Agent, um proaktive Zusammenarbeit zu verwenden."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "Das Limit für Werkzeugaufrufe wurde erreicht, bevor die Aufgabe fertig war.",
+    "noProgress": "Wiederholt identische Werkzeugergebnisse brachten keinen Fortschritt, daher wurde der Agent gestoppt.",
+    "maxTurns": "Das Limit für Anbieter-Runden wurde erreicht, bevor die Aufgabe fertig war.",
+    "continueMessage": "Bitte dort fortfahren, wo zuletzt aufgehört wurde."
   }
 }

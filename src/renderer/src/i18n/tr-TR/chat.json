@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "Alt Agent’ı aç" },
+    "actions": {
+      "openChild": "Alt Agent’ı aç"
+    },
     "activityTitle": "Agent etkinliği",
     "proactive": {
       "title": "Proaktif iş birliği",
@@ -616,5 +618,11 @@
         "subagents_disabled": "Proaktif iş birliğini kullanmak için bu Agent üzerinde Subagents özelliğini etkinleştirin."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "Görev bitmeden araç çağrısı sınırına ulaşıldı.",
+    "noProgress": "Tekrarlanan aynı araç sonuçları ilerleme sağlamadı, bu yüzden Agent durdu.",
+    "maxTurns": "Görev bitmeden sağlayıcı turu sınırına ulaşıldı.",
+    "continueMessage": "Kaldığın yerden devam et."
   }
 }

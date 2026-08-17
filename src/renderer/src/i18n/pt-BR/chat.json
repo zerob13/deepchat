@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "Abrir Agent filho" },
+    "actions": {
+      "openChild": "Abrir Agent filho"
+    },
     "activityTitle": "Atividade dos Agents",
     "proactive": {
       "title": "Colaboração proativa",
@@ -616,5 +618,11 @@
         "subagents_disabled": "Ative Subagents para este Agent antes de usar a colaboração proativa."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "O limite de chamadas de ferramentas foi atingido antes de a tarefa terminar.",
+    "noProgress": "Resultados idênticos e repetidos das ferramentas não geraram progresso, então o Agent parou.",
+    "maxTurns": "O limite de rodadas do provedor foi atingido antes de a tarefa terminar.",
+    "continueMessage": "Continue de onde parou."
   }
 }

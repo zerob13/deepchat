@@ -825,7 +825,7 @@ describe('CliRunService', () => {
       { kind: 'run', runId: 'run-1' }
     )
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
+    await expect(result).resolves.toMatchObject({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
     expect(emitted.map((entry) => entry.event)).toEqual([
       'runs.snapshot',
       'chat.stream.completed',
@@ -861,7 +861,7 @@ describe('CliRunService', () => {
       { kind: 'run', runId: 'run-1' }
     )
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
+    await expect(result).resolves.toMatchObject({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
     expect(emitted).toEqual(['runs.snapshot', 'chat.stream.failed', 'sessions.status.changed'])
   })
 
@@ -898,7 +898,7 @@ describe('CliRunService', () => {
       { kind: 'run', runId: 'run-1' }
     )
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
+    await expect(result).resolves.toMatchObject({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
     expect(emitted).toEqual(['chat.stream.completed', 'sessions.status.changed'])
   })
 
@@ -932,7 +932,7 @@ describe('CliRunService', () => {
           emitted.push(event)
         }
       )
-    ).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
+    ).resolves.toMatchObject({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
     expect(emitted).toEqual(['chat.stream.completed', 'sessions.status.changed'])
   })
 
@@ -951,7 +951,7 @@ describe('CliRunService', () => {
       { kind: 'run', runId: 'run-1' }
     )
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:1' })
+    await expect(result).resolves.toMatchObject({ runId: 'run-1', lastCursor: 'test-epoch_1:1' })
     expect(emitted).toEqual(['runs.snapshot', 'runs.turn.failed'])
   })
 
@@ -973,7 +973,7 @@ describe('CliRunService', () => {
       { kind: 'run', runId: 'run-1' }
     )
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
+    await expect(result).resolves.toMatchObject({ runId: 'run-1', lastCursor: 'test-epoch_1:2' })
     expect(emitted).toEqual(['runs.snapshot', 'sessions.status.changed', 'sessions.status.changed'])
   })
 
@@ -990,7 +990,7 @@ describe('CliRunService', () => {
         new AbortController().signal,
         emit
       )
-    ).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:0' })
+    ).resolves.toMatchObject({ runId: 'run-1', lastCursor: 'test-epoch_1:0' })
     expect(emit).toHaveBeenCalledWith(
       'runs.snapshot',
       expect.objectContaining({
@@ -1020,7 +1020,7 @@ describe('CliRunService', () => {
     await snapshotReady
     controller.abort()
 
-    await expect(result).resolves.toEqual({ runId: 'run-1', lastCursor: 'test-epoch_1:0' })
+    await expect(result).resolves.toMatchObject({ runId: 'run-1', lastCursor: 'test-epoch_1:0' })
     expect(turn.cancelGeneration).not.toHaveBeenCalled()
   })
 

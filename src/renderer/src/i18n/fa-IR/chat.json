@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "باز کردن Agent فرزند" },
+    "actions": {
+      "openChild": "باز کردن Agent فرزند"
+    },
     "activityTitle": "فعالیت Agent",
     "proactive": {
       "title": "همکاری فعال",
@@ -616,5 +618,11 @@
         "subagents_disabled": "برای استفاده از همکاری فعال، Subagentها را برای این Agent فعال کنید."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "قبل از اتمام کار، به سقف تعداد فراخوانی ابزار رسید.",
+    "noProgress": "نتایج یکسان و تکراری ابزار پیشرفتی نداشت، بنابراین Agent متوقف شد.",
+    "maxTurns": "قبل از اتمام کار، به سقف نوبت‌های ارائه‌دهنده رسید.",
+    "continueMessage": "از همان‌جا که متوقف شد ادامه بده."
   }
 }

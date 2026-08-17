@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "Mở Agent con" },
+    "actions": {
+      "openChild": "Mở Agent con"
+    },
     "activityTitle": "Hoạt động của Agent",
     "proactive": {
       "title": "Cộng tác chủ động",
@@ -616,5 +618,11 @@
         "subagents_disabled": "Hãy bật Subagents cho Agent này để dùng cộng tác chủ động."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "Đã đạt giới hạn số lần gọi công cụ trước khi hoàn thành tác vụ.",
+    "noProgress": "Kết quả công cụ giống nhau lặp lại không mang lại tiến triển, nên Agent đã dừng.",
+    "maxTurns": "Đã đạt giới hạn số vòng của nhà cung cấp trước khi hoàn thành tác vụ.",
+    "continueMessage": "Tiếp tục từ chỗ vừa dừng."
   }
 }

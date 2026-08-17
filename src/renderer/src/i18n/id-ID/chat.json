@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "Buka Agent anak" },
+    "actions": {
+      "openChild": "Buka Agent anak"
+    },
     "activityTitle": "Aktivitas Agent",
     "proactive": {
       "title": "Kolaborasi proaktif",
@@ -616,5 +618,11 @@
         "subagents_disabled": "Aktifkan Subagents untuk Agent ini agar dapat menggunakan kolaborasi proaktif."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "Batas pemanggilan alat tercapai sebelum tugas selesai.",
+    "noProgress": "Hasil alat yang sama berulang kali tidak memberi kemajuan, jadi Agent berhenti.",
+    "maxTurns": "Batas putaran penyedia tercapai sebelum tugas selesai.",
+    "continueMessage": "Lanjutkan dari tempat terakhir berhenti."
   }
 }

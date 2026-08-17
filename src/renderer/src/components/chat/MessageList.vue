@@ -16,6 +16,7 @@
         :show-trace="traceMessageIdSet.has(item.id)"
         :is-capturing="isCapturingValue"
         :is-read-only="isReadOnly"
+        :allow-guard-stop-continue="item.id === latestAssistantMessageId"
         :disable-markdown-virtualization="shouldDisableMarkdownVirtualization"
         :class="{ 'message-row-entrance': shouldAnimateEntrance(item) }"
         :data-entrance-feedback="shouldAnimateEntrance(item) || undefined"
@@ -73,6 +74,7 @@ const props = withDefaults(
     beforeSpacerHeight?: number
     afterSpacerHeight?: number
     disableMarkdownVirtualization?: boolean
+    latestAssistantMessageId?: string | null
   }>(),
   {
     conversationId: '',
@@ -84,7 +86,8 @@ const props = withDefaults(
     isReadOnly: false,
     beforeSpacerHeight: 0,
     afterSpacerHeight: 0,
-    disableMarkdownVirtualization: false
+    disableMarkdownVirtualization: false,
+    latestAssistantMessageId: null
   }
 )
 
@@ -106,6 +109,7 @@ const shouldDisableMarkdownVirtualization = computed(
   () => props.disableMarkdownVirtualization || isCapturingValue.value
 )
 const allRenderedMessages = computed(() => props.messages)
+const latestAssistantMessageId = computed(() => props.latestAssistantMessageId ?? null)
 const seenMessageIds = new Set<string>()
 const animatingMessageIds = ref(new Set<string>())
 

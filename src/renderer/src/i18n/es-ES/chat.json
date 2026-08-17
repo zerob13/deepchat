@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "Abrir Agent secundario" },
+    "actions": {
+      "openChild": "Abrir Agent secundario"
+    },
     "activityTitle": "Actividad del Agent",
     "proactive": {
       "title": "Colaboración proactiva",
@@ -616,5 +618,11 @@
         "subagents_disabled": "Activa Subagents para este Agent antes de usar la colaboración proactiva."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "Se alcanzó el límite de llamadas a herramientas antes de terminar la tarea.",
+    "noProgress": "Los resultados idénticos y repetidos de las herramientas no produjeron progreso, así que el Agent se detuvo.",
+    "maxTurns": "Se alcanzó el límite de rondas del proveedor antes de terminar la tarea.",
+    "continueMessage": "Continúa desde donde lo dejaste."
   }
 }

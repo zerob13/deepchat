@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "子 Agent を開く" },
+    "actions": {
+      "openChild": "子 Agent を開く"
+    },
     "activityTitle": "Agent のアクティビティ",
     "proactive": {
       "title": "プロアクティブ連携",
@@ -616,5 +618,11 @@
         "subagents_disabled": "プロアクティブ連携を使用するには、この Agent の Subagent を有効にしてください。"
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "タスクが完了する前にツール呼び出し回数の上限に達しました。",
+    "noProgress": "同じツール結果が繰り返され進展がなかったため、Agent は停止しました。",
+    "maxTurns": "タスクが完了する前にプロバイダーラウンドの上限に達しました。",
+    "continueMessage": "中断したところから続けてください。"
   }
 }

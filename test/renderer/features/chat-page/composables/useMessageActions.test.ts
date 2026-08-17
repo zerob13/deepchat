@@ -15,6 +15,9 @@ function createHarness() {
     editUserMessage: vi.fn().mockResolvedValue(undefined),
     forkSession: vi.fn().mockResolvedValue({ id: 'forked' })
   }
+  const chatClient = {
+    sendMessage: vi.fn().mockResolvedValue({ accepted: true })
+  }
   const beginPlanTurn = vi.fn()
   const clearPlanSnapshotForDeletedMessage = vi.fn()
   const loadMessagesForSession = vi.fn().mockResolvedValue({ id: 'loaded' })
@@ -38,6 +41,7 @@ function createHarness() {
       messageStore: messageStore as any,
       sessionStore: sessionStore as any,
       sessionClient,
+      chatClient,
       beginPlanTurn,
       clearPlanSnapshotForDeletedMessage,
       loadMessagesForSession,
@@ -58,6 +62,7 @@ function createHarness() {
     messageStore,
     sessionStore,
     sessionClient,
+    chatClient,
     beginPlanTurn,
     clearPlanSnapshotForDeletedMessage,
     loadMessagesForSession,
@@ -292,7 +297,7 @@ describe('useMessageActions', () => {
     harness.stop()
   })
 
-  it('edits then retries, forks in order, and continues without an interaction gate', async () => {
+  it('edits then retries, forks in order, and continues with a new send', async () => {
     const harness = createHarness()
 
     await harness.actions.onMessageEditSave({ messageId: 'message-1', text: '  updated  ' })
@@ -308,7 +313,37 @@ describe('useMessageActions', () => {
 
     harness.isBlocking.value = true
     await harness.actions.onMessageContinue('ignored-conversation', 'message-3')
-    expect(harness.sessionClient.retryMessage).toHaveBeenLastCalledWith('s1', 'message-3')
+    expect(harness.sessionClient.retryMessage).not.toHaveBeenCalledWith('s1', 'message-3')
+    expect(harness.chatClient.sendMessage).not.toHaveBeenCalled()
+
+    harness.isBlocking.value = false
+    await harness.actions.onMessageContinue('ignored-conversation', 'message-3')
+    expect(harness.sessionClient.retryMessage).not.toHaveBeenCalledWith('s1', 'message-3')
+    expect(harness.chatClient.sendMessage).toHaveBeenCalledWith(
+      's1',
+      'chat.guardStop.continueMessage'
+    )
+    expect(harness.beginPlanTurn).toHaveBeenCalledWith('s1')
+    harness.stop()
+  })
+
+  it('does not send a second continue while the first send is in flight', async () => {
+    const harness = createHarness()
+    let resolveSend!: (value: { accepted: boolean }) => void
+    harness.chatClient.sendMessage.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSend = resolve
+      })
+    )
+
+    const first = harness.actions.onMessageContinue('s1', 'message-3')
+    const second = harness.actions.onMessageContinue('s1', 'message-3')
+    await Promise.resolve()
+    expect(harness.chatClient.sendMessage).toHaveBeenCalledTimes(1)
+
+    resolveSend({ accepted: true })
+    await Promise.all([first, second])
+    expect(harness.chatClient.sendMessage).toHaveBeenCalledTimes(1)
     harness.stop()
   })
 })

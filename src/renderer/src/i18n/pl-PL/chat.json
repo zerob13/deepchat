@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "Otwórz podrzędnego Agenta" },
+    "actions": {
+      "openChild": "Otwórz podrzędnego Agenta"
+    },
     "activityTitle": "Aktywność Agentów",
     "proactive": {
       "title": "Proaktywna współpraca",
@@ -616,5 +618,11 @@
         "subagents_disabled": "Włącz Subagents dla tego Agenta, aby używać proaktywnej współpracy."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "Osiągnięto limit wywołań narzędzi, zanim zadanie zostało ukończone.",
+    "noProgress": "Powtarzające się identyczne wyniki narzędzi nie dały postępu, więc Agent został zatrzymany.",
+    "maxTurns": "Osiągnięto limit rund dostawcy, zanim zadanie zostało ukończone.",
+    "continueMessage": "Kontynuuj od miejsca, w którym przerwano."
   }
 }

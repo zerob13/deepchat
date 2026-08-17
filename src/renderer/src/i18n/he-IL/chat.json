@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "פתיחת Agent ילד" },
+    "actions": {
+      "openChild": "פתיחת Agent ילד"
+    },
     "activityTitle": "פעילות Agent",
     "proactive": {
       "title": "שיתוף פעולה יזום",
@@ -616,5 +618,11 @@
         "subagents_disabled": "יש להפעיל Subagents עבור Agent זה כדי להשתמש בשיתוף פעולה יזום."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "הגעת למגבלת קריאות הכלים לפני שהמשימה הסתיימה.",
+    "noProgress": "תוצאות כלים זהות שחזרו על עצמן לא קידמו דבר, ולכן ה-Agent נעצר.",
+    "maxTurns": "הגעת למגבלת הסבבים של הספק לפני שהמשימה הסתיימה.",
+    "continueMessage": "המשך מהמקום שבו הפסקת."
   }
 }

@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "하위 Agent 열기" },
+    "actions": {
+      "openChild": "하위 Agent 열기"
+    },
     "activityTitle": "Agent 활동",
     "proactive": {
       "title": "능동형 협업",
@@ -616,5 +618,11 @@
         "subagents_disabled": "능동형 협업을 사용하려면 이 Agent의 Subagent를 활성화하세요."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "작업이 끝나기 전에 도구 호출 한도에 도달했습니다.",
+    "noProgress": "동일한 도구 결과가 반복되어 진전이 없어 Agent가 중지되었습니다.",
+    "maxTurns": "작업이 끝나기 전에 제공자 라운드 한도에 도달했습니다.",
+    "continueMessage": "멈춘 지점부터 이어서 진행하세요."
   }
 }

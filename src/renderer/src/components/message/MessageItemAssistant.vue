@@ -130,6 +130,14 @@
               />
               <MessageBlockError v-else-if="item.block.type === 'error'" :block="item.block" />
             </template>
+            <MessageBlockGuardStop
+              v-if="guardStopReason"
+              :stop-reason="guardStopReason"
+              :is-read-only="isReadOnly"
+              :disabled="resolvedIsInGeneratingThread"
+              :allow-continue="allowGuardStopContinue !== false"
+              @continue="handleGuardStopContinue"
+            />
           </div>
           <MessageToolbar
             :loading="message.status === 'pending'"
@@ -234,6 +242,8 @@ import MessageBlockContent from './MessageBlockContent.vue'
 import MessageBlockThink from './MessageBlockThink.vue'
 import MessageBlockToolCall from './MessageBlockToolCall.vue'
 import MessageBlockError from './MessageBlockError.vue'
+import MessageBlockGuardStop from './MessageBlockGuardStop.vue'
+import { isGuardRunStopReason } from '@shared/lib/runStopReason'
 import MessageBlockQuestionRequest from './MessageBlockQuestionRequest.vue'
 import MessageToolbar from './MessageToolbar.vue'
 import MessageInfo from './MessageInfo.vue'
@@ -278,6 +288,7 @@ const props = defineProps<{
   showTrace?: boolean
   isReadOnly?: boolean
   disableMarkdownVirtualization?: boolean
+  allowGuardStopContinue?: boolean
 }>()
 
 const themeStore = useThemeStore()
@@ -479,8 +490,14 @@ const permissionStatusByToolCallId = computed(() =>
 
 // Resolved permission outcomes merge into their tool card; the standalone
 // action card only remains as a fallback when the tool card is missing.
+const guardStopReason = computed(() => {
+  const stopReason = currentMessage.value.runStopReason
+  return isGuardRunStopReason(stopReason) ? stopReason : undefined
+})
+
 const currentVisibleContent = computed(() =>
   currentContent.value.filter((block) => {
+    if (guardStopReason.value && block.type === 'error') return false
     const status = getResolvedPermissionStatus(block)
     const toolCallId = block.tool_call?.id
     return !(status && toolCallId && permissionStatusByToolCallId.value[toolCallId])
@@ -674,6 +691,13 @@ const handleBlockContinue = (conversationId: string, messageId: string) => {
     return
   }
   emit('continue', conversationId, messageId)
+}
+
+const handleGuardStopContinue = () => {
+  if (isReadOnly.value || resolvedIsInGeneratingThread.value) {
+    return
+  }
+  emit('continue', currentThreadId.value, currentMessage.value.id)
 }
 
 const handleBlockSwitchProvider = () => {

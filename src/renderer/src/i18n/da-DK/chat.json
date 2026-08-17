@@ -602,7 +602,9 @@
     }
   },
   "orchestration": {
-    "actions": { "openChild": "Åbn underagent" },
+    "actions": {
+      "openChild": "Åbn underagent"
+    },
     "activityTitle": "Agentaktivitet",
     "proactive": {
       "title": "Proaktivt samarbejde",
@@ -616,5 +618,11 @@
         "subagents_disabled": "Aktivér Subagents for denne Agent for at bruge proaktivt samarbejde."
       }
     }
+  },
+  "guardStop": {
+    "maxToolCalls": "Værktøjskaldsgrænsen blev nået, før opgaven var færdig.",
+    "noProgress": "Gentagne identiske værktøjsresultater gav ingen fremgang, så Agent stoppede.",
+    "maxTurns": "Grænsen for samtalerunder blev nået, før opgaven var færdig.",
+    "continueMessage": "Fortsæt derfra, hvor du slap."
   }
 }
