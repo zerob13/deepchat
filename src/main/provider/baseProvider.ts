@@ -723,6 +723,20 @@ ${this.convertToolsToXml(tools)}
   ): Promise<LLMResponse>
 
   /**
+   * Return the total context currently allocated by the provider runtime, when it can be observed
+   * without loading the model. Static model metadata is not a runtime limit. Implementations that
+   * support this observation should return `undefined` only when a successful query has no
+   * model-specific runtime fact; reject if the query itself is unavailable so callers can preserve
+   * a prior successful limit.
+   */
+  public async getRuntimeContextLimitTokens(
+    _modelId: string,
+    _signal?: AbortSignal
+  ): Promise<number | undefined> {
+    return undefined
+  }
+
+  /**
    * [新] 核心流式处理方法
    * 此方法由具体的提供商子类实现，负责单次API调用和事件标准化。
    * @param messages 对话消息

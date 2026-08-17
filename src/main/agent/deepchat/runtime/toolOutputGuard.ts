@@ -70,6 +70,7 @@ interface GuardToolOutputParams extends PrepareToolOutputParams {
   conversationMessages: ChatMessage[]
   toolDefinitions: MCPToolDefinition[]
   contextLength: number
+  outputCapContextLength?: number
   maxTokens: number
 }
 
@@ -81,6 +82,7 @@ interface ContextBudgetParams {
   conversationMessages: ChatMessage[]
   toolDefinitions: MCPToolDefinition[]
   contextLength: number
+  outputCapContextLength?: number
   maxTokens: number
 }
 
@@ -299,6 +301,7 @@ export class ToolOutputGuard {
           conversationMessages: fallbackMessages,
           toolDefinitions: params.toolDefinitions,
           contextLength: params.contextLength,
+          outputCapContextLength: params.outputCapContextLength,
           maxTokens: params.maxTokens
         })
       ) {
@@ -324,6 +327,7 @@ export class ToolOutputGuard {
         conversationMessages: params.conversationMessages,
         toolDefinitions: params.toolDefinitions,
         contextLength: params.contextLength,
+        outputCapContextLength: params.outputCapContextLength,
         maxTokens: params.maxTokens
       })
     ) {
@@ -361,6 +365,7 @@ export class ToolOutputGuard {
         conversationMessages: nextMessages,
         toolDefinitions: params.toolDefinitions,
         contextLength: params.contextLength,
+        outputCapContextLength: params.outputCapContextLength,
         maxTokens: params.maxTokens
       })
     ) {
@@ -402,6 +407,7 @@ export class ToolOutputGuard {
         ),
         toolDefinitions: params.toolDefinitions,
         contextLength: params.contextLength,
+        outputCapContextLength: params.outputCapContextLength,
         maxTokens: params.maxTokens
       })
     ) {
@@ -442,6 +448,7 @@ export class ToolOutputGuard {
           ),
           toolDefinitions: params.toolDefinitions,
           contextLength: params.contextLength,
+          outputCapContextLength: params.outputCapContextLength,
           maxTokens: params.maxTokens
         })
       ) {
@@ -485,6 +492,7 @@ export class ToolOutputGuard {
             ),
             toolDefinitions: params.toolDefinitions,
             contextLength: params.contextLength,
+            outputCapContextLength: params.outputCapContextLength,
             maxTokens: params.maxTokens
           })
         ) {
@@ -517,11 +525,18 @@ export class ToolOutputGuard {
   }
 
   hasContextBudget(params: ContextBudgetParams): boolean {
-    const { conversationMessages, toolDefinitions, contextLength, maxTokens } = params
+    const {
+      conversationMessages,
+      toolDefinitions,
+      contextLength,
+      outputCapContextLength,
+      maxTokens
+    } = params
     return preflightRequestContext({
       messages: conversationMessages,
       tools: toolDefinitions,
       contextLength,
+      outputCapContextLength,
       requestedMaxTokens: maxTokens
     }).fitsWithinContext
   }
@@ -539,6 +554,7 @@ export class ToolOutputGuard {
         conversationMessages: errorMessages,
         toolDefinitions: params.toolDefinitions,
         contextLength: params.contextLength,
+        outputCapContextLength: params.outputCapContextLength,
         maxTokens: params.maxTokens
       })
     ) {

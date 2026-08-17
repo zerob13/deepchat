@@ -384,6 +384,7 @@ function createAttemptInput(options?: {
             },
       budget: {
         estimateToolReserveTokens: () => 0,
+        getEffectiveContextLength: () => 1_000,
         preflight: ({
           messages,
           requestedMaxTokens
@@ -1280,6 +1281,7 @@ describe('DeepChatContextCoordinator', () => {
     expect(fixture.run.promptUsageAnchor).toMatchObject({
       providerId: 'provider-1',
       modelId: 'model-1',
+      effectiveContextLength: 1_000,
       promptTokens: 800,
       cacheReadTokens: 700
     })
@@ -1403,6 +1405,11 @@ describe('DeepChatContextCoordinator', () => {
       (fixture: ReturnType<typeof createAttemptInput>) => (fixture.input.maxTokens = 120)
     ],
     [
+      'effective context budget',
+      (fixture: ReturnType<typeof createAttemptInput>) =>
+        (fixture.input.budget.getEffectiveContextLength = () => 640)
+    ],
+    [
       'tool schema',
       (fixture: ReturnType<typeof createAttemptInput>) =>
         (fixture.input.tools = [
@@ -1446,6 +1453,7 @@ describe('DeepChatContextCoordinator', () => {
       2,
       expect.not.objectContaining({ promptTokenEstimate: expect.any(Number) })
     )
+    expect(fixture.run.promptUsageAnchor).toBeNull()
   })
 
   it('keeps an actual provider attempt fail-open when ViewManifest persistence throws', async () => {

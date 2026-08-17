@@ -33,6 +33,7 @@ import { isInsecureTlsAllowed } from '@/lib/insecureTls'
 import { buildResolvedCapabilitySnapshot, resolveCapabilityIdentity } from '../capabilityIdentity'
 
 const OLLAMA_LIST_TIMEOUT_MS = 5000
+const OLLAMA_RUNTIME_CONTEXT_TIMEOUT_MS = 400
 
 export class OllamaProvider extends BaseLLMProvider {
   private static readonly CONFIG_DRAIN_TIMEOUT_MS = 1500
@@ -53,18 +54,23 @@ export class OllamaProvider extends BaseLLMProvider {
     this.init()
   }
 
-  private createOllamaClient(): Ollama {
+  private createOllamaClient(signal?: AbortSignal): Ollama {
     const host = normalizeOllamaSdkHost(this.provider.baseUrl)
+    const requestFetch: typeof fetch | undefined = signal
+      ? (input, init) => fetch(input, { ...init, signal })
+      : undefined
 
     if (this.provider.apiKey) {
       return new Ollama({
         host,
-        headers: { Authorization: `Bearer ${this.provider.apiKey}` }
+        headers: { Authorization: `Bearer ${this.provider.apiKey}` },
+        ...(requestFetch ? { fetch: requestFetch } : {})
       })
     }
 
     return new Ollama({
-      host
+      host,
+      ...(requestFetch ? { fetch: requestFetch } : {})
     })
   }
 
@@ -279,10 +285,25 @@ export class OllamaProvider extends BaseLLMProvider {
   }
 
   private matchesRequestedModelName(actualModelName: string, requestedModelName: string): boolean {
-    return (
-      actualModelName === requestedModelName ||
-      (!requestedModelName.includes(':') && actualModelName === `${requestedModelName}:latest`)
-    )
+    const normalizeLatestTag = (name: string): string =>
+      name.endsWith(':latest') ? name.slice(0, -':latest'.length) : name
+    return normalizeLatestTag(actualModelName) === normalizeLatestTag(requestedModelName)
+  }
+
+  private normalizeRuntimeContextLength(value: unknown): number | undefined {
+    return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : undefined
+  }
+
+  private async listRuntimeModels(client: Ollama = this.ollama): Promise<OllamaModel[]> {
+    const response = await client.ps()
+    return response.models.map((rawModel) => {
+      const model = rawModel as unknown as OllamaModel & { context_length?: unknown }
+      const runtimeContextLength = this.normalizeRuntimeContextLength(model.context_length)
+      return {
+        ...model,
+        ...(runtimeContextLength !== undefined ? { runtimeContextLength } : {})
+      }
+    })
   }
 
   private mergeModelInfo(
@@ -681,11 +702,57 @@ export class OllamaProvider extends BaseLLMProvider {
 
   public async listRunningModels(): Promise<OllamaModel[]> {
     try {
-      const response = await this.ollama.ps()
-      const runningModels = response.models as unknown as OllamaModel[]
+      const runningModels = await this.listRuntimeModels()
       return await Promise.all(runningModels.map(async (model) => this.attachModelInfo(model)))
     } catch {
       return []
+    }
+  }
+
+  public override async getRuntimeContextLimitTokens(
+    modelId: string,
+    signal?: AbortSignal
+  ): Promise<number | undefined> {
+    signal?.throwIfAborted()
+    const timeoutController = new AbortController()
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    try {
+      timeoutId = setTimeout(() => {
+        timeoutController.abort(
+          new Error(
+            `Timed out after ${OLLAMA_RUNTIME_CONTEXT_TIMEOUT_MS}ms while reading Ollama runtime models`
+          )
+        )
+      }, OLLAMA_RUNTIME_CONTEXT_TIMEOUT_MS)
+      const requestSignal = signal
+        ? AbortSignal.any([signal, timeoutController.signal])
+        : timeoutController.signal
+      const runningModels = await this.listRuntimeModels(this.createOllamaClient(requestSignal))
+      const matchingModels = runningModels.filter((model) =>
+        this.matchesRequestedModelName(model.name, modelId)
+      )
+      if (matchingModels.length === 0) return undefined
+
+      const matchingLimits = matchingModels
+        .map((model) => model.runtimeContextLength)
+        .filter((value): value is number => value !== undefined)
+      if (matchingLimits.length === 0) {
+        throw new Error(
+          'Ollama did not expose runtime context_length for the running model. Upgrade Ollama to v0.9.7 or newer.'
+        )
+      }
+      return Math.min(...matchingLimits)
+    } catch (error) {
+      signal?.throwIfAborted()
+      const cause = timeoutController.signal.aborted ? timeoutController.signal.reason : error
+      throw new Error(
+        `Failed to read the Ollama runtime context for ${modelId}: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        { cause }
+      )
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId)
     }
   }
 
