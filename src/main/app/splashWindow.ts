@@ -8,10 +8,16 @@ import { is } from '@electron-toolkit/utils'
 import icon from '../../../resources/icon.png?asset' // 应用图标 (macOS/Linux)
 import iconWin from '../../../resources/icon.ico?asset' // 应用图标 (Windows)
 import {
+  DATABASE_RECOVERY_CANCEL_CHANNEL,
+  DATABASE_RECOVERY_REQUEST_CHANNEL,
+  DATABASE_RECOVERY_SUBMIT_CHANNEL,
   DATABASE_UNLOCK_CANCEL_CHANNEL,
   DATABASE_UNLOCK_PROGRESS_CHANNEL,
   DATABASE_UNLOCK_REQUEST_CHANNEL,
   DATABASE_UNLOCK_SUBMIT_CHANNEL,
+  type DatabaseRecoveryChoice,
+  type DatabaseRecoveryRequestPayload,
+  type DatabaseRecoverySubmitPayload,
   type DatabaseUnlockProgressPayload,
   type DatabaseUnlockRequestPayload,
   type DatabaseUnlockReason
@@ -27,6 +33,11 @@ export class SplashWindow {
     requestId: string
     payload: DatabaseUnlockRequestPayload
     resolve: (password: string | null) => void
+  } | null = null
+  private recoveryRequest: {
+    requestId: string
+    payload: DatabaseRecoveryRequestPayload
+    resolve: (choice: DatabaseRecoveryChoice | null) => void
   } | null = null
   private pendingUnlockProgress: DatabaseUnlockProgressPayload | null = null
   private splashReadyToShow = false
@@ -118,6 +129,8 @@ export class SplashWindow {
 
       // Handle window closed event6
       this.splashWindow.on('closed', () => {
+        this.recoveryRequest?.resolve(null)
+        this.recoveryRequest = null
         this.clearSplashShowDelayTimer()
         this.splashWindow = null
         this.splashDidFinishLoad = false
@@ -167,6 +180,27 @@ export class SplashWindow {
     })
   }
 
+  async requestDatabaseRecovery(
+    payload: Omit<DatabaseRecoveryRequestPayload, 'requestId'>
+  ): Promise<DatabaseRecoveryChoice | null> {
+    this.recoveryRequest?.resolve(null)
+
+    const requestId = `database-recovery-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const requestPayload: DatabaseRecoveryRequestPayload = {
+      requestId,
+      kind: payload.kind,
+      preservedPath: payload.preservedPath,
+      ...(payload.invalidPassword ? { invalidPassword: true } : {}),
+      ...(payload.quarantineFailed ? { quarantineFailed: true } : {})
+    }
+
+    return await new Promise((resolve) => {
+      this.recoveryRequest = { requestId, payload: requestPayload, resolve }
+      this.forceShowSplash({ skipDelay: true })
+      this.emitDatabaseUnlockState()
+    })
+  }
+
   async showDebugScenario(mode: SplashDebugMode): Promise<void> {
     this.debugMode = mode
     if (!this.splashWindow || this.splashWindow.isDestroyed()) {
@@ -194,6 +228,8 @@ export class SplashWindow {
     if (options.resolveUnlockRequest !== false) {
       this.unlockRequest?.resolve(null)
       this.unlockRequest = null
+      this.recoveryRequest?.resolve(null)
+      this.recoveryRequest = null
     }
     if (options.resolveUnlockRequest !== false) {
       this.pendingUnlockProgress = null
@@ -266,6 +302,37 @@ export class SplashWindow {
       this.unlockRequest = null
       current.resolve(null)
     })
+
+    ipcMain.on(DATABASE_RECOVERY_SUBMIT_CHANNEL, (event, payload: unknown) => {
+      if (!this.isSplashSender(event.sender.id) || !this.recoveryRequest) {
+        return
+      }
+      const choice = parseRecoverySubmit(payload, this.recoveryRequest.requestId)
+      if (!choice) {
+        return
+      }
+
+      const current = this.recoveryRequest
+      this.recoveryRequest = null
+      current.resolve(choice)
+    })
+
+    ipcMain.on(DATABASE_RECOVERY_CANCEL_CHANNEL, (event, payload: unknown) => {
+      if (!this.isSplashSender(event.sender.id) || !this.recoveryRequest) {
+        return
+      }
+      const requestId =
+        payload && typeof payload === 'object'
+          ? (payload as { requestId?: unknown }).requestId
+          : undefined
+      if (requestId !== this.recoveryRequest.requestId) {
+        return
+      }
+
+      const current = this.recoveryRequest
+      this.recoveryRequest = null
+      current.resolve(null)
+    })
   }
 
   private isSplashSender(webContentsId: number): boolean {
@@ -288,6 +355,13 @@ export class SplashWindow {
       this.splashWindow.webContents.send(
         DATABASE_UNLOCK_REQUEST_CHANNEL,
         this.unlockRequest.payload
+      )
+    }
+
+    if (this.recoveryRequest) {
+      this.splashWindow.webContents.send(
+        DATABASE_RECOVERY_REQUEST_CHANNEL,
+        this.recoveryRequest.payload
       )
     }
   }
@@ -516,6 +590,7 @@ export class SplashWindow {
         <div id="error" class="error" hidden>Wrong password. Try again.</div>
         <div id="actions" class="actions" hidden>
           <button id="submit" class="primary" type="submit" disabled>Unlock</button>
+          <button id="empty" type="button" hidden>Start empty</button>
           <button id="quit" type="button">Quit</button>
         </div>
         <p id="hint" class="hint">DeepChat is reading the saved password from the system credential store.</p>
@@ -532,13 +607,19 @@ export class SplashWindow {
       const error = document.getElementById('error')
       const actions = document.getElementById('actions')
       const submit = document.getElementById('submit')
+      const empty = document.getElementById('empty')
       const quit = document.getElementById('quit')
       const hint = document.getElementById('hint')
       const setDebugMode = (mode) => {
         requestId = ''
-        shell.classList.toggle('shell--manual-unlock', mode === 'unlock')
+        shell.classList.toggle('shell--manual-unlock', mode === 'unlock' || mode === 'recovery')
         password.value = ''
         error.hidden = true
+        submit.dataset.recovery = ''
+        submit.dataset.confirm = ''
+        empty.hidden = true
+        empty.dataset.confirm = ''
+        empty.textContent = 'Start empty'
         if (mode === 'loading') {
           label.hidden = true
           password.hidden = true
@@ -553,6 +634,19 @@ export class SplashWindow {
           actions.hidden = true
           subtitle.textContent = 'Unlocking local database'
           hint.textContent = 'DeepChat is reading the saved password from the system credential store.'
+          return
+        }
+        if (mode === 'recovery') {
+          label.hidden = false
+          password.hidden = false
+          actions.hidden = false
+          password.disabled = true
+          submit.disabled = true
+          quit.disabled = true
+          empty.hidden = false
+          empty.disabled = true
+          subtitle.textContent = 'This database cannot be read. It may be encrypted or damaged.'
+          hint.textContent = 'Development preview — password submission is disabled.'
           return
         }
         label.hidden = false
@@ -577,6 +671,12 @@ export class SplashWindow {
         password.value = ''
         submit.textContent = 'Unlock'
         submit.disabled = true
+        submit.dataset.recovery = ''
+        submit.dataset.confirm = ''
+        empty.hidden = true
+        empty.disabled = false
+        empty.dataset.confirm = ''
+        empty.textContent = 'Start empty'
         hint.textContent = payload.reason === 'system-key-missing'
           ? 'The saved system credential is missing or cannot be decrypted. Enter the SQLite password once to unlock and save it again.'
           : payload.safeStorageAvailable
@@ -589,18 +689,75 @@ export class SplashWindow {
       })
       panel.addEventListener('submit', (event) => {
         event.preventDefault()
-        if (!splash || !requestId || !password.value) return
+        if (!splash || !requestId) return
+        if (submit.dataset.recovery === 'start-empty') {
+          if (submit.dataset.confirm !== '1') {
+            submit.dataset.confirm = '1'
+            submit.textContent = 'Confirm start empty'
+            return
+          }
+          splash.submitRecovery({ requestId, action: 'start-empty' })
+          return
+        }
+        if (submit.dataset.recovery === 'password') {
+          if (!password.value) return
+          splash.submitRecovery({ requestId, action: 'password', password: password.value })
+          return
+        }
+        if (!password.value) return
         splash.submitUnlock({ requestId, password: password.value })
         password.value = ''
         submit.disabled = true
         submit.textContent = 'Opening...'
       })
+      empty.addEventListener('click', () => {
+        if (!splash || !requestId || !submit.dataset.recovery) return
+        if (empty.dataset.confirm !== '1') {
+          empty.dataset.confirm = '1'
+          empty.textContent = 'Confirm start empty'
+          return
+        }
+        splash.submitRecovery({ requestId, action: 'start-empty' })
+      })
       quit.addEventListener('click', () => {
         if (!splash || !requestId) return
+        if (submit.dataset.recovery) {
+          splash.cancelRecovery({ requestId })
+          return
+        }
         splash.cancelUnlock({ requestId })
       })
       splash && splash.onDebugMode((mode) => setDebugMode(mode))
       splash && splash.onUnlockRequest((payload) => setUnlock(payload))
+      splash && splash.onRecoveryRequest((payload) => {
+        shell.classList.add('shell--manual-unlock')
+        requestId = payload.requestId
+        const needsPassword = payload.kind === 'unreadable'
+        subtitle.textContent = payload.kind === 'unreadable'
+          ? 'This database cannot be read. It may be encrypted or damaged.'
+          : payload.kind === 'orphaned-sidecar'
+            ? 'A leftover database journal was found without its main file.'
+            : 'The local database is damaged.'
+        label.hidden = !needsPassword
+        password.hidden = !needsPassword
+        password.disabled = !needsPassword
+        actions.hidden = false
+        quit.disabled = false
+        error.hidden = !payload.invalidPassword && !payload.quarantineFailed
+        error.textContent = payload.quarantineFailed
+          ? 'Could not move the original files. Try Start empty again or quit.'
+          : 'Wrong password. Try again.'
+        password.value = ''
+        submit.textContent = needsPassword ? 'Unlock' : 'Start empty'
+        submit.disabled = needsPassword
+        submit.dataset.recovery = needsPassword ? 'password' : 'start-empty'
+        submit.dataset.confirm = ''
+        empty.hidden = !needsPassword
+        empty.dataset.confirm = ''
+        empty.textContent = 'Start empty'
+        hint.textContent = 'Original files will be kept at ' + payload.preservedPath + '.'
+        if (needsPassword) setTimeout(() => password.focus(), 0)
+      })
       splash && splash.onUnlockProgress((payload) => {
         if (payload && payload.active && !requestId) {
           subtitle.textContent = 'Unlocking local database'
@@ -631,4 +788,25 @@ export class SplashWindow {
       console.error('Failed to close hidden splash window:', error)
     }
   }
+}
+
+function parseRecoverySubmit(payload: unknown, requestId: string): DatabaseRecoveryChoice | null {
+  if (!payload || typeof payload !== 'object') {
+    return null
+  }
+
+  const record = payload as DatabaseRecoverySubmitPayload
+  if (record.requestId !== requestId) {
+    return null
+  }
+
+  if (record.action === 'start-empty') {
+    return { action: 'start-empty' }
+  }
+
+  if (record.action === 'password' && typeof record.password === 'string' && record.password) {
+    return { action: 'password', password: record.password }
+  }
+
+  return null
 }

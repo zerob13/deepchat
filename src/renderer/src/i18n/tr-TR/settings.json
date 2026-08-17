@@ -3226,6 +3226,7 @@
       "loading": "Yükleme önizlemesi",
       "systemUnlock": "Sistem kilit açma önizlemesi",
       "unlock": "Manuel kilit açma önizlemesi",
+      "recovery": "Veritabanı kurtarma önizlemesi",
       "failed": "Açılış senaryosu gösterilemiyor.",
       "previewHint": "Geliştirme önizlemesi — parola gönderimi devre dışı."
     },

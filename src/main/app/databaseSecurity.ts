@@ -9,6 +9,10 @@ import type { DatabaseSecurityStatus } from '@shared/contracts/routes'
 import type { DatabaseUnlockReason } from '@shared/contracts/databaseSecurity'
 import { openSQLiteDatabase } from '../data/databaseConnection'
 import { configureSQLCipherCompatibility } from '@/data/connectionConfig'
+import {
+  isDecryptedDatabaseCorruptionError,
+  OrphanWalDatabaseError
+} from '@/data/databaseStartupRecovery'
 import { shouldExcludeFromSqliteCopy } from '@/data/sqliteCopyExclusions'
 import { orderSqliteTablesForCopy } from '@/data/sqliteCopyOrder'
 
@@ -110,6 +114,46 @@ export class DatabaseSecurityService {
     this.recoverInterruptedMigrationFiles()
   }
 
+  getDatabasePath(): string {
+    return this.dbPath
+  }
+
+  private rememberPasswordAfterUnlock(
+    password: string,
+    metadata: DatabaseSecurityMetadata,
+    safeStorageAvailable: boolean
+  ): void {
+    if (!safeStorageAvailable) {
+      return
+    }
+    this.persistMetadata({
+      ...metadata,
+      passwordStorage: 'safeStorage',
+      wrappedPassword: this.wrapPassword(password),
+      safeStorageBackend: this.getSafeStorageBackend()
+    })
+  }
+
+  persistRecoveredEncryptionMetadata(password: string): void {
+    this.assertPassword(password)
+    const safeStorageAvailable = this.isSafeStorageAvailable()
+    const metadata = this.getMetadata()
+    this.persistMetadata({
+      version: 1,
+      enabled: true,
+      cipher: 'sqlcipher',
+      passwordStorage: safeStorageAvailable ? 'safeStorage' : 'manual',
+      wrappedPassword: safeStorageAvailable ? this.wrapPassword(password) : undefined,
+      safeStorageBackend: this.getSafeStorageBackend(),
+      lastMigrationAt: metadata.lastMigrationAt,
+      lastMigrationDirection: metadata.lastMigrationDirection
+    })
+  }
+
+  clearEncryptionMetadata(): void {
+    this.persistMetadata({ ...DEFAULT_METADATA })
+  }
+
   getStatus(): DatabaseSecurityStatus {
     const metadata = this.getMetadata()
     const safeStorageAvailable = this.isSafeStorageAvailable()
@@ -142,11 +186,18 @@ export class DatabaseSecurityService {
       metadata.passwordStorage === 'safeStorage' &&
       metadata.wrappedPassword
     ) {
+      let password: string | undefined
       try {
-        const password = this.unwrapPassword(metadata.wrappedPassword)
+        password = this.unwrapPassword(metadata.wrappedPassword)
         this.validatePassword(password)
         return password
-      } catch {
+      } catch (error) {
+        if (password !== undefined && isDecryptedDatabaseCorruptionError(error)) {
+          return password
+        }
+        if (error instanceof OrphanWalDatabaseError) {
+          throw error
+        }
         safeStorageUnlockFailed = true
         console.warn('[DatabaseSecurity] safeStorage unlock failed; manual unlock required.')
       }
@@ -167,16 +218,16 @@ export class DatabaseSecurityService {
 
       try {
         this.validatePassword(password)
-        if (safeStorageAvailable) {
-          this.persistMetadata({
-            ...metadata,
-            passwordStorage: 'safeStorage',
-            wrappedPassword: this.wrapPassword(password),
-            safeStorageBackend: this.getSafeStorageBackend()
-          })
-        }
+        this.rememberPasswordAfterUnlock(password, metadata, safeStorageAvailable)
         return password
-      } catch {
+      } catch (error) {
+        if (isDecryptedDatabaseCorruptionError(error)) {
+          this.rememberPasswordAfterUnlock(password, metadata, safeStorageAvailable)
+          return password
+        }
+        if (error instanceof OrphanWalDatabaseError) {
+          throw error
+        }
         reason = 'invalid'
       }
     }

@@ -3226,6 +3226,7 @@
       "loading": "Pratinjau pemuatan",
       "systemUnlock": "Pratinjau pembukaan kunci sistem",
       "unlock": "Pratinjau pembukaan kunci manual",
+      "recovery": "Pratinjau pemulihan basis data",
       "failed": "Tidak dapat menampilkan skenario jendela pembuka.",
       "previewHint": "Pratinjau pengembangan — pengiriman kata sandi dinonaktifkan."
     },
