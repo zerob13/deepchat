@@ -34,22 +34,35 @@ export class ProxyConfig {
   private proxyUrl: string | null = null
   private mode: ProxyMode = ProxyMode.SYSTEM
   private customProxyUrl: string = ''
+  private resolutionPromise: Promise<boolean> = Promise.resolve(true)
 
-  async resolveProxy(): Promise<boolean> {
+  resolveProxy(): Promise<boolean> {
+    const mode = this.mode
+    const customProxyUrl = this.customProxyUrl
+    const resolution = this.resolutionPromise.then(() => this.resolveProxyNow(mode, customProxyUrl))
+    this.resolutionPromise = resolution
+    return resolution
+  }
+
+  whenReady(): Promise<boolean> {
+    return this.resolutionPromise
+  }
+
+  private async resolveProxyNow(mode: ProxyMode, customProxyUrl: string): Promise<boolean> {
     try {
       // 根据不同的代理模式设置
-      if (this.mode === ProxyMode.NONE) {
-        this.clearProxy()
+      if (mode === ProxyMode.NONE) {
+        await this.clearProxy()
         logger.info('clear proxy')
         return false
-      } else if (this.mode === ProxyMode.CUSTOM && this.customProxyUrl) {
-        logger.info('proxy url', this.customProxyUrl)
-        this.setCustomProxy(this.customProxyUrl)
+      } else if (mode === ProxyMode.CUSTOM && customProxyUrl) {
+        logger.info('proxy url', customProxyUrl)
+        await this.setCustomProxy(customProxyUrl)
         return false
       }
 
       // 系统代理模式
-      session.defaultSession.setProxy({ mode: 'system' })
+      await session.defaultSession.setProxy({ mode: 'system' })
       const proxyString = await session.defaultSession.resolveProxy('https://www.google.com')
       const [protocol, address] = proxyString.split(';')[0].split(' ')
       logger.info('proxy url', protocol, address)
@@ -80,7 +93,8 @@ export class ProxyConfig {
     }
   }
 
-  private clearProxy(): void {
+  private async clearProxy(): Promise<void> {
+    await session.defaultSession.setProxy({ mode: 'direct' })
     this.proxyUrl = null
     delete process.env.http_proxy
     delete process.env.https_proxy
@@ -90,11 +104,11 @@ export class ProxyConfig {
     delete process.env.grpc_proxy
     delete process.env.no_proxy
     delete process.env.NO_PROXY
-    session.defaultSession.setProxy({ mode: 'direct' })
     setGlobalDispatcher(new Agent())
   }
 
-  private setCustomProxy(proxyUrl: string): void {
+  private async setCustomProxy(proxyUrl: string): Promise<void> {
+    await session.defaultSession.setProxy({ proxyRules: proxyUrl })
     this.proxyUrl = proxyUrl
     process.env.http_proxy = proxyUrl
     process.env.https_proxy = proxyUrl
@@ -105,7 +119,6 @@ export class ProxyConfig {
     const mergedNoProxy = mergeNoProxy(NO_PROXY)
     process.env.no_proxy = mergedNoProxy
     process.env.NO_PROXY = mergedNoProxy
-    session.defaultSession.setProxy({ proxyRules: proxyUrl })
     setGlobalDispatcher(
       new EnvHttpProxyAgent({
         httpProxy: proxyUrl,
