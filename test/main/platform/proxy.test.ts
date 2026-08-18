@@ -159,7 +159,7 @@ describe('process-wide fetch dispatcher', () => {
       headersTimeout: 0,
       bodyTimeout: 0
     })
-    expect(setGlobalDispatcher).toHaveBeenCalledTimes(1)
+    expect(setGlobalDispatcher).toHaveBeenCalledTimes(2)
     expect(EnvHttpProxyAgent).not.toHaveBeenCalled()
   })
 
@@ -172,7 +172,7 @@ describe('process-wide fetch dispatcher', () => {
       headersTimeout: 0,
       bodyTimeout: 0
     })
-    expect(setGlobalDispatcher).toHaveBeenCalledTimes(1)
+    expect(setGlobalDispatcher).toHaveBeenCalledTimes(2)
   })
 
   it('installs EnvHttpProxyAgent with those timeouts when a proxy is set', async () => {
@@ -188,6 +188,129 @@ describe('process-wide fetch dispatcher', () => {
         bodyTimeout: 0
       })
     )
+    expect(setGlobalDispatcher).toHaveBeenCalledTimes(2)
+  })
+
+  it('merges process NO_PROXY into the system proxy dispatcher', async () => {
+    process.env.NO_PROXY = 'example.test, .internal'
+    electronMocks.resolveProxy.mockResolvedValue('PROXY 127.0.0.1:7890')
+    const config = new ProxyConfig()
+    await config.resolveProxy()
+
+    expect(EnvHttpProxyAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        noProxy: expect.stringMatching(/localhost/),
+        headersTimeout: 0,
+        bodyTimeout: 0
+      })
+    )
+    const noProxy = (EnvHttpProxyAgent.mock.calls[0]?.[0] as { noProxy?: string } | undefined)
+      ?.noProxy
+    expect(noProxy).toContain('example.test')
+    expect(noProxy).toContain('.internal')
+  })
+
+  it('installs a no-proxy Agent with those timeouts when resolveProxy fails', async () => {
+    electronMocks.resolveProxy.mockRejectedValue(new Error('resolve failed'))
+    const config = new ProxyConfig()
+
+    await expect(config.resolveProxy()).resolves.toBe(false)
+
+    expect(Agent).toHaveBeenCalledWith({
+      headersTimeout: 0,
+      bodyTimeout: 0
+    })
     expect(setGlobalDispatcher).toHaveBeenCalledTimes(1)
+    expect(EnvHttpProxyAgent).not.toHaveBeenCalled()
+  })
+
+  it('keeps the known proxy dispatcher when a later resolve fails', async () => {
+    electronMocks.resolveProxy
+      .mockResolvedValueOnce('PROXY 127.0.0.1:7890')
+      .mockRejectedValueOnce(new Error('resolve failed'))
+    const config = new ProxyConfig()
+    await config.resolveProxy()
+    vi.clearAllMocks()
+    electronMocks.setProxy.mockResolvedValue(undefined)
+
+    await expect(config.resolveProxy()).resolves.toBe(false)
+
+    expect(EnvHttpProxyAgent).not.toHaveBeenCalled()
+    expect(Agent).not.toHaveBeenCalled()
+    expect(setGlobalDispatcher).not.toHaveBeenCalled()
+    expect(config.getProxyUrl()).toBe('http://127.0.0.1:7890')
+  })
+
+  it('preserves inherited NO_PROXY after a DIRECT to proxy transition', async () => {
+    process.env.NO_PROXY = 'corp.internal'
+    electronMocks.resolveProxy
+      .mockResolvedValueOnce('DIRECT')
+      .mockResolvedValueOnce('PROXY 127.0.0.1:7890')
+    const config = new ProxyConfig()
+    await config.resolveProxy()
+    expect(process.env.NO_PROXY).toBeUndefined()
+
+    await expect(config.resolveProxy()).resolves.toBe(true)
+    const noProxy = (EnvHttpProxyAgent.mock.calls.at(-1)?.[0] as { noProxy?: string } | undefined)
+      ?.noProxy
+    expect(noProxy).toContain('corp.internal')
+    expect(noProxy).toContain('localhost')
+  })
+
+  it('clears committed proxy env when system resolution becomes DIRECT', async () => {
+    electronMocks.resolveProxy
+      .mockResolvedValueOnce('PROXY 127.0.0.1:7890')
+      .mockResolvedValueOnce('DIRECT')
+    const config = new ProxyConfig()
+    await config.resolveProxy()
+    expect(process.env.HTTP_PROXY).toBe('http://127.0.0.1:7890')
+    expect(process.env.GRPC_PROXY).toBe('http://127.0.0.1:7890')
+
+    await expect(config.resolveProxy()).resolves.toBe(true)
+    expect(config.getProxyUrl()).toBeNull()
+    expect(process.env.http_proxy).toBeUndefined()
+    expect(process.env.https_proxy).toBeUndefined()
+    expect(process.env.HTTP_PROXY).toBeUndefined()
+    expect(process.env.HTTPS_PROXY).toBeUndefined()
+    expect(process.env.GRPC_PROXY).toBeUndefined()
+    expect(process.env.grpc_proxy).toBeUndefined()
+    expect(process.env.no_proxy).toBeUndefined()
+    expect(process.env.NO_PROXY).toBeUndefined()
+    expect(Agent).toHaveBeenLastCalledWith({
+      headersTimeout: 0,
+      bodyTimeout: 0
+    })
+  })
+
+  it('treats a PROXY result without an address as a no-proxy dispatcher', async () => {
+    electronMocks.resolveProxy.mockResolvedValue('PROXY')
+    const config = new ProxyConfig()
+
+    await expect(config.resolveProxy()).resolves.toBe(true)
+    expect(config.getProxyUrl()).toBeNull()
+    expect(Agent).toHaveBeenCalledWith({
+      headersTimeout: 0,
+      bodyTimeout: 0
+    })
+    expect(EnvHttpProxyAgent).not.toHaveBeenCalled()
+  })
+
+  it('does not stall later resolves when dispatcher setup fails', async () => {
+    electronMocks.resolveProxy
+      .mockResolvedValueOnce('PROXY 127.0.0.1:7890')
+      .mockResolvedValueOnce('PROXY 127.0.0.1:9999')
+      .mockResolvedValueOnce('PROXY 127.0.0.1:7891')
+    const config = new ProxyConfig()
+    await config.resolveProxy()
+    expect(config.getProxyUrl()).toBe('http://127.0.0.1:7890')
+
+    EnvHttpProxyAgent.mockImplementationOnce(() => {
+      throw new Error('invalid proxy')
+    })
+    await expect(config.resolveProxy()).resolves.toBe(false)
+    expect(config.getProxyUrl()).toBe('http://127.0.0.1:7890')
+
+    await expect(config.resolveProxy()).resolves.toBe(true)
+    expect(config.getProxyUrl()).toBe('http://127.0.0.1:7891')
   })
 })
