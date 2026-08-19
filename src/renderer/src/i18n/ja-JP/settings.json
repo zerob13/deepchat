@@ -1792,8 +1792,6 @@
     "enableToAccess": "まずACPを有効にしてプロキシ設定にアクセスしてください",
     "enabledDescription": "有効にすると、設定されたACPプロキシがモデルセレクターにモデルとして表示されます。",
     "enabledTitle": "ACPを有効にする",
-    "useBuiltinRuntimeTitle": "DeepChat内蔵ランタイムを使用",
-    "useBuiltinRuntimeDescription": "有効にすると、システムのnodeとuvコマンドをバイパスし、DeepChatにバンドルされたバージョンを使用します。",
     "env": "環境変数",
     "envKeyPlaceholder": "キー",
     "envValuePlaceholder": "価値",
@@ -2640,7 +2638,10 @@
       "assets_missing": "このインストールには必要なオフライン OCR アセットがありません。",
       "runtime_manifest_invalid": "内蔵 OCR ランタイムのマニフェストが無効です。",
       "service_closed": "OCR サービスを終了しています。",
-      "unsupported_platform": "このプラットフォームとアーキテクチャでは OCR を利用できません。"
+      "unsupported_platform": "このプラットフォームとアーキテクチャでは OCR を利用できません。",
+      "toolchain_unavailable": "OCR には公式 Node.js v24.18.0 が必要です。設定 → ツールチェーンから公式ランタイムをインストールしてください。",
+      "version_mismatch": "OCR には Node.js v24.18.0 が必要です。現在の Node はこの範囲外です。設定 → ツールチェーンから公式ランタイムをインストールしてください。",
+      "abi_mismatch": "OCR には Node.js ABI 137（v24.18.0）が必要です。設定 → ツールチェーンから公式ランタイムをインストールしてください。"
     },
     "processStates": {
       "idle": "アイドル",
@@ -3268,5 +3269,49 @@
       "description": "オンボーディング、会話、更新用の開発専用モックを作成します。",
       "failed": "デバッグ用ガイドフローを開始できません。"
     }
+  },
+  "toolchains": {
+    "description": "DeepChat が使う Node と uv の入手元を選びます。一度選んだ入手元は自動では切り替わりません。",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "入手元",
+    "sources": {
+      "bundled": "アプリ同梱",
+      "managed": "DeepChat がインストール",
+      "system": "システムのインストール",
+      "custom": "カスタムパス",
+      "unconfigured": "未設定",
+      "autoNamed": "自動（{source}）"
+    },
+    "systemDetected": "システムのバイナリを検出：{path}",
+    "systemDetectedHint": "すでに使えるインストールがある場合は、それを使います。再ダウンロードしません。",
+    "install": "公式ランタイムをインストール",
+    "repair": "修復",
+    "revert": "元に戻す",
+    "cancelInstall": "キャンセル",
+    "installing": "インストール中…",
+    "version": "バージョン",
+    "path": "パス",
+    "bannerTitle": "必要なランタイムがありません",
+    "bannerDescription": "MCP、ACP、Skills、または OCR で使える Node または uv がありません。",
+    "bannerAction": "ツールチェーンを開く",
+    "availability": {
+      "ready": "利用可能",
+      "missing": "不足",
+      "incomplete": "不完全",
+      "unconfigured": "未設定"
+    },
+    "downloadReasons": {
+      "dns": "ダウンロード先のホスト名を解決できませんでした。",
+      "timeout": "ダウンロードがタイムアウトしました。",
+      "http": "ダウンロードサーバーがエラーを返しました。",
+      "proxy": "設定されたプロキシ経由のダウンロードに失敗しました。",
+      "checksum_mismatch": "ダウンロードしたファイルの整合性検証に失敗しました。",
+      "disk": "ランタイムをディスクに書き込めませんでした。",
+      "cancelled": "ダウンロードはキャンセルされました。",
+      "activation_failed": "ランタイムを有効化できませんでした。",
+      "unsupported_platform": "このプラットフォームには公式ランタイムがありません。"
+    },
+    "ocrPinHint": "OCR には公式 Node v24.18.0（ABI 137）が必要です。このランタイムはチャットと MCP では利用できますが、OCR では使えません。公式ランタイムをインストールしてください。"
   }
 }

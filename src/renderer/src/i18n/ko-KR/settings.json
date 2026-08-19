@@ -1792,8 +1792,6 @@
     "enableToAccess": "프록시 구성에 액세스하려면 먼저 ACP를 활성화하세요.",
     "enabledDescription": "활성화되면 구성된 ACP 에이전트가 모델 선택기에서 모델로 나타납니다.",
     "enabledTitle": "ACP 활성화",
-    "useBuiltinRuntimeTitle": "DeepChat 내장 런타임 사용",
-    "useBuiltinRuntimeDescription": "활성화하면 시스템의 node 및 uv 명령을 우회하여 DeepChat에 번들로 제공되는 버전을 사용합니다.",
     "env": "환경 변수",
     "envKeyPlaceholder": "열쇠",
     "envValuePlaceholder": "값",
@@ -2640,7 +2638,10 @@
       "assets_missing": "이 설치에 필요한 오프라인 OCR 자산이 없습니다.",
       "runtime_manifest_invalid": "내장 OCR 런타임 매니페스트가 올바르지 않습니다.",
       "service_closed": "OCR 서비스를 종료하는 중입니다.",
-      "unsupported_platform": "이 플랫폼과 아키텍처에서는 OCR을 사용할 수 없습니다."
+      "unsupported_platform": "이 플랫폼과 아키텍처에서는 OCR을 사용할 수 없습니다.",
+      "toolchain_unavailable": "OCR에는 공식 Node.js v24.18.0이 필요합니다. 설정 → 툴체인에서 공식 런타임을 설치하세요.",
+      "version_mismatch": "OCR에는 Node.js v24.18.0이 필요합니다. 현재 Node는 이 범위 밖입니다. 설정 → 툴체인에서 공식 런타임을 설치하세요.",
+      "abi_mismatch": "OCR에는 Node.js ABI 137(v24.18.0)이 필요합니다. 설정 → 툴체인에서 공식 런타임을 설치하세요."
     },
     "processStates": {
       "idle": "유휴",
@@ -3268,5 +3269,49 @@
       "description": "온보딩, 대화, 업데이트를 위한 개발 전용 모의를 만듭니다.",
       "failed": "디버그 안내 흐름을 시작할 수 없습니다."
     }
+  },
+  "toolchains": {
+    "description": "DeepChat이 사용할 Node와 uv의 출처를 선택합니다. 선택한 출처는 자동으로 바뀌지 않습니다.",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "출처",
+    "sources": {
+      "bundled": "앱에 포함됨",
+      "managed": "DeepChat이 설치",
+      "system": "시스템 설치",
+      "custom": "사용자 지정 경로",
+      "unconfigured": "구성되지 않음",
+      "autoNamed": "자동({source})"
+    },
+    "systemDetected": "시스템 바이너리 감지됨: {path}",
+    "systemDetectedHint": "이미 사용 가능한 설치가 있으면 그것을 사용하며 다시 다운로드하지 않습니다.",
+    "install": "공식 런타임 설치",
+    "repair": "복구",
+    "revert": "되돌리기",
+    "cancelInstall": "취소",
+    "installing": "설치 중…",
+    "version": "버전",
+    "path": "경로",
+    "bannerTitle": "필요한 런타임이 없습니다",
+    "bannerDescription": "MCP, ACP, Skills 또는 OCR에 사용할 Node 또는 uv가 없습니다.",
+    "bannerAction": "툴체인 열기",
+    "availability": {
+      "ready": "준비됨",
+      "missing": "없음",
+      "incomplete": "불완전",
+      "unconfigured": "구성되지 않음"
+    },
+    "downloadReasons": {
+      "dns": "다운로드 호스트를 확인할 수 없습니다.",
+      "timeout": "다운로드 시간이 초과되었습니다.",
+      "http": "다운로드 서버가 오류를 반환했습니다.",
+      "proxy": "구성된 프록시를 통한 다운로드에 실패했습니다.",
+      "checksum_mismatch": "다운로드한 파일의 무결성 검증에 실패했습니다.",
+      "disk": "런타임을 디스크에 쓸 수 없습니다.",
+      "cancelled": "다운로드가 취소되었습니다.",
+      "activation_failed": "런타임을 활성화할 수 없습니다.",
+      "unsupported_platform": "이 플랫폼에는 공식 런타임이 없습니다."
+    },
+    "ocrPinHint": "OCR에는 공식 Node v24.18.0(ABI 137)이 필요합니다. 이 런타임은 채팅과 MCP에는 사용할 수 있지만 OCR에는 사용할 수 없습니다. 공식 런타임을 설치하세요."
   }
 }

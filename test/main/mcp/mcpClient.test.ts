@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { McpClient } from '../../../src/main/mcp/mcpClient'
 import { RuntimeHelper } from '../../../src/main/lib/runtimeHelper'
+import { ToolchainService } from '../../../src/main/toolchains/service'
+import { ToolchainResolutionError } from '../../../src/main/toolchains/errors'
 import path from 'path'
 import fs from 'fs'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
@@ -174,6 +176,18 @@ describe('McpClient Runtime Command Processing Tests', () => {
     runtimeHelper.runtimesInitialized = false
     runtimeHelper.setNodeRuntimePath(null)
     runtimeHelper.setUvRuntimePath(null)
+    vi.spyOn(ToolchainService, 'getInstance').mockReturnValue({
+      rewriteCommand: (command: string, args: string[]) => ({ command, args }),
+      resolvedBinDirs: () => [],
+      prependResolvedToEnv: (env: Record<string, string>) => env,
+      resolve: (kind: 'node' | 'uv') => {
+        throw new ToolchainResolutionError(
+          kind,
+          'unconfigured',
+          `${kind} toolchain is not configured`
+        )
+      }
+    } as never)
 
     mockHandleSamplingRequest.mockReset()
     mockCancelSamplingRequest.mockReset()
@@ -209,6 +223,7 @@ describe('McpClient Runtime Command Processing Tests', () => {
   })
 
   afterEach(() => {
+    ToolchainService.resetForTests()
     vi.clearAllMocks()
   })
 
@@ -269,27 +284,26 @@ describe('McpClient Runtime Command Processing Tests', () => {
     })
 
     it('should handle uvx command with runtime path replacement', () => {
-      const serverConfig = {
-        type: 'stdio',
-        command: 'uvx',
-        args: ['osm-mcp-server']
-      }
-
-      const client = createMcpClient('osm-mcp-server', serverConfig)
-
-      // Mock the runtime path for testing
       const uvRuntimePath = path
         .join('/mock/app/runtime/uv')
         .replace('app.asar', 'app.asar.unpacked')
-      client.uvRuntimePath = uvRuntimePath
-
-      const processedCommand = (client as any).processCommandWithArgs('uvx', ['osm-mcp-server'])
-
-      // Should use the runtime path
       const expectedUvxPath =
         process.platform === 'win32'
           ? path.join(uvRuntimePath, 'uvx.exe')
           : path.join(uvRuntimePath, 'uvx')
+      vi.spyOn(ToolchainService, 'getInstance').mockReturnValue({
+        rewriteCommand: () => ({ command: expectedUvxPath, args: ['osm-mcp-server'] }),
+        resolvedBinDirs: () => [],
+        prependResolvedToEnv: (env: Record<string, string>) => env,
+        resolve: () => ({ rootDir: uvRuntimePath })
+      } as never)
+
+      const client = createMcpClient('osm-mcp-server', {
+        type: 'stdio',
+        command: 'uvx',
+        args: ['osm-mcp-server']
+      })
+      const processedCommand = (client as any).processCommandWithArgs('uvx', ['osm-mcp-server'])
 
       expect(processedCommand.command.replace(/[\\/]+/g, '/')).toBe(
         expectedUvxPath.replace(/[\\/]+/g, '/')
@@ -317,7 +331,7 @@ describe('McpClient Runtime Command Processing Tests', () => {
   })
 
   describe('Other Command Processing', () => {
-    it('should handle node command replacement with bun', () => {
+    it('should handle node command replacement with the resolved toolchain', () => {
       const serverConfig = {
         type: 'stdio',
         command: 'node',
@@ -380,24 +394,26 @@ describe('McpClient Runtime Command Processing Tests', () => {
   })
 
   describe('Runtime Path Detection', () => {
-    it('should detect uv runtime when files exist', () => {
-      mockFsExistsSync.mockImplementation((filePath: string | Buffer | URL) => {
-        const pathStr = String(filePath)
-        return pathStr.includes('runtime/uv/uv')
-      })
+    it('should expose resolved toolchain roots from the service', () => {
+      vi.spyOn(ToolchainService, 'getInstance').mockReturnValue({
+        rewriteCommand: (command: string, args: string[]) => ({ command, args }),
+        resolvedBinDirs: () => [],
+        prependResolvedToEnv: (env: Record<string, string>) => env,
+        resolve: (kind: 'node' | 'uv') => ({
+          rootDir: kind === 'uv' ? '/runtime/uv' : '/runtime/node'
+        })
+      } as never)
 
       const client = createMcpClient('test', { type: 'stdio' })
 
-      expect((client as any).uvRuntimePath).toBeTruthy()
-      expect((client as any).nodeRuntimePath).toBeNull()
+      expect((client as any).uvRuntimePath).toBe('/runtime/uv')
+      expect((client as any).nodeRuntimePath).toBe('/runtime/node')
     })
 
     it('should handle missing runtime files gracefully', () => {
-      mockFsExistsSync.mockReturnValue(false)
-
       const client = createMcpClient('test', { type: 'stdio' })
 
-      expect((client as any).bunRuntimePath).toBeNull()
+      expect((client as any).nodeRuntimePath).toBeNull()
       expect((client as any).uvRuntimePath).toBeNull()
     })
   })
@@ -443,6 +459,19 @@ describe('McpClient Runtime Command Processing Tests', () => {
       const pathEnv =
         transportOptions.env.PATH ?? transportOptions.env.Path ?? transportOptions.env.path
       expect(pathEnv).toContain('/custom/bin')
+      expect(transportOptions.env.path).toBeUndefined()
+    })
+
+    it('drops a leftover lowercase path key when merging runtime bins', () => {
+      const client = createMcpClient('test', { type: 'stdio' })
+      const env = {
+        Path: 'C:\\user\\bin',
+        path: 'C:\\legacy\\bin',
+        PATH: 'C:\\user\\bin'
+      }
+      ;(client as any).addRuntimePathsToEnvironment(env, '/mock/home')
+      expect(env.path).toBeUndefined()
+      expect(env.PATH ?? env.Path).toContain('C:\\user\\bin')
     })
 
     it('uses the minimal inherited environment only when explicitly requested', async () => {
@@ -483,6 +512,43 @@ describe('McpClient Runtime Command Processing Tests', () => {
           process.env.CUA_LOG = originalCuaLog
         }
       }
+    })
+
+    it('keeps probe-only PATH entries out of a minimal stdio server', async () => {
+      const probeDir = '/mock/home/.asdf/shims'
+      const toolchainBin = '/managed/node/bin'
+      const prependResolvedToEnv = vi.fn((env: Record<string, string>) => {
+        if (!env.PATH && !env.Path && !env.path) {
+          return { PATH: `${toolchainBin}:${probeDir}` }
+        }
+        return env
+      })
+      vi.spyOn(ToolchainService, 'getInstance').mockReturnValue({
+        rewriteCommand: (command: string, args: string[]) => ({ command, args }),
+        resolvedBinDirs: () => [toolchainBin],
+        prependResolvedToEnv,
+        resolve: () => ({ rootDir: '/managed/node', binDir: toolchainBin })
+      } as never)
+
+      const client = createMcpClient('test', {
+        type: 'stdio',
+        command: 'cua-driver',
+        args: ['mcp'],
+        inheritEnv: 'minimal'
+      })
+      await client.connect()
+
+      const transportCalls = vi.mocked(StdioClientTransport).mock.calls
+      const transportOptions = transportCalls[transportCalls.length - 1][0] as {
+        env: Record<string, string>
+      }
+      const pathEnv =
+        transportOptions.env.PATH ?? transportOptions.env.Path ?? transportOptions.env.path
+      expect(pathEnv).toContain(toolchainBin)
+      expect(pathEnv).not.toContain(probeDir)
+      expect(pathEnv).not.toContain('.volta/bin')
+      expect(pathEnv).not.toContain('.fnm/current/bin')
+      expect(prependResolvedToEnv).not.toHaveBeenCalled()
     })
 
     it('preserves legacy inheritance for existing native MCP configs', async () => {

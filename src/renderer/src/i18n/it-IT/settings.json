@@ -150,7 +150,10 @@
       "assets_missing": "In questa installazione mancano risorse OCR offline necessarie.",
       "runtime_manifest_invalid": "Il manifesto del runtime OCR integrato non è valido.",
       "service_closed": "Il servizio OCR è in fase di arresto.",
-      "unsupported_platform": "L’OCR non è disponibile per questa piattaforma e architettura."
+      "unsupported_platform": "L’OCR non è disponibile per questa piattaforma e architettura.",
+      "toolchain_unavailable": "OCR richiede Node.js ufficiale v24.18.0. Apri Impostazioni → Toolchain e installa il runtime ufficiale.",
+      "version_mismatch": "OCR richiede Node.js v24.18.0. Questa versione è fuori intervallo. Apri Impostazioni → Toolchain e installa il runtime ufficiale.",
+      "abi_mismatch": "OCR richiede Node.js ABI 137 (v24.18.0). Apri Impostazioni → Toolchain e installa il runtime ufficiale."
     },
     "processStates": {
       "idle": "Inattivo",
@@ -2070,8 +2073,6 @@
     "description": "Gestisci ACP Agent locali avviati da DeepChat.",
     "enabledTitle": "Attiva ACP",
     "enabledDescription": "Dopo l'attivazione, gli ACP Agent configurati appariranno nella lista modelli.",
-    "useBuiltinRuntimeTitle": "Usa ambiente integrato DeepChat",
-    "useBuiltinRuntimeDescription": "Se selezionato, bypassa i comandi node e uv di sistema e usa le versioni incluse in DeepChat.",
     "enableToAccess": "Attiva ACP per configurare Agent.",
     "registryInstallEntry": "Installa Agent",
     "registryInstallEntryDescription": "Cerca e installa Agent da ACP Registry; al termine torna qui per attivarli e configurarli.",
@@ -3268,5 +3269,49 @@
       "description": "Crea simulazioni di onboarding, conversazioni e aggiornamenti riservate allo sviluppo.",
       "failed": "Impossibile avviare il flusso guidato di debug."
     }
+  },
+  "toolchains": {
+    "description": "Scegli da dove DeepChat ottiene Node e uv. L’origine non cambia da sola dopo la scelta.",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "Origine",
+    "sources": {
+      "bundled": "Incluso nell’app",
+      "managed": "Installato da DeepChat",
+      "system": "Installazione di sistema",
+      "custom": "Percorso personalizzato",
+      "unconfigured": "Non configurato",
+      "autoNamed": "Automatico ({source})"
+    },
+    "systemDetected": "Trovato binario di sistema: {path}",
+    "systemDetectedHint": "Se esiste già un’installazione funzionante, viene usata quella. Non viene scaricato nulla.",
+    "install": "Installa il runtime ufficiale",
+    "repair": "Ripara",
+    "revert": "Ripristina",
+    "cancelInstall": "Annulla",
+    "installing": "Installazione…",
+    "version": "Versione",
+    "path": "Percorso",
+    "bannerTitle": "Manca un runtime necessario",
+    "bannerDescription": "Node o uv non è disponibile per MCP, ACP, Skills o OCR.",
+    "bannerAction": "Apri toolchain",
+    "availability": {
+      "ready": "Pronto",
+      "missing": "Mancante",
+      "incomplete": "Incompleto",
+      "unconfigured": "Non configurato"
+    },
+    "downloadReasons": {
+      "dns": "Impossibile risolvere l’host del download.",
+      "timeout": "Il download è scaduto.",
+      "http": "Il server di download ha restituito un errore.",
+      "proxy": "Il download tramite il proxy configurato non è riuscito.",
+      "checksum_mismatch": "Il file scaricato non ha superato la verifica di integrità.",
+      "disk": "Impossibile scrivere il runtime su disco.",
+      "cancelled": "Il download è stato annullato.",
+      "activation_failed": "Impossibile attivare il runtime.",
+      "unsupported_platform": "Questa piattaforma non ha un runtime ufficiale."
+    },
+    "ocrPinHint": "OCR richiede Node ufficiale v24.18.0 (ABI 137). Questo runtime va bene per chat e MCP, ma non per OCR. Installa il runtime ufficiale."
   }
 }

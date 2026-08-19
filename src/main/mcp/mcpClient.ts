@@ -30,12 +30,14 @@ import type {
   Transport
 } from '@modelcontextprotocol/client'
 import type { DeepchatEventPublisher } from '@shared/contracts/events'
-import path from 'path'
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import { app } from 'electron'
 // import { NO_PROXY, proxyConfig } from '@/platform/proxy'
 import type { InMemoryServerFactory } from './inMemoryServers/builder'
 import { RuntimeHelper } from '@/lib/runtimeHelper'
+import { ToolchainService } from '@/toolchains'
+import { getPathEntriesFromEnv, setPathEntriesOnEnv } from '@/agent/shared/process/shellEnvHelper'
 import { terminateProcessTreeByPid } from '@/agent/shared/process/processTree'
 import { awaitWithAbort } from '@/lib/awaitWithAbort'
 import type { McpOAuthManager } from './mcpOAuthManager'
@@ -263,6 +265,7 @@ export class McpClient {
   private readonly runtime: McpClientRuntime
   private readonly onRegistryChanged: () => void
   private readonly runtimeHelper = RuntimeHelper.getInstance()
+  private readonly toolchainService: ToolchainService
   private probe: McpServerDiagnostics['probe'] = { outcome: 'not-run' }
 
   constructor(
@@ -285,6 +288,7 @@ export class McpClient {
     this.runtime = runtime
     this.onRegistryChanged = onRegistryChanged
     this.runtimeHelper.initializeRuntimes()
+    this.toolchainService = ToolchainService.getInstance()
   }
 
   private emitServerStatusChanged(
@@ -314,8 +318,7 @@ export class McpClient {
     command: string,
     args: string[]
   ): { command: string; args: string[] } {
-    this.runtimeHelper.initializeRuntimes()
-    return this.runtimeHelper.processCommandWithArgs(command, args)
+    return this.toolchainService.rewriteCommand(command, args)
   }
 
   public expandPath(inputPath: string): string {
@@ -323,29 +326,19 @@ export class McpClient {
   }
 
   public get nodeRuntimePath(): string | null {
-    this.runtimeHelper.initializeRuntimes()
-    return this.runtimeHelper.getNodeRuntimePath()
-  }
-
-  public set nodeRuntimePath(value: string | null) {
-    this.runtimeHelper.setNodeRuntimePath(value)
-  }
-
-  public get bunRuntimePath(): string | null {
-    return this.nodeRuntimePath
-  }
-
-  public set bunRuntimePath(value: string | null) {
-    this.nodeRuntimePath = value
+    try {
+      return this.toolchainService.resolve('node').rootDir
+    } catch {
+      return null
+    }
   }
 
   public get uvRuntimePath(): string | null {
-    this.runtimeHelper.initializeRuntimes()
-    return this.runtimeHelper.getUvRuntimePath()
-  }
-
-  public set uvRuntimePath(value: string | null) {
-    this.runtimeHelper.setUvRuntimePath(value)
+    try {
+      return this.toolchainService.resolve('uv').rootDir
+    } catch {
+      return null
+    }
   }
 
   private addRuntimePathsToEnvironment(
@@ -355,26 +348,15 @@ export class McpClient {
       Boolean(value)
     )
   ): void {
-    const allPaths = [...inheritedPaths, ...this.runtimeHelper.getDefaultPaths(homeDir)]
-    const uvRuntimePath = this.runtimeHelper.getUvRuntimePath()
-    const nodeRuntimePath = this.runtimeHelper.getNodeRuntimePath()
-    if (process.platform === 'win32') {
-      if (uvRuntimePath) {
-        allPaths.unshift(uvRuntimePath)
-      }
-      if (nodeRuntimePath) {
-        allPaths.unshift(nodeRuntimePath)
-      }
-    } else {
-      if (uvRuntimePath) {
-        allPaths.unshift(uvRuntimePath)
-      }
-      if (nodeRuntimePath) {
-        allPaths.unshift(path.join(nodeRuntimePath, 'bin'))
-      }
-    }
-    const { key, value } = this.runtimeHelper.normalizePathEnv(allPaths)
-    env[key] = value
+    setPathEntriesOnEnv(
+      env,
+      [
+        this.toolchainService.resolvedBinDirs(),
+        inheritedPaths,
+        this.runtimeHelper.getDefaultPaths(homeDir)
+      ],
+      { includeDefaultPaths: false }
+    )
   }
 
   // Connect to MCP server
@@ -553,14 +535,11 @@ export class McpClient {
         const env: Record<string, string> = {}
 
         // Handle command and argument replacement
-        const processedCommand = this.runtimeHelper.processCommandWithArgs(command, args)
+        const processedCommand = this.toolchainService.rewriteCommand(command, args)
         command = processedCommand.command
         args = processedCommand.args
 
-        // Determine if it's Node.js/UV related command
-        const isNodeCommand = ['node', 'npm', 'npx', 'uv', 'uvx'].some(
-          (cmd) => command.includes(cmd) || args.some((arg) => arg.includes(cmd))
-        )
+        const isNodeCommand = isToolchainStdioCommand(command, process.platform)
 
         if (this.serverConfig.inheritEnv === 'minimal') {
           Object.assign(env, createMinimalProcessEnvironment(process.env, process.platform))
@@ -614,11 +593,9 @@ export class McpClient {
                 const stringValue = String(value ?? '')
                 // 如果是PATH相关变量，合并到主PATH中
                 if (['PATH', 'Path', 'path'].includes(key)) {
-                  const currentPathKey = process.platform === 'win32' ? 'Path' : 'PATH'
-                  const separator = process.platform === 'win32' ? ';' : ':'
-                  env[currentPathKey] = env[currentPathKey]
-                    ? `${stringValue}${separator}${env[currentPathKey]}`
-                    : stringValue
+                  setPathEntriesOnEnv(env, [stringValue, getPathEntriesFromEnv(env)], {
+                    includeDefaultPaths: false
+                  })
                 } else {
                   env[key] = stringValue
                 }
@@ -1895,4 +1872,13 @@ export class McpClient {
       updatedAt: Date.now()
     }
   }
+}
+
+const TOOLCHAIN_STDIO_COMMANDS = new Set(['node', 'npm', 'npx', 'corepack', 'uv', 'uvx'])
+
+function isToolchainStdioCommand(command: string, platform: NodeJS.Platform): boolean {
+  const basename = path.basename(command.trim())
+  const normalized =
+    platform === 'win32' ? basename.toLowerCase().replace(/\.(exe|cmd|bat)$/i, '') : basename
+  return TOOLCHAIN_STDIO_COMMANDS.has(normalized)
 }

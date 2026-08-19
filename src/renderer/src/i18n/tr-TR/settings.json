@@ -150,7 +150,10 @@
       "assets_missing": "Bu kurulumda gerekli çevrimdışı OCR varlıkları eksik.",
       "runtime_manifest_invalid": "Yerleşik OCR çalışma zamanı bildirimi geçersiz.",
       "service_closed": "OCR hizmeti kapatılıyor.",
-      "unsupported_platform": "OCR bu platform ve mimari için kullanılamıyor."
+      "unsupported_platform": "OCR bu platform ve mimari için kullanılamıyor.",
+      "toolchain_unavailable": "OCR resmi Node.js v24.18.0 gerektirir. Ayarlar → Araç zincirleri ögesini açıp resmi çalışma zamanını yükleyin.",
+      "version_mismatch": "OCR Node.js v24.18.0 gerektirir. Bu sürüm aralık dışında. Ayarlar → Araç zincirleri ögesini açıp resmi çalışma zamanını yükleyin.",
+      "abi_mismatch": "OCR Node.js ABI 137 (v24.18.0) gerektirir. Ayarlar → Araç zincirleri ögesini açıp resmi çalışma zamanını yükleyin."
     },
     "processStates": {
       "idle": "Boşta",
@@ -2070,8 +2073,6 @@
     "description": "DeepChat tarafından başlatılan yerel Agent İstemci Protokolü agents'yi yönetin.",
     "enabledTitle": "ACP'yi etkinleştir",
     "enabledDescription": "Etkinleştirildiğinde, yapılandırılmış ACP agents seçicide model olarak görünecektir.",
-    "useBuiltinRuntimeTitle": "DeepChat Yerleşik Çalışma Zamanını Kullan",
-    "useBuiltinRuntimeDescription": "Etkinleştirildiğinde, DeepChat'nin paketlenmiş sürümlerini kullanarak sistem node ve uv komutlarını atlar.",
     "enableToAccess": "agents'yi yapılandırmak için ACP'yi etkinleştirin.",
     "registryInstallEntry": "Agent'yi yükleyin",
     "registryInstallEntryDescription": "ACP Registry'den agents'yi arayın ve yükleyin, ardından bunları etkinleştirmek ve yapılandırmak için buraya geri dönün.",
@@ -3268,5 +3269,49 @@
       "description": "Yalnızca geliştirme için işe alıştırma, konuşma ve güncelleme sahte verileri oluşturun.",
       "failed": "Hata ayıklama rehberli akışı başlatılamıyor."
     }
+  },
+  "toolchains": {
+    "description": "DeepChat’in Node ve uv’yi nereden alacağını seçin. Kaynak daha sonra kendiliğinden değişmez.",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "Kaynak",
+    "sources": {
+      "bundled": "Uygulamayla birlikte",
+      "managed": "DeepChat tarafından yüklendi",
+      "system": "Sistem kurulumu",
+      "custom": "Özel yol",
+      "unconfigured": "Yapılandırılmadı",
+      "autoNamed": "Otomatik ({source})"
+    },
+    "systemDetected": "Sistem ikili dosyası bulundu: {path}",
+    "systemDetectedHint": "Çalışan bir kurulum varsa o kullanılır. Yeniden indirme yapılmaz.",
+    "install": "Resmi çalışma zamanını yükle",
+    "repair": "Onar",
+    "revert": "Geri al",
+    "cancelInstall": "İptal",
+    "installing": "Yükleniyor…",
+    "version": "Sürüm",
+    "path": "Yol",
+    "bannerTitle": "Gerekli çalışma zamanı eksik",
+    "bannerDescription": "MCP, ACP, Skills veya OCR için Node ya da uv kullanılamıyor.",
+    "bannerAction": "Araç zincirlerini aç",
+    "availability": {
+      "ready": "Hazır",
+      "missing": "Eksik",
+      "incomplete": "Eksik bileşenli",
+      "unconfigured": "Yapılandırılmadı"
+    },
+    "downloadReasons": {
+      "dns": "İndirme ana bilgisayarı çözülemedi.",
+      "timeout": "İndirme zaman aşımına uğradı.",
+      "http": "İndirme sunucusu bir hata döndürdü.",
+      "proxy": "Yapılandırılmış vekil üzerinden indirme başarısız oldu.",
+      "checksum_mismatch": "İndirilen dosya bütünlük doğrulamasından geçmedi.",
+      "disk": "Çalışma zamanı diske yazılamadı.",
+      "cancelled": "İndirme iptal edildi.",
+      "activation_failed": "Çalışma zamanı etkinleştirilemedi.",
+      "unsupported_platform": "Bu platform için resmi bir çalışma zamanı yok."
+    },
+    "ocrPinHint": "OCR resmi Node v24.18.0 (ABI 137) gerektirir. Bu çalışma zamanı sohbet ve MCP için hazırdır, OCR için değildir. Resmi çalışma zamanını yükleyin."
   }
 }

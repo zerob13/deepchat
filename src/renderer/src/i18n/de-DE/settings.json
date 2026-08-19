@@ -150,7 +150,10 @@
       "assets_missing": "Erforderliche Offline-OCR-Ressourcen fehlen in dieser Installation.",
       "runtime_manifest_invalid": "Das Manifest der integrierten OCR-Laufzeit ist ungültig.",
       "service_closed": "Der OCR-Dienst wird beendet.",
-      "unsupported_platform": "OCR ist für diese Plattform und Architektur nicht verfügbar."
+      "unsupported_platform": "OCR ist für diese Plattform und Architektur nicht verfügbar.",
+      "toolchain_unavailable": "OCR benötigt das offizielle Node.js v24.18.0. Öffnen Sie Einstellungen → Toolchains und installieren Sie die offizielle Runtime.",
+      "version_mismatch": "OCR benötigt Node.js v24.18.0. Diese Node-Version liegt außerhalb der Pin-Spanne. Öffnen Sie Einstellungen → Toolchains und installieren Sie die offizielle Runtime.",
+      "abi_mismatch": "OCR benötigt Node.js ABI 137 (v24.18.0). Öffnen Sie Einstellungen → Toolchains und installieren Sie die offizielle Runtime."
     },
     "processStates": {
       "idle": "Leerlauf",
@@ -2070,8 +2073,6 @@
     "description": "Lokale ACP Agent verwalten, die von DeepChat gestartet werden.",
     "enabledTitle": "ACP aktivieren",
     "enabledDescription": "Nach Aktivierung erscheinen konfigurierte ACP Agent in der Modellliste.",
-    "useBuiltinRuntimeTitle": "Integrierte DeepChat-Umgebung verwenden",
-    "useBuiltinRuntimeDescription": "Wenn aktiviert, werden die Systembefehle node und uv umgangen und die mit DeepChat gebündelten Versionen verwendet.",
     "enableToAccess": "ACP aktivieren, um Agent zu konfigurieren.",
     "registryInstallEntry": "Agent installieren",
     "registryInstallEntryDescription": "In ACP Registry nach Agent suchen und installieren; danach hierher zurückkehren, um sie zu aktivieren und zu konfigurieren.",
@@ -3268,5 +3269,49 @@
       "description": "Nur für die Entwicklung bestimmte Mock-Daten für Onboarding, Unterhaltungen und Updates erstellen.",
       "failed": "Der geführte Debug-Ablauf kann nicht gestartet werden."
     }
+  },
+  "toolchains": {
+    "description": "Wählen Sie, woher DeepChat Node und uv bezieht. Die Quelle wechselt danach nicht von selbst.",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "Quelle",
+    "sources": {
+      "bundled": "Mit der App gebündelt",
+      "managed": "Von DeepChat installiert",
+      "system": "Systeminstallation",
+      "custom": "Benutzerdefinierter Pfad",
+      "unconfigured": "Nicht konfiguriert",
+      "autoNamed": "Automatisch ({source})"
+    },
+    "systemDetected": "System-Binary gefunden: {path}",
+    "systemDetectedHint": "Wenn bereits eine funktionierende Installation vorhanden ist, wird sie verwendet. Es wird nichts heruntergeladen.",
+    "install": "Offizielle Runtime installieren",
+    "repair": "Reparieren",
+    "revert": "Zurücksetzen",
+    "cancelInstall": "Abbrechen",
+    "installing": "Wird installiert…",
+    "version": "Version",
+    "path": "Pfad",
+    "bannerTitle": "Eine erforderliche Runtime fehlt",
+    "bannerDescription": "Node oder uv ist für MCP, ACP, Skills oder OCR nicht verfügbar.",
+    "bannerAction": "Toolchains öffnen",
+    "availability": {
+      "ready": "Bereit",
+      "missing": "Fehlt",
+      "incomplete": "Unvollständig",
+      "unconfigured": "Nicht konfiguriert"
+    },
+    "downloadReasons": {
+      "dns": "Der Download-Host konnte nicht aufgelöst werden.",
+      "timeout": "Der Download ist abgelaufen.",
+      "http": "Der Download-Server hat einen Fehler zurückgegeben.",
+      "proxy": "Der Download über den konfigurierten Proxy ist fehlgeschlagen.",
+      "checksum_mismatch": "Die heruntergeladene Datei hat die Integritätsprüfung nicht bestanden.",
+      "disk": "Die Runtime konnte nicht auf die Festplatte geschrieben werden.",
+      "cancelled": "Der Download wurde abgebrochen.",
+      "activation_failed": "Die Runtime konnte nicht aktiviert werden.",
+      "unsupported_platform": "Für diese Plattform gibt es keine offizielle Runtime."
+    },
+    "ocrPinHint": "OCR benötigt offizielles Node v24.18.0 (ABI 137). Diese Runtime ist für Chat und MCP bereit, aber nicht für OCR. Installieren Sie die offizielle Runtime."
   }
 }

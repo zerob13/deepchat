@@ -324,4 +324,198 @@ describe('ServerManager notifications and plugin isolation', () => {
       env: persistedEnvironment
     })
   })
+
+  it('reuses an in-flight start instead of creating a second client', async () => {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const providerSettings = createProviderSettings({
+      regular: {
+        command: 'regular-command',
+        args: [],
+        env: {},
+        type: 'stdio'
+      }
+    })
+    providerSettings.getMcpServers.mockImplementation(async () => {
+      await blocked
+      return {
+        regular: {
+          command: 'regular-command',
+          args: [],
+          env: {},
+          type: 'stdio'
+        }
+      }
+    })
+    const manager = createManager(providerSettings)
+    const first = manager.startServer('regular')
+    const second = manager.startServer('regular')
+    expect(manager.isServerActive('regular')).toBe(true)
+    release()
+    await expect(Promise.all([first, second])).resolves.toEqual(['connected', 'connected'])
+    expect(McpClient).toHaveBeenCalledTimes(1)
+    expect(clientMocks.connect).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears in-flight tracking when stopServer runs before a client exists', async () => {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const providerSettings = createProviderSettings({
+      regular: {
+        command: 'regular-command',
+        args: [],
+        env: {},
+        type: 'stdio'
+      }
+    })
+    providerSettings.getMcpServers.mockImplementation(async () => {
+      await blocked
+      return {
+        regular: {
+          command: 'regular-command',
+          args: [],
+          env: {},
+          type: 'stdio'
+        }
+      }
+    })
+    const manager = createManager(providerSettings)
+    const first = manager.startServer('regular')
+    await Promise.resolve()
+    expect(manager.isServerActive('regular')).toBe(true)
+    const started = Date.now()
+    await manager.stopServer('regular')
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(manager.isServerActive('regular')).toBe(false)
+    release()
+    await expect(first).resolves.toBe('stopped')
+  })
+
+  it('returns from stop while an in-flight connect is hung', async () => {
+    clientMocks.connect.mockImplementation(() => new Promise(() => {}))
+    const providerSettings = createProviderSettings({
+      regular: {
+        command: 'regular-command',
+        args: [],
+        env: {},
+        type: 'stdio'
+      }
+    })
+    const manager = createManager(providerSettings)
+    void manager.startServer('regular')
+    await vi.waitFor(() => {
+      expect(clientMocks.connect).toHaveBeenCalled()
+    })
+    const started = Date.now()
+    await manager.stopServer('regular')
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(clientMocks.disconnect).toHaveBeenCalled()
+    expect(manager.isServerActive('regular')).toBe(false)
+  })
+
+  it('does not leave a second client when stop races a pre-client start', async () => {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const providerSettings = createProviderSettings({
+      regular: {
+        command: 'regular-command',
+        args: [],
+        env: {},
+        type: 'stdio'
+      }
+    })
+    providerSettings.getMcpServers.mockImplementation(async () => {
+      await blocked
+      return {
+        regular: {
+          command: 'regular-command',
+          args: [],
+          env: {},
+          type: 'stdio'
+        }
+      }
+    })
+    const manager = createManager(providerSettings)
+    const first = manager.startServer('regular')
+    await Promise.resolve()
+    const stopped = manager.stopServer('regular')
+    const second = manager.startServer('regular')
+    release()
+    await expect(first).resolves.toBe('stopped')
+    await stopped
+    await expect(second).resolves.toBe('connected')
+    expect(McpClient).toHaveBeenCalledTimes(1)
+  })
+
+  it('upgrades an in-flight soft-timeout start when a later caller waits', async () => {
+    let releaseConnect!: (result: 'soft-timeout-released' | 'connected') => void
+    clientMocks.connect.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseConnect = resolve
+        })
+    )
+    const providerSettings = createProviderSettings({
+      regular: {
+        command: 'regular-command',
+        args: [],
+        env: {},
+        type: 'stdio'
+      }
+    })
+    const manager = createManager(providerSettings)
+    const first = manager.startServer('regular')
+    await Promise.resolve()
+    const second = manager.startServer('regular', { waitForConnection: true })
+    releaseConnect('soft-timeout-released')
+    await expect(first).resolves.toBe('soft-timeout-released')
+    releaseConnect('connected')
+    await expect(second).resolves.toBe('connected')
+    expect(clientMocks.connect).toHaveBeenLastCalledWith({
+      phase: 'startup',
+      waitForConnection: true
+    })
+  })
+
+  it('does not reuse an in-flight configOverride start', async () => {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const providerSettings = createProviderSettings({
+      regular: {
+        command: 'regular-command',
+        args: [],
+        env: {},
+        type: 'stdio'
+      }
+    })
+    providerSettings.getMcpServers.mockImplementation(async () => {
+      await blocked
+      return {
+        regular: {
+          command: 'regular-command',
+          args: [],
+          env: {},
+          type: 'stdio'
+        }
+      }
+    })
+    const manager = createManager(providerSettings)
+    const overridden = manager.startServer('regular', {
+      configOverride: { command: 'plugin-command' }
+    })
+    const regular = manager.startServer('regular')
+    release()
+    await expect(Promise.all([overridden, regular])).resolves.toEqual(['connected', 'connected'])
+    expect(McpClient).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(McpClient).mock.calls[0][1]).toMatchObject({ command: 'plugin-command' })
+    expect(vi.mocked(McpClient).mock.calls[1][1]).toMatchObject({ command: 'regular-command' })
+  })
 })

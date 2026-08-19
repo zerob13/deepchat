@@ -12,6 +12,7 @@ import {
   SOURCE_SHA_PATTERN,
   TARGET_DEFINITIONS,
   matchesRoleFileName,
+  resolvePackageSizeExpectedDelta,
   validateSourceSha
 } from './package-contract.mjs'
 import { findRoleFile } from './package-files.mjs'
@@ -111,6 +112,19 @@ export function validatePackageSizePolicy(policy) {
     typeof policy.targets !== 'object'
   ) {
     throw new Error('Invalid package-size policy')
+  }
+  if (policy.expectedDelta !== undefined) {
+    const expected = policy.expectedDelta
+    if (
+      !expected ||
+      typeof expected !== 'object' ||
+      typeof expected.baselineCommit !== 'string' ||
+      !SOURCE_SHA_PATTERN.test(expected.baselineCommit) ||
+      !Number.isSafeInteger(expected.bytes) ||
+      expected.bytes > 0
+    ) {
+      throw new Error('Package-size policy expectedDelta is invalid')
+    }
   }
   for (const definition of TARGET_DEFINITIONS) {
     const target = policy.targets[definition.id]
@@ -246,14 +260,19 @@ export async function comparePackageSize({
     const candidateArtifact = candidate[roleDefinition.name]
     const limits = policy.targets[definition.id][roleDefinition.name]
     const deltaBytes = candidateArtifact.bytes - baselineArtifact.bytes
+    const expectedDeltaBytes = resolvePackageSizeExpectedDelta(policy, baseline.source.commit)
+    const adjustedDeltaBytes = deltaBytes - expectedDeltaBytes
     const roleWithinPolicy =
-      deltaBytes <= limits.maxGrowthBytes && deltaBytes >= -limits.maxShrinkBytes
+      adjustedDeltaBytes <= limits.maxGrowthBytes &&
+      adjustedDeltaBytes >= -limits.maxShrinkBytes
     if (!roleWithinPolicy) withinPolicy = false
     comparisons.push({
       role: roleDefinition.name,
       baseline: baselineArtifact,
       candidate: candidateArtifact,
       deltaBytes,
+      expectedDeltaBytes,
+      adjustedDeltaBytes,
       maxGrowthBytes: limits.maxGrowthBytes,
       maxShrinkBytes: limits.maxShrinkBytes,
       withinPolicy: roleWithinPolicy
@@ -264,6 +283,7 @@ export async function comparePackageSize({
     target: definition.id,
     baseline: baseline.source,
     candidateCommit: candidateCommit ?? null,
+    expectedDeltaBytes: resolvePackageSizeExpectedDelta(policy, baseline.source.commit),
     comparisons,
     withinPolicy
   }

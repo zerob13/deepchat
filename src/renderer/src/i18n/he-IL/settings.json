@@ -1760,8 +1760,6 @@
     "description": "ניהול סוכני ACP מקומיים (Agent Client Protocol) המופעלים על ידי DeepChat.",
     "enabledTitle": "הפעל את ACP",
     "enabledDescription": "כאשר מופעל, סוכני ACP מוגדרים יופיעו כמודלים בבוחר.",
-    "useBuiltinRuntimeTitle": "השתמש בסביבת הרצה מובנית של DeepChat",
-    "useBuiltinRuntimeDescription": "כאשר מופעל, עוקף פקודות node ו-uv של המערכת, ומשתמש בגרסאות המצורפות ל-DeepChat.",
     "enableToAccess": "הפעל את ACP כדי להגדיר סוכנים.",
     "addCustomAgent": "הוסף סוכן מותאם אישית",
     "customEmpty": "אין סוכנים מותאמים אישית עדיין.",
@@ -2640,7 +2638,10 @@
       "assets_missing": "בהתקנה זו חסרים משאבי OCR לא מקוונים נדרשים.",
       "runtime_manifest_invalid": "מניפסט סביבת ה-OCR המובנית אינו תקין.",
       "service_closed": "שירות ה-OCR נמצא בתהליך סגירה.",
-      "unsupported_platform": "OCR אינו זמין לפלטפורמה ולארכיטקטורה האלה."
+      "unsupported_platform": "OCR אינו זמין לפלטפורמה ולארכיטקטורה האלה.",
+      "toolchain_unavailable": "OCR דורש Node.js רשמי v24.18.0. פתחו הגדרות ← שרשראות כלים והתקינו את סביבת הריצה הרשמית.",
+      "version_mismatch": "OCR דורש Node.js v24.18.0. גרסה זו מחוץ לטווח. פתחו הגדרות ← שרשראות כלים והתקינו את סביבת הריצה הרשמית.",
+      "abi_mismatch": "OCR דורש Node.js ABI 137 (v24.18.0). פתחו הגדרות ← שרשראות כלים והתקינו את סביבת הריצה הרשמית."
     },
     "processStates": {
       "idle": "לא פעיל",
@@ -3268,5 +3269,49 @@
       "description": "צור נתוני דמה לפיתוח בלבד עבור תהליך ההיכרות, שיחות ועדכונים.",
       "failed": "לא ניתן להפעיל את התהליך המודרך לניפוי שגיאות."
     }
+  },
+  "toolchains": {
+    "description": "בחרו מאיפה DeepChat מקבל את Node ו-uv. המקור לא מתחלף מעצמו אחרי הבחירה.",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "מקור",
+    "sources": {
+      "bundled": "כלול ביישום",
+      "managed": "הותקן על ידי DeepChat",
+      "system": "התקנת מערכת",
+      "custom": "נתיב מותאם",
+      "unconfigured": "לא הוגדר",
+      "autoNamed": "אוטומטי ({source})"
+    },
+    "systemDetected": "נמצא קובץ בינארי של המערכת: {path}",
+    "systemDetectedHint": "אם כבר יש התקנה עובדת, נשתמש בה. לא יורד דבר.",
+    "install": "התקנת סביבת הריצה הרשמית",
+    "repair": "תיקון",
+    "revert": "שחזור",
+    "cancelInstall": "ביטול",
+    "installing": "מתקין…",
+    "version": "גרסה",
+    "path": "נתיב",
+    "bannerTitle": "חסרה סביבת ריצה נדרשת",
+    "bannerDescription": "Node או uv אינם זמינים עבור MCP, ACP, Skills או OCR.",
+    "bannerAction": "פתיחת שרשראות כלים",
+    "availability": {
+      "ready": "מוכן",
+      "missing": "חסר",
+      "incomplete": "חלקי",
+      "unconfigured": "לא הוגדר"
+    },
+    "downloadReasons": {
+      "dns": "לא ניתן היה לפתור את מארח ההורדה.",
+      "timeout": "ההורדה חרגה ממגבלת הזמן.",
+      "http": "שרת ההורדה החזיר שגיאה.",
+      "proxy": "ההורדה דרך ה-proxy שהוגדר נכשלה.",
+      "checksum_mismatch": "הקובץ שהורד נכשל בבדיקת השלמות.",
+      "disk": "לא ניתן היה לכתוב את סביבת הריצה לדיסק.",
+      "cancelled": "ההורדה בוטלה.",
+      "activation_failed": "לא ניתן היה להפעיל את סביבת הריצה.",
+      "unsupported_platform": "לפלטפורמה זו אין סביבת ריצה רשמית."
+    },
+    "ocrPinHint": "OCR דורש Node רשמי v24.18.0 (ABI 137). סביבה זו מתאימה לצ׳אט ול-MCP, אך לא ל-OCR. התקינו את סביבת הריצה הרשמית."
   }
 }

@@ -150,7 +150,10 @@
       "assets_missing": "W tej instalacji brakuje wymaganych zasobów OCR offline.",
       "runtime_manifest_invalid": "Manifest wbudowanego środowiska OCR jest nieprawidłowy.",
       "service_closed": "Usługa OCR jest zamykana.",
-      "unsupported_platform": "OCR nie jest dostępny dla tej platformy i architektury."
+      "unsupported_platform": "OCR nie jest dostępny dla tej platformy i architektury.",
+      "toolchain_unavailable": "OCR wymaga oficjalnego Node.js v24.18.0. Otwórz Ustawienia → Łańcuchy narzędzi i zainstaluj oficjalne środowisko.",
+      "version_mismatch": "OCR wymaga Node.js v24.18.0. Ta wersja jest poza zakresem. Otwórz Ustawienia → Łańcuchy narzędzi i zainstaluj oficjalne środowisko.",
+      "abi_mismatch": "OCR wymaga Node.js ABI 137 (v24.18.0). Otwórz Ustawienia → Łańcuchy narzędzi i zainstaluj oficjalne środowisko."
     },
     "processStates": {
       "idle": "Bezczynny",
@@ -2070,8 +2073,6 @@
     "description": "Zarządzaj lokalnymi agentami protokołu klienta Agent uruchomionymi przez DeepChat.",
     "enabledTitle": "Włącz AKP",
     "enabledDescription": "Po włączeniu skonfigurowani agenci ACP pojawią się jako modele w selektorze.",
-    "useBuiltinRuntimeTitle": "Użyj wbudowanego środowiska wykonawczego DeepChat",
-    "useBuiltinRuntimeDescription": "Po włączeniu pomija polecenia węzła systemowego i uv, korzystając z dołączonych wersji DeepChat.",
     "enableToAccess": "Włącz ACP, aby skonfigurować agentów.",
     "registryInstallEntry": "Zainstaluj Agent",
     "registryInstallEntryDescription": "Wyszukaj i zainstaluj agenty z rejestru ACP, a następnie wróć tutaj, aby je włączyć i skonfigurować.",
@@ -3268,5 +3269,49 @@
       "description": "Twórz dostępne tylko w środowisku programistycznym symulacje wdrażania, rozmów i aktualizacji.",
       "failed": "Nie można uruchomić debugowego procesu z przewodnikiem."
     }
+  },
+  "toolchains": {
+    "description": "Wybierz, skąd DeepChat pobiera Node i uv. Źródło nie zmienia się potem samo.",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "Źródło",
+    "sources": {
+      "bundled": "Dołączone do aplikacji",
+      "managed": "Zainstalowane przez DeepChat",
+      "system": "Instalacja systemowa",
+      "custom": "Ścieżka niestandardowa",
+      "unconfigured": "Nie skonfigurowano",
+      "autoNamed": "Automatycznie ({source})"
+    },
+    "systemDetected": "Znaleziono plik binarny systemu: {path}",
+    "systemDetectedHint": "Jeśli jest już działająca instalacja, zostanie użyta. Nic nie jest pobierane.",
+    "install": "Zainstaluj oficjalne środowisko",
+    "repair": "Napraw",
+    "revert": "Przywróć",
+    "cancelInstall": "Anuluj",
+    "installing": "Instalowanie…",
+    "version": "Wersja",
+    "path": "Ścieżka",
+    "bannerTitle": "Brak wymaganego środowiska",
+    "bannerDescription": "Node lub uv jest niedostępne dla MCP, ACP, Skills lub OCR.",
+    "bannerAction": "Otwórz łańcuchy narzędzi",
+    "availability": {
+      "ready": "Gotowe",
+      "missing": "Brak",
+      "incomplete": "Niekompletne",
+      "unconfigured": "Nie skonfigurowano"
+    },
+    "downloadReasons": {
+      "dns": "Nie udało się rozpoznać hosta pobierania.",
+      "timeout": "Pobieranie przekroczyło limit czasu.",
+      "http": "Serwer pobierania zwrócił błąd.",
+      "proxy": "Pobieranie przez skonfigurowane proxy nie powiodło się.",
+      "checksum_mismatch": "Pobrany plik nie przeszedł weryfikacji integralności.",
+      "disk": "Nie udało się zapisać środowiska na dysku.",
+      "cancelled": "Pobieranie zostało anulowane.",
+      "activation_failed": "Nie udało się aktywować środowiska.",
+      "unsupported_platform": "Ta platforma nie ma oficjalnego środowiska."
+    },
+    "ocrPinHint": "OCR wymaga oficjalnego Node v24.18.0 (ABI 137). To środowisko nadaje się do czatu i MCP, ale nie do OCR. Zainstaluj oficjalne środowisko."
   }
 }

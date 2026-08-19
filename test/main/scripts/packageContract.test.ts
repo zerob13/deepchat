@@ -34,11 +34,13 @@ import {
   getTargetDefinition,
   PACKAGE_MANIFEST_SCHEMA_VERSION,
   RELEASE_INDEX_SCHEMA_VERSION,
+  resolvePackageSizeExpectedDelta,
   SHA512_BASE64_PATTERN,
   TARGET_DEFINITIONS
 } from '../../../scripts/ci/package-contract.mjs'
 import {
   createPackageManifest,
+  validateInstallerSizeReport,
   validateMacZipEntries,
   verifyMacAppDistribution,
   verifyMacZipDistribution
@@ -654,6 +656,126 @@ describe('package-size contract', () => {
       workflow: 'Build Application'
     })
     expect(policy).toEqual(createDefaultPackageSizePolicy())
+    expect(policy.expectedDelta.baselineCommit).toBe(baseline.source.commit)
+    expect(resolvePackageSizeExpectedDelta(policy, baseline.source.commit)).toBe(
+      policy.expectedDelta.bytes
+    )
+    expect(resolvePackageSizeExpectedDelta(policy, sourceSha)).toBe(0)
+  })
+
+  it('applies expectedDelta only when the baseline commit matches', async () => {
+    const definition = getTargetDefinition('win32-x64')
+    const candidateName = `DeepChat-${version}-windows-x64.exe`
+    const candidatePath = path.join(tempDirectory, candidateName)
+    const baseline = createBaseline()
+    baseline.targets[definition.id].installer.bytes = 20
+    const policy = createDefaultPackageSizePolicy()
+    policy.expectedDelta = { baselineCommit: sourceSha, bytes: -10 }
+    policy.targets[definition.id].installer = {
+      maxGrowthBytes: 5,
+      maxShrinkBytes: 5
+    }
+    await writeFile(candidatePath, '12345678')
+
+    const report = await comparePackageSize({
+      target: definition.id,
+      candidateDirectory: tempDirectory,
+      candidateCommit: sourceSha,
+      baseline,
+      policy
+    })
+    expect(report).toMatchObject({
+      withinPolicy: true,
+      expectedDeltaBytes: -10,
+      comparisons: [
+        {
+          deltaBytes: -12,
+          expectedDeltaBytes: -10,
+          adjustedDeltaBytes: -2,
+          withinPolicy: true
+        }
+      ]
+    })
+    expect(() =>
+      validateInstallerSizeReport(report, definition.id, sourceSha, policy)
+    ).not.toThrow()
+
+    policy.expectedDelta = { baselineCommit: 'b'.repeat(40), bytes: -10 }
+    const stale = await comparePackageSize({
+      target: definition.id,
+      candidateDirectory: tempDirectory,
+      candidateCommit: sourceSha,
+      baseline,
+      policy
+    })
+    expect(stale).toMatchObject({
+      withinPolicy: false,
+      expectedDeltaBytes: 0,
+      comparisons: [
+        {
+          deltaBytes: -12,
+          expectedDeltaBytes: 0,
+          adjustedDeltaBytes: -12,
+          withinPolicy: false
+        }
+      ]
+    })
+    expect(() => validateInstallerSizeReport(stale, definition.id, sourceSha, policy)).toThrow(
+      /did not pass/
+    )
+    expect(() =>
+      validateInstallerSizeReport(
+        {
+          ...stale,
+          withinPolicy: true,
+          comparisons: stale.comparisons.map((comparison) => ({
+            ...comparison,
+            withinPolicy: true
+          }))
+        },
+        definition.id,
+        sourceSha,
+        policy
+      )
+    ).toThrow(/invalid limits/)
+  })
+
+  it('rejects installer-size report limits that do not match policy', () => {
+    const definition = getTargetDefinition('win32-x64')
+    const policy = createDefaultPackageSizePolicy()
+    const limits = policy.targets[definition.id].installer
+    expect(() =>
+      validateInstallerSizeReport(
+        {
+          schemaVersion: 1,
+          target: definition.id,
+          candidateCommit: sourceSha,
+          withinPolicy: true,
+          comparisons: [
+            {
+              role: 'installer',
+              baseline: {
+                name: 'baseline.exe',
+                bytes: 10,
+                sha256: '0'.repeat(64)
+              },
+              candidate: {
+                name: 'candidate.exe',
+                bytes: 10,
+                sha256: '1'.repeat(64)
+              },
+              deltaBytes: 0,
+              maxGrowthBytes: limits.maxGrowthBytes,
+              maxShrinkBytes: 10 * 1024 * 1024 * 1024,
+              withinPolicy: true
+            }
+          ]
+        },
+        definition.id,
+        sourceSha,
+        policy
+      )
+    ).toThrow(/does not match policy/)
   })
 })
 
@@ -686,6 +808,7 @@ describe('package manifest staging', () => {
   async function prepareWindowsPackage() {
     const installerName = `DeepChat-${version}-windows-x64.exe`
     const installer = Buffer.from('installer')
+    const installerLimits = createDefaultPackageSizePolicy().targets['win32-x64'].installer
     const blockmapName = `${installerName}.blockmap`
     const smokePath = path.join(distDirectory, 'light-ocr-smoke-win32-x64.json')
     const sizePath = path.join(distDirectory, 'package-size-win32-x64.json')
@@ -738,8 +861,8 @@ describe('package manifest staging', () => {
                 sha256: sha256(installer)
               },
               deltaBytes: 0,
-              maxGrowthBytes: 1,
-              maxShrinkBytes: 1,
+              maxGrowthBytes: installerLimits.maxGrowthBytes,
+              maxShrinkBytes: installerLimits.maxShrinkBytes,
               withinPolicy: true
             }
           ],

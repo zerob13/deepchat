@@ -15,6 +15,8 @@ import {
   POSIX_COMMAND_SHELL,
   WINDOWS_POWERSHELL_COMMAND_SHELL
 } from '../../helpers/commandShell'
+import { ToolchainService } from '../../../src/main/toolchains/service'
+import { ToolchainResolutionError } from '../../../src/main/toolchains/errors'
 
 vi.mock('child_process', () => ({
   spawn: vi.fn()
@@ -328,11 +330,10 @@ describe('SkillExecutionService', () => {
     expect(plan.cwd).toBe(resolvePath('/package'))
   })
 
-  it('falls back to bundled uv for python auto runtime', async () => {
-    vi.spyOn(service as never, 'resolveSystemCommand' as never).mockResolvedValue(null)
-    vi.spyOn(service as never, 'getBundledRuntimeCommand' as never).mockImplementation(
-      (command: 'uv' | 'node') => (command === 'uv' ? '/runtime/uv' : null)
-    )
+  it('uses the persisted uv toolchain for python auto runtime', async () => {
+    vi.spyOn(ToolchainService, 'getInstance').mockReturnValue({
+      resolve: () => ({ uv: '/runtime/uv' })
+    } as never)
 
     const runtime = await (service as never).resolvePythonRuntime('auto', { PATH: '/bin' })
 
@@ -342,14 +343,22 @@ describe('SkillExecutionService', () => {
     })
   })
 
-  it('reports unavailable python runtime when uv and system python are missing', async () => {
-    vi.spyOn(service as never, 'resolveSystemCommand' as never).mockResolvedValue(null)
-    vi.spyOn(service as never, 'getBundledRuntimeCommand' as never).mockReturnValue(null)
-    vi.spyOn(service as never, 'findSystemPythonRuntime' as never).mockResolvedValue(null)
+  it('fail-closes python auto when uv is not configured', async () => {
+    vi.spyOn(ToolchainService, 'getInstance').mockReturnValue({
+      resolve: () => {
+        throw new ToolchainResolutionError('uv', 'unconfigured', 'uv toolchain is not configured')
+      }
+    } as never)
+    const resolveSystem = vi
+      .spyOn(service as never, 'resolveSystemCommand' as never)
+      .mockImplementation(async (command: string) =>
+        command === 'python3' ? '/usr/bin/python3' : null
+      )
 
     await expect((service as never).resolvePythonRuntime('auto', { PATH: '/bin' })).rejects.toThrow(
-      'No compatible Python runtime found for this skill'
+      'No compatible uv runtime found for this skill'
     )
+    expect(resolveSystem).not.toHaveBeenCalled()
   })
 
   it.each([WINDOWS_POWERSHELL_COMMAND_SHELL, CMD_COMMAND_SHELL, POSIX_COMMAND_SHELL])(

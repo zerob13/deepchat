@@ -150,7 +150,10 @@
       "assets_missing": "Bản cài đặt này thiếu tài nguyên OCR ngoại tuyến bắt buộc.",
       "runtime_manifest_invalid": "Tệp kê khai runtime OCR tích hợp không hợp lệ.",
       "service_closed": "Dịch vụ OCR đang tắt.",
-      "unsupported_platform": "OCR không khả dụng cho nền tảng và kiến trúc này."
+      "unsupported_platform": "OCR không khả dụng cho nền tảng và kiến trúc này.",
+      "toolchain_unavailable": "OCR cần Node.js chính thức v24.18.0. Mở Cài đặt → Toolchain và cài runtime chính thức.",
+      "version_mismatch": "OCR cần Node.js v24.18.0. Phiên bản hiện tại nằm ngoài phạm vi. Mở Cài đặt → Toolchain và cài runtime chính thức.",
+      "abi_mismatch": "OCR cần Node.js ABI 137 (v24.18.0). Mở Cài đặt → Toolchain và cài runtime chính thức."
     },
     "processStates": {
       "idle": "Không hoạt động",
@@ -2070,8 +2073,6 @@
     "description": "Quản lý các tác nhân Giao thức Máy khách Agent cục bộ do DeepChat bắt đầu.",
     "enabledTitle": "Kích hoạt ACP",
     "enabledDescription": "Khi được bật, các tác nhân ACP được định cấu hình sẽ xuất hiện dưới dạng mô hình trong bộ chọn.",
-    "useBuiltinRuntimeTitle": "Sử dụng Thời gian chạy tích hợp DeepChat",
-    "useBuiltinRuntimeDescription": "Khi được bật, bỏ qua các lệnh uv và nút hệ thống, sử dụng các phiên bản đi kèm của DeepChat.",
     "enableToAccess": "Kích hoạt ACP để định cấu hình các tác nhân.",
     "registryInstallEntry": "Cài đặt Agent",
     "registryInstallEntryDescription": "Tìm kiếm và cài đặt các tác nhân từ ACP Register, sau đó quay lại đây để kích hoạt và định cấu hình chúng.",
@@ -3268,5 +3269,49 @@
       "description": "Tạo các mô phỏng chỉ dành cho phát triển cho quá trình làm quen, cuộc trò chuyện và cập nhật.",
       "failed": "Không thể bắt đầu quy trình gỡ lỗi có hướng dẫn."
     }
+  },
+  "toolchains": {
+    "description": "Chọn nguồn DeepChat lấy Node và uv. Nguồn đã chọn sẽ không tự đổi.",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "Nguồn",
+    "sources": {
+      "bundled": "Đi kèm ứng dụng",
+      "managed": "Do DeepChat cài đặt",
+      "system": "Cài đặt hệ thống",
+      "custom": "Đường dẫn tùy chỉnh",
+      "unconfigured": "Chưa cấu hình",
+      "autoNamed": "Tự động ({source})"
+    },
+    "systemDetected": "Đã tìm thấy nhị phân hệ thống: {path}",
+    "systemDetectedHint": "Nếu đã có bản cài đặt hoạt động, sẽ dùng bản đó. Không tải thêm.",
+    "install": "Cài runtime chính thức",
+    "repair": "Sửa",
+    "revert": "Hoàn nguyên",
+    "cancelInstall": "Hủy",
+    "installing": "Đang cài…",
+    "version": "Phiên bản",
+    "path": "Đường dẫn",
+    "bannerTitle": "Thiếu runtime bắt buộc",
+    "bannerDescription": "Node hoặc uv không khả dụng cho MCP, ACP, Skills hoặc OCR.",
+    "bannerAction": "Mở toolchain",
+    "availability": {
+      "ready": "Sẵn sàng",
+      "missing": "Thiếu",
+      "incomplete": "Chưa đủ",
+      "unconfigured": "Chưa cấu hình"
+    },
+    "downloadReasons": {
+      "dns": "Không phân giải được máy chủ tải xuống.",
+      "timeout": "Tải xuống hết thời gian.",
+      "http": "Máy chủ tải xuống trả về lỗi.",
+      "proxy": "Tải xuống qua proxy đã cấu hình thất bại.",
+      "checksum_mismatch": "Tệp đã tải không vượt qua kiểm tra toàn vẹn.",
+      "disk": "Không ghi được runtime ra đĩa.",
+      "cancelled": "Đã hủy tải xuống.",
+      "activation_failed": "Không kích hoạt được runtime.",
+      "unsupported_platform": "Nền tảng này không có runtime chính thức."
+    },
+    "ocrPinHint": "OCR cần Node chính thức v24.18.0 (ABI 137). Runtime này dùng được cho chat và MCP, nhưng không dùng cho OCR. Hãy cài runtime chính thức."
   }
 }

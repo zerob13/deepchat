@@ -150,7 +150,10 @@
       "assets_missing": "Aset OCR luring yang diperlukan tidak ada dalam instalasi ini.",
       "runtime_manifest_invalid": "Manifes runtime OCR bawaan tidak valid.",
       "service_closed": "Layanan OCR sedang dihentikan.",
-      "unsupported_platform": "OCR tidak tersedia untuk platform dan arsitektur ini."
+      "unsupported_platform": "OCR tidak tersedia untuk platform dan arsitektur ini.",
+      "toolchain_unavailable": "OCR membutuhkan Node.js resmi v24.18.0. Buka Pengaturan → Toolchain dan pasang runtime resmi.",
+      "version_mismatch": "OCR membutuhkan Node.js v24.18.0. Versi ini di luar rentang. Buka Pengaturan → Toolchain dan pasang runtime resmi.",
+      "abi_mismatch": "OCR membutuhkan Node.js ABI 137 (v24.18.0). Buka Pengaturan → Toolchain dan pasang runtime resmi."
     },
     "processStates": {
       "idle": "Tidak aktif",
@@ -2070,8 +2073,6 @@
     "description": "Mengelola ACP Agent lokal yang dimulai oleh DeepChat.",
     "enabledTitle": "Aktifkan ACP",
     "enabledDescription": "Setelah diaktifkan, ACP Agent yang dikonfigurasi akan muncul di daftar model.",
-    "useBuiltinRuntimeTitle": "Gunakan lingkungan bawaan DeepChat",
-    "useBuiltinRuntimeDescription": "Jika dicentang, perintah node dan uv sistem akan dilewati dan versi yang disertakan dengan DeepChat akan digunakan.",
     "enableToAccess": "Agent tidak dapat dikonfigurasi sampai ACP diaktifkan.",
     "registryInstallEntry": "Instal Agent",
     "registryInstallEntryDescription": "Cari dan instal Agent dari ACP Registry dan kembali ke sini untuk mengaktifkan dan mengkonfigurasinya setelah instalasi selesai.",
@@ -3268,5 +3269,49 @@
       "description": "Buat tiruan onboarding, percakapan, dan pembaruan khusus pengembangan.",
       "failed": "Tidak dapat memulai alur terpandu debug."
     }
+  },
+  "toolchains": {
+    "description": "Pilih dari mana DeepChat mendapatkan Node dan uv. Sumber tidak beralih sendiri setelah dipilih.",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "Sumber",
+    "sources": {
+      "bundled": "Terbundle di aplikasi",
+      "managed": "Dipasang oleh DeepChat",
+      "system": "Instalasi sistem",
+      "custom": "Jalur kustom",
+      "unconfigured": "Belum dikonfigurasi",
+      "autoNamed": "Otomatis ({source})"
+    },
+    "systemDetected": "Biner sistem ditemukan: {path}",
+    "systemDetectedHint": "Jika sudah ada instalasi yang berfungsi, itu yang dipakai. Tidak ada unduhan.",
+    "install": "Pasang runtime resmi",
+    "repair": "Perbaiki",
+    "revert": "Kembalikan",
+    "cancelInstall": "Batal",
+    "installing": "Memasang…",
+    "version": "Versi",
+    "path": "Jalur",
+    "bannerTitle": "Runtime yang diperlukan tidak ada",
+    "bannerDescription": "Node atau uv tidak tersedia untuk MCP, ACP, Skills, atau OCR.",
+    "bannerAction": "Buka toolchain",
+    "availability": {
+      "ready": "Siap",
+      "missing": "Tidak ada",
+      "incomplete": "Tidak lengkap",
+      "unconfigured": "Belum dikonfigurasi"
+    },
+    "downloadReasons": {
+      "dns": "Host unduhan tidak dapat diselesaikan.",
+      "timeout": "Unduhan habis waktu.",
+      "http": "Server unduhan mengembalikan kesalahan.",
+      "proxy": "Unduhan melalui proksi yang dikonfigurasi gagal.",
+      "checksum_mismatch": "Berkas yang diunduh gagal verifikasi integritas.",
+      "disk": "Runtime tidak dapat ditulis ke disk.",
+      "cancelled": "Unduhan dibatalkan.",
+      "activation_failed": "Runtime tidak dapat diaktifkan.",
+      "unsupported_platform": "Platform ini tidak memiliki runtime resmi."
+    },
+    "ocrPinHint": "OCR membutuhkan Node resmi v24.18.0 (ABI 137). Runtime ini siap untuk chat dan MCP, tetapi tidak untuk OCR. Pasang runtime resmi."
   }
 }

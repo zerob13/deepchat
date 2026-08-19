@@ -408,6 +408,13 @@ fi
       fs.rmSync(temporaryDirectory, { recursive: true, force: true })
     }
   })
+
+  it('firewalls the same Node binary the Light OCR smoke actually uses', () => {
+    const source = readWorkflowSource(reusableWorkflows.windows.name)
+    expect(source).toContain("$nodePath = [string](node -p 'process.execPath')")
+    expect(source).toContain("if ($nodeVersion -ne 'v24.18.0')")
+    expect(source).not.toContain('Get-Command node')
+  })
 })
 
 describe('Build Application caller', () => {

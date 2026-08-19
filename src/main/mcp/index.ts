@@ -391,6 +391,9 @@ export class McpService implements McpServicePort {
       logger.info('[MCP] Initialization completed')
 
       this.scheduleBackgroundRegistryUpdate()
+      void this.retryUnstartedEnabledServers().catch((error) => {
+        console.error('[MCP] Failed to retry unstarted enabled servers:', error)
+      })
     } catch (error) {
       console.error('[MCP] Initialization failed:', error)
       // Mark as complete even if initialization fails to avoid system stuck in uninitialized state
@@ -894,6 +897,32 @@ export class McpService implements McpServicePort {
       this.mcpOAuthManager.clearServerCredentials(persistedServerId)
     }
     await this.mcpSettings.removeMcpServer(serverName)
+  }
+
+  async retryUnstartedEnabledServers(): Promise<void> {
+    if (!this.isInitialized) return
+    const [servers, enabledServers, mcpEnabled] = await Promise.all([
+      this.mcpSettings.getMcpServers(),
+      this.mcpSettings.getEnabledMcpServers(),
+      this.mcpSettings.getMcpEnabled()
+    ])
+    if (!mcpEnabled) return
+    for (const serverName of enabledServers) {
+      const serverConfig = servers[serverName]
+      if (
+        !serverConfig ||
+        this.serverManager.isServerActive(serverName) ||
+        this.isPluginOwnedServerConfig(serverConfig) ||
+        this.pluginRuntimeSupervisor.ownsServer(serverName)
+      ) {
+        continue
+      }
+      this.startServerInBackground(
+        serverName,
+        `[MCP] Enabled server ${serverName} started after toolchain PATH refresh`,
+        `[MCP] Failed to retry enabled server ${serverName}:`
+      )
+    }
   }
 
   async isServerRunning(serverName: string): Promise<boolean> {

@@ -3,6 +3,7 @@ import { access, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import runtimeVersions from '../../../resources/runtime-versions.json'
+import { isToolchainResolutionError } from '@/toolchains/errors'
 import { resolveBundledNodeExecutable } from './lightOcrProcessHost'
 import {
   classifyLightOcrArtifact,
@@ -18,9 +19,13 @@ export type OcrRuntimeUnavailableReason =
   | 'runtime_manifest_invalid'
   | 'service_closed'
   | 'unsupported_platform'
+  | 'toolchain_unavailable'
+  | 'version_mismatch'
+  | 'abi_mismatch'
 
 export interface OcrRuntimeAssets {
   nodeExecutable: string
+  nodeVersion?: string
   helperEntryPath: string
   facadeDir: string
   runtimeDir: string
@@ -50,6 +55,7 @@ export interface OcrRuntimeAssetResolverOptions {
   platform?: NodeJS.Platform
   arch?: string
   nodeRuntimePath?: string | null
+  resolveNode?: () => { executable: string; version: string }
 }
 
 interface PackagedRuntimeManifest {
@@ -68,7 +74,7 @@ interface PackagedRuntimeManifest {
   nativePackage?: string
   nativeArtifactInventory?: NativeArtifactInventory
   paths?: {
-    node: string
+    node?: string
     helper: string
     facade: string
     runtime: string
@@ -168,7 +174,9 @@ export class OcrRuntimeAssetResolver {
 
     return {
       assets: {
-        nodeExecutable: resolveManifestPath(unpackedRoot, manifest.paths.node),
+        ...this.resolveNodeAssets(
+          manifest.paths.node ? resolveManifestPath(unpackedRoot, manifest.paths.node) : ''
+        ),
         helperEntryPath: resolveManifestPath(unpackedRoot, manifest.paths.helper),
         facadeDir: resolveManifestPath(unpackedRoot, manifest.paths.facade),
         runtimeDir: resolveManifestPath(unpackedRoot, manifest.paths.runtime),
@@ -184,7 +192,7 @@ export class OcrRuntimeAssetResolver {
   }
 
   private async resolveDevelopment(nativePackage: string): Promise<ResolvedRuntimeAssets> {
-    if (!this.options.nodeRuntimePath) {
+    if (!this.options.resolveNode && !this.options.nodeRuntimePath) {
       throw new RuntimeAssetError('assets_missing', 'Bundled Node runtime is not installed')
     }
 
@@ -209,7 +217,11 @@ export class OcrRuntimeAssetResolver {
 
     return {
       assets: {
-        nodeExecutable: resolveBundledNodeExecutable(this.options.nodeRuntimePath, this.platform),
+        ...this.resolveNodeAssets(
+          this.options.nodeRuntimePath
+            ? resolveBundledNodeExecutable(this.options.nodeRuntimePath, this.platform)
+            : ''
+        ),
         helperEntryPath: path.join(this.options.appPath, 'out', 'main', 'lightOcrHelper.js'),
         facadeDir: path.resolve(path.dirname(facadeEntry), '..'),
         runtimeDir: path.resolve(path.dirname(runtimeEntry), '..'),
@@ -222,6 +234,31 @@ export class OcrRuntimeAssetResolver {
       },
       expectedNativeArtifactInventory: null
     }
+  }
+
+  private resolveNodeAssets(fallbackExecutable: string): {
+    nodeExecutable: string
+    nodeVersion?: string
+  } {
+    if (this.options.resolveNode) {
+      try {
+        const resolved = this.options.resolveNode()
+        return { nodeExecutable: resolved.executable, nodeVersion: resolved.version }
+      } catch (error) {
+        if (isToolchainResolutionError(error)) {
+          const reason =
+            error.reason === 'version_mismatch' || error.reason === 'abi_mismatch'
+              ? error.reason
+              : 'toolchain_unavailable'
+          throw new RuntimeAssetError(reason, error.message, { cause: error })
+        }
+        throw error
+      }
+    }
+    if (fallbackExecutable) {
+      return { nodeExecutable: fallbackExecutable }
+    }
+    throw new RuntimeAssetError('assets_missing', 'Bundled Node runtime is not installed')
   }
 
   private async verifyIdentity(
@@ -366,7 +403,7 @@ function resolveManifestPath(rootDir: string, relativePath: string): string {
   return resolvedPath
 }
 
-function isPackagedRuntimeManifest(value: unknown): value is PackagedRuntimeManifest {
+export function isPackagedRuntimeManifest(value: unknown): value is PackagedRuntimeManifest {
   if (!isRecord(value)) return false
   if (
     typeof value.schemaVersion !== 'number' ||
@@ -399,8 +436,10 @@ function isPackagedRuntimeManifest(value: unknown): value is PackagedRuntimeMani
   }
   if (value.paths === undefined) return true
   if (!isRecord(value.paths)) return false
-  return ['node', 'helper', 'facade', 'runtime', 'bundle', 'native'].every(
-    (key) => typeof value.paths?.[key] === 'string'
+  const requiredPathKeys = ['helper', 'facade', 'runtime', 'bundle', 'native'] as const
+  return (
+    requiredPathKeys.every((key) => typeof value.paths?.[key] === 'string') &&
+    (value.paths.node === undefined || typeof value.paths.node === 'string')
   )
 }
 

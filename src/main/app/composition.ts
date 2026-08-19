@@ -32,6 +32,7 @@ import { WindowPresenter } from '../desktop/window'
 import { PluginSettingsWindow } from '../desktop/pluginSettingsWindow'
 import { ShortcutPresenter } from '../desktop/shortcut'
 import type { FileServicePort } from '@shared/types/file'
+import type { ToolchainKind } from '@shared/types/toolchains'
 import type { WorkspaceServicePort } from '@shared/types/workspace'
 import type { AssistantMessageBlock } from '@shared/types/agent-interface'
 import { projectFinalAssistantAnswer } from '@shared/lib/assistantDeliverySegments'
@@ -60,7 +61,11 @@ import { DeviceService } from '../device'
 import { UpgradeService } from '../upgrade'
 import { UpdateSettings } from '../upgrade/settings'
 import { FileService } from '../file'
+import { getShellEnvironment } from '@/agent/shared/process/shellEnvHelper'
 import { RuntimeHelper } from '@/lib/runtimeHelper'
+import { mergeDetectionEnv, noteNodeDemandFromMcp, ToolchainService } from '@/toolchains'
+import { ToolchainResolutionError } from '@/toolchains/errors'
+import { createToolchainRoutes } from '@/toolchains/routes'
 import { AttachmentCapabilityRouter } from '@/ocr/attachmentCapabilityRouter'
 import { OcrRuntimeService } from '@/ocr/ocrRuntimeService'
 import { OcrSettings } from '@/ocr/ocrSettings'
@@ -1209,10 +1214,54 @@ export async function createMainProcessControl(dependencies: {
   ocrSettings = new OcrSettings(dependencies.settingsStore, publishDeepchatEvent)
   const runtimeHelper = RuntimeHelper.getInstance()
   runtimeHelper.initializeRuntimes()
+  const toolchainHomeDir = app.getPath('home')
+  const toolchainService = ToolchainService.initialize({
+    appPath: app.getAppPath(),
+    userDataDir: app.getPath('userData'),
+    env: mergeDetectionEnv(process.env, toolchainHomeDir, process.platform),
+    allowProbe: () => !dependencies.privacySettings.isEnabled(),
+    onProgress: (progress) =>
+      publishDeepchatEvent('toolchains.progress', { ...progress, version: Date.now() }),
+    onMissing: (missing) =>
+      publishDeepchatEvent('toolchains.missing', { missing, version: Date.now() }),
+    onStateChanged: (kind?: ToolchainKind) => {
+      publishDeepchatEvent('toolchains.changed', { version: Date.now() })
+      ocrRuntimeService?.refreshAvailability(kind)
+      const state = ToolchainService.getInstance().getState()
+      if (state.node.source === 'unconfigured' && state.uv.source === 'unconfigured') {
+        return
+      }
+      void mcpService?.retryUnstartedEnabledServers().catch((error) => {
+        logger.warn('[ToolchainService] Failed to retry MCP servers after PATH refresh', error)
+      })
+    }
+  })
+  if (process.platform !== 'win32') {
+    void getShellEnvironment()
+      .then((shellEnv) => {
+        toolchainService.updateDetectionEnv(
+          mergeDetectionEnv(shellEnv, toolchainHomeDir, process.platform)
+        )
+      })
+      .catch((error) => {
+        logger.warn('[ToolchainService] Failed to refresh login-shell PATH', error)
+      })
+  }
   ocrRuntimeService = new OcrRuntimeService({
     appPath: app.getAppPath(),
     isPackaged: app.isPackaged,
-    nodeRuntimePath: runtimeHelper.getNodeRuntimePath(),
+    nodeRuntimePath: null,
+    resolveNode: () => {
+      const resolved = toolchainService.resolve('node', { purpose: 'ocr' })
+      if (!resolved.version) {
+        throw new ToolchainResolutionError(
+          'node',
+          'version_mismatch',
+          'OCR Node version is unavailable'
+        )
+      }
+      return { executable: resolved.node, version: resolved.version }
+    },
     tempBaseDir: app.getPath('temp'),
     userDataDir: app.getPath('userData')
   })
@@ -1335,6 +1384,9 @@ export async function createMainProcessControl(dependencies: {
     },
     () => reportMainStartupComponentFailure(dependencies.startupRunId, 'mcp', 'unknown')
   )
+  await noteNodeDemandFromMcp(dependencies.mcpSettings, toolchainService).catch((error) => {
+    logger.warn('[ToolchainService] Failed to note MCP Node demand', error)
+  })
   const deeplinkActions = createDeeplinkActions({
     window: windowPresenter,
     config: providerSettings,
@@ -2754,6 +2806,10 @@ export async function createMainProcessControl(dependencies: {
     })
     const fileRoutes = createFileRoutes(fileService)
     const ocrRoutes = createOcrRoutes({ runtime: ocrRuntimeService })
+    const toolchainRoutes = createToolchainRoutes({
+      service: toolchainService,
+      pickPath: () => deviceService.selectFiles({ multiple: false })
+    })
     const knowledgeRoutes = createKnowledgeRoutes({
       service: knowledgeService,
       settings: knowledgeSettings,
@@ -2985,6 +3041,7 @@ export async function createMainProcessControl(dependencies: {
         desktopRoutes,
         fileRoutes,
         ocrRoutes,
+        toolchainRoutes,
         knowledgeRoutes,
         workspaceRoutes,
         orchestrationRoutes,
@@ -3178,6 +3235,23 @@ export async function createMainProcessControl(dependencies: {
       },
       'Failed to start disabled agent tool capability cleanup:',
       { component: 'disabled_agent_tool_capability_cleanup', category: 'persistence' }
+    )
+
+    scheduleMainStartupTask(
+      startupRunId,
+      {
+        id: 'main:toolchain-gc',
+        target: 'main',
+        phase: 'background',
+        resource: 'io',
+        labelKey: 'startup.main.toolchainGc',
+        run: async (taskContext) => {
+          await taskContext.yield()
+          toolchainService.gcUnreachableTrees()
+        }
+      },
+      'Failed to collect unused toolchain trees:',
+      { component: 'toolchain_gc', category: 'resource' }
     )
   }
 

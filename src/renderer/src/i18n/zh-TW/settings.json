@@ -1786,8 +1786,6 @@
     "description": "管理由 DeepChat 啟動的本地 ACP Agent。",
     "enabledTitle": "啟用 ACP",
     "enabledDescription": "啟用後，設定好的 ACP Agent 會出現在模型列表。",
-    "useBuiltinRuntimeTitle": "使用 DeepChat 內建環境",
-    "useBuiltinRuntimeDescription": "勾選後會繞過系統的 node 和 uv 命令，使用 DeepChat 自帶的版本。",
     "enableToAccess": "啟用 ACP 後才能設定 Agent。",
     "addCustomAgent": "新增自訂 Agent",
     "customEmpty": "還沒有自訂 Agent。",
@@ -2640,7 +2638,10 @@
       "assets_missing": "目前安裝缺少必要的離線 OCR 資產。",
       "runtime_manifest_invalid": "內建 OCR 執行階段清單無效。",
       "service_closed": "OCR 服務正在關閉。",
-      "unsupported_platform": "目前平台與架構暫不支援 OCR。"
+      "unsupported_platform": "目前平台與架構暫不支援 OCR。",
+      "toolchain_unavailable": "OCR 需要官方 Node.js v24.18.0。請到設定 → 工具鏈安裝官方執行階段。",
+      "version_mismatch": "OCR 需要 Node.js v24.18.0，目前版本不在此範圍。請到設定 → 工具鏈安裝官方執行階段。",
+      "abi_mismatch": "OCR 需要 Node.js ABI 137（v24.18.0）。請到設定 → 工具鏈安裝官方執行階段。"
     },
     "processStates": {
       "idle": "閒置",
@@ -3268,5 +3269,49 @@
       "description": "建立僅供開發環境使用的引導、對話和更新模擬。",
       "failed": "無法啟動偵錯引導。"
     }
+  },
+  "toolchains": {
+    "description": "選擇 DeepChat 使用的 Node 和 uv。來源選定後不會再偷偷切換。",
+    "nodeTitle": "Node.js",
+    "uvTitle": "uv",
+    "source": "來源",
+    "sources": {
+      "bundled": "應用內建",
+      "managed": "由 DeepChat 安裝",
+      "system": "系統既有安裝",
+      "custom": "自訂路徑",
+      "unconfigured": "未設定",
+      "autoNamed": "自動（{source}）"
+    },
+    "systemDetected": "偵測到系統二進位檔：{path}",
+    "systemDetectedHint": "已有可用安裝時優先使用，不必再下載一份。",
+    "install": "安裝官方執行環境",
+    "repair": "修復",
+    "revert": "還原",
+    "cancelInstall": "取消",
+    "installing": "正在安裝…",
+    "version": "版本",
+    "path": "路徑",
+    "bannerTitle": "缺少所需執行環境",
+    "bannerDescription": "MCP、ACP、Skills 或 OCR 目前沒有可用的 Node 或 uv。",
+    "bannerAction": "開啟工具鏈",
+    "availability": {
+      "ready": "可用",
+      "missing": "缺失",
+      "incomplete": "不完整",
+      "unconfigured": "未設定"
+    },
+    "downloadReasons": {
+      "dns": "無法解析下載位址。",
+      "timeout": "下載逾時。",
+      "http": "下載伺服器傳回了錯誤。",
+      "proxy": "經由代理下載失敗。",
+      "checksum_mismatch": "下載檔案未通過完整性檢查。",
+      "disk": "無法把執行環境寫入磁碟。",
+      "cancelled": "下載已取消。",
+      "activation_failed": "無法啟用該執行環境。",
+      "unsupported_platform": "目前平台沒有官方執行環境建置。"
+    },
+    "ocrPinHint": "OCR 需要官方 Node v24.18.0（ABI 137）。目前執行階段可供聊天和 MCP 使用，但不能用於 OCR。請安裝官方執行階段。"
   }
 }
