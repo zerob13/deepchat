@@ -3,6 +3,7 @@ import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 
 const sdkMock = vi.hoisted(() => ({
+  initialize: vi.fn(),
   initializeResponse: {
     protocolVersion: 1,
     agentInfo: { name: 'Agent One', version: '1.0.0' },
@@ -31,7 +32,7 @@ vi.mock('@agentclientprotocol/sdk', () => ({
   PROTOCOL_VERSION: 1,
   ClientSideConnection: class {
     closed = new Promise<void>(() => {})
-    initialize = vi.fn(async () => sdkMock.initializeResponse)
+    initialize = sdkMock.initialize
   }
 }))
 
@@ -55,15 +56,23 @@ class MockChild extends EventEmitter {
 
 describe('AcpProcessManager initialized capabilities', () => {
   it('carries initialize capabilities into the ready process handle', async () => {
+    sdkMock.initialize.mockResolvedValue(sdkMock.initializeResponse)
     const { AcpProcessManager } =
       await import('@/agent/acp/runtime/acpProcessManager')
     const manager = new AcpProcessManager({
       publishEvent: vi.fn(),
       providerId: 'acp',
-      resolveLaunchSpec: vi.fn()
+      resolveLaunchSpec: vi.fn(),
+      terminalAuthAvailable: true
     })
     const child = new MockChild()
-    vi.spyOn(manager as any, 'spawnAgentProcess').mockResolvedValue(child)
+    vi.spyOn(manager as any, 'materializeAgentLaunch').mockResolvedValue({
+      command: 'agent',
+      args: [],
+      env: {},
+      cwd: '/tmp/workspace'
+    })
+    vi.spyOn(manager as any, 'spawnAgentProcess').mockReturnValue(child)
 
     const handle = await (manager as any).spawnProcessOnce(
       {
@@ -80,7 +89,8 @@ describe('AcpProcessManager initialized capabilities', () => {
         args: [],
         env: {}
       },
-      'manual:agent'
+      'manual:agent',
+      undefined
     )
 
     expect(handle.promptCapabilities).toEqual({
@@ -100,6 +110,11 @@ describe('AcpProcessManager initialized capabilities', () => {
     expect(handle.supportsSessionClose).toBe(true)
     expect(handle.supportsSessionFork).toBe(true)
     expect(handle.authMethods).toEqual([{ id: 'terminal', name: 'Terminal', type: 'terminal' }])
+    expect(sdkMock.initialize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientCapabilities: expect.objectContaining({ auth: { terminal: true } })
+      })
+    )
     expect(handle.capabilitySnapshot?.supports).toEqual({
       loadSession: true,
       sessionList: true,

@@ -1,6 +1,7 @@
 import spawn from 'cross-spawn'
 import type { ChildProcessWithoutNullStreams } from 'child_process'
 import { Readable, Writable } from 'node:stream'
+import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -14,6 +15,8 @@ import type { Stream } from '@agentclientprotocol/sdk/dist/stream.js'
 import type {
   AcpAgentConfig,
   AcpAgentState,
+  AcpAuthChallenge,
+  AcpAuthChallengeOrigin,
   AcpConfigState,
   AcpDebugEventEntry,
   AcpResolvedLaunchSpec
@@ -43,6 +46,14 @@ import {
   updateAcpConfigStateValue
 } from './acpConfigState'
 import { AcpDebugLog } from './acpDebugLog'
+import { normalizeAcpAuthMethod } from './acpAuthentication'
+
+export interface AcpMaterializedLaunch {
+  command: string
+  args: string[]
+  env: Record<string, string>
+  cwd: string
+}
 
 export interface AcpProcessHandle extends AgentProcessHandle {
   child: ChildProcessWithoutNullStreams
@@ -69,6 +80,7 @@ export interface AcpProcessHandle extends AgentProcessHandle {
   supportsSessionClose?: boolean
   supportsSessionFork?: boolean
   launchSignature: string
+  materializedLaunch: AcpMaterializedLaunch
 }
 
 interface AcpProcessManagerOptions {
@@ -78,6 +90,19 @@ interface AcpProcessManagerOptions {
   getAgentState?: (agentId: string) => Promise<AcpAgentState | null>
   getNpmRegistry?: () => Promise<string | null>
   getUvRegistry?: () => Promise<string | null>
+  terminalAuthAvailable?: boolean
+}
+
+interface StoredAuthChallenge {
+  public: AcpAuthChallenge
+  agent: AcpAgentConfig
+  handle: AcpProcessHandle
+  launchSignature: string
+  methods: schema.AuthMethod[]
+  materializedLaunch: AcpMaterializedLaunch
+  createdAt: number
+  consumed: boolean
+  active: boolean
 }
 
 export type SessionNotificationHandler = (notification: schema.SessionNotification) => void
@@ -184,7 +209,10 @@ export const parseLoadSessionCapability = (initializeResult: unknown): boolean |
   return Boolean(loadSession)
 }
 
-const createLaunchSignature = (launchSpec: AcpResolvedLaunchSpec): string =>
+const createLaunchSignature = (
+  launchSpec: AcpResolvedLaunchSpec,
+  userEnvOverride?: Record<string, string>
+): string =>
   JSON.stringify({
     command: launchSpec.command,
     args: launchSpec.args ?? [],
@@ -192,8 +220,11 @@ const createLaunchSignature = (launchSpec: AcpResolvedLaunchSpec): string =>
     cwd: launchSpec.cwd ?? null,
     distributionType: launchSpec.distributionType,
     version: launchSpec.version ?? null,
-    installDir: launchSpec.installDir ?? null
+    installDir: launchSpec.installDir ?? null,
+    userEnvOverride: userEnvOverride ?? {}
   })
+
+const AUTH_CHALLENGE_TTL_MS = 10 * 60 * 1000
 
 export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, AcpAgentConfig> {
   private readonly publishEvent: DeepChatEventPublisher
@@ -205,6 +236,7 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
   private readonly getAgentState?: (agentId: string) => Promise<AcpAgentState | null>
   private readonly getNpmRegistry?: () => Promise<string | null>
   private readonly getUvRegistry?: () => Promise<string | null>
+  private readonly terminalAuthAvailable: boolean
   private readonly handles = new Map<string, AcpProcessHandle>()
   private readonly boundHandles = new Map<string, AcpProcessHandle>()
   private readonly pendingHandles = new Map<string, Promise<AcpProcessHandle>>()
@@ -233,6 +265,8 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
   private readonly debugLog = new AcpDebugLog()
   private readonly protocolRequestsToAgent = new Map<string, Map<JsonRpcId, string>>()
   private readonly protocolRequestsFromAgent = new Map<string, Map<JsonRpcId, string>>()
+  private readonly authChallenges = new Map<string, StoredAuthChallenge>()
+  private readonly activeAuthScopes = new Map<string, string>()
   private readonly initializingChildren = new Set<ChildProcessWithoutNullStreams>()
   private readonly terminatedChildren = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly disposedHandles = new WeakSet<AcpProcessHandle>()
@@ -246,6 +280,7 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     this.getAgentState = options.getAgentState
     this.getNpmRegistry = options.getNpmRegistry
     this.getUvRegistry = options.getUvRegistry
+    this.terminalAuthAvailable = options.terminalAuthAvailable === true
   }
 
   getTerminalSnapshot(terminalId: string): schema.TerminalOutputResponse | null {
@@ -416,7 +451,9 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
       this.assertAcceptingProcesses()
       const launchSpec = await this.resolveLaunchSpec(agent.id, resolvedWorkdir)
       this.assertAcceptingProcesses()
-      const launchSignature = createLaunchSignature(launchSpec)
+      const agentState = await this.getAgentState?.(agent.id)
+      this.assertAcceptingProcesses()
+      const launchSignature = createLaunchSignature(launchSpec, agentState?.envOverride)
       const warmupCount = this.getHandlesByAgent(agent.id).filter((handle) =>
         this.isHandleAlive(handle)
       ).length
@@ -474,7 +511,13 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
       }
 
       this.assertAcceptingProcesses()
-      const handlePromise = this.spawnProcess(agent, resolvedWorkdir, launchSpec, launchSignature)
+      const handlePromise = this.spawnProcess(
+        agent,
+        resolvedWorkdir,
+        launchSpec,
+        launchSignature,
+        agentState
+      )
       this.pendingHandles.set(warmupKey, handlePromise)
 
       try {
@@ -599,6 +642,178 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     return processes
   }
 
+  createAuthChallenge(
+    handle: AcpProcessHandle,
+    input: {
+      origin: AcpAuthChallengeOrigin
+      sessionId?: string
+    }
+  ): AcpAuthChallenge {
+    this.pruneAuthChallenges()
+    const challenge: AcpAuthChallenge = {
+      id: randomUUID(),
+      agentId: handle.agentId,
+      agentName: handle.agent.name,
+      workdir: handle.workdir,
+      methods: (handle.authMethods ?? []).map((method) => {
+        const normalized = normalizeAcpAuthMethod(method)
+        return normalized.type === 'terminal' && !this.terminalAuthAvailable
+          ? { ...normalized, type: 'unsupported' as const }
+          : normalized
+      }),
+      origin: input.origin,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {})
+    }
+    this.authChallenges.set(challenge.id, {
+      public: challenge,
+      agent: handle.agent,
+      handle,
+      launchSignature: handle.launchSignature,
+      methods: [...(handle.authMethods ?? [])],
+      materializedLaunch: {
+        command: handle.materializedLaunch.command,
+        args: [...handle.materializedLaunch.args],
+        env: { ...handle.materializedLaunch.env },
+        cwd: handle.materializedLaunch.cwd
+      },
+      createdAt: Date.now(),
+      consumed: false,
+      active: false
+    })
+    return challenge
+  }
+
+  getAuthChallenge(challengeId: string): AcpAuthChallenge {
+    return this.requireStoredAuthChallenge(challengeId).public
+  }
+
+  async inspectAuthentication(
+    agent: AcpAgentConfig,
+    workdir?: string
+  ): Promise<AcpAuthChallenge> {
+    const handle = await this.getConnection(agent, workdir)
+    return this.createAuthChallenge(handle, { origin: 'settings_probe' })
+  }
+
+  async authenticateAgent(challengeId: string, methodId: string): Promise<void> {
+    const challenge = await this.claimAuthChallenge(challengeId, methodId, 'agent')
+    try {
+      await challenge.handle.connection.authenticate({ methodId })
+      challenge.consumed = true
+    } finally {
+      this.releaseAuthChallenge(challenge)
+    }
+  }
+
+  async prepareTerminalAuthentication(
+    challengeId: string,
+    methodId: string
+  ): Promise<{
+    challenge: AcpAuthChallenge
+    launch: AcpMaterializedLaunch
+  }> {
+    const challenge = await this.claimAuthChallenge(challengeId, methodId, 'terminal')
+    const method = challenge.methods.find((candidate) => candidate.id === methodId)
+    if (!method || !('type' in method) || method.type !== 'terminal') {
+      this.releaseAuthChallenge(challenge)
+      throw new Error('Selected ACP authentication method is not a terminal method')
+    }
+    return {
+      challenge: challenge.public,
+      launch: {
+        command: challenge.materializedLaunch.command,
+        args: [...challenge.materializedLaunch.args, ...(method.args ?? [])],
+        env: { ...challenge.materializedLaunch.env, ...method.env },
+        cwd: challenge.materializedLaunch.cwd
+      }
+    }
+  }
+
+  async completeTerminalAuthentication(challengeId: string): Promise<void> {
+    const challenge = this.requireStoredAuthChallenge(challengeId)
+    if (!challenge.active) {
+      throw new Error('ACP authentication challenge is not active')
+    }
+    try {
+      await this.disposeHandle(challenge.handle)
+      await this.getConnection(challenge.agent, challenge.public.workdir)
+      challenge.consumed = true
+    } finally {
+      this.releaseAuthChallenge(challenge)
+    }
+  }
+
+  abandonAuthentication(challengeId: string): void {
+    const challenge = this.authChallenges.get(challengeId)
+    if (challenge && !challenge.consumed) this.releaseAuthChallenge(challenge)
+  }
+
+  private async claimAuthChallenge(
+    challengeId: string,
+    methodId: string,
+    expectedType: 'agent' | 'terminal'
+  ): Promise<StoredAuthChallenge> {
+    const challenge = this.requireStoredAuthChallenge(challengeId)
+    if (challenge.active) throw new Error('ACP authentication is already running')
+    if (!this.isHandleAlive(challenge.handle)) {
+      throw new Error('ACP authentication challenge is stale')
+    }
+
+    const [launchSpec, agentState] = await Promise.all([
+      this.resolveLaunchSpec(challenge.agent.id, challenge.public.workdir),
+      this.getAgentState?.(challenge.agent.id)
+    ])
+    const currentSignature = createLaunchSignature(launchSpec, agentState?.envOverride)
+    if (currentSignature !== challenge.launchSignature) {
+      throw new Error('ACP authentication challenge is stale')
+    }
+
+    const scopeKey = this.getAuthScopeKey(challenge.public)
+    const activeChallengeId = this.activeAuthScopes.get(scopeKey)
+    if (activeChallengeId && activeChallengeId !== challenge.public.id) {
+      throw new Error('ACP authentication is already running for this agent and workdir')
+    }
+
+    const method = challenge.methods.find((candidate) => candidate.id === methodId)
+    if (!method) throw new Error('ACP authentication method is no longer available')
+    const methodType = 'type' in method ? method.type : 'agent'
+    if (methodType !== expectedType) {
+      throw new Error(`ACP authentication method does not support ${expectedType} authentication`)
+    }
+    challenge.active = true
+    this.activeAuthScopes.set(scopeKey, challenge.public.id)
+    return challenge
+  }
+
+  private getAuthScopeKey(challenge: AcpAuthChallenge): string {
+    return JSON.stringify([challenge.agentId, challenge.workdir])
+  }
+
+  private releaseAuthChallenge(challenge: StoredAuthChallenge): void {
+    challenge.active = false
+    const scopeKey = this.getAuthScopeKey(challenge.public)
+    if (this.activeAuthScopes.get(scopeKey) === challenge.public.id) {
+      this.activeAuthScopes.delete(scopeKey)
+    }
+  }
+
+  private requireStoredAuthChallenge(challengeId: string): StoredAuthChallenge {
+    this.pruneAuthChallenges()
+    const challenge = this.authChallenges.get(challengeId)
+    if (!challenge || challenge.consumed) {
+      throw new Error('ACP authentication challenge is unavailable or expired')
+    }
+    return challenge
+  }
+
+  private pruneAuthChallenges(now = Date.now()): void {
+    for (const [challengeId, challenge] of this.authChallenges) {
+      if (!challenge.active && now - challenge.createdAt > AUTH_CHALLENGE_TTL_MS) {
+        this.authChallenges.delete(challengeId)
+      }
+    }
+  }
+
   async release(agentId: string): Promise<void> {
     const targets = this.getHandlesByAgent(agentId)
     if (!targets.length) return
@@ -640,6 +855,8 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     this.latestModeSnapshots.clear()
     this.protocolRequestsToAgent.clear()
     this.protocolRequestsFromAgent.clear()
+    this.authChallenges.clear()
+    this.activeAuthScopes.clear()
 
     this.shutdownPromise = (async () => {
       await Promise.allSettled(handleCleanup)
@@ -835,11 +1052,18 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     agent: AcpAgentConfig,
     workdir: string,
     launchSpec: AcpResolvedLaunchSpec,
-    launchSignature: string
+    launchSignature: string,
+    agentState: AcpAgentState | null | undefined
   ): Promise<AcpProcessHandle> {
     this.assertAcceptingProcesses()
     try {
-      const handle = await this.spawnProcessOnce(agent, workdir, launchSpec, launchSignature)
+      const handle = await this.spawnProcessOnce(
+        agent,
+        workdir,
+        launchSpec,
+        launchSignature,
+        agentState
+      )
       if (this.shuttingDown) {
         await this.disposeHandle(handle)
         this.assertAcceptingProcesses()
@@ -856,7 +1080,13 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
         `[ACP] Retrying npx agent ${agent.id} after cache repair: ${repairResult.message}`
       )
       try {
-        const handle = await this.spawnProcessOnce(agent, workdir, launchSpec, launchSignature)
+        const handle = await this.spawnProcessOnce(
+          agent,
+          workdir,
+          launchSpec,
+          launchSignature,
+          agentState
+        )
         if (this.shuttingDown) {
           await this.disposeHandle(handle)
           this.assertAcceptingProcesses()
@@ -873,10 +1103,17 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     agent: AcpAgentConfig,
     workdir: string,
     launchSpec: AcpResolvedLaunchSpec,
-    launchSignature: string
+    launchSignature: string,
+    agentState: AcpAgentState | null | undefined
   ): Promise<AcpProcessHandle> {
     this.assertAcceptingProcesses()
-    const child = await this.spawnAgentProcess(agent, workdir, launchSpec)
+    const materializedLaunch = await this.materializeAgentLaunch(
+      agent,
+      workdir,
+      launchSpec,
+      agentState
+    )
+    const child = this.spawnAgentProcess(agent, materializedLaunch)
     if (this.shuttingDown) {
       this.killChild(child, 'late spawn')
       this.assertAcceptingProcesses()
@@ -888,7 +1125,8 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
         agent,
         workdir,
         launchSpec,
-        launchSignature
+        launchSignature,
+        materializedLaunch
       )
       if (this.shuttingDown) {
         await this.disposeHandle(handle)
@@ -905,7 +1143,8 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     agent: AcpAgentConfig,
     workdir: string,
     launchSpec: AcpResolvedLaunchSpec,
-    launchSignature: string
+    launchSignature: string,
+    materializedLaunch: AcpMaterializedLaunch
   ): Promise<AcpProcessHandle> {
     const stderrChunks: string[] = []
     const stream = this.createAgentStream(agent.id, child)
@@ -981,7 +1220,8 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities: buildClientCapabilities({
           enableFs: true,
-          enableTerminal: true
+          enableTerminal: true,
+          enableTerminalAuth: this.terminalAuthAvailable
         }),
         clientInfo: { name: 'DeepChat', version: app.getVersion() }
       }
@@ -1149,7 +1389,8 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
       supportsSessionResume: handleSeed.supportsSessionResume,
       supportsSessionClose: handleSeed.supportsSessionClose,
       supportsSessionFork: handleSeed.supportsSessionFork,
-      launchSignature
+      launchSignature,
+      materializedLaunch
     }
     readyHandle = handle
     if (!this.isHandleAlive(handle)) {
@@ -1342,16 +1583,14 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     }
   }
 
-  private async spawnAgentProcess(
+  private async materializeAgentLaunch(
     agent: AcpAgentConfig,
     workdir: string,
-    launchSpec: AcpResolvedLaunchSpec
-  ): Promise<ChildProcessWithoutNullStreams> {
+    launchSpec: AcpResolvedLaunchSpec,
+    agentState: AcpAgentState | null | undefined
+  ): Promise<AcpMaterializedLaunch> {
     this.assertAcceptingProcesses()
-    // Initialize runtime paths if not already done
     this.runtimeHelper.initializeRuntimes()
-    const agentState = await this.getAgentState?.(agent.id)
-    this.assertAcceptingProcesses()
 
     // Validate command
     if (!launchSpec.command || launchSpec.command.trim().length === 0) {
@@ -1382,7 +1621,7 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     console.info(`[ACP] Spawning process for agent ${agent.id}:`, {
       originalCommand: launchSpec.command,
       processedCommand,
-      args: launchSpec.args ?? [],
+      argsCount: launchSpec.args?.length ?? 0,
       distributionType: launchSpec.distributionType
     })
 
@@ -1474,12 +1713,7 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     )
 
     const mergedEnv = env
-    const pathKey = process.platform === 'win32' ? 'Path' : 'PATH'
-    const pathValue = mergedEnv[pathKey] || mergedEnv.PATH || ''
-
     console.info(`[ACP] Environment variables for agent ${agent.id}:`, {
-      pathKey,
-      pathValue,
       distributionEnvKeys: Object.keys(launchSpec.env ?? {}),
       userOverrideKeys: Object.keys(userEnvOverride ?? {})
     })
@@ -1489,17 +1723,30 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     this.validateSpawnCwd(agent.id, cwd, configuredCwd ? 'configured cwd' : 'workdir')
     console.info(`[ACP] Using workdir as cwd for agent ${agent.id}: ${cwd}`)
 
-    console.info(`[ACP] Spawning process with options:`, {
+    this.assertAcceptingProcesses()
+    return {
       command: processedCommand,
-      args: processedArgs,
-      cwd,
+      args: [...processedArgs],
+      env: { ...mergedEnv },
+      cwd
+    }
+  }
+
+  private spawnAgentProcess(
+    agent: AcpAgentConfig,
+    launch: AcpMaterializedLaunch
+  ): ChildProcessWithoutNullStreams {
+    this.assertAcceptingProcesses()
+    console.info('[ACP] Spawning process:', {
+      agentId: agent.id,
+      command: launch.command,
+      argsCount: launch.args.length,
+      cwd: launch.cwd,
       platform: process.platform
     })
-
-    this.assertAcceptingProcesses()
-    const child = spawn(processedCommand, processedArgs, {
-      env: mergedEnv,
-      cwd,
+    const child = spawn(launch.command, launch.args, {
+      env: launch.env,
+      cwd: launch.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
       windowsHide: process.platform === 'win32' && isElectron()
