@@ -1459,19 +1459,26 @@ export const useModelStore = defineStore('model', () => {
   // First-setup model recommendations: deterministic metadata only (the app
   // normalizes a missing type to Chat), capped at three, and never applied when
   // the user already has any enabled model for the provider.
-  const applyInitialModelRecommendations = async (providerId: string) => {
+  const applyInitialModelRecommendations = async (providerId: string): Promise<number> => {
     await ensureProviderModelsReady(providerId)
     const models =
       allProviderModels.value.find((entry) => entry.providerId === providerId)?.models ?? []
     if (models.length === 0 || models.some((model) => model.enabled)) {
-      return
+      return 0
     }
     const recommended = models
       .filter((model) => (model.type ?? ModelType.Chat) === ModelType.Chat)
       .slice(0, 3)
+    let appliedCount = 0
     for (const model of recommended) {
       await updateModelStatus(providerId, model.id, true)
+      // updateModelStatus swallows IPC failures and rolls back the local state,
+      // so only count models whose activation actually landed.
+      if (getLocalModelEnabledState(providerId, model.id) === true) {
+        appliedCount += 1
+      }
     }
+    return appliedCount
   }
 
   const addCustomModelMutation = useIpcMutation({

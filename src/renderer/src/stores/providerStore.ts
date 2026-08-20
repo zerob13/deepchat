@@ -454,8 +454,8 @@ export const useProviderStore = defineStore('provider', () => {
   // Runs "Connect and load models" against a draft configuration. Nothing is
   // persisted and no enable flag is toggled; the typed main-process boundary
   // validates the draft with a transient provider instance.
-  const validateDraftProvider = async (draft: LLM_PROVIDER) => {
-    return await providerClient.validateDraftProvider(draft)
+  const validateDraftProvider = async (draft: LLM_PROVIDER, options?: { loadModels?: boolean }) => {
+    return await providerClient.validateDraftProvider(draft, options)
   }
 
   // Persists a successfully validated draft as a configured, available provider
@@ -467,12 +467,54 @@ export const useProviderStore = defineStore('provider', () => {
     await recordProviderHealth(provider.id, computeHealthFingerprint(provider), true)
   }
 
+  // Serializes staged changes per provider so overlapping credential/endpoint
+  // edits cannot interleave read → validate → persist → health recording: each
+  // edit validates against the latest committed state and only ever persists a
+  // configuration that was actually verified.
+  const stagedApiChangeQueues = new Map<string, Promise<unknown>>()
+
+  const stageProviderApiChange = (
+    providerId: string,
+    updates: { apiKey?: string; baseUrl?: string }
+  ): Promise<{ isOk: boolean; errorMsg: string | null }> => {
+    const previous = stagedApiChangeQueues.get(providerId) ?? Promise.resolve()
+    const run = previous.then(
+      () => performStageApiChange(providerId, updates),
+      () => performStageApiChange(providerId, updates)
+    )
+    // Keep the queue alive for the next edit regardless of this one's outcome.
+    stagedApiChangeQueues.set(
+      providerId,
+      run.catch(() => undefined)
+    )
+    return run
+  }
+
+  const performStageApiChange = async (
+    providerId: string,
+    updates: { apiKey?: string; baseUrl?: string }
+  ): Promise<{ isOk: boolean; errorMsg: string | null }> => {
+    const current = providers.value.find((item) => item.id === providerId)
+    if (!current) {
+      throw new Error(`Provider ${providerId} not found`)
+    }
+    const staged: LLM_PROVIDER = { ...current, ...updates }
+    const result = await validateDraftProvider(staged, { loadModels: false })
+    if (!result.isOk) {
+      return { isOk: false, errorMsg: result.errorMsg }
+    }
+    await updateProviderApi(providerId, updates.apiKey, updates.baseUrl)
+    await recordProviderHealth(providerId, computeHealthFingerprint(staged), true)
+    return { isOk: true, errorMsg: null }
+  }
+
   const removeProvider = async (providerId: string) => {
     await providerClient.removeProviderAtomic(providerId)
     providerOrder.value = providerOrder.value.filter((id) => id !== providerId)
     await saveProviderOrder()
     await unmarkProviderConfigured(providerId)
     await clearProviderHealth(providerId)
+    stagedApiChangeQueues.delete(providerId)
     await refreshProviders()
   }
 
@@ -675,6 +717,7 @@ export const useProviderStore = defineStore('provider', () => {
     addCustomProvider,
     validateDraftProvider,
     commitValidatedDraft,
+    stageProviderApiChange,
     removeProvider,
     updateAwsBedrockProviderConfig,
     updateVertexProviderConfig,
