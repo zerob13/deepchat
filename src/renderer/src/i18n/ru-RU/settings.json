@@ -1855,22 +1855,22 @@
     "initializeSuccess": "Инициализация началась",
     "initializing": "Инициализация...",
     "auth": {
-      "title": "Sign in to {name}",
-      "description": "Choose an authentication method. Credentials stay with the agent process.",
-      "requiredTitle": "{name} needs sign-in",
-      "requiredDescription": "Authenticate before starting this chat.",
-      "checkSignIn": "Check sign-in",
-      "openTerminal": "Open terminal",
-      "cancelSignIn": "Cancel sign-in",
-      "unsupported": "This authentication method is not supported. Configure its environment variables manually.",
-      "noMethods": "The agent did not provide an authentication method that DeepChat can use.",
+      "title": "Войти в {name}",
+      "description": "Выберите способ аутентификации. Учетные данные остаются в процессе агента.",
+      "requiredTitle": "{name}: требуется вход",
+      "requiredDescription": "Пройдите аутентификацию перед началом чата.",
+      "checkSignIn": "Проверить вход",
+      "openTerminal": "Открыть терминал",
+      "cancelSignIn": "Отменить вход",
+      "unsupported": "Этот способ аутентификации не поддерживается. Настройте необходимые переменные окружения вручную.",
+      "noMethods": "Агент не предоставил способ аутентификации, который может использовать DeepChat.",
       "status": {
-        "required": "Authentication required",
-        "running": "Signing in",
-        "reconnecting": "Reconnecting",
-        "succeeded": "Ready",
-        "cancelled": "Cancelled",
-        "failed": "Failed"
+        "required": "Требуется аутентификация",
+        "running": "Выполняется вход",
+        "reconnecting": "Повторное подключение",
+        "succeeded": "Готово",
+        "cancelled": "Отменено",
+        "failed": "Ошибка"
       }
     },
     "terminal": {

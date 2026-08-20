@@ -261,6 +261,70 @@ describe('AcpProcessManager config cache fallback', () => {
     await expect(firstStart).resolves.toMatchObject({ challenge: { id: challenge.id } })
   })
 
+  it('does not bind a warmup handle while authentication owns it', async () => {
+    const manager = createManager()
+    const handle = createProcessHandle(new MockSpawnedChild())
+    handle.authMethods = [
+      { id: 'browser-login', name: 'Browser login', type: 'terminal', args: ['auth'] }
+    ]
+    ;(manager as any).handles.set('agent-1::/tmp/workspace', handle)
+    const challenge = manager.createAuthChallenge(handle as any, { origin: 'settings_probe' })
+
+    await manager.prepareTerminalAuthentication(challenge.id, 'browser-login')
+    manager.bindProcess('agent-1', 'conv-1')
+
+    expect(handle.state).toBe('warmup')
+    expect(manager.getBoundProcess('conv-1')).toBeNull()
+
+    manager.abandonAuthentication(challenge.id)
+    manager.bindProcess('agent-1', 'conv-1')
+    expect(manager.getBoundProcess('conv-1')).toBe(handle)
+  })
+
+  it('consumes a terminal challenge before reconnecting', async () => {
+    const manager = createManager()
+    const handle = createProcessHandle(new MockSpawnedChild())
+    handle.authMethods = [
+      { id: 'browser-login', name: 'Browser login', type: 'terminal', args: ['auth'] }
+    ]
+    const challenge = manager.createAuthChallenge(handle as any, { origin: 'settings_probe' })
+    await manager.prepareTerminalAuthentication(challenge.id, 'browser-login')
+    vi.spyOn(manager, 'getConnection').mockRejectedValue(new Error('reconnect failed'))
+
+    await expect(manager.completeTerminalAuthentication(challenge.id)).rejects.toThrow(
+      'reconnect failed'
+    )
+
+    expect(() => manager.getAuthChallenge(challenge.id)).toThrow('unavailable or expired')
+    expect((manager as any).activeAuthScopes.size).toBe(0)
+  })
+
+  it('bounds agent-owned authentication when the ACP request never settles', async () => {
+    vi.useFakeTimers()
+    const manager = createManager()
+    const child = new MockSpawnedChild()
+    const handle = createProcessHandle(child)
+    handle.authMethods = [{ id: 'oauth', name: 'OAuth' }]
+    handle.connection = {
+      authenticate: vi.fn(() => new Promise(() => {})),
+      closed: new Promise(() => {})
+    } as any
+    const challenge = manager.createAuthChallenge(handle as any, { origin: 'settings_probe' })
+    try {
+      const authentication = manager.authenticateAgent(challenge.id, 'oauth')
+      const rejection = expect(authentication).rejects.toThrow('timed out')
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      await rejection
+
+      expect(child.kill).toHaveBeenCalledOnce()
+      expect((manager as any).activeAuthScopes.size).toBe(0)
+      expect(() => manager.getAuthChallenge(challenge.id)).toThrow('unavailable or expired')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not expose terminal methods as supported when the capability is disabled', () => {
     const manager = new AcpProcessManager({
       publishEvent: publishDeepchatEventMock,

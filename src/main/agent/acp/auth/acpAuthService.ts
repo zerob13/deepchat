@@ -1,11 +1,12 @@
 import type { AcpAgentConfig, AcpAuthChallenge, AcpAuthRunStatus } from '@shared/types/acp'
 import type { AgentSettingsPort } from '@/agent/settings'
 import type { AcpRuntimeOwner } from '../client'
-import { AcpTerminalAuthRunner } from './acpTerminalAuthRunner'
+import { AcpTerminalAuthRunner, type AcpTerminalAuthExit } from './acpTerminalAuthRunner'
 import { resolveAcpAgentAlias } from '@shared/utils/acpAgentAlias'
 
 type AcpAuthEventName = 'acpAuth.output' | 'acpAuth.stateChanged'
-type StoredAuthStatus = AcpAuthRunStatus & { ownerWebContentsId?: number }
+type AcpAuthStatusInput = Omit<AcpAuthRunStatus, 'version'>
+type StoredAuthStatus = AcpAuthRunStatus & { ownerWebContentsId: number }
 
 const MAX_AUTH_STATUS_ENTRIES = 100
 
@@ -20,11 +21,16 @@ export class AcpAuthService {
   private readonly runner = new AcpTerminalAuthRunner()
   private readonly statuses = new Map<string, StoredAuthStatus>()
   private readonly detachRendererListeners = new Map<string, () => void>()
+  private lastEventVersion = 0
   private disposed = false
 
   constructor(private readonly dependencies: AcpAuthServiceDependencies) {}
 
-  async inspect(agentId: string, workdir?: string): Promise<AcpAuthChallenge> {
+  async inspect(
+    agentId: string,
+    workdir: string | undefined,
+    ownerWebContentsId: number
+  ): Promise<AcpAuthChallenge> {
     this.ensureActive()
     const agent = await this.resolveAgent(agentId)
     const challenge = await this.dependencies.owner
@@ -33,7 +39,9 @@ export class AcpAuthService {
     this.ensureActive()
     this.rememberStatus({
       challengeId: challenge.id,
-      state: 'required'
+      state: 'required',
+      version: this.nextEventVersion(),
+      ownerWebContentsId
     })
     return challenge
   }
@@ -45,10 +53,10 @@ export class AcpAuthService {
   ): Promise<AcpAuthRunStatus> {
     this.ensureActive()
     const current = this.statuses.get(challengeId)
+    if (current && current.ownerWebContentsId !== ownerWebContentsId) {
+      throw new Error('ACP authentication is owned by another renderer')
+    }
     if (current?.state === 'running' || current?.state === 'reconnecting') {
-      if (current.ownerWebContentsId !== ownerWebContentsId) {
-        throw new Error('ACP authentication is owned by another renderer')
-      }
       return this.publicStatus(current)
     }
 
@@ -62,8 +70,12 @@ export class AcpAuthService {
 
     if (method.type === 'agent') {
       this.setStatus(ownerWebContentsId, { challengeId, state: 'running' })
+      const controller = new AbortController()
+      const detachRendererListener = this.dependencies.onRendererDestroyed(ownerWebContentsId, () =>
+        controller.abort(new Error('ACP authentication renderer was destroyed'))
+      )
       try {
-        await processManager.authenticateAgent(challengeId, methodId)
+        await processManager.authenticateAgent(challengeId, methodId, controller.signal)
         return this.setStatus(ownerWebContentsId, { challengeId, state: 'succeeded' })
       } catch (error) {
         return this.setStatus(ownerWebContentsId, {
@@ -71,6 +83,8 @@ export class AcpAuthService {
           state: 'failed',
           error: this.toSafeError(error)
         })
+      } finally {
+        detachRendererListener()
       }
     }
 
@@ -87,7 +101,7 @@ export class AcpAuthService {
             challengeId,
             runId,
             data,
-            version: Date.now()
+            version: this.nextEventVersion()
           })
         }
       })
@@ -122,11 +136,10 @@ export class AcpAuthService {
 
   getStatus(challengeId: string, ownerWebContentsId: number): AcpAuthRunStatus {
     const status = this.statuses.get(challengeId)
-    if (!status) return { challengeId, state: 'required' }
-    if (
-      status.ownerWebContentsId !== undefined &&
-      status.ownerWebContentsId !== ownerWebContentsId
-    ) {
+    if (!status) {
+      return { challengeId, state: 'required', version: this.nextEventVersion() }
+    }
+    if (status.ownerWebContentsId !== ownerWebContentsId) {
       throw new Error('ACP authentication is owned by another renderer')
     }
     return this.publicStatus(status)
@@ -153,17 +166,37 @@ export class AcpAuthService {
     challengeId: string,
     runId: string,
     ownerWebContentsId: number,
-    completion: Promise<{ exitCode: number; signal?: number; cancelled: boolean }>
+    completion: Promise<AcpTerminalAuthExit>
   ): Promise<void> {
     const processManager = this.dependencies.owner.getOrCreate().processManager
     try {
       const exit = await completion
-      if (exit.cancelled) {
+      if (exit.reason === 'cancelled') {
         processManager.abandonAuthentication(challengeId)
         this.setStatus(ownerWebContentsId, {
           challengeId,
           runId,
           state: 'cancelled'
+        })
+        return
+      }
+      if (exit.reason === 'timed_out') {
+        processManager.abandonAuthentication(challengeId)
+        this.setStatus(ownerWebContentsId, {
+          challengeId,
+          runId,
+          state: 'failed',
+          error: 'Authentication process timed out'
+        })
+        return
+      }
+      if (exit.reason === 'output_limit') {
+        processManager.abandonAuthentication(challengeId)
+        this.setStatus(ownerWebContentsId, {
+          challengeId,
+          runId,
+          state: 'failed',
+          error: 'Authentication process exceeded the output limit'
         })
         return
       }
@@ -222,14 +255,15 @@ export class AcpAuthService {
     return agent
   }
 
-  private setStatus(ownerWebContentsId: number, status: AcpAuthRunStatus): AcpAuthRunStatus {
-    if (this.disposed) return status
-    this.rememberStatus({ ...status, ownerWebContentsId })
-    this.dependencies.sendToRenderer(ownerWebContentsId, 'acpAuth.stateChanged', {
+  private setStatus(ownerWebContentsId: number, status: AcpAuthStatusInput): AcpAuthRunStatus {
+    const publicStatus: AcpAuthRunStatus = {
       ...status,
-      version: Date.now()
-    })
-    return status
+      version: this.nextEventVersion()
+    }
+    if (this.disposed) return publicStatus
+    this.rememberStatus({ ...publicStatus, ownerWebContentsId })
+    this.dependencies.sendToRenderer(ownerWebContentsId, 'acpAuth.stateChanged', publicStatus)
+    return publicStatus
   }
 
   private rememberStatus(status: StoredAuthStatus): void {
@@ -251,6 +285,11 @@ export class AcpAuthService {
 
   private ensureActive(): void {
     if (this.disposed) throw new Error('ACP authentication service is shut down')
+  }
+
+  private nextEventVersion(): number {
+    this.lastEventVersion = Math.max(Date.now(), this.lastEventVersion + 1)
+    return this.lastEventVersion
   }
 
   private toSafeError(error: unknown): string {

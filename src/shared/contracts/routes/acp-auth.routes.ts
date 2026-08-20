@@ -31,7 +31,8 @@ export const AcpAuthRunStatusSchema = z.object({
   challengeId: z.string().min(1),
   runId: z.string().min(1).optional(),
   state: AcpAuthRunStateSchema,
-  error: z.string().optional()
+  error: z.string().optional(),
+  version: z.number().int().nonnegative()
 })
 
 export const acpAuthInspectRoute = defineRouteContract({

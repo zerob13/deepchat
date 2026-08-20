@@ -1742,10 +1742,12 @@ function createRuntime() {
       methods: [],
       origin: 'settings_probe'
     }),
-    start: vi.fn().mockResolvedValue({ challengeId: 'challenge-1', state: 'running' }),
+    start: vi.fn().mockResolvedValue({ challengeId: 'challenge-1', state: 'running', version: 1 }),
     write: vi.fn(),
     cancel: vi.fn().mockReturnValue(true),
-    getStatus: vi.fn().mockReturnValue({ challengeId: 'challenge-1', state: 'required' })
+    getStatus: vi
+      .fn()
+      .mockReturnValue({ challengeId: 'challenge-1', state: 'required', version: 1 })
   }
   const acpRoutes = createAcpRoutes({ auth: acpAuth as never })
   const deviceRoutes = createDeviceRoutes({
@@ -3225,6 +3227,7 @@ describe('dispatchDeepchatRoute', () => {
     const { runtime, acpAuth } = createRuntime()
     const context = createRendererRouteContext(42, 7)
 
+    await dispatchDeepchatRoute(runtime, 'acpAuth.inspect', { agentId: 'agent-1' }, context)
     const inputResult = await dispatchDeepchatRoute(
       runtime,
       'acpAuth.input',
@@ -3238,6 +3241,7 @@ describe('dispatchDeepchatRoute', () => {
       context
     )
 
+    expect(acpAuth.inspect).toHaveBeenCalledWith('agent-1', undefined, 42)
     expect(acpAuth.write).toHaveBeenCalledWith('run-1', 42, 'hello\n')
     expect(acpAuth.cancel).toHaveBeenCalledWith('run-1', 42)
     expect(inputResult).toEqual({ sent: true })

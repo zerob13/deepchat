@@ -259,6 +259,7 @@ export interface AcpAuthRunStatus {
   runId?: string
   state: AcpAuthRunState
   error?: string
+  version: number
 }
 
 export interface AcpSessionEntity {

@@ -113,6 +113,7 @@ let terminalInput = ''
 let terminalInputTimer: ReturnType<typeof setTimeout> | null = null
 let emittedSuccess = false
 let authenticationAttempt = 0
+let latestStateVersion = 0
 
 const selectedMethod = computed(() =>
   props.challenge?.methods.find((method) => method.id === selectedMethodId.value)
@@ -138,6 +139,7 @@ function resetDialog() {
   runId.value = null
   error.value = null
   emittedSuccess = false
+  latestStateVersion = 0
   const supported = props.challenge?.methods.filter((method) => method.type !== 'unsupported') ?? []
   selectedMethodId.value = supported.length === 1 ? supported[0].id : ''
   terminal?.dispose()
@@ -175,6 +177,7 @@ async function ensureTerminal() {
 async function startAuthentication() {
   if (!props.challenge || !selectedMethod.value) return
   const attempt = ++authenticationAttempt
+  const stateVersionAtStart = latestStateVersion
   error.value = null
   state.value = 'running'
   try {
@@ -183,13 +186,15 @@ async function startAuthentication() {
       if (result.runId) cancelRun(result.runId)
       return
     }
+    if (result.version <= latestStateVersion) return
+    latestStateVersion = result.version
     state.value = result.state
     runId.value = result.runId ?? null
     error.value = result.error ?? null
     if (runId.value) await ensureTerminal()
     notifySucceeded()
   } catch (caught) {
-    if (attempt !== authenticationAttempt) return
+    if (attempt !== authenticationAttempt || latestStateVersion !== stateVersionAtStart) return
     state.value = 'failed'
     error.value = caught instanceof Error ? caught.message : String(caught)
   }
@@ -209,7 +214,14 @@ function invalidateAuthenticationAttempt() {
   authenticationAttempt += 1
   const activeRunId = authPending.value ? runId.value : null
   runId.value = null
+  clearTerminalInput()
   if (activeRunId) cancelRun(activeRunId)
+}
+
+function clearTerminalInput() {
+  if (terminalInputTimer) clearTimeout(terminalInputTimer)
+  terminalInputTimer = null
+  terminalInput = ''
 }
 
 function cancelRun(activeRunId: string) {
@@ -233,6 +245,8 @@ const stopState = client.onStateChanged((payload) => {
   if (!props.open) return
   if (payload.challengeId !== props.challenge?.id) return
   if (runId.value && payload.runId && payload.runId !== runId.value) return
+  if (payload.version <= latestStateVersion) return
+  latestStateVersion = payload.version
   runId.value = payload.runId ?? runId.value
   state.value = payload.state
   error.value = payload.error ?? null
@@ -251,7 +265,6 @@ onBeforeUnmount(() => {
   invalidateAuthenticationAttempt()
   stopOutput()
   stopState()
-  if (terminalInputTimer) clearTimeout(terminalInputTimer)
   terminal?.dispose()
 })
 </script>

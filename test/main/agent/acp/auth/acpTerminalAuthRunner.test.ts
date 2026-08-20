@@ -25,7 +25,7 @@ describe('AcpTerminalAuthRunner', () => {
 
       const exit = await started.completion
 
-      expect(exit).toMatchObject({ exitCode: 0, cancelled: false })
+      expect(exit).toMatchObject({ exitCode: 0, reason: 'exited' })
       expect(output.join('')).toContain('PTY_AUTH_OK')
     } finally {
       if (previousSentinel === undefined) delete process.env[sentinelName]

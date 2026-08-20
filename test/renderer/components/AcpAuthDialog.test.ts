@@ -11,11 +11,14 @@ const authClient = vi.hoisted(() => ({
   stateListener: null as ((payload: unknown) => void) | null
 }))
 const terminalWrite = vi.hoisted(() => vi.fn())
+const terminalData = vi.hoisted(() => ({ listener: null as ((data: string) => void) | null }))
 
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     open() {}
-    onData() {}
+    onData(listener: (data: string) => void) {
+      terminalData.listener = listener
+    }
     write = terminalWrite
     dispose() {}
   }
@@ -82,6 +85,7 @@ beforeEach(() => {
   authClient.outputListener = null
   authClient.stateListener = null
   terminalWrite.mockReset()
+  terminalData.listener = null
 })
 
 describe('AcpAuthDialog', () => {
@@ -108,7 +112,11 @@ describe('AcpAuthDialog', () => {
   })
 
   it('emits success only after the selected method succeeds', async () => {
-    authClient.start.mockResolvedValue({ challengeId: 'challenge-1', state: 'succeeded' })
+    authClient.start.mockResolvedValue({
+      challengeId: 'challenge-1',
+      state: 'succeeded',
+      version: 1
+    })
     const wrapper = await mountDialog(
       baseChallenge([{ id: 'agent', name: 'Agent login', type: 'agent' }])
     )
@@ -132,7 +140,7 @@ describe('AcpAuthDialog', () => {
 
   it('keeps terminal output that arrives before the start response', async () => {
     let resolveStart:
-      | ((value: { challengeId: string; runId: string; state: 'running' }) => void)
+      | ((value: { challengeId: string; runId: string; state: 'running'; version: number }) => void)
       | null = null
     authClient.start.mockReturnValue(
       new Promise((resolve) => {
@@ -155,13 +163,18 @@ describe('AcpAuthDialog', () => {
     expect((wrapper.vm as any).runId).toBe('run-early')
     expect(terminalWrite).toHaveBeenCalledWith('EARLY_OUTPUT')
 
-    resolveStart?.({ challengeId: 'challenge-1', runId: 'run-early', state: 'running' })
+    resolveStart?.({
+      challengeId: 'challenge-1',
+      runId: 'run-early',
+      state: 'running',
+      version: 1
+    })
     await starting
   })
 
   it('cancels a terminal run returned after the dialog closes', async () => {
     let resolveStart:
-      | ((value: { challengeId: string; runId: string; state: 'running' }) => void)
+      | ((value: { challengeId: string; runId: string; state: 'running'; version: number }) => void)
       | null = null
     authClient.start.mockReturnValue(
       new Promise((resolve) => {
@@ -174,7 +187,12 @@ describe('AcpAuthDialog', () => {
 
     const starting = (wrapper.vm as any).startAuthentication()
     ;(wrapper.vm as any).handleOpenChange(false)
-    resolveStart?.({ challengeId: 'challenge-1', runId: 'run-late', state: 'running' })
+    resolveStart?.({
+      challengeId: 'challenge-1',
+      runId: 'run-late',
+      state: 'running',
+      version: 1
+    })
     await starting
 
     expect(authClient.cancel).toHaveBeenCalledWith('run-late')
@@ -185,7 +203,8 @@ describe('AcpAuthDialog', () => {
     authClient.start.mockResolvedValue({
       challengeId: 'challenge-1',
       runId: 'run-active',
-      state: 'running'
+      state: 'running',
+      version: 1
     })
     const wrapper = await mountDialog(
       baseChallenge([{ id: 'browser', name: 'Browser login', type: 'terminal' }])
@@ -195,5 +214,73 @@ describe('AcpAuthDialog', () => {
     wrapper.unmount()
 
     expect(authClient.cancel).toHaveBeenCalledWith('run-active')
+  })
+
+  it('does not apply a start response older than a state event', async () => {
+    let resolveStart:
+      | ((value: { challengeId: string; runId: string; state: 'running'; version: number }) => void)
+      | null = null
+    authClient.start.mockReturnValue(
+      new Promise((resolve) => {
+        resolveStart = resolve
+      })
+    )
+    const wrapper = await mountDialog(
+      baseChallenge([{ id: 'browser', name: 'Browser login', type: 'terminal' }])
+    )
+
+    const starting = (wrapper.vm as any).startAuthentication()
+    authClient.stateListener?.({
+      challengeId: 'challenge-1',
+      runId: 'run-1',
+      state: 'succeeded',
+      version: 2
+    })
+    resolveStart?.({
+      challengeId: 'challenge-1',
+      runId: 'run-1',
+      state: 'running',
+      version: 1
+    })
+    await starting
+
+    expect((wrapper.vm as any).state).toBe('succeeded')
+    expect(wrapper.emitted('succeeded')).toHaveLength(1)
+  })
+
+  it('drops buffered terminal input before a later run starts', async () => {
+    vi.useFakeTimers()
+    authClient.start
+      .mockResolvedValueOnce({
+        challengeId: 'challenge-1',
+        runId: 'run-1',
+        state: 'running',
+        version: 1
+      })
+      .mockResolvedValueOnce({
+        challengeId: 'challenge-1',
+        runId: 'run-2',
+        state: 'running',
+        version: 2
+      })
+    const wrapper = await mountDialog(
+      baseChallenge([{ id: 'browser', name: 'Browser login', type: 'terminal' }])
+    )
+    try {
+      await (wrapper.vm as any).startAuthentication()
+      terminalData.listener?.('secret')
+
+      ;(wrapper.vm as any).handleOpenChange(false)
+      await wrapper.setProps({ open: false })
+      await wrapper.setProps({ open: true })
+      await flushPromises()
+      await (wrapper.vm as any).startAuthentication()
+      await vi.advanceTimersByTimeAsync(8)
+
+      expect(authClient.sendInput).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
   })
 })

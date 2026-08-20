@@ -13,10 +13,14 @@ export function createAcpRoutes(dependencies: { auth: AcpAuthService }) {
     [
       acpAuthInspectRoute.name,
       async (rawInput, context) => {
-        requireRendererCaller(context)
+        const caller = requireRendererCaller(context)
         const input = acpAuthInspectRoute.input.parse(rawInput)
         return acpAuthInspectRoute.output.parse({
-          challenge: await dependencies.auth.inspect(input.agentId, input.workdir)
+          challenge: await dependencies.auth.inspect(
+            input.agentId,
+            input.workdir,
+            caller.webContentsId
+          )
         })
       }
     ],

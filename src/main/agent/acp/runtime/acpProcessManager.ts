@@ -225,6 +225,7 @@ const createLaunchSignature = (
   })
 
 const AUTH_CHALLENGE_TTL_MS = 10 * 60 * 1000
+const AUTH_AGENT_TIMEOUT_MS = 10 * 60 * 1000
 
 export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, AcpAgentConfig> {
   private readonly publishEvent: DeepChatEventPublisher
@@ -267,9 +268,11 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
   private readonly protocolRequestsFromAgent = new Map<string, Map<JsonRpcId, string>>()
   private readonly authChallenges = new Map<string, StoredAuthChallenge>()
   private readonly activeAuthScopes = new Map<string, string>()
+  private readonly reservedAuthHandles = new Map<AcpProcessHandle, string>()
   private readonly initializingChildren = new Set<ChildProcessWithoutNullStreams>()
   private readonly terminatedChildren = new WeakSet<ChildProcessWithoutNullStreams>()
   private readonly disposedHandles = new WeakSet<AcpProcessHandle>()
+  private readonly shutdownController = new AbortController()
   private shuttingDown = false
   private shutdownPromise?: Promise<void>
 
@@ -695,12 +698,80 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     return this.createAuthChallenge(handle, { origin: 'settings_probe' })
   }
 
-  async authenticateAgent(challengeId: string, methodId: string): Promise<void> {
+  async authenticateAgent(
+    challengeId: string,
+    methodId: string,
+    signal?: AbortSignal
+  ): Promise<void> {
     const challenge = await this.claimAuthChallenge(challengeId, methodId, 'agent')
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const cleanupListeners: Array<() => void> = []
+    let interrupted = false
     try {
-      await challenge.handle.connection.authenticate({ methodId })
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          interrupted = true
+          reject(new Error(`ACP authentication timed out after ${AUTH_AGENT_TIMEOUT_MS}ms`))
+        }, AUTH_AGENT_TIMEOUT_MS)
+        timeout.unref?.()
+      })
+      const connectionClosedPromise = challenge.handle.connection.closed.then(() => {
+        interrupted = true
+        throw new Error('ACP connection closed during authentication')
+      })
+      const processExitPromise = new Promise<never>((_resolve, reject) => {
+        const onExit = (code: number | null, processSignal: NodeJS.Signals | null) => {
+          interrupted = true
+          reject(
+            new Error(
+              `ACP agent exited during authentication (code=${code ?? 'null'}, signal=${processSignal ?? 'null'})`
+            )
+          )
+        }
+        challenge.handle.child.once('exit', onExit)
+        cleanupListeners.push(() => challenge.handle.child.removeListener('exit', onExit))
+        if (!this.isHandleAlive(challenge.handle)) {
+          onExit(challenge.handle.child.exitCode, challenge.handle.child.signalCode)
+        }
+      })
+      const abortPromise = new Promise<never>((_resolve, reject) => {
+        const signals = [signal, this.shutdownController.signal].filter(
+          (candidate): candidate is AbortSignal => Boolean(candidate)
+        )
+        for (const candidate of signals) {
+          const onAbort = () => {
+            interrupted = true
+            reject(
+              candidate.reason instanceof Error
+                ? candidate.reason
+                : new Error('ACP authentication was cancelled')
+            )
+          }
+          if (candidate.aborted) {
+            onAbort()
+            return
+          }
+          candidate.addEventListener('abort', onAbort, { once: true })
+          cleanupListeners.push(() => candidate.removeEventListener('abort', onAbort))
+        }
+      })
+      await Promise.race([
+        challenge.handle.connection.authenticate({ methodId }),
+        timeoutPromise,
+        connectionClosedPromise,
+        processExitPromise,
+        abortPromise
+      ])
       challenge.consumed = true
+    } catch (error) {
+      if (interrupted) {
+        challenge.consumed = true
+        await this.disposeHandle(challenge.handle)
+      }
+      throw error
     } finally {
+      if (timeout) clearTimeout(timeout)
+      cleanupListeners.forEach((cleanup) => cleanup())
       this.releaseAuthChallenge(challenge)
     }
   }
@@ -735,9 +806,16 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
       throw new Error('ACP authentication challenge is not active')
     }
     try {
+      if (
+        challenge.handle.state !== 'warmup' ||
+        this.reservedAuthHandles.get(challenge.handle) !== challenge.public.id ||
+        !this.isHandleAlive(challenge.handle)
+      ) {
+        throw new Error('ACP authentication challenge is stale')
+      }
+      challenge.consumed = true
       await this.disposeHandle(challenge.handle)
       await this.getConnection(challenge.agent, challenge.public.workdir)
-      challenge.consumed = true
     } finally {
       this.releaseAuthChallenge(challenge)
     }
@@ -761,6 +839,9 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     if (!this.isHandleAlive(challenge.handle)) {
       throw new Error('ACP authentication challenge is stale')
     }
+    if (challenge.handle.state !== 'warmup') {
+      throw new Error('ACP authentication challenge is stale')
+    }
 
     const scopeKey = this.getAuthScopeKey(challenge.public)
     const activeChallengeId = this.activeAuthScopes.get(scopeKey)
@@ -776,6 +857,7 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     }
 
     challenge.active = true
+    this.reservedAuthHandles.set(challenge.handle, challenge.public.id)
     this.activeAuthScopes.set(scopeKey, challenge.public.id)
     try {
       const [launchSpec, agentState] = await Promise.all([
@@ -799,6 +881,9 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
 
   private releaseAuthChallenge(challenge: StoredAuthChallenge): void {
     challenge.active = false
+    if (this.reservedAuthHandles.get(challenge.handle) === challenge.public.id) {
+      this.reservedAuthHandles.delete(challenge.handle)
+    }
     const scopeKey = this.getAuthScopeKey(challenge.public)
     if (this.activeAuthScopes.get(scopeKey) === challenge.public.id) {
       this.activeAuthScopes.delete(scopeKey)
@@ -838,6 +923,7 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
   shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise
     this.shuttingDown = true
+    this.shutdownController.abort(new Error('ACP process manager is shutting down'))
     const handles = this.listProcesses()
     const allAgents = new Set<string>()
     const handleCleanup = handles.map((handle) => {
@@ -865,6 +951,7 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     this.protocolRequestsFromAgent.clear()
     this.authChallenges.clear()
     this.activeAuthScopes.clear()
+    this.reservedAuthHandles.clear()
 
     this.shutdownPromise = (async () => {
       await Promise.allSettled(handleCleanup)
@@ -881,6 +968,7 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
       ([, handle]) =>
         handle.agentId === agentId &&
         handle.state === 'warmup' &&
+        !this.reservedAuthHandles.has(handle) &&
         (!workdir || !handle.workdir || handle.workdir === resolvedWorkdir)
     )
     const handle =
@@ -2222,7 +2310,10 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
   private findReusableHandle(agentId: string, workdir: string): AcpProcessHandle | undefined {
     const candidates = this.getHandlesByAgent(agentId).filter(
       (handle) =>
-        handle.workdir === workdir && handle.state === 'warmup' && this.isHandleAlive(handle)
+        handle.workdir === workdir &&
+        handle.state === 'warmup' &&
+        !this.reservedAuthHandles.has(handle) &&
+        this.isHandleAlive(handle)
     )
     return candidates[0]
   }

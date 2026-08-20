@@ -27,6 +27,7 @@ const terminalChallenge: AcpAuthChallenge = {
 
 function createHarness(challenge: AcpAuthChallenge = terminalChallenge) {
   const processManager = {
+    inspectAuthentication: vi.fn().mockResolvedValue(challenge),
     getAuthChallenge: vi.fn((challengeId: string) => ({ ...challenge, id: challengeId })),
     authenticateAgent: vi.fn().mockResolvedValue(undefined),
     prepareTerminalAuthentication: vi.fn().mockResolvedValue({
@@ -51,7 +52,11 @@ function createHarness(challenge: AcpAuthChallenge = terminalChallenge) {
     owner: {
       getOrCreate: () => ({ processManager })
     } as never,
-    agentSettings: { getAcpAgents: vi.fn().mockResolvedValue([]) },
+    agentSettings: {
+      getAcpAgents: vi
+        .fn()
+        .mockResolvedValue([{ id: 'agent-1', name: 'Agent One', command: 'agent' }])
+    },
     sendToRenderer,
     onRendererDestroyed
   })
@@ -162,7 +167,8 @@ describe('AcpAuthService', () => {
     })
     expect(harness.processManager.authenticateAgent).toHaveBeenCalledWith(
       'challenge-1',
-      'browser-login'
+      'browser-login',
+      expect.any(AbortSignal)
     )
     expect(ptyMock.spawn).not.toHaveBeenCalled()
   })
@@ -195,7 +201,7 @@ describe('AcpAuthService', () => {
       await harness.service.start(`challenge-${index}`, 'browser-login', 42)
     }
 
-    expect(harness.service.getStatus('challenge-0', 42)).toEqual({
+    expect(harness.service.getStatus('challenge-0', 42)).toMatchObject({
       challengeId: 'challenge-0',
       state: 'required'
     })
@@ -214,5 +220,35 @@ describe('AcpAuthService', () => {
       expect(harness.processManager.abandonAuthentication).toHaveBeenCalledWith('challenge-1')
     )
     expect(harness.sendToRenderer).toHaveBeenCalledTimes(eventCount)
+  })
+
+  it('binds inspected challenges to the renderer that received them', async () => {
+    const harness = createHarness()
+
+    await harness.service.inspect('agent-1', undefined, 42)
+
+    await expect(harness.service.start('challenge-1', 'terminal-login', 99)).rejects.toThrow(
+      'owned by another renderer'
+    )
+    expect(harness.processManager.prepareTerminalAuthentication).not.toHaveBeenCalled()
+  })
+
+  it('reports terminal timeouts as failures even when the PTY never exits', async () => {
+    vi.useFakeTimers()
+    const harness = createHarness()
+    try {
+      await harness.service.start('challenge-1', 'terminal-login', 42)
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 4 * 1000)
+
+      expect(harness.service.getStatus('challenge-1', 42)).toMatchObject({
+        state: 'failed',
+        error: 'Authentication process timed out'
+      })
+      expect(harness.processManager.completeTerminalAuthentication).not.toHaveBeenCalled()
+    } finally {
+      harness.service.shutdown()
+      vi.useRealTimers()
+    }
   })
 })

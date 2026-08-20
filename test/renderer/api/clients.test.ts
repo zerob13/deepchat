@@ -49,7 +49,12 @@ describe('renderer api clients', () => {
               }
             case 'acpAuth.start':
             case 'acpAuth.status':
-              return { challengeId: 'challenge-1', runId: 'run-1', state: 'running' }
+              return {
+                challengeId: 'challenge-1',
+                runId: 'run-1',
+                state: 'running',
+                version: 1
+              }
             case 'acpAuth.input':
               return { sent: true }
             case 'acpAuth.cancel':
