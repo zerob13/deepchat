@@ -78,7 +78,7 @@ async function mountDialog(challenge: AcpAuthChallenge) {
 beforeEach(() => {
   authClient.start.mockReset()
   authClient.sendInput.mockReset()
-  authClient.cancel.mockReset()
+  authClient.cancel.mockReset().mockResolvedValue({ cancelled: true })
   authClient.outputListener = null
   authClient.stateListener = null
   terminalWrite.mockReset()
@@ -157,5 +157,43 @@ describe('AcpAuthDialog', () => {
 
     resolveStart?.({ challengeId: 'challenge-1', runId: 'run-early', state: 'running' })
     await starting
+  })
+
+  it('cancels a terminal run returned after the dialog closes', async () => {
+    let resolveStart:
+      | ((value: { challengeId: string; runId: string; state: 'running' }) => void)
+      | null = null
+    authClient.start.mockReturnValue(
+      new Promise((resolve) => {
+        resolveStart = resolve
+      })
+    )
+    const wrapper = await mountDialog(
+      baseChallenge([{ id: 'browser', name: 'Browser login', type: 'terminal' }])
+    )
+
+    const starting = (wrapper.vm as any).startAuthentication()
+    ;(wrapper.vm as any).handleOpenChange(false)
+    resolveStart?.({ challengeId: 'challenge-1', runId: 'run-late', state: 'running' })
+    await starting
+
+    expect(authClient.cancel).toHaveBeenCalledWith('run-late')
+    expect((wrapper.vm as any).runId).toBeNull()
+  })
+
+  it('cancels the active terminal run on unmount', async () => {
+    authClient.start.mockResolvedValue({
+      challengeId: 'challenge-1',
+      runId: 'run-active',
+      state: 'running'
+    })
+    const wrapper = await mountDialog(
+      baseChallenge([{ id: 'browser', name: 'Browser login', type: 'terminal' }])
+    )
+    await (wrapper.vm as any).startAuthentication()
+
+    wrapper.unmount()
+
+    expect(authClient.cancel).toHaveBeenCalledWith('run-active')
   })
 })

@@ -223,6 +223,44 @@ describe('AcpProcessManager config cache fallback', () => {
     ).resolves.toMatchObject({ challenge: { id: second.id } })
   })
 
+  it('reserves a challenge before asynchronous launch validation', async () => {
+    const manager = createManager()
+    const handle = createProcessHandle(new MockSpawnedChild())
+    handle.authMethods = [
+      { id: 'browser-login', name: 'Browser login', type: 'terminal', args: ['auth'] }
+    ]
+    const challenge = manager.createAuthChallenge(handle as any, { origin: 'settings_probe' })
+    let resolveLaunch!: (value: {
+      agentId: string
+      source: 'manual'
+      distributionType: 'manual'
+      command: string
+      args: string[]
+      env: Record<string, string>
+    }) => void
+    ;(manager as any).resolveLaunchSpec.mockReturnValue(
+      new Promise((resolve) => {
+        resolveLaunch = resolve
+      })
+    )
+
+    const firstStart = manager.prepareTerminalAuthentication(challenge.id, 'browser-login')
+    await vi.waitFor(() => expect((manager as any).resolveLaunchSpec).toHaveBeenCalledOnce())
+    await expect(
+      manager.prepareTerminalAuthentication(challenge.id, 'browser-login')
+    ).rejects.toThrow('already running')
+
+    resolveLaunch({
+      agentId: 'agent-1',
+      source: 'manual',
+      distributionType: 'manual',
+      command: 'agent',
+      args: [],
+      env: {}
+    })
+    await expect(firstStart).resolves.toMatchObject({ challenge: { id: challenge.id } })
+  })
+
   it('does not expose terminal methods as supported when the capability is disabled', () => {
     const manager = new AcpProcessManager({
       publishEvent: publishDeepchatEventMock,
@@ -247,6 +285,24 @@ describe('AcpProcessManager config cache fallback', () => {
     expect(challenge.methods).toEqual([
       { id: 'browser-login', name: 'Browser login', type: 'unsupported' }
     ])
+  })
+
+  it('rejects terminal authentication when the capability is disabled', async () => {
+    const manager = new AcpProcessManager({
+      publishEvent: publishDeepchatEventMock,
+      providerId: 'acp',
+      resolveLaunchSpec: vi.fn(),
+      terminalAuthAvailable: false
+    })
+    const handle = createProcessHandle(new MockSpawnedChild())
+    handle.authMethods = [
+      { id: 'browser-login', name: 'Browser login', type: 'terminal', args: ['auth'] }
+    ]
+    const challenge = manager.createAuthChallenge(handle as any, { origin: 'settings_probe' })
+
+    await expect(
+      manager.prepareTerminalAuthentication(challenge.id, 'browser-login')
+    ).rejects.toThrow('Terminal ACP authentication is unavailable')
   })
 
   it('falls back to the latest agent config when no scoped handle matches', () => {

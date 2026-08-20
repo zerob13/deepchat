@@ -112,6 +112,7 @@ let terminal: XtermTerminal | null = null
 let terminalInput = ''
 let terminalInputTimer: ReturnType<typeof setTimeout> | null = null
 let emittedSuccess = false
+let authenticationAttempt = 0
 
 const selectedMethod = computed(() =>
   props.challenge?.methods.find((method) => method.id === selectedMethodId.value)
@@ -132,6 +133,7 @@ const statusClass = computed(() =>
 )
 
 function resetDialog() {
+  invalidateAuthenticationAttempt()
   state.value = 'required'
   runId.value = null
   error.value = null
@@ -172,16 +174,22 @@ async function ensureTerminal() {
 
 async function startAuthentication() {
   if (!props.challenge || !selectedMethod.value) return
+  const attempt = ++authenticationAttempt
   error.value = null
   state.value = 'running'
   try {
     const result = await client.start(props.challenge.id, selectedMethod.value.id)
+    if (attempt !== authenticationAttempt || !props.open) {
+      if (result.runId) cancelRun(result.runId)
+      return
+    }
     state.value = result.state
     runId.value = result.runId ?? null
     error.value = result.error ?? null
     if (runId.value) await ensureTerminal()
     notifySucceeded()
   } catch (caught) {
+    if (attempt !== authenticationAttempt) return
     state.value = 'failed'
     error.value = caught instanceof Error ? caught.message : String(caught)
   }
@@ -193,10 +201,19 @@ async function cancelAuthentication() {
 }
 
 function handleOpenChange(open: boolean) {
-  if (!open && authPending.value && runId.value) {
-    void client.cancel(runId.value)
-  }
+  if (!open) invalidateAuthenticationAttempt()
   emit('update:open', open)
+}
+
+function invalidateAuthenticationAttempt() {
+  authenticationAttempt += 1
+  const activeRunId = authPending.value ? runId.value : null
+  runId.value = null
+  if (activeRunId) cancelRun(activeRunId)
+}
+
+function cancelRun(activeRunId: string) {
+  void client.cancel(activeRunId).catch(() => {})
 }
 
 function notifySucceeded() {
@@ -206,12 +223,14 @@ function notifySucceeded() {
 }
 
 const stopOutput = client.onOutput((payload) => {
+  if (!props.open) return
   if (payload.challengeId !== props.challenge?.id) return
   if (runId.value && payload.runId !== runId.value) return
   runId.value ??= payload.runId
   void ensureTerminal().then(() => terminal?.write(payload.data))
 })
 const stopState = client.onStateChanged((payload) => {
+  if (!props.open) return
   if (payload.challengeId !== props.challenge?.id) return
   if (runId.value && payload.runId && payload.runId !== runId.value) return
   runId.value = payload.runId ?? runId.value
@@ -229,6 +248,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  invalidateAuthenticationAttempt()
   stopOutput()
   stopState()
   if (terminalInputTimer) clearTimeout(terminalInputTimer)

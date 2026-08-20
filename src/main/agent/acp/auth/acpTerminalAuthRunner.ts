@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { spawn, type IPty } from 'node-pty'
 import type { AcpMaterializedLaunch } from '../runtime/acpProcessManager'
 
+const AUTH_RUN_TIMEOUT_MS = 10 * 60 * 1000
+const AUTH_KILL_GRACE_MS = 2 * 1000
+
 export interface AcpTerminalAuthExit {
   exitCode: number
   signal?: number
@@ -13,10 +16,14 @@ interface AcpTerminalAuthRun {
   pty: IPty
   cancelled: boolean
   completion: Promise<AcpTerminalAuthExit>
+  timeout: ReturnType<typeof setTimeout> | null
+  forceKillTimeout: ReturnType<typeof setTimeout> | null
 }
 
 export class AcpTerminalAuthRunner {
   private readonly runs = new Map<string, AcpTerminalAuthRun>()
+
+  constructor(private readonly platform: NodeJS.Platform = process.platform) {}
 
   start(input: {
     ownerWebContentsId: number
@@ -39,7 +46,9 @@ export class AcpTerminalAuthRunner {
       ownerWebContentsId: input.ownerWebContentsId,
       pty,
       cancelled: false,
-      completion
+      completion,
+      timeout: null,
+      forceKillTimeout: null
     }
     this.runs.set(runId, run)
     const dataSubscription = pty.onData((data) => {
@@ -50,9 +59,14 @@ export class AcpTerminalAuthRunner {
     const exitSubscription = pty.onExit(({ exitCode, signal }) => {
       dataSubscription.dispose()
       exitSubscription.dispose()
+      this.clearTimeouts(run)
       this.runs.delete(runId)
       resolveExit({ exitCode, signal, cancelled: run.cancelled })
     })
+    if (this.runs.get(runId) === run) {
+      run.timeout = setTimeout(() => this.terminate(runId, run), AUTH_RUN_TIMEOUT_MS)
+      run.timeout.unref?.()
+    }
     return { runId, completion }
   }
 
@@ -67,8 +81,7 @@ export class AcpTerminalAuthRunner {
     if (run.ownerWebContentsId !== ownerWebContentsId) {
       throw new Error('ACP authentication terminal belongs to another renderer')
     }
-    run.cancelled = true
-    run.pty.kill()
+    this.terminate(runId, run)
     return true
   }
 
@@ -81,10 +94,34 @@ export class AcpTerminalAuthRunner {
   }
 
   shutdown(): void {
-    for (const run of this.runs.values()) {
-      run.cancelled = true
-      run.pty.kill()
+    for (const [runId, run] of this.runs) {
+      this.terminate(runId, run)
     }
+  }
+
+  private terminate(runId: string, run: AcpTerminalAuthRun): void {
+    run.cancelled = true
+    try {
+      run.pty.kill()
+    } catch {}
+    if (this.platform === 'win32' || this.runs.get(runId) !== run || run.forceKillTimeout) {
+      return
+    }
+    run.forceKillTimeout = setTimeout(() => {
+      run.forceKillTimeout = null
+      if (this.runs.get(runId) !== run) return
+      try {
+        run.pty.kill('SIGKILL')
+      } catch {}
+    }, AUTH_KILL_GRACE_MS)
+    run.forceKillTimeout.unref?.()
+  }
+
+  private clearTimeouts(run: AcpTerminalAuthRun): void {
+    if (run.timeout) clearTimeout(run.timeout)
+    if (run.forceKillTimeout) clearTimeout(run.forceKillTimeout)
+    run.timeout = null
+    run.forceKillTimeout = null
   }
 
   private requireOwnedRun(runId: string, ownerWebContentsId: number): AcpTerminalAuthRun {

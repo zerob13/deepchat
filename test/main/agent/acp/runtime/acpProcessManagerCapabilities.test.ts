@@ -55,72 +55,73 @@ class MockChild extends EventEmitter {
 }
 
 describe('AcpProcessManager initialized capabilities', () => {
-  it('carries initialize capabilities into the ready process handle', async () => {
-    sdkMock.initialize.mockResolvedValue(sdkMock.initializeResponse)
-    const { AcpProcessManager } =
-      await import('@/agent/acp/runtime/acpProcessManager')
-    const manager = new AcpProcessManager({
-      publishEvent: vi.fn(),
-      providerId: 'acp',
-      resolveLaunchSpec: vi.fn(),
-      terminalAuthAvailable: true
-    })
-    const child = new MockChild()
-    vi.spyOn(manager as any, 'materializeAgentLaunch').mockResolvedValue({
-      command: 'agent',
-      args: [],
-      env: {},
-      cwd: '/tmp/workspace'
-    })
-    vi.spyOn(manager as any, 'spawnAgentProcess').mockReturnValue(child)
-
-    const handle = await (manager as any).spawnProcessOnce(
-      {
-        id: 'agent-1',
-        name: 'Agent One',
-        command: 'agent'
-      },
-      '/tmp/workspace',
-      {
-        agentId: 'agent-1',
-        source: 'manual',
-        distributionType: 'manual',
+  it.each([true, false])(
+    'carries initialize capabilities into the ready process handle when terminal auth is %s',
+    async (terminalAuthAvailable) => {
+      sdkMock.initialize.mockClear()
+      sdkMock.initialize.mockResolvedValue(sdkMock.initializeResponse)
+      const { AcpProcessManager } = await import('@/agent/acp/runtime/acpProcessManager')
+      const manager = new AcpProcessManager({
+        publishEvent: vi.fn(),
+        providerId: 'acp',
+        resolveLaunchSpec: vi.fn(),
+        terminalAuthAvailable
+      })
+      const child = new MockChild()
+      vi.spyOn(manager as any, 'materializeAgentLaunch').mockResolvedValue({
         command: 'agent',
         args: [],
-        env: {}
-      },
-      'manual:agent',
-      undefined
-    )
-
-    expect(handle.promptCapabilities).toEqual({
-      image: true,
-      audio: true,
-      embeddedContext: true
-    })
-    expect(handle.sessionCapabilities).toEqual({
-      list: {},
-      resume: {},
-      close: {},
-      fork: {}
-    })
-    expect(handle.supportsLoadSession).toBe(true)
-    expect(handle.supportsSessionList).toBe(true)
-    expect(handle.supportsSessionResume).toBe(true)
-    expect(handle.supportsSessionClose).toBe(true)
-    expect(handle.supportsSessionFork).toBe(true)
-    expect(handle.authMethods).toEqual([{ id: 'terminal', name: 'Terminal', type: 'terminal' }])
-    expect(sdkMock.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        clientCapabilities: expect.objectContaining({ auth: { terminal: true } })
+        env: {},
+        cwd: '/tmp/workspace'
       })
-    )
-    expect(handle.capabilitySnapshot?.supports).toEqual({
-      loadSession: true,
-      sessionList: true,
-      sessionResume: true,
-      sessionClose: true,
-      sessionFork: true
-    })
-  })
+      vi.spyOn(manager as any, 'spawnAgentProcess').mockReturnValue(child)
+
+      const handle = await (manager as any).spawnProcessOnce(
+        {
+          id: 'agent-1',
+          name: 'Agent One',
+          command: 'agent'
+        },
+        '/tmp/workspace',
+        {
+          agentId: 'agent-1',
+          source: 'manual',
+          distributionType: 'manual',
+          command: 'agent',
+          args: [],
+          env: {}
+        },
+        'manual:agent',
+        undefined
+      )
+
+      expect(handle.promptCapabilities).toEqual({
+        image: true,
+        audio: true,
+        embeddedContext: true
+      })
+      expect(handle.sessionCapabilities).toEqual({
+        list: {},
+        resume: {},
+        close: {},
+        fork: {}
+      })
+      expect(handle.supportsLoadSession).toBe(true)
+      expect(handle.supportsSessionList).toBe(true)
+      expect(handle.supportsSessionResume).toBe(true)
+      expect(handle.supportsSessionClose).toBe(true)
+      expect(handle.supportsSessionFork).toBe(true)
+      expect(handle.authMethods).toEqual([{ id: 'terminal', name: 'Terminal', type: 'terminal' }])
+      const clientCapabilities = sdkMock.initialize.mock.calls.at(-1)?.[0].clientCapabilities
+      if (terminalAuthAvailable) expect(clientCapabilities.auth).toEqual({ terminal: true })
+      else expect(clientCapabilities.auth).toBeUndefined()
+      expect(handle.capabilitySnapshot?.supports).toEqual({
+        loadSession: true,
+        sessionList: true,
+        sessionResume: true,
+        sessionClose: true,
+        sessionFork: true
+      })
+    }
+  )
 })

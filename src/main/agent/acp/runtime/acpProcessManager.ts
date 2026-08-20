@@ -753,18 +753,12 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     methodId: string,
     expectedType: 'agent' | 'terminal'
   ): Promise<StoredAuthChallenge> {
+    if (expectedType === 'terminal' && !this.terminalAuthAvailable) {
+      throw new Error('Terminal ACP authentication is unavailable')
+    }
     const challenge = this.requireStoredAuthChallenge(challengeId)
     if (challenge.active) throw new Error('ACP authentication is already running')
     if (!this.isHandleAlive(challenge.handle)) {
-      throw new Error('ACP authentication challenge is stale')
-    }
-
-    const [launchSpec, agentState] = await Promise.all([
-      this.resolveLaunchSpec(challenge.agent.id, challenge.public.workdir),
-      this.getAgentState?.(challenge.agent.id)
-    ])
-    const currentSignature = createLaunchSignature(launchSpec, agentState?.envOverride)
-    if (currentSignature !== challenge.launchSignature) {
       throw new Error('ACP authentication challenge is stale')
     }
 
@@ -780,9 +774,23 @@ export class AcpProcessManager implements AgentProcessManager<AcpProcessHandle, 
     if (methodType !== expectedType) {
       throw new Error(`ACP authentication method does not support ${expectedType} authentication`)
     }
+
     challenge.active = true
     this.activeAuthScopes.set(scopeKey, challenge.public.id)
-    return challenge
+    try {
+      const [launchSpec, agentState] = await Promise.all([
+        this.resolveLaunchSpec(challenge.agent.id, challenge.public.workdir),
+        this.getAgentState?.(challenge.agent.id)
+      ])
+      const currentSignature = createLaunchSignature(launchSpec, agentState?.envOverride)
+      if (currentSignature !== challenge.launchSignature) {
+        throw new Error('ACP authentication challenge is stale')
+      }
+      return challenge
+    } catch (error) {
+      this.releaseAuthChallenge(challenge)
+      throw error
+    }
   }
 
   private getAuthScopeKey(challenge: AcpAuthChallenge): string {

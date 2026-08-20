@@ -17,8 +17,8 @@ may run during development, but durable tests are selected and added after the b
 - `src/main/agent/acp/runtime/acpSessionManager.ts`: numeric `auth_required` detection before
   resume/load/new fallback and retry eligibility.
 - `src/main/agent/acp/instance/*`: expose `auth_required` without duplicating authentication logic.
-- `src/main/agent/acp/launch/*`: replace the unused shell-injection path with a narrow direct PTY
-  auth runner.
+- `src/main/agent/acp/auth/acpTerminalAuthRunner.ts`: replace the unused shell-injection path with a
+  narrow direct PTY auth runner.
 - `src/shared/contracts/*` and `src/renderer/api/*`: renderer-safe auth routes/events and client.
 - `src/renderer/src/pages/NewThreadPage.vue` and `src/renderer/settings/components/AcpSettings.vue`:
   onboarding/auth-required entry points and one-shot retry.

@@ -257,8 +257,8 @@ For `type='terminal'`:
 2. keep the existing protocol connection alive while a separate PTY process runs;
 3. direct-spawn the materialized command with base args plus method args and the merged env;
 4. stream PTY output only to the renderer that started the run and forward bounded user input;
-5. on cancellation, window closure, app shutdown, missing exit status, signal termination, or
-   non-zero exit, terminate the PTY tree and do not retry;
+5. cap each PTY run at ten minutes; on timeout, cancellation, window closure, app shutdown, missing
+   exit status, signal termination, or non-zero exit, terminate the PTY tree and do not retry;
 6. on exit status `0`, dispose the old ACP process handle;
 7. start a fresh connection with the same agent/workdir and run `initialize` again;
 8. do **not** call `authenticate` with the terminal method ID;

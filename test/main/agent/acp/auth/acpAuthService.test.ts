@@ -27,7 +27,7 @@ const terminalChallenge: AcpAuthChallenge = {
 
 function createHarness(challenge: AcpAuthChallenge = terminalChallenge) {
   const processManager = {
-    getAuthChallenge: vi.fn(() => challenge),
+    getAuthChallenge: vi.fn((challengeId: string) => ({ ...challenge, id: challengeId })),
     authenticateAgent: vi.fn().mockResolvedValue(undefined),
     prepareTerminalAuthentication: vi.fn().mockResolvedValue({
       challenge,
@@ -183,5 +183,36 @@ describe('AcpAuthService', () => {
     )
     expect(harness.processManager.completeTerminalAuthentication).not.toHaveBeenCalled()
     expect(harness.processManager.abandonAuthentication).toHaveBeenCalledWith('challenge-1')
+  })
+
+  it('keeps authentication status recovery bounded', async () => {
+    const harness = createHarness({
+      ...terminalChallenge,
+      methods: [{ id: 'browser-login', name: 'Browser login', type: 'agent' }]
+    })
+
+    for (let index = 0; index <= 100; index += 1) {
+      await harness.service.start(`challenge-${index}`, 'browser-login', 42)
+    }
+
+    expect(harness.service.getStatus('challenge-0', 42)).toEqual({
+      challengeId: 'challenge-0',
+      state: 'required'
+    })
+    expect(harness.service.getStatus('challenge-100', 42)).toMatchObject({ state: 'succeeded' })
+  })
+
+  it('suppresses status events after shutdown while preserving process cleanup', async () => {
+    const harness = createHarness()
+    await harness.service.start('challenge-1', 'terminal-login', 42)
+    const eventCount = harness.sendToRenderer.mock.calls.length
+
+    harness.service.shutdown()
+    ptyMock.exitListeners[0]?.({ exitCode: 0 })
+
+    await vi.waitFor(() =>
+      expect(harness.processManager.abandonAuthentication).toHaveBeenCalledWith('challenge-1')
+    )
+    expect(harness.sendToRenderer).toHaveBeenCalledTimes(eventCount)
   })
 })

@@ -5,6 +5,9 @@ import { AcpTerminalAuthRunner } from './acpTerminalAuthRunner'
 import { resolveAcpAgentAlias } from '@shared/utils/acpAgentAlias'
 
 type AcpAuthEventName = 'acpAuth.output' | 'acpAuth.stateChanged'
+type StoredAuthStatus = AcpAuthRunStatus & { ownerWebContentsId?: number }
+
+const MAX_AUTH_STATUS_ENTRIES = 100
 
 export interface AcpAuthServiceDependencies {
   owner: AcpRuntimeOwner
@@ -15,17 +18,20 @@ export interface AcpAuthServiceDependencies {
 
 export class AcpAuthService {
   private readonly runner = new AcpTerminalAuthRunner()
-  private readonly statuses = new Map<string, AcpAuthRunStatus & { ownerWebContentsId?: number }>()
+  private readonly statuses = new Map<string, StoredAuthStatus>()
   private readonly detachRendererListeners = new Map<string, () => void>()
+  private disposed = false
 
   constructor(private readonly dependencies: AcpAuthServiceDependencies) {}
 
   async inspect(agentId: string, workdir?: string): Promise<AcpAuthChallenge> {
+    this.ensureActive()
     const agent = await this.resolveAgent(agentId)
     const challenge = await this.dependencies.owner
       .getOrCreate()
       .processManager.inspectAuthentication(agent, workdir)
-    this.statuses.set(challenge.id, {
+    this.ensureActive()
+    this.rememberStatus({
       challengeId: challenge.id,
       state: 'required'
     })
@@ -37,6 +43,7 @@ export class AcpAuthService {
     methodId: string,
     ownerWebContentsId: number
   ): Promise<AcpAuthRunStatus> {
+    this.ensureActive()
     const current = this.statuses.get(challengeId)
     if (current?.state === 'running' || current?.state === 'reconnecting') {
       if (current.ownerWebContentsId !== ownerWebContentsId) {
@@ -70,10 +77,12 @@ export class AcpAuthService {
     const prepared = await processManager.prepareTerminalAuthentication(challengeId, methodId)
     let started: ReturnType<AcpTerminalAuthRunner['start']>
     try {
+      this.ensureActive()
       started = this.runner.start({
         ownerWebContentsId,
         launch: prepared.launch,
         onData: (runId, data) => {
+          if (this.disposed) return
           this.dependencies.sendToRenderer(ownerWebContentsId, 'acpAuth.output', {
             challengeId,
             runId,
@@ -132,9 +141,12 @@ export class AcpAuthService {
   }
 
   shutdown(): void {
+    if (this.disposed) return
+    this.disposed = true
     this.runner.shutdown()
     this.detachRendererListeners.forEach((detach) => detach())
     this.detachRendererListeners.clear()
+    this.statuses.clear()
   }
 
   private async finishTerminalAuthentication(
@@ -211,7 +223,8 @@ export class AcpAuthService {
   }
 
   private setStatus(ownerWebContentsId: number, status: AcpAuthRunStatus): AcpAuthRunStatus {
-    this.statuses.set(status.challengeId, { ...status, ownerWebContentsId })
+    if (this.disposed) return status
+    this.rememberStatus({ ...status, ownerWebContentsId })
     this.dependencies.sendToRenderer(ownerWebContentsId, 'acpAuth.stateChanged', {
       ...status,
       version: Date.now()
@@ -219,11 +232,25 @@ export class AcpAuthService {
     return status
   }
 
-  private publicStatus(
-    status: AcpAuthRunStatus & { ownerWebContentsId?: number }
-  ): AcpAuthRunStatus {
+  private rememberStatus(status: StoredAuthStatus): void {
+    this.statuses.delete(status.challengeId)
+    this.statuses.set(status.challengeId, status)
+    if (this.statuses.size <= MAX_AUTH_STATUS_ENTRIES) return
+
+    for (const [challengeId, candidate] of this.statuses) {
+      if (candidate.state === 'running' || candidate.state === 'reconnecting') continue
+      this.statuses.delete(challengeId)
+      if (this.statuses.size <= MAX_AUTH_STATUS_ENTRIES) return
+    }
+  }
+
+  private publicStatus(status: StoredAuthStatus): AcpAuthRunStatus {
     const { ownerWebContentsId: _ownerWebContentsId, ...result } = status
     return result
+  }
+
+  private ensureActive(): void {
+    if (this.disposed) throw new Error('ACP authentication service is shut down')
   }
 
   private toSafeError(error: unknown): string {
